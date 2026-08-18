@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -14,16 +14,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/vps-dashboard ./cmd/server
 
 FROM debian:bookworm-slim
+
 # The dashboard drives the host through these tools; a scratch image would
 # leave most of the product non-functional. They are the same binaries an
 # operator would use over SSH.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
+      gnupg \
       tzdata \
       git \
       openssh-client \
-      docker.io \
-      docker-compose-plugin \
       systemd \
       tmux \
       procps \
@@ -35,8 +36,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       postgresql-client \
       default-mysql-client \
       certbot \
-      nginx-common \
       logrotate \
+    && rm -rf /var/lib/apt/lists/*
+
+# Debian ships neither a standalone docker CLI nor the compose v2 plugin, and
+# this image must not carry a second daemon — only the client that talks to
+# the host's socket. Docker's own repository is the supported source for both.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/vps-dashboard /usr/local/bin/vps-dashboard

@@ -5,14 +5,15 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-FROM oven/bun:1 AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Both the app and /api are served from one origin in production, so the
-# build-time rewrite target is never consulted and WebSockets are same-origin.
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN bun run build
+# Dependencies are resolved by bun, but the compile itself runs under Node:
+# the baseline bun binary in the official image segfaults tearing down after
+# a Next build. Invoking next's own entrypoint keeps npm out of the picture.
+RUN node node_modules/next/dist/bin/next build
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

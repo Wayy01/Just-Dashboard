@@ -1,11 +1,7 @@
 import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/hooks/use-auth"
 import "./globals.css"
-
-const sans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
-const mono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "VPS Dashboard",
@@ -14,9 +10,11 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Dark-only: an operator reads this during incidents, often at night, and a
+  // theme toggle is not worth the flash-of-wrong-theme it costs.
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} antialiased`}>
+      <body className="antialiased">
         <AuthProvider>
           {children}
           <Toaster position="top-right" richColors closeButton />

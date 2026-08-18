@@ -61,7 +61,8 @@ services:
       context: ./frontend
     image: vps-dashboard-frontend:latest
     restart: unless-stopped
-    # No host access of its own: it serves the UI and nothing else.
+    # No host access of its own: it serves the UI and nothing else, which is
+    # why it is also the only service that runs unprivileged.
     expose:
       - "3000"
     healthcheck:

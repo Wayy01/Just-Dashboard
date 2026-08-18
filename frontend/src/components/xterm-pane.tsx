@@ -48,7 +48,7 @@ export function XtermPane({
       if (disposed) return
 
       const term = new Terminal({
-        fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
         fontSize: 13,
         cursorBlink: true,
         convertEol: true,
