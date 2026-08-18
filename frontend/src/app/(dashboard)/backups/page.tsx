@@ -1,0 +1,579 @@
+"use client"
+
+import { useState } from "react"
+import { Archive, CloudUpload, HardDriveDownload, Play, Plus, Trash2 } from "lucide-react"
+import { toast } from "sonner"
+import { del, get, post, put } from "@/lib/api"
+import { bytes, relativeTime, timestamp } from "@/lib/format"
+import type { BackupJob, BackupRun } from "@/lib/types"
+import { usePoll } from "@/hooks/use-poll"
+import { useAuth } from "@/hooks/use-auth"
+import { useConfirm } from "@/components/confirm-dialog"
+import { PageHeader } from "@/components/page-header"
+import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
+import { StatusBadge } from "@/components/status-dot"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+
+export default function BackupsPage() {
+  const { can } = useAuth()
+  const { confirm, dialog } = useConfirm()
+  const [historyFor, setHistoryFor] = useState<BackupJob | null>(null)
+  const { data, error, loading, refresh } = usePoll(
+    (signal) => get<BackupJob[]>("/backups/", undefined, signal),
+    15000,
+  )
+
+  const runNow = async (job: BackupJob) => {
+    try {
+      await post(`/backups/${job.id}/run`)
+      toast.success(`${job.name} started`, { description: "Progress appears in the run history." })
+      refresh()
+    } catch (err) {
+      toast.error("Could not start", { description: String(err) })
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Backups"
+        description="Scheduled archives to local disk or S3-compatible storage"
+        actions={can("system.admin") && <JobDialog onDone={refresh} />}
+      />
+
+      {loading && <LoadingRows />}
+      {error && <ErrorState error={error} />}
+      {data?.length === 0 && (
+        <EmptyState
+          icon={Archive}
+          title="No backup jobs"
+          description="Create one to archive directories on a schedule. Provider credentials are encrypted with the dashboard's master key."
+        />
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {data?.map((job) => (
+          <Card key={job.id}>
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="truncate text-base">{job.name}</CardTitle>
+                  <CardDescription className="truncate">
+                    {job.sources.length} source(s) →{" "}
+                    {job.targetKind === "local"
+                      ? job.target.path
+                      : `${job.targetKind}://${job.target.bucket}/${job.target.prefix ?? ""}`}
+                  </CardDescription>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Badge variant={job.enabled ? "default" : "secondary"}>
+                    {job.enabled ? "enabled" : "paused"}
+                  </Badge>
+                  {job.hasCredentials && (
+                    <Badge variant="outline" className="text-[10px]">
+                      keys stored
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <dt className="text-muted-foreground">Schedule</dt>
+                <dd className="font-mono">{job.schedule || "manual only"}</dd>
+                <dt className="text-muted-foreground">Next run</dt>
+                <dd>{job.nextRun ? relativeTime(job.nextRun) : "—"}</dd>
+                <dt className="text-muted-foreground">Keep</dt>
+                <dd>{job.retention > 0 ? `${job.retention} archives` : "everything"}</dd>
+                <dt className="text-muted-foreground">Last run</dt>
+                <dd>
+                  {job.lastRun ? (
+                    <span className="flex items-center gap-1.5">
+                      <StatusBadge state={job.lastRun.status} />
+                      {relativeTime(job.lastRun.startedAt)}
+                    </span>
+                  ) : (
+                    "never"
+                  )}
+                </dd>
+              </dl>
+
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setHistoryFor(job)}>
+                  History
+                </Button>
+                {can("service.control") && (
+                  <Button size="sm" onClick={() => runNow(job)}>
+                    <Play className="size-3.5" />
+                    Run now
+                  </Button>
+                )}
+                {can("system.admin") && (
+                  <>
+                    <TestTargetButton job={job} />
+                    <JobDialog job={job} onDone={refresh} />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive"
+                      onClick={() =>
+                        confirm({
+                          title: "Delete backup job",
+                          phrase: job.name,
+                          confirmLabel: "Delete",
+                          description: (
+                            <p>
+                              Removes the schedule for <b>{job.name}</b>. Archives already taken are
+                              kept where they are.
+                            </p>
+                          ),
+                          action: async (c) => {
+                            await del(`/backups/${job.id}`, { confirm: c })
+                            refresh()
+                          },
+                        })
+                      }
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <HistorySheet job={historyFor} onOpenChange={(o) => !o && setHistoryFor(null)} />
+      {dialog}
+    </>
+  )
+}
+
+function TestTargetButton({ job }: { job: BackupJob }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          const res = await post<{ ok: boolean; error?: string }>(`/backups/${job.id}/test`)
+          if (res.ok) toast.success("Target is reachable and writable")
+          else toast.error("Target unreachable", { description: res.error })
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      {busy ? <Spinner /> : <CloudUpload className="size-3.5" />}
+      Test
+    </Button>
+  )
+}
+
+function HistorySheet({
+  job,
+  onOpenChange,
+}: {
+  job: BackupJob | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { can } = useAuth()
+  const { confirm, dialog } = useConfirm()
+  const [logFor, setLogFor] = useState<BackupRun | null>(null)
+  const { data, loading, refresh } = usePoll(
+    (signal) =>
+      job
+        ? get<{ runs: BackupRun[]; running: boolean }>(`/backups/${job.id}/runs`, undefined, signal)
+        : Promise.resolve({ runs: [], running: false }),
+    5000,
+    [job?.id],
+  )
+
+  return (
+    <>
+      <Sheet open={job !== null} onOpenChange={onOpenChange}>
+        <SheetContent side="right" className="w-full overflow-auto sm:max-w-3xl">
+          <SheetHeader>
+            <SheetTitle>{job?.name}</SheetTitle>
+            <SheetDescription>
+              {data?.running ? "A run is in progress right now." : "Run history, newest first"}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-4 px-4">
+            {loading && <LoadingRows />}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Size</TableHead>
+                  <TableHead>Took</TableHead>
+                  <TableHead className="w-px" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data?.runs.map((run) => (
+                  <TableRow key={run.id}>
+                    <TableCell className="text-xs">
+                      <div>{timestamp(run.startedAt)}</div>
+                      <p className="text-[11px] text-muted-foreground">{run.trigger}</p>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge state={run.status} />
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">
+                      {run.sizeBytes ? bytes(run.sizeBytes) : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {run.duration ?? "running"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setLogFor(run)}>
+                          Log
+                        </Button>
+                        {run.status === "success" && can("destructive") && (
+                          <RestoreButton run={run} confirm={confirm} onDone={refresh} />
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {data?.runs.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="p-0">
+                      <EmptyState icon={Archive} title="No runs yet" />
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+
+            {logFor && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Log · run {logFor.id}</p>
+                <pre className="max-h-80 overflow-auto rounded-md border bg-black/40 p-3 font-mono text-xs">
+                  {logFor.log || "No output recorded."}
+                </pre>
+                {logFor.artifact && (
+                  <p className="font-mono text-[11px] text-muted-foreground">{logFor.artifact}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+      {dialog}
+    </>
+  )
+}
+
+function RestoreButton({
+  run,
+  confirm,
+  onDone,
+}: {
+  run: BackupRun
+  confirm: ReturnType<typeof useConfirm>["confirm"]
+  onDone: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [destination, setDestination] = useState("/tmp/restore")
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
+          <HardDriveDownload className="size-3.5" />
+          Restore
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Restore run {run.id}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="restore-dest">Destination directory</Label>
+            <Input
+              id="restore-dest"
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Files are unpacked here, overwriting anything with the same path. Restoring into a
+              scratch directory first is usually the safer move.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            onClick={() => {
+              setOpen(false)
+              confirm({
+                title: "Restore backup",
+                phrase: destination,
+                confirmLabel: "Restore",
+                description: (
+                  <p className="text-destructive">
+                    Unpacks the archive into <b>{destination}</b>, overwriting files that already
+                    exist there.
+                  </p>
+                ),
+                action: async (c) => {
+                  const res = await post<{ entries: number; bytes: number }>(
+                    `/backups/runs/${run.id}/restore`,
+                    { destination },
+                    { confirm: c },
+                  )
+                  toast.success(`Restored ${res.entries} entries (${bytes(res.bytes)})`)
+                  onDone()
+                },
+              })
+            }}
+          >
+            Continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(job?.name ?? "")
+  const [sources, setSources] = useState((job?.sources ?? []).join("\n"))
+  const [excludes, setExcludes] = useState((job?.excludes ?? []).join("\n"))
+  const [targetKind, setTargetKind] = useState(job?.targetKind ?? "local")
+  const [path, setPath] = useState(job?.target.path ?? "/var/backups/vps-dashboard")
+  const [bucket, setBucket] = useState(job?.target.bucket ?? "")
+  const [region, setRegion] = useState(job?.target.region ?? "")
+  const [endpoint, setEndpoint] = useState(job?.target.endpoint ?? "")
+  const [prefix, setPrefix] = useState(job?.target.prefix ?? "")
+  const [accessKey, setAccessKey] = useState("")
+  const [secretKey, setSecretKey] = useState("")
+  const [schedule, setSchedule] = useState(job?.schedule ?? "0 3 * * *")
+  const [retention, setRetention] = useState(job?.retention ?? 7)
+  const [enabled, setEnabled] = useState(job?.enabled ?? true)
+
+  const submit = async () => {
+    const body = {
+      name,
+      sources: sources.split("\n").map((s) => s.trim()).filter(Boolean),
+      excludes: excludes.split("\n").map((s) => s.trim()).filter(Boolean),
+      targetKind,
+      target: targetKind === "local" ? { path } : { bucket, region, endpoint, prefix },
+      schedule,
+      retention: Number(retention),
+      enabled,
+      // Omitted when blank so editing a schedule does not wipe stored keys.
+      secrets: accessKey || secretKey ? { accessKeyId: accessKey, secretAccessKey: secretKey } : undefined,
+    }
+    try {
+      if (job) await put(`/backups/${job.id}`, body)
+      else await post("/backups/", body)
+      toast.success(job ? "Job updated" : "Job created")
+      setOpen(false)
+      onDone()
+    } catch (err) {
+      toast.error("Could not save", { description: String(err) })
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {job ? (
+          <Button size="sm" variant="outline">
+            Edit
+          </Button>
+        ) : (
+          <Button size="sm">
+            <Plus className="size-4" />
+            New job
+          </Button>
+        )}
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{job ? `Edit ${job.name}` : "New backup job"}</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="job-name">Name</Label>
+            <Input id="job-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="job-sources">Sources (one per line)</Label>
+              <Textarea
+                id="job-sources"
+                value={sources}
+                onChange={(e) => setSources(e.target.value)}
+                rows={4}
+                className="font-mono text-xs"
+                placeholder="/srv/app&#10;/etc/nginx"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="job-excludes">Excludes (glob, one per line)</Label>
+              <Textarea
+                id="job-excludes"
+                value={excludes}
+                onChange={(e) => setExcludes(e.target.value)}
+                rows={4}
+                className="font-mono text-xs"
+                placeholder="node_modules&#10;*.log"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Destination</Label>
+            <Select value={targetKind} onValueChange={(v) => setTargetKind(v as typeof targetKind)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local directory</SelectItem>
+                <SelectItem value="s3">Amazon S3</SelectItem>
+                <SelectItem value="b2">Backblaze B2</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {targetKind === "local" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="job-path">Directory</Label>
+              <Input id="job-path" value={path} onChange={(e) => setPath(e.target.value)} className="font-mono text-sm" />
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-bucket">Bucket</Label>
+                  <Input id="job-bucket" value={bucket} onChange={(e) => setBucket(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-region">Region</Label>
+                  <Input id="job-region" value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-endpoint">Endpoint</Label>
+                  <Input
+                    id="job-endpoint"
+                    value={endpoint}
+                    onChange={(e) => setEndpoint(e.target.value)}
+                    placeholder={targetKind === "b2" ? "s3.us-west-004.backblazeb2.com" : "leave blank for AWS"}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-prefix">Prefix</Label>
+                  <Input id="job-prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-access">Access key ID</Label>
+                  <Input
+                    id="job-access"
+                    value={accessKey}
+                    onChange={(e) => setAccessKey(e.target.value)}
+                    placeholder={job?.hasCredentials ? "unchanged" : ""}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="job-secret">Secret access key</Label>
+                  <Input
+                    id="job-secret"
+                    type="password"
+                    value={secretKey}
+                    onChange={(e) => setSecretKey(e.target.value)}
+                    placeholder={job?.hasCredentials ? "unchanged" : ""}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-3 items-end gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="job-schedule">Schedule (cron)</Label>
+              <Input
+                id="job-schedule"
+                value={schedule}
+                onChange={(e) => setSchedule(e.target.value)}
+                className="font-mono text-sm"
+                placeholder="0 3 * * *"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="job-retention">Keep</Label>
+              <Input
+                id="job-retention"
+                type="number"
+                min={0}
+                value={retention}
+                onChange={(e) => setRetention(Number(e.target.value))}
+              />
+            </div>
+            <label className="flex items-center gap-2 pb-2 text-sm">
+              <Switch checked={enabled} onCheckedChange={setEnabled} />
+              Enabled
+            </label>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={submit} disabled={!name || !sources.trim()}>
+            {job ? "Save" : "Create"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

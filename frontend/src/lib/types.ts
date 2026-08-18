@@ -429,6 +429,25 @@ export type DbConnection = {
   createdAt: string
 }
 
+/** One table, view or Mongo collection, as the schema browser lists it. */
+export type DbTable = {
+  schema: string
+  name: string
+  type: string
+  estimatedRows: number
+  size?: number
+  comment?: string
+}
+
+export type DbColumn = {
+  name: string
+  type: string
+  nullable: boolean
+  default?: string
+  key?: string
+  position: number
+}
+
 export type QueryResult = {
   columns: string[]
   types: string[]

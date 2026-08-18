@@ -198,15 +198,19 @@ func (m *Manager) Detach(id string) error {
 
 // TmuxSessions lists persistent sessions that exist in tmux but are not
 // currently tracked here — for instance after this process was restarted.
+//
+// It always returns a non-nil slice: a nil slice marshals to JSON null, and a
+// list endpoint that answers null instead of [] breaks every consumer that
+// reasonably expects to iterate the result.
 func (m *Manager) TmuxSessions(ctx context.Context) []string {
+	names := []string{}
 	if !m.useTmux {
-		return nil
+		return names
 	}
 	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
-		return nil
+		return names
 	}
-	names := []string{}
 	for _, line := range splitLines(string(out)) {
 		if len(line) > 5 && line[:5] == "vpsd-" {
 			names = append(names, line)
