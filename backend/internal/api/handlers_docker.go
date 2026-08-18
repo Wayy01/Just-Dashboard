@@ -150,6 +150,13 @@ func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return s.dockerErr(err)
 	}
+	// Every authenticated role may read container detail, and a container's
+	// environment routinely holds the master key, database passwords and
+	// deploy credentials. Anyone below system.admin gets them redacted here,
+	// on the server, so a readonly API token cannot lift them either.
+	if !httpx.MustPrincipal(r).Can(auth.CapSystemAdmin) {
+		detail.Env = dockerx.RedactEnv(detail.Env)
+	}
 	httpx.JSON(w, http.StatusOK, detail)
 	return nil
 }

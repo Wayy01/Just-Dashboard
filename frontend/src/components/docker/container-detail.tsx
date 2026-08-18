@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { Eye, EyeOff, ShieldAlert } from "lucide-react"
 import { get } from "@/lib/api"
 import { duration, timestamp } from "@/lib/format"
 import type { ContainerDetail, LogLine } from "@/lib/types"
@@ -95,22 +96,7 @@ function ContainerDetailBody({ containerId }: { containerId: string }) {
           </TabsContent>
 
           <TabsContent value="env" className="min-h-0 flex-1 p-4">
-            <ScrollArea className="h-full pr-3">
-              <div className="space-y-1 font-mono text-xs">
-                {detail.env.map((line) => {
-                  const [key, ...rest] = line.split("=")
-                  return (
-                    <div key={line} className="flex gap-2 rounded px-2 py-1 hover:bg-muted">
-                      <span className="shrink-0 text-muted-foreground">{key}=</span>
-                      <span className="break-all">{rest.join("=")}</span>
-                    </div>
-                  )
-                })}
-                {detail.env.length === 0 && (
-                  <p className="text-muted-foreground">No environment variables set.</p>
-                )}
-              </div>
-            </ScrollArea>
+            <EnvironmentList env={detail.env} />
           </TabsContent>
 
           <TabsContent value="mounts" className="min-h-0 flex-1 p-4">
@@ -152,6 +138,108 @@ function ContainerDetailBody({ containerId }: { containerId: string }) {
         </Tabs>
       )}
     </>
+  )
+}
+
+/**
+ * Names that conventionally hold a credential. The server already withholds
+ * these values from anyone below system.admin; this list is what decides
+ * whether an admin's copy is printed on screen or kept behind a click, so it
+ * errs towards hiding — a needless extra click costs less than a key read over
+ * someone's shoulder or captured in a screen share.
+ */
+const SECRET_ENV_HINTS = [
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "TOKEN",
+  "CREDENTIAL",
+  "PRIVATE",
+  "SALT",
+  "SIGNATURE",
+  "CIPHER",
+  "APIKEY",
+  "API_KEY",
+  "AUTH",
+  "DSN",
+  "_KEY",
+  "KEY_",
+]
+
+function isSecretEnvKey(name: string) {
+  const upper = name.toUpperCase()
+  return upper === "KEY" || SECRET_ENV_HINTS.some((hint) => upper.includes(hint))
+}
+
+function EnvironmentList({ env }: { env: string[] }) {
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
+  const rows = useMemo(
+    () =>
+      env.map((line) => {
+        const eq = line.indexOf("=")
+        const name = eq === -1 ? line : line.slice(0, eq)
+        const value = eq === -1 ? "" : line.slice(eq + 1)
+        return { line, name, value, secret: isSecretEnvKey(name) }
+      }),
+    [env],
+  )
+  const secretCount = rows.filter((r) => r.secret).length
+
+  if (rows.length === 0) {
+    return <p className="text-xs text-muted-foreground">No environment variables set.</p>
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {secretCount > 0 && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground">
+          <ShieldAlert className="mt-px size-3.5 shrink-0" />
+          <span>
+            {secretCount} {secretCount === 1 ? "value looks" : "values look"} like a credential and
+            {secretCount === 1 ? " is" : " are"} hidden. Reveal only when nobody is watching your
+            screen.
+          </span>
+        </p>
+      )}
+      <ScrollArea className="min-h-0 flex-1 pr-3">
+        <div className="space-y-1 font-mono text-xs">
+          {rows.map((row) => {
+            const show = !row.secret || revealed[row.name]
+            return (
+              <div
+                key={row.line}
+                className="flex items-start gap-2 rounded px-2 py-1 hover:bg-muted"
+              >
+                <span className="shrink-0 text-muted-foreground">{row.name}=</span>
+                {show ? (
+                  <span className="break-all">{row.value}</span>
+                ) : (
+                  <span className="text-muted-foreground select-none">••••••••••••</span>
+                )}
+                {row.secret && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto h-5 shrink-0 px-1.5 text-[11px] font-normal"
+                    aria-label={`${revealed[row.name] ? "Hide" : "Reveal"} ${row.name}`}
+                    onClick={() =>
+                      setRevealed((prev) => ({ ...prev, [row.name]: !prev[row.name] }))
+                    }
+                  >
+                    {revealed[row.name] ? (
+                      <EyeOff className="size-3" />
+                    ) : (
+                      <Eye className="size-3" />
+                    )}
+                    {revealed[row.name] ? "Hide" : "Reveal"}
+                  </Button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </ScrollArea>
+    </div>
   )
 }
 

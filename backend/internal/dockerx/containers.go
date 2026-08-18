@@ -166,10 +166,61 @@ type NetworkBinding struct {
 	NetworkID  string   `json:"networkId"`
 }
 
+// RedactedEnvValue replaces a credential-shaped environment value. It is a
+// fixed string rather than a length-preserving mask so the placeholder cannot
+// leak how long the original was.
+const RedactedEnvValue = "\u2022\u2022\u2022 hidden"
+
+// secretEnvHints are substrings that mark an environment variable as holding a
+// credential. Matching is deliberately broad and substring-based: masking a
+// value that did not need masking costs an operator one extra click, while the
+// reverse hands out a key.
+var secretEnvHints = []string{
+	"SECRET", "PASSWORD", "PASSWD", "TOKEN", "CREDENTIAL", "PRIVATE",
+	"SALT", "SIGNATURE", "CIPHER", "APIKEY", "API_KEY", "AUTH", "DSN",
+	"_KEY", "KEY_", "MASTER_KEY", "ACCESS", "SESSION",
+}
+
+// IsSecretEnvKey reports whether an environment variable name conventionally
+// carries a credential.
+func IsSecretEnvKey(name string) bool {
+	upper := strings.ToUpper(name)
+	if upper == "KEY" {
+		return true
+	}
+	for _, hint := range secretEnvHints {
+		if strings.Contains(upper, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactEnv masks credential-shaped values in a container's environment.
+//
+// Container inspect output routinely carries the dashboard's own master key,
+// database passwords and deploy credentials. Every authenticated role may read
+// container detail, so without this a readonly account could lift the key that
+// decrypts every other stored secret. Callers hand the unmasked slice only to
+// a principal that already holds system.admin.
+func RedactEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, found := strings.Cut(entry, "=")
+		if found && IsSecretEnvKey(name) {
+			out = append(out, name+"="+RedactedEnvValue)
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 // Inspect returns the full view an operator needs when debugging a container.
 // Environment variables are included deliberately — they routinely hold
-// secrets, which is precisely why this route requires an authenticated
-// principal and is written to the audit trail.
+// secrets, which is why the handler redacts them for anyone below
+// system.admin, and why the UI keeps even an admin's copy behind a deliberate
+// reveal rather than printing it on screen.
 func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, error) {
 	cli, err := c.api()
 	if err != nil {

@@ -19,6 +19,15 @@
 # address Caddy binds and the name its certificate is issued for, so those two
 # can never drift apart.
 {$VPSD_SITE:localhost}:8443 {
+	# The site address above decides which Host/SNI this block answers for --
+	# it does NOT decide which interface the socket binds. Without an explicit
+	# bind, Caddy listens on every interface, so VPSD_SITE=localhost would
+	# still leave a root-equivalent dashboard on a public port, defended only
+	# by whatever the host firewall happens to be doing. Binding to the same
+	# value keeps the two in step: localhost stays on loopback, and a
+	# WireGuard address binds only that tunnel interface.
+	bind {$VPSD_SITE:localhost}
+
 	# Caddy's own CA signs this. It is enough because the listener is only ever
 	# reached over a VPN tunnel or an SSH forward, both already encrypted and
 	# authenticated — the browser warns once and you accept it once.
