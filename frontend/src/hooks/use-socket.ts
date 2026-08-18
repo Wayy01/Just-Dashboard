@@ -1,0 +1,100 @@
+"use client"
+
+import { useEffect, useRef, useState } from "react"
+import { wsUrl } from "@/lib/api"
+
+export type Envelope<T = unknown> = {
+  type: string
+  data?: T
+  error?: string
+  ts: number
+}
+
+type SocketOptions = {
+  /** Called for every decoded frame. Kept in a ref so a changing handler does not reconnect. */
+  onMessage?: (envelope: Envelope) => void
+  onOpen?: () => void
+  onClose?: () => void
+  enabled?: boolean
+  /** Query parameters appended to the endpoint. */
+  query?: Record<string, string | number | boolean | undefined | null>
+}
+
+export type SocketState = "connecting" | "open" | "closed" | "error"
+
+/**
+ * Subscribes to one of the dashboard's push endpoints. Reconnects with
+ * backoff, because these sockets ride a VPN tunnel that drops routinely and a
+ * dead metrics graph is worse than a brief gap.
+ */
+export function useSocket(path: string, options: SocketOptions = {}) {
+  const { enabled = true } = options
+  const [state, setState] = useState<SocketState>("closed")
+  const handlers = useRef(options)
+  handlers.current = options
+  const socketRef = useRef<WebSocket | null>(null)
+
+  const queryKey = JSON.stringify(options.query ?? {})
+
+  useEffect(() => {
+    if (!enabled) {
+      setState("closed")
+      return
+    }
+    let attempt = 0
+    let closedByUs = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+    const connect = () => {
+      setState("connecting")
+      const ws = new WebSocket(wsUrl(path, handlers.current.query))
+      ws.binaryType = "arraybuffer"
+      socketRef.current = ws
+
+      ws.onopen = () => {
+        attempt = 0
+        setState("open")
+        handlers.current.onOpen?.()
+      }
+      ws.onmessage = (event) => {
+        if (typeof event.data !== "string") return
+        try {
+          handlers.current.onMessage?.(JSON.parse(event.data) as Envelope)
+        } catch {
+          // A frame we cannot parse is not worth tearing the socket down for.
+        }
+      }
+      ws.onerror = () => setState("error")
+      ws.onclose = () => {
+        socketRef.current = null
+        handlers.current.onClose?.()
+        if (closedByUs) {
+          setState("closed")
+          return
+        }
+        setState("closed")
+        attempt += 1
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 15000)
+        retryTimer = setTimeout(connect, delay)
+      }
+    }
+
+    connect()
+    return () => {
+      closedByUs = true
+      if (retryTimer) clearTimeout(retryTimer)
+      socketRef.current?.close()
+      socketRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, enabled, queryKey])
+
+  const send = (payload: unknown) => {
+    const ws = socketRef.current
+    if (ws?.readyState !== WebSocket.OPEN) return false
+    ws.send(typeof payload === "string" ? payload : JSON.stringify(payload))
+    return true
+  }
+
+  return { state, send }
+}
