@@ -2,9 +2,11 @@ package api
 
 import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/dockerx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/files"
 	"github.com/Wayy01/vps-dashboard/backend/internal/logsx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/procs"
 	"github.com/Wayy01/vps-dashboard/backend/internal/sysinfo"
+	"github.com/Wayy01/vps-dashboard/backend/internal/term"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -19,6 +21,8 @@ type moduleSet struct {
 	table   *procs.Table
 	cron    *procs.Cron
 	logs    *logsx.Service
+	term    *term.Manager
+	files   *files.Service
 }
 
 func (s *Server) initModules() {
@@ -29,10 +33,10 @@ func (s *Server) initModules() {
 	s.modules.table = procs.NewTable()
 	s.modules.cron = procs.NewCron()
 	s.modules.logs = logsx.New(s.Cfg.LogRoots)
+	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell)
+	s.modules.files = files.New(s.Cfg.FileRoots)
 }
 
-func (s *Server) mountTerminalRoutes(r chi.Router)  {}
-func (s *Server) mountFileRoutes(r chi.Router)      {}
 func (s *Server) mountProxyRoutes(r chi.Router)     {}
 func (s *Server) mountDatabaseRoutes(r chi.Router)  {}
 func (s *Server) mountLinuxUserRoutes(r chi.Router) {}
