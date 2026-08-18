@@ -194,7 +194,7 @@ function SourceList({
 
   return (
     <Card className="min-h-0">
-      <CardHeader className="pb-2">
+      <CardHeader>
         <CardTitle className="text-base">Sources</CardTitle>
         <CardDescription>{sources.data?.length ?? 0} available</CardDescription>
       </CardHeader>

@@ -455,7 +455,7 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
     <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       {data.map((stack) => (
         <Card key={stack.name}>
-          <CardHeader className="pb-3">
+          <CardHeader>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <CardTitle className="truncate text-base">{stack.name}</CardTitle>
@@ -566,7 +566,7 @@ function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle className="text-base">Images</CardTitle>
           <CardDescription>{bytes(total)} on disk</CardDescription>
@@ -685,7 +685,7 @@ function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle className="text-base">Volumes</CardTitle>
           <CardDescription>Volumes not in use can be reclaimed</CardDescription>

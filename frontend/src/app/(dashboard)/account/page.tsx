@@ -287,7 +287,7 @@ function TokensTab() {
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle className="text-base">API tokens</CardTitle>
             <CardDescription>
@@ -508,7 +508,7 @@ function UsersTab() {
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle className="text-base">Dashboard users</CardTitle>
             <CardDescription>Separate from the host&apos;s own Linux accounts</CardDescription>

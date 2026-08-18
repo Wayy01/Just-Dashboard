@@ -95,7 +95,7 @@ function FirewallTab() {
         </Alert>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between space-y-0">
+          <CardHeader className="flex flex-row items-start justify-between">
             <div>
               <CardTitle className="text-base">
                 {data.backend} · {data.enabled ? "active" : "inactive"}
@@ -341,7 +341,7 @@ function Fail2banTab() {
     <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       {data.jails.map((jail) => (
         <Card key={jail.name}>
-          <CardHeader className="pb-3">
+          <CardHeader>
             <CardTitle className="text-base">{jail.name}</CardTitle>
             <CardDescription>
               {jail.currentlyBanned} banned now · {jail.totalBanned} total · {jail.currentlyFailed}{" "}

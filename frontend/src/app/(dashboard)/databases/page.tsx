@@ -199,7 +199,7 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_1fr] [&>*]:min-w-0">
       <Card className="min-h-0">
-        <CardHeader className="pb-2">
+        <CardHeader>
           <CardTitle className="text-base">Schemas</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-3">
@@ -254,7 +254,7 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
       </Card>
 
       <Card className="min-h-0">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle className="text-base">{table ?? "Pick a table"}</CardTitle>
             {rows.data && (
@@ -444,7 +444,7 @@ function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: ConfirmFn })
 
       {result && (
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader>
             <CardTitle className="text-base">Result</CardTitle>
             <CardDescription className="font-mono text-xs">{result.statement}</CardDescription>
           </CardHeader>

@@ -18,8 +18,8 @@ export function StatCard({
   tone?: "default" | "warning" | "danger"
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+    <Card className="gap-3">
+      <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         {Icon && <Icon className="size-4 text-muted-foreground" />}
       </CardHeader>

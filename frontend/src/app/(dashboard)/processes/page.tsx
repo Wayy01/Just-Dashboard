@@ -587,7 +587,7 @@ function CronTab() {
     <>
       <div className="space-y-6">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-base">User crontab</CardTitle>
               <CardDescription>{crontab.data?.source}</CardDescription>

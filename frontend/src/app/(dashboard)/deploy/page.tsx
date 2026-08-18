@@ -96,7 +96,7 @@ export default function DeployPage() {
       <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data?.map((project) => (
           <Card key={project.id}>
-            <CardHeader className="pb-3">
+            <CardHeader>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <CardTitle className="truncate text-base">{project.name}</CardTitle>

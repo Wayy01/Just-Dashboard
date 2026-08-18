@@ -178,7 +178,7 @@ export default function OverviewPage() {
 
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader>
             <CardTitle className="text-base">CPU</CardTitle>
             <CardDescription className="font-mono text-xs">{host.cpuModel}</CardDescription>
           </CardHeader>
@@ -210,7 +210,7 @@ export default function OverviewPage() {
         </Card>
 
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader>
             <CardTitle className="text-base">Memory and swap</CardTitle>
             <CardDescription>Share of total, sampled every 2 seconds</CardDescription>
           </CardHeader>
@@ -253,7 +253,7 @@ export default function OverviewPage() {
       </div>
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader>
           <CardTitle className="text-base">Network throughput</CardTitle>
           <CardDescription>Combined across all interfaces</CardDescription>
         </CardHeader>
@@ -349,7 +349,7 @@ function MountsCard({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader>
         <CardTitle className="text-base">Filesystems</CardTitle>
         <CardDescription>Expand a mount to see what is using it</CardDescription>
       </CardHeader>
@@ -435,7 +435,7 @@ function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Network className="size-4" />
           Interfaces
