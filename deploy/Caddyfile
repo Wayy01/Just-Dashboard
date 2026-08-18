@@ -3,16 +3,26 @@
 # Serving the UI and the API from one origin is not cosmetic: the session
 # cookie is SameSite=Strict and the API refuses cross-origin WebSocket
 # upgrades, so a split origin would break both by design.
+#
+# This is the only listener in the stack bound to anything but loopback, which
+# makes it the single place where "who can reach the dashboard" is decided.
 
 {
 	admin off
-	auto_https off
+	# Disable only the redirect listener — certificate management stays on,
+	# because `tls internal` below depends on it.
+	auto_https disable_redirects
 }
 
-:8443 {
-	# A self-signed certificate is enough here — this listener is only ever
+# VPSD_SITE is the address you actually type into the browser — localhost for
+# an SSH tunnel, or the WireGuard address such as 10.8.0.1. It is both the
+# address Caddy binds and the name its certificate is issued for, so those two
+# can never drift apart.
+{$VPSD_SITE:localhost}:8443 {
+	# Caddy's own CA signs this. It is enough because the listener is only ever
 	# reached over a VPN tunnel or an SSH forward, both already encrypted and
-	# authenticated. Replace with `tls <cert> <key>` to use your own.
+	# authenticated — the browser warns once and you accept it once.
+	# Replace with `tls <cert> <key>` to use your own certificate.
 	tls internal
 
 	encode zstd gzip
@@ -20,10 +30,11 @@
 	# The API, including every WebSocket endpoint. Caddy upgrades these
 	# transparently, which is why production needs no NEXT_PUBLIC_WS_BASE.
 	handle /api/* {
-		reverse_proxy host.docker.internal:8080 {
+		reverse_proxy 127.0.0.1:8080 {
 			# The backend only trusts a forwarded address from a proxy listed
 			# in VPSD_TRUSTED_PROXIES; without that pairing its allowlist
-			# would see every request as coming from this container.
+			# would judge every request by this proxy's address instead of the
+			# real client's.
 			header_up X-Forwarded-For {remote_host}
 			# Long-lived streams: metrics push, log tails, PTY sessions.
 			flush_interval -1
@@ -35,11 +46,11 @@
 	}
 
 	handle /healthz {
-		reverse_proxy host.docker.internal:8080
+		reverse_proxy 127.0.0.1:8080
 	}
 
 	handle {
-		reverse_proxy frontend:3000
+		reverse_proxy 127.0.0.1:3000
 	}
 
 	header {
