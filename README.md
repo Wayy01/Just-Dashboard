@@ -158,6 +158,7 @@ controls a role cannot use, but the server re-decides every request on its own.
 | Edit files | | ✅ | ✅ |
 | Web terminal and container shells | | | ✅ |
 | Delete, prune, kill, restore, git discard / reset | | | ✅ |
+| Apply system updates | | | ✅ |
 | Host accounts, firewall, dashboard users, tokens | | | ✅ |
 
 Manage accounts under **Account → Dashboard users**. New users must change
@@ -179,6 +180,7 @@ their password and enroll 2FA before anything works.
 | **Proxy & TLS** | nginx/Caddy config editor that validates with the server's own test before anything is written or reloaded, vhost enable/disable, certificate inventory, live TLS checks, listening ports joined to owning processes. |
 | **Databases** | Postgres, MySQL and MongoDB: schema browsing, paged table browser, a query runner that classifies destructive statements before running them, dumps and restores. |
 | **Security** | Firewall rules, fail2ban jails with unban, active SSH sessions. |
+| **Updates** | Which OS packages are behind, which of those are security updates, and whether the machine needs a reboot. Applies them with `apt-get upgrade` — never installing new packages or removing any. |
 | **Deployments** | Git pull plus `docker compose up -d --build`, triggered by hand or a signed webhook, with history and rollback to any previous commit. |
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention, history and restore. |
 | **System users** | Host accounts with SSH key management, lock/unlock, add and remove. |

@@ -12,6 +12,7 @@ import {
   GitBranch,
   Globe,
   ListChecks,
+  PackageCheck,
   LogOut,
   Rocket,
   ScrollText,
@@ -76,6 +77,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
   {
     label: "Operations",
     items: [
+      { title: "Updates", href: "/updates", icon: PackageCheck },
       { title: "Deployments", href: "/deploy", icon: Rocket },
       { title: "Backups", href: "/backups", icon: Archive },
       { title: "System users", href: "/system-users", icon: Users, capability: "system.admin" },

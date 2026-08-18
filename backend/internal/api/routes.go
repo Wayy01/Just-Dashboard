@@ -75,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 			s.mountTerminalRoutes(r)
 			s.mountFileRoutes(r)
 			s.mountGitRoutes(r)
+			s.mountUpdateRoutes(r)
 			s.mountProxyRoutes(r)
 			s.mountDatabaseRoutes(r)
 			s.mountLinuxUserRoutes(r)

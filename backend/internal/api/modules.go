@@ -16,6 +16,7 @@ import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/proxysvc"
 	"github.com/Wayy01/vps-dashboard/backend/internal/sysinfo"
 	"github.com/Wayy01/vps-dashboard/backend/internal/term"
+	"github.com/Wayy01/vps-dashboard/backend/internal/updates"
 )
 
 // moduleSet holds the feature backends. Each is optional: a host without
@@ -32,6 +33,7 @@ type moduleSet struct {
 	term         *term.Manager
 	files        *files.Service
 	git          *gitx.Service
+	updates      *updates.Service
 	proxy        *proxysvc.Service
 	dbs          *dbx.Manager
 	linuxUsers   *linuxusers.Service
@@ -58,6 +60,7 @@ func (s *Server) initModules() {
 	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell)
 	s.modules.files = files.New(s.Cfg.FileRoots)
 	s.modules.git = gitx.New(s.Cfg.GitRoots)
+	s.modules.updates = updates.New()
 	s.modules.proxy = proxysvc.New(s.Cfg.NginxDir, s.Cfg.CaddyFile)
 	s.modules.dbs = dbx.NewManager()
 	s.modules.linuxUsers = linuxusers.New()

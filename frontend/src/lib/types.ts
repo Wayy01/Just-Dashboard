@@ -727,3 +727,25 @@ export type GitResult = {
   output: string
   ok: boolean
 }
+
+// --- System updates ---
+
+export type UpdatePackage = {
+  name: string
+  current: string
+  candidate: string
+  origin?: string
+  security: boolean
+  arch?: string
+}
+
+export type UpdateReport = {
+  available: boolean
+  manager?: string
+  packages: UpdatePackage[]
+  securityCount: number
+  rebootRequired: boolean
+  rebootPackages?: string[]
+  lastChecked: string
+  error?: string
+}
