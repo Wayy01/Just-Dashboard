@@ -112,22 +112,37 @@ function SecurityTab() {
         <CardHeader>
           <CardTitle className="text-base">Change password</CardTitle>
           <CardDescription>
-            At least 12 characters, mixing three of: uppercase, lowercase, digits, symbols.
-            Changing it signs out every session, including this one.
+            At least 12 characters, mixing three of: uppercase, lowercase, digits, symbols. Changing
+            it signs out every session, including this one.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="cur-pw">Current password</Label>
-            <Input id="cur-pw" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            <Input
+              id="cur-pw"
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-pw">New password</Label>
-            <Input id="new-pw" type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+            <Input
+              id="new-pw"
+              type="password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="conf-pw">Confirm new password</Label>
-            <Input id="conf-pw" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
+            <Input
+              id="conf-pw"
+              type="password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+            />
           </div>
           <Button onClick={change} disabled={busy || !current || !next}>
             {busy && <Loader2 className="size-4 animate-spin" />}
@@ -140,12 +155,20 @@ function SecurityTab() {
         <CardHeader>
           <CardTitle className="text-base">Two-factor authentication</CardTitle>
           <CardDescription>
-            {status?.user?.totpEnabled ? "Enrolled and required at every sign in." : "Not enrolled."}
+            {status?.user?.totpEnabled
+              ? "Enrolled and required at every sign in."
+              : "Not enrolled."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2">
-            <ShieldCheck className={status?.user?.totpEnabled ? "size-5 text-emerald-400" : "size-5 text-muted-foreground"} />
+            <ShieldCheck
+              className={
+                status?.user?.totpEnabled
+                  ? "size-5 text-emerald-400"
+                  : "size-5 text-muted-foreground"
+              }
+            />
             <Badge variant={status?.user?.totpEnabled ? "default" : "secondary"}>
               {status?.user?.totpEnabled ? "enabled" : "not enrolled"}
             </Badge>
@@ -217,9 +240,7 @@ function SessionsTab() {
               <TableRow key={session.id}>
                 <TableCell className="font-mono text-xs">
                   {session.ip}
-                  {session.current && (
-                    <Badge className="ml-2 text-[10px]">this session</Badge>
-                  )}
+                  {session.current && <Badge className="ml-2 text-[10px]">this session</Badge>}
                 </TableCell>
                 <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
                   {session.userAgent}
@@ -419,7 +440,12 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
           <div className="grid gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="tok-name">Name</Label>
-              <Input id="tok-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="ci-deploy" />
+              <Input
+                id="tok-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="ci-deploy"
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -525,10 +551,7 @@ function UsersTab() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Select
-                        value={user.role}
-                        onValueChange={(v) => update(user, { role: v })}
-                      >
+                      <Select value={user.role} onValueChange={(v) => update(user, { role: v })}>
                         <SelectTrigger className="h-7 w-28 text-xs">
                           <SelectValue />
                         </SelectTrigger>
@@ -545,7 +568,9 @@ function UsersTab() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {user.lastLoginAt.startsWith("0001") ? "never" : relativeTime(user.lastLoginAt)}
+                      {user.lastLoginAt.startsWith("0001")
+                        ? "never"
+                        : relativeTime(user.lastLoginAt)}
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -646,7 +671,12 @@ function CreateDashboardUserDialog({ onDone }: { onDone: () => void }) {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="du-pw">Initial password</Label>
-            <Input id="du-pw" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input
+              id="du-pw"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
             <p className="text-xs text-muted-foreground">
               At least 12 characters, mixing three character classes.
             </p>

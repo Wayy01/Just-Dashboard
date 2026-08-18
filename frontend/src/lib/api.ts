@@ -105,14 +105,23 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
 export const get = <T>(path: string, query?: RequestOptions["query"], signal?: AbortSignal) =>
   api<T>(path, { query, signal })
 
-export const post = <T>(path: string, body?: unknown, opts: Omit<RequestOptions, "method" | "body"> = {}) =>
-  api<T>(path, { ...opts, method: "POST", body })
+export const post = <T>(
+  path: string,
+  body?: unknown,
+  opts: Omit<RequestOptions, "method" | "body"> = {},
+) => api<T>(path, { ...opts, method: "POST", body })
 
-export const put = <T>(path: string, body?: unknown, opts: Omit<RequestOptions, "method" | "body"> = {}) =>
-  api<T>(path, { ...opts, method: "PUT", body })
+export const put = <T>(
+  path: string,
+  body?: unknown,
+  opts: Omit<RequestOptions, "method" | "body"> = {},
+) => api<T>(path, { ...opts, method: "PUT", body })
 
-export const patch = <T>(path: string, body?: unknown, opts: Omit<RequestOptions, "method" | "body"> = {}) =>
-  api<T>(path, { ...opts, method: "PATCH", body })
+export const patch = <T>(
+  path: string,
+  body?: unknown,
+  opts: Omit<RequestOptions, "method" | "body"> = {},
+) => api<T>(path, { ...opts, method: "PATCH", body })
 
 export const del = <T>(path: string, opts: Omit<RequestOptions, "method"> = {}) =>
   api<T>(path, { ...opts, method: "DELETE" })

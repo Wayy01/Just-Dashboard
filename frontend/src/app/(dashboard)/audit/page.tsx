@@ -120,7 +120,10 @@ export default function AuditPage() {
               </TableHeader>
               <TableBody>
                 {data.entries.map((entry) => (
-                  <TableRow key={entry.id} className={entry.success ? undefined : "bg-destructive/5"}>
+                  <TableRow
+                    key={entry.id}
+                    className={entry.success ? undefined : "bg-destructive/5"}
+                  >
                     <TableCell className="text-xs">
                       <div>{timestamp(entry.ts)}</div>
                       <p className="text-[11px] text-muted-foreground">{relativeTime(entry.ts)}</p>
@@ -140,7 +143,10 @@ export default function AuditPage() {
                     <TableCell className="max-w-xs">
                       <div className="truncate font-mono text-xs">{entry.target}</div>
                       {entry.detail && (
-                        <p className="truncate text-[11px] text-muted-foreground" title={entry.detail}>
+                        <p
+                          className="truncate text-[11px] text-muted-foreground"
+                          title={entry.detail}
+                        >
                           {entry.detail}
                         </p>
                       )}

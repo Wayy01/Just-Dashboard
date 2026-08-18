@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Download, FileText, RefreshCw, ScrollText } from "lucide-react"
 import { toast } from "sonner"
 import { downloadUrl, get } from "@/lib/api"
@@ -32,60 +32,11 @@ const LEVELS = ["critical", "error", "warn", "info", "debug"] as const
 
 export default function LogsPage() {
   const [selected, setSelected] = useState<LogSource | null>(null)
-  const [lines, setLines] = useState<LogLine[]>([])
   const [levels, setLevels] = useState<string[]>([])
   const [grep, setGrep] = useState("")
   const [appliedGrep, setAppliedGrep] = useState("")
 
   const sources = usePoll((signal) => get<LogSource[]>("/logs/sources", undefined, signal), 60000)
-
-  useEffect(() => setLines([]), [selected, appliedGrep, levels])
-
-  const onMessage = useCallback((envelope: Envelope) => {
-    if (envelope.type === "logs") {
-      const batch = envelope.data as LogLine[]
-      setLines((prev) => {
-        const next = [...prev, ...batch]
-        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
-      })
-    } else if (envelope.type === "journal") {
-      const batch = envelope.data as JournalEntry[]
-      setLines((prev) => {
-        const next = [
-          ...prev,
-          ...batch.map((e) => ({
-            text: e.message,
-            timestamp: e.timestamp,
-            level: e.priority <= 3 ? "error" : e.priority === 4 ? "warn" : "info",
-            source: e.syslogIdentifier,
-          })),
-        ]
-        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
-      })
-    }
-  }, [])
-
-  const query = useMemo(
-    () => ({
-      source: selected?.id,
-      lines: 400,
-      q: appliedGrep || undefined,
-      levels: levels.length ? levels.join(",") : undefined,
-    }),
-    [selected, appliedGrep, levels],
-  )
-
-  const { state } = useSocket("/logs/stream", { onMessage, enabled: selected !== null, query })
-
-  const grouped = useMemo(() => {
-    const map = new Map<string, LogSource[]>()
-    for (const s of sources.data ?? []) {
-      const list = map.get(s.kind) ?? []
-      list.push(s)
-      map.set(s.kind, list)
-    }
-    return [...map.entries()]
-  }, [sources.data])
 
   return (
     <>
@@ -104,47 +55,7 @@ export default function LogsPage() {
       />
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[18rem_1fr]">
-        <Card className="min-h-0">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Sources</CardTitle>
-            <CardDescription>{sources.data?.length ?? 0} available</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ScrollArea className="h-[calc(100vh-20rem)]">
-              {sources.loading && <LoadingRows className="p-4" />}
-              {sources.error && <ErrorState error={sources.error} className="m-4" />}
-              <div className="space-y-4 p-3">
-                {grouped.map(([kind, items]) => (
-                  <div key={kind}>
-                    <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {kind}
-                    </p>
-                    <div className="space-y-0.5">
-                      {items.map((source) => (
-                        <button
-                          key={source.id}
-                          onClick={() => setSelected(source)}
-                          className={
-                            selected?.id === source.id
-                              ? "flex w-full flex-col rounded-md bg-accent px-2 py-1.5 text-left"
-                              : "flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-accent/50"
-                          }
-                        >
-                          <span className="truncate text-sm">{source.label}</span>
-                          {source.size !== undefined && source.size > 0 && (
-                            <span className="text-[11px] text-muted-foreground">
-                              {bytes(source.size)} · {relativeTime(source.modified)}
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
+        <SourceList sources={sources} selected={selected} onSelect={setSelected} />
 
         <div className="flex min-h-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -178,15 +89,16 @@ export default function LogsPage() {
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
-            <Badge variant={state === "open" ? "default" : "secondary"}>{state}</Badge>
           </div>
 
           {selected ? (
-            <LogViewer
-              className="min-h-0 flex-1"
-              lines={lines}
-              onClear={() => setLines([])}
-              emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
+            // Keyed on everything that changes what the socket delivers, so a
+            // new filter starts a clean buffer instead of mixing results.
+            <LogStream
+              key={`${selected.id}|${appliedGrep}|${levels.join(",")}`}
+              source={selected}
+              grep={appliedGrep}
+              levels={levels}
             />
           ) : (
             <EmptyState
@@ -198,6 +110,132 @@ export default function LogsPage() {
         </div>
       </div>
     </>
+  )
+}
+
+function LogStream({
+  source,
+  grep,
+  levels,
+}: {
+  source: LogSource
+  grep: string
+  levels: string[]
+}) {
+  const [lines, setLines] = useState<LogLine[]>([])
+
+  const onMessage = useCallback((envelope: Envelope) => {
+    if (envelope.type === "logs") {
+      const batch = envelope.data as LogLine[]
+      setLines((prev) => {
+        const next = [...prev, ...batch]
+        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
+      })
+    } else if (envelope.type === "journal") {
+      const batch = envelope.data as JournalEntry[]
+      setLines((prev) => {
+        const next = [
+          ...prev,
+          ...batch.map((e) => ({
+            text: e.message,
+            timestamp: e.timestamp,
+            level: e.priority <= 3 ? "error" : e.priority === 4 ? "warn" : "info",
+            source: e.syslogIdentifier,
+          })),
+        ]
+        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
+      })
+    }
+  }, [])
+
+  const query = useMemo(
+    () => ({
+      source: source.id,
+      lines: 400,
+      q: grep || undefined,
+      levels: levels.length ? levels.join(",") : undefined,
+    }),
+    [source.id, grep, levels],
+  )
+
+  const { state } = useSocket("/logs/stream", { onMessage, query })
+
+  return (
+    <>
+      <Badge variant={state === "open" ? "default" : "secondary"} className="w-fit">
+        {state}
+      </Badge>
+      <LogViewer
+        className="min-h-0 flex-1"
+        lines={lines}
+        onClear={() => setLines([])}
+        emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
+      />
+    </>
+  )
+}
+
+function SourceList({
+  sources,
+  selected,
+  onSelect,
+}: {
+  sources: ReturnType<typeof usePoll<LogSource[]>>
+  selected: LogSource | null
+  onSelect: (source: LogSource) => void
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, LogSource[]>()
+    for (const s of sources.data ?? []) {
+      const list = map.get(s.kind) ?? []
+      list.push(s)
+      map.set(s.kind, list)
+    }
+    return [...map.entries()]
+  }, [sources.data])
+
+  return (
+    <Card className="min-h-0">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Sources</CardTitle>
+        <CardDescription>{sources.data?.length ?? 0} available</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ScrollArea className="h-[calc(100vh-20rem)]">
+          {sources.loading && <LoadingRows className="p-4" />}
+          {sources.error && <ErrorState error={sources.error} className="m-4" />}
+          <div className="space-y-4 p-3">
+            {grouped.map(([kind, items]) => (
+              <div key={kind}>
+                <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {kind}
+                </p>
+                <div className="space-y-0.5">
+                  {items.map((source) => (
+                    <button
+                      key={source.id}
+                      onClick={() => onSelect(source)}
+                      className={
+                        selected?.id === source.id
+                          ? "flex w-full flex-col rounded-md bg-accent px-2 py-1.5 text-left"
+                          : "flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-accent/50"
+                      }
+                    >
+                      <span className="truncate text-sm">{source.label}</span>
+                      {source.size !== undefined && source.size > 0 && (
+                        <span className="text-[11px] text-muted-foreground">
+                          {bytes(source.size)} · {relativeTime(source.modified)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -226,11 +264,21 @@ function DownloadDialog({ source }: { source: LogSource }) {
         <div className="grid gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="since">From</Label>
-            <Input id="since" type="datetime-local" value={since} onChange={(e) => setSince(e.target.value)} />
+            <Input
+              id="since"
+              type="datetime-local"
+              value={since}
+              onChange={(e) => setSince(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="until">To</Label>
-            <Input id="until" type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} />
+            <Input
+              id="until"
+              type="datetime-local"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+            />
           </div>
           <p className="text-xs text-muted-foreground">
             Leave both empty to export the whole file. Lines without a parseable timestamp are kept,

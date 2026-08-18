@@ -1,10 +1,20 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Activity, Clock, Cpu, ListChecks, Play, RotateCw, Search, Square, Trash2 } from "lucide-react"
+import {
+  Activity,
+  Clock,
+  Cpu,
+  ListChecks,
+  Play,
+  RotateCw,
+  Search,
+  Square,
+  Trash2,
+} from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post, put } from "@/lib/api"
-import { bytes, duration, percent, relativeTime, timestamp } from "@/lib/format"
+import { bytes, duration, percent, relativeTime } from "@/lib/format"
 import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -72,8 +82,7 @@ function PM2Tab() {
   const { confirm, dialog } = useConfirm()
   const [logsFor, setLogsFor] = useState<string | null>(null)
   const { data, error, loading, refresh } = usePoll(
-    (signal) =>
-      get<{ available: boolean; processes: PM2Process[] }>("/pm2/", undefined, signal),
+    (signal) => get<{ available: boolean; processes: PM2Process[] }>("/pm2/", undefined, signal),
     5000,
   )
 
@@ -93,7 +102,9 @@ function PM2Tab() {
   }
 
   const act = async (proc: PM2Process, action: string, confirmText?: string) => {
-    await post(`/pm2/${encodeURIComponent(proc.name)}/${action}`, undefined, { confirm: confirmText })
+    await post(`/pm2/${encodeURIComponent(proc.name)}/${action}`, undefined, {
+      confirm: confirmText,
+    })
     toast.success(`${proc.name} ${action}ed`)
     refresh()
   }
@@ -118,7 +129,10 @@ function PM2Tab() {
               {data.processes.map((proc) => (
                 <TableRow key={proc.id} className="group">
                   <TableCell>
-                    <button className="font-medium hover:underline" onClick={() => setLogsFor(proc.name)}>
+                    <button
+                      className="font-medium hover:underline"
+                      onClick={() => setLogsFor(proc.name)}
+                    >
                       {proc.name}
                     </button>
                     <p className="truncate font-mono text-[11px] text-muted-foreground">
@@ -137,7 +151,9 @@ function PM2Tab() {
                   <TableCell className="text-right font-mono text-xs tabular-nums">
                     {proc.restarts}
                     {proc.unstableRestarts > 0 && (
-                      <span className="ml-1 text-destructive">({proc.unstableRestarts} unstable)</span>
+                      <span className="ml-1 text-destructive">
+                        ({proc.unstableRestarts} unstable)
+                      </span>
                     )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -146,38 +162,65 @@ function PM2Tab() {
                   <TableCell>
                     <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       {proc.status !== "online" && can("service.control") && (
-                        <Button size="icon" variant="ghost" className="size-7" title="Start"
-                          onClick={() => act(proc, "start").catch((e) => toast.error(String(e)))}>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          title="Start"
+                          onClick={() => act(proc, "start").catch((e) => toast.error(String(e)))}
+                        >
                           <Play className="size-3.5" />
                         </Button>
                       )}
                       {can("destructive") && (
                         <>
-                          <Button size="icon" variant="ghost" className="size-7" title="Restart"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            title="Restart"
                             onClick={() =>
                               confirm({
                                 title: "Restart application",
                                 phrase: proc.name,
                                 confirmLabel: "Restart",
-                                description: <p><b>{proc.name}</b> restarts and briefly stops serving.</p>,
+                                description: (
+                                  <p>
+                                    <b>{proc.name}</b> restarts and briefly stops serving.
+                                  </p>
+                                ),
                                 action: (c) => act(proc, "restart", c),
                               })
-                            }>
+                            }
+                          >
                             <RotateCw className="size-3.5" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="size-7" title="Stop"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            title="Stop"
                             onClick={() =>
                               confirm({
                                 title: "Stop application",
                                 phrase: proc.name,
                                 confirmLabel: "Stop",
-                                description: <p><b>{proc.name}</b> stops until it is started again.</p>,
+                                description: (
+                                  <p>
+                                    <b>{proc.name}</b> stops until it is started again.
+                                  </p>
+                                ),
                                 action: (c) => act(proc, "stop", c),
                               })
-                            }>
+                            }
+                          >
                             <Square className="size-3.5" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="size-7 text-destructive" title="Delete"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7 text-destructive"
+                            title="Delete"
                             onClick={() =>
                               confirm({
                                 title: "Delete from PM2",
@@ -194,7 +237,8 @@ function PM2Tab() {
                                   refresh()
                                 },
                               })
-                            }>
+                            }
+                          >
                             <Trash2 className="size-3.5" />
                           </Button>
                         </>
@@ -230,7 +274,8 @@ function SystemdTab() {
     const needle = filter.toLowerCase()
     if (needle) {
       units = units.filter(
-        (u) => u.name.toLowerCase().includes(needle) || u.description.toLowerCase().includes(needle),
+        (u) =>
+          u.name.toLowerCase().includes(needle) || u.description.toLowerCase().includes(needle),
       )
     }
     return units
@@ -238,10 +283,13 @@ function SystemdTab() {
 
   if (loading) return <LoadingRows />
   if (error) return <ErrorState error={error} />
-  if (!data?.available) return <EmptyState icon={ListChecks} title="systemd is not available on this host" />
+  if (!data?.available)
+    return <EmptyState icon={ListChecks} title="systemd is not available on this host" />
 
   const act = async (unit: SystemdUnit, action: string, confirmText?: string) => {
-    await post(`/systemd/${encodeURIComponent(unit.name)}/${action}`, undefined, { confirm: confirmText })
+    await post(`/systemd/${encodeURIComponent(unit.name)}/${action}`, undefined, {
+      confirm: confirmText,
+    })
     toast.success(`${unit.name} ${action}`)
     refresh()
   }
@@ -271,9 +319,7 @@ function SystemdTab() {
             <SelectItem value="failed">Failed</SelectItem>
           </SelectContent>
         </Select>
-        {failed > 0 && (
-          <Badge variant="destructive">{failed} failed</Badge>
-        )}
+        {failed > 0 && <Badge variant="destructive">{failed} failed</Badge>}
       </div>
 
       <Card>
@@ -291,13 +337,19 @@ function SystemdTab() {
               {visible.slice(0, 200).map((unit) => (
                 <TableRow key={unit.name} className="group">
                   <TableCell>
-                    <button className="font-medium hover:underline" onClick={() => setJournalFor(unit.name)}>
+                    <button
+                      className="font-medium hover:underline"
+                      onClick={() => setJournalFor(unit.name)}
+                    >
                       {unit.name}
                     </button>
                     <p className="truncate text-xs text-muted-foreground">{unit.description}</p>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge state={unit.activeState} label={`${unit.activeState} (${unit.subState})`} />
+                    <StatusBadge
+                      state={unit.activeState}
+                      label={`${unit.activeState} (${unit.subState})`}
+                    />
                   </TableCell>
                   <TableCell>
                     <Badge variant={unit.enabled ? "default" : "secondary"}>
@@ -307,46 +359,75 @@ function SystemdTab() {
                   <TableCell>
                     <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       {unit.activeState !== "active" && can("service.control") && (
-                        <Button size="icon" variant="ghost" className="size-7" title="Start"
-                          onClick={() => act(unit, "start").catch((e) => toast.error(String(e)))}>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          title="Start"
+                          onClick={() => act(unit, "start").catch((e) => toast.error(String(e)))}
+                        >
                           <Play className="size-3.5" />
                         </Button>
                       )}
                       {can("destructive") && (
                         <>
-                          <Button size="icon" variant="ghost" className="size-7" title="Restart"
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            title="Restart"
                             onClick={() =>
                               confirm({
                                 title: "Restart unit",
                                 phrase: unit.name,
                                 confirmLabel: "Restart",
-                                description: <p><b>{unit.name}</b> restarts, interrupting whatever it serves.</p>,
+                                description: (
+                                  <p>
+                                    <b>{unit.name}</b> restarts, interrupting whatever it serves.
+                                  </p>
+                                ),
                                 action: (c) => act(unit, "restart", c),
                               })
-                            }>
+                            }
+                          >
                             <RotateCw className="size-3.5" />
                           </Button>
                           {unit.activeState === "active" && (
-                            <Button size="icon" variant="ghost" className="size-7" title="Stop"
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-7"
+                              title="Stop"
                               onClick={() =>
                                 confirm({
                                   title: "Stop unit",
                                   phrase: unit.name,
                                   confirmLabel: "Stop",
-                                  description: <p><b>{unit.name}</b> stops until started again.</p>,
+                                  description: (
+                                    <p>
+                                      <b>{unit.name}</b> stops until started again.
+                                    </p>
+                                  ),
                                   action: (c) => act(unit, "stop", c),
                                 })
-                              }>
+                              }
+                            >
                               <Square className="size-3.5" />
                             </Button>
                           )}
                         </>
                       )}
                       {can("system.admin") && (
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
                           onClick={() =>
-                            act(unit, unit.enabled ? "disable" : "enable").catch((e) => toast.error(String(e)))
-                          }>
+                            act(unit, unit.enabled ? "disable" : "enable").catch((e) =>
+                              toast.error(String(e)),
+                            )
+                          }
+                        >
                           {unit.enabled ? "Disable" : "Enable"}
                         </Button>
                       )}
@@ -452,7 +533,11 @@ function ProcessTableTab() {
                               </>
                             ),
                             action: async (c) => {
-                              await post(`/processes/${proc.pid}/signal`, { signal: "SIGTERM" }, { confirm: c })
+                              await post(
+                                `/processes/${proc.pid}/signal`,
+                                { signal: "SIGTERM" },
+                                { confirm: c },
+                              )
                               refresh()
                             },
                           })
@@ -503,15 +588,25 @@ function CronTab() {
               <CardTitle className="text-base">User crontab</CardTitle>
               <CardDescription>{crontab.data?.source}</CardDescription>
             </div>
-            <Select value={user} onValueChange={(v) => { setUser(v); setDraft(null) }}>
+            <Select
+              value={user}
+              onValueChange={(v) => {
+                setUser(v)
+                setDraft(null)
+              }}
+            >
               <SelectTrigger className="w-48">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="root">root</SelectItem>
-                {users.data?.filter((u) => u !== "root").map((u) => (
-                  <SelectItem key={u} value={u}>{u}</SelectItem>
-                ))}
+                {users.data
+                  ?.filter((u) => u !== "root")
+                  .map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </CardHeader>
@@ -581,7 +676,11 @@ function CronTab() {
                           </p>
                         ),
                         action: async (c) => {
-                          await put(`/cron/user/${encodeURIComponent(user)}`, { content: draft }, { confirm: c })
+                          await put(
+                            `/cron/user/${encodeURIComponent(user)}`,
+                            { content: draft },
+                            { confirm: c },
+                          )
                           setDraft(null)
                           crontab.refresh()
                         },

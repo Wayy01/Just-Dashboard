@@ -1,0 +1,52 @@
+# Single origin for the dashboard.
+#
+# Serving the UI and the API from one origin is not cosmetic: the session
+# cookie is SameSite=Strict and the API refuses cross-origin WebSocket
+# upgrades, so a split origin would break both by design.
+
+{
+	admin off
+	auto_https off
+}
+
+:8443 {
+	# A self-signed certificate is enough here — this listener is only ever
+	# reached over a VPN tunnel or an SSH forward, both already encrypted and
+	# authenticated. Replace with `tls <cert> <key>` to use your own.
+	tls internal
+
+	encode zstd gzip
+
+	# The API, including every WebSocket endpoint. Caddy upgrades these
+	# transparently, which is why production needs no NEXT_PUBLIC_WS_BASE.
+	handle /api/* {
+		reverse_proxy host.docker.internal:8080 {
+			# The backend only trusts a forwarded address from a proxy listed
+			# in VPSD_TRUSTED_PROXIES; without that pairing its allowlist
+			# would see every request as coming from this container.
+			header_up X-Forwarded-For {remote_host}
+			# Long-lived streams: metrics push, log tails, PTY sessions.
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	handle /healthz {
+		reverse_proxy host.docker.internal:8080
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}

@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { get } from "@/lib/api"
-import { bytes, duration, relativeTime, timestamp } from "@/lib/format"
+import { duration, timestamp } from "@/lib/format"
 import type { ContainerDetail, LogLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { useAuth } from "@/hooks/use-auth"
@@ -32,16 +32,24 @@ export function ContainerDetailSheet({
   containerId: string | null
   onOpenChange: (open: boolean) => void
 }) {
+  return (
+    <Sheet open={containerId !== null} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
+        {/* Keyed on the container so selecting another one starts fresh
+            rather than briefly showing the previous container's detail. */}
+        {containerId && <ContainerDetailBody key={containerId} containerId={containerId} />}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function ContainerDetailBody({ containerId }: { containerId: string }) {
   const { can } = useAuth()
   const [detail, setDetail] = useState<ContainerDetail>()
   const [error, setError] = useState<Error>()
   const [tab, setTab] = useState("overview")
 
   useEffect(() => {
-    setDetail(undefined)
-    setError(undefined)
-    setTab("overview")
-    if (!containerId) return
     const controller = new AbortController()
     get<ContainerDetail>(`/docker/containers/${containerId}`, undefined, controller.signal)
       .then(setDetail)
@@ -50,112 +58,128 @@ export function ContainerDetailSheet({
   }, [containerId])
 
   return (
-    <Sheet open={containerId !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
-        <SheetHeader className="border-b p-4">
-          <SheetTitle className="flex items-center gap-2">
-            {detail?.name ?? "Container"}
-            {detail && <StatusBadge state={detail.state} />}
-          </SheetTitle>
-          <SheetDescription className="font-mono text-xs">
-            {detail?.image ?? containerId}
-          </SheetDescription>
-        </SheetHeader>
+    <>
+      <SheetHeader className="border-b p-4">
+        <SheetTitle className="flex items-center gap-2">
+          {detail?.name ?? "Container"}
+          {detail && <StatusBadge state={detail.state} />}
+        </SheetTitle>
+        <SheetDescription className="font-mono text-xs">
+          {detail?.image ?? containerId}
+        </SheetDescription>
+      </SheetHeader>
 
-        {error && <ErrorState error={error} className="m-4" />}
-        {!detail && !error && <LoadingRows className="p-4" />}
+      {error && <ErrorState error={error} className="m-4" />}
+      {!detail && !error && <LoadingRows className="p-4" />}
 
-        {detail && containerId && (
-          <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className="mx-4 mt-3 w-fit">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="logs">Logs</TabsTrigger>
-              <TabsTrigger value="env">Environment</TabsTrigger>
-              <TabsTrigger value="mounts">Mounts</TabsTrigger>
-              {can("terminal") && detail.state === "running" && (
-                <TabsTrigger value="shell">Shell</TabsTrigger>
-              )}
-            </TabsList>
-
-            <TabsContent value="overview" className="min-h-0 flex-1 p-4">
-              <ScrollArea className="h-full pr-3">
-                <OverviewFields detail={detail} />
-              </ScrollArea>
-            </TabsContent>
-
-            <TabsContent value="logs" className="min-h-0 flex-1 p-4">
-              <ContainerLogs containerId={containerId} active={tab === "logs"} />
-            </TabsContent>
-
-            <TabsContent value="env" className="min-h-0 flex-1 p-4">
-              <ScrollArea className="h-full pr-3">
-                <div className="space-y-1 font-mono text-xs">
-                  {detail.env.map((line) => {
-                    const [key, ...rest] = line.split("=")
-                    return (
-                      <div key={line} className="flex gap-2 rounded px-2 py-1 hover:bg-muted">
-                        <span className="shrink-0 text-muted-foreground">{key}=</span>
-                        <span className="break-all">{rest.join("=")}</span>
-                      </div>
-                    )
-                  })}
-                  {detail.env.length === 0 && (
-                    <p className="text-muted-foreground">No environment variables set.</p>
-                  )}
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            <TabsContent value="mounts" className="min-h-0 flex-1 p-4">
-              <ScrollArea className="h-full pr-3">
-                <div className="space-y-3">
-                  {detail.mounts.map((mount, i) => (
-                    <div key={i} className="rounded-md border p-3 text-xs">
-                      <div className="mb-1 flex items-center gap-2">
-                        <Badge variant="outline">{mount.type}</Badge>
-                        <Badge variant={mount.rw ? "default" : "secondary"}>
-                          {mount.rw ? "read-write" : "read-only"}
-                        </Badge>
-                      </div>
-                      <p className="font-mono break-all">
-                        <span className="text-muted-foreground">{mount.source}</span>
-                        {" → "}
-                        {mount.destination}
-                      </p>
-                    </div>
-                  ))}
-                  {detail.mounts.length === 0 && (
-                    <p className="text-sm text-muted-foreground">No mounts.</p>
-                  )}
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
+      {detail && (
+        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="mx-4 mt-3 w-fit">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
+            <TabsTrigger value="env">Environment</TabsTrigger>
+            <TabsTrigger value="mounts">Mounts</TabsTrigger>
             {can("terminal") && detail.state === "running" && (
-              <TabsContent value="shell" className="min-h-0 flex-1 p-4">
-                {tab === "shell" && (
-                  <XtermPane
-                    path={`/docker/containers/${containerId}/exec`}
-                    query={{ rows: 30, cols: 100 }}
-                    className="h-full"
-                  />
-                )}
-              </TabsContent>
+              <TabsTrigger value="shell">Shell</TabsTrigger>
             )}
-          </Tabs>
-        )}
-      </SheetContent>
-    </Sheet>
+          </TabsList>
+
+          <TabsContent value="overview" className="min-h-0 flex-1 p-4">
+            <ScrollArea className="h-full pr-3">
+              <OverviewFields detail={detail} />
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="logs" className="min-h-0 flex-1 p-4">
+            <ContainerLogs containerId={containerId} active={tab === "logs"} />
+          </TabsContent>
+
+          <TabsContent value="env" className="min-h-0 flex-1 p-4">
+            <ScrollArea className="h-full pr-3">
+              <div className="space-y-1 font-mono text-xs">
+                {detail.env.map((line) => {
+                  const [key, ...rest] = line.split("=")
+                  return (
+                    <div key={line} className="flex gap-2 rounded px-2 py-1 hover:bg-muted">
+                      <span className="shrink-0 text-muted-foreground">{key}=</span>
+                      <span className="break-all">{rest.join("=")}</span>
+                    </div>
+                  )
+                })}
+                {detail.env.length === 0 && (
+                  <p className="text-muted-foreground">No environment variables set.</p>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="mounts" className="min-h-0 flex-1 p-4">
+            <ScrollArea className="h-full pr-3">
+              <div className="space-y-3">
+                {detail.mounts.map((mount, i) => (
+                  <div key={i} className="rounded-md border p-3 text-xs">
+                    <div className="mb-1 flex items-center gap-2">
+                      <Badge variant="outline">{mount.type}</Badge>
+                      <Badge variant={mount.rw ? "default" : "secondary"}>
+                        {mount.rw ? "read-write" : "read-only"}
+                      </Badge>
+                    </div>
+                    <p className="font-mono break-all">
+                      <span className="text-muted-foreground">{mount.source}</span>
+                      {" → "}
+                      {mount.destination}
+                    </p>
+                  </div>
+                ))}
+                {detail.mounts.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No mounts.</p>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          {can("terminal") && detail.state === "running" && (
+            <TabsContent value="shell" className="min-h-0 flex-1 p-4">
+              {tab === "shell" && (
+                <XtermPane
+                  path={`/docker/containers/${containerId}/exec`}
+                  query={{ rows: 30, cols: 100 }}
+                  className="h-full"
+                />
+              )}
+            </TabsContent>
+          )}
+        </Tabs>
+      )}
+    </>
   )
 }
 
 function OverviewFields({ detail }: { detail: ContainerDetail }) {
   const fields: [string, React.ReactNode][] = [
-    ["Container ID", <span key="id" className="font-mono text-xs">{detail.id.slice(0, 20)}</span>],
-    ["Image", <span key="img" className="font-mono text-xs">{detail.image}</span>],
-    ["Command", <span key="cmd" className="font-mono text-xs">{detail.command || "—"}</span>],
+    [
+      "Container ID",
+      <span key="id" className="font-mono text-xs">
+        {detail.id.slice(0, 20)}
+      </span>,
+    ],
+    [
+      "Image",
+      <span key="img" className="font-mono text-xs">
+        {detail.image}
+      </span>,
+    ],
+    [
+      "Command",
+      <span key="cmd" className="font-mono text-xs">
+        {detail.command || "—"}
+      </span>,
+    ],
     ["Created", timestamp(detail.createdAt)],
-    ["Started", detail.startedAt ? `${timestamp(detail.startedAt)} (${duration(detail.uptimeSeconds)})` : "—"],
+    [
+      "Started",
+      detail.startedAt ? `${timestamp(detail.startedAt)} (${duration(detail.uptimeSeconds)})` : "—",
+    ],
     ["Restart policy", detail.restartPolicy || "none"],
     ["Restarts", detail.restartCount],
     ["Exit code", detail.state === "running" ? "—" : detail.exitCode],
@@ -221,10 +245,6 @@ function OverviewFields({ detail }: { detail: ContainerDetail }) {
 function ContainerLogs({ containerId, active }: { containerId: string; active: boolean }) {
   const [lines, setLines] = useState<LogLine[]>([])
   const [timestamps, setTimestamps] = useState(true)
-
-  // Switching container resets the buffer, otherwise the next container's
-  // logs would appear appended to the previous one's.
-  useEffect(() => setLines([]), [containerId])
 
   const onMessage = useCallback((envelope: Envelope) => {
     if (envelope.type !== "logs") return

@@ -4,7 +4,6 @@ import { useState } from "react"
 import { Link2, Plus, TerminalSquare, X } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
-import { relativeTime } from "@/lib/format"
 import type { TerminalSession } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -62,7 +61,11 @@ export default function TerminalPage() {
 
   const reattach = async (tmuxName: string) => {
     try {
-      const session = await post<{ id: string }>("/terminal/reattach", { tmuxName, rows: 30, cols: 110 })
+      const session = await post<{ id: string }>("/terminal/reattach", {
+        tmuxName,
+        rows: 30,
+        cols: 110,
+      })
       await refresh()
       setActive(session.id)
     } catch (err) {

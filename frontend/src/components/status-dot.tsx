@@ -41,7 +41,9 @@ export function toneFor(state: string | undefined): Tone {
 }
 
 export function StatusDot({ state, className }: { state?: string; className?: string }) {
-  return <span className={cn("size-1.5 shrink-0 rounded-full", TONE_CLASS[toneFor(state)], className)} />
+  return (
+    <span className={cn("size-1.5 shrink-0 rounded-full", TONE_CLASS[toneFor(state)], className)} />
+  )
 }
 
 export function StatusBadge({ state, label }: { state?: string; label?: string }) {

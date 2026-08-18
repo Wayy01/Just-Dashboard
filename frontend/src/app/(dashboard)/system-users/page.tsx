@@ -134,7 +134,11 @@ export default function SystemUsersPage() {
                           title={user.locked ? "Unlock" : "Lock"}
                           onClick={() => setLocked(user, !user.locked)}
                         >
-                          {user.locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />}
+                          {user.locked ? (
+                            <Unlock className="size-3.5" />
+                          ) : (
+                            <Lock className="size-3.5" />
+                          )}
                         </Button>
                         <Button
                           size="icon"
@@ -148,12 +152,14 @@ export default function SystemUsersPage() {
                               confirmLabel: "Delete",
                               description: (
                                 <p className="text-destructive">
-                                  Removes the account <b>{user.username}</b> from this host. Its home
-                                  directory is left in place.
+                                  Removes the account <b>{user.username}</b> from this host. Its
+                                  home directory is left in place.
                                 </p>
                               ),
                               action: async (c) => {
-                                await del(`/system-users/${encodeURIComponent(user.username)}`, { confirm: c })
+                                await del(`/system-users/${encodeURIComponent(user.username)}`, {
+                                  confirm: c,
+                                })
                                 refresh()
                               },
                             })
@@ -178,7 +184,11 @@ export default function SystemUsersPage() {
         </Card>
       )}
 
-      <SSHKeysSheet username={keysFor} onOpenChange={(o) => !o && setKeysFor(null)} onChanged={refresh} />
+      <SSHKeysSheet
+        username={keysFor}
+        onOpenChange={(o) => !o && setKeysFor(null)}
+        onChanged={refresh}
+      />
       {dialog}
     </>
   )
@@ -198,7 +208,10 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
         username,
         comment,
         shell,
-        groups: groups.split(",").map((g) => g.trim()).filter(Boolean),
+        groups: groups
+          .split(",")
+          .map((g) => g.trim())
+          .filter(Boolean),
         sshKey: sshKey.trim(),
       })
       toast.success(`Created ${username}`)
@@ -228,7 +241,11 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
         <div className="grid gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="new-username">Username</Label>
-            <Input id="new-username" value={username} onChange={(e) => setUsername(e.target.value)} />
+            <Input
+              id="new-username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-comment">Full name</Label>
@@ -368,9 +385,7 @@ function SSHKeysSheet({
               </div>
             ))}
 
-            {data?.keys.length === 0 && (
-              <EmptyState icon={KeyRound} title="No authorised keys" />
-            )}
+            {data?.keys.length === 0 && <EmptyState icon={KeyRound} title="No authorised keys" />}
 
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="add-key">Authorise another key</Label>

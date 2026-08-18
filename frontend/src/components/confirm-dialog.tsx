@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { AlertTriangle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { ApiError } from "@/lib/api"
@@ -41,15 +41,21 @@ export function ConfirmDialog({
   request: ConfirmRequest | null
   onOpenChange: (open: boolean) => void
 }) {
+  if (!request) return null
+  // Keyed on the phrase so a second dialog never opens pre-filled with what
+  // was typed into the previous one — which would defeat the whole point.
+  return <ConfirmBody key={request.phrase} request={request} onOpenChange={onOpenChange} />
+}
+
+function ConfirmBody({
+  request,
+  onOpenChange,
+}: {
+  request: ConfirmRequest
+  onOpenChange: (open: boolean) => void
+}) {
   const [typed, setTyped] = useState("")
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    setTyped("")
-    setBusy(false)
-  }, [request])
-
-  if (!request) return null
   const matches = typed === request.phrase
 
   const run = async () => {
@@ -83,8 +89,8 @@ export function ConfirmDialog({
 
         <div className="space-y-2">
           <Label htmlFor="confirm-phrase" className="text-xs text-muted-foreground">
-            Type <span className="font-mono font-semibold text-foreground">{request.phrase}</span> to
-            confirm
+            Type <span className="font-mono font-semibold text-foreground">{request.phrase}</span>{" "}
+            to confirm
           </Label>
           <Input
             id="confirm-phrase"

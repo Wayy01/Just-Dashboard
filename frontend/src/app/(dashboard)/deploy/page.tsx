@@ -165,8 +165,8 @@ export default function DeployPage() {
                           confirmLabel: "Delete",
                           description: (
                             <p>
-                              Removes <b>{project.name}</b> and its webhook. The checkout on disk and
-                              its running containers are left alone.
+                              Removes <b>{project.name}</b> and its webhook. The checkout on disk
+                              and its running containers are left alone.
                             </p>
                           ),
                           action: async (c) => {
@@ -186,7 +186,11 @@ export default function DeployPage() {
         ))}
       </div>
 
-      <ProjectSheet project={detailFor} onOpenChange={(o) => !o && setDetailFor(null)} onChanged={refresh} />
+      <ProjectSheet
+        project={detailFor}
+        onOpenChange={(o) => !o && setDetailFor(null)}
+        onChanged={refresh}
+      />
       {dialog}
     </>
   )
@@ -194,7 +198,10 @@ export default function DeployPage() {
 
 function HookDialog({ project }: { project: DeployProject }) {
   const [secret, setSecret] = useState<string | null>(null)
-  const url = typeof window !== "undefined" ? `${window.location.origin}${project.hookUrl}` : project.hookUrl ?? ""
+  const url =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${project.hookUrl}`
+      : (project.hookUrl ?? "")
 
   return (
     <Dialog>
@@ -321,7 +328,8 @@ function RunsTable({
   onSelect: (run: DeployRun) => void
 }) {
   const { data, loading } = usePoll(
-    (signal) => get<{ runs: DeployRun[]; running: boolean }>(`/deploy/${project.id}/runs`, undefined, signal),
+    (signal) =>
+      get<{ runs: DeployRun[]; running: boolean }>(`/deploy/${project.id}/runs`, undefined, signal),
     5000,
     [project.id],
   )
@@ -357,7 +365,12 @@ function RunsTable({
               <StatusBadge state={run.status} />
             </TableCell>
             <TableCell>
-              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onSelect(run)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => onSelect(run)}
+              >
                 Log
               </Button>
             </TableCell>
@@ -388,7 +401,10 @@ function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () =
           exactly the code path that deploys.
         </p>
         {data?.map((commit) => (
-          <div key={commit.sha} className="flex items-center justify-between gap-3 rounded-md border p-3">
+          <div
+            key={commit.sha}
+            className="flex items-center justify-between gap-3 rounded-md border p-3"
+          >
             <div className="min-w-0">
               <p className="truncate text-sm">{commit.subject}</p>
               <p className="font-mono text-[11px] text-muted-foreground">
@@ -418,7 +434,11 @@ function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () =
                           </>
                         ),
                         action: async (c) => {
-                          await post(`/deploy/${project.id}/rollback`, { commit: commit.sha }, { confirm: c })
+                          await post(
+                            `/deploy/${project.id}/rollback`,
+                            { commit: commit.sha },
+                            { confirm: c },
+                          )
                           onDone()
                         },
                       })
@@ -480,12 +500,13 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
 
       <div className="space-y-1">
         {vars.map((v) => (
-          <div key={v.key} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+          <div
+            key={v.key}
+            className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+          >
             <span className="font-mono text-xs">{v.key}</span>
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">
-                {v.value ?? v.masked}
-              </span>
+              <span className="font-mono text-xs text-muted-foreground">{v.value ?? v.masked}</span>
               {can("system.admin") && (
                 <Button
                   size="icon"

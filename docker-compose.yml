@@ -1,0 +1,94 @@
+# VPS Dashboard — self-hosted, single server.
+#
+# The topology exists to satisfy one rule: the dashboard is root-equivalent and
+# must never be reachable from the open internet.
+#
+#   browser ──(WireGuard / VPN, or an SSH tunnel)──▶ proxy:8443
+#                                                     ├─ /api  ─▶ backend:8080
+#                                                     └─ /*    ─▶ frontend:3000
+#
+# The proxy binds to 127.0.0.1 by default, so nothing is exposed until you
+# deliberately publish it on a private interface. Serving both halves from one
+# origin is also what lets the SameSite=Strict session cookie and the
+# same-origin WebSocket checks work as designed.
+
+name: vps-dashboard
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: vps-dashboard-backend:latest
+    restart: unless-stopped
+    # The dashboard manages the host, so it shares the host's namespaces.
+    # This is the trade the product makes: without it, "restart nginx" and
+    # "who is logged in" have no meaning.
+    pid: host
+    network_mode: host
+    privileged: true
+    environment:
+      # Loopback only. The proxy in front of it is the single entry point.
+      VPSD_ADDR: 127.0.0.1:8080
+      VPSD_DATA_DIR: /var/lib/vps-dashboard
+      # Required. Generate once with: openssl rand -hex 32
+      VPSD_MASTER_KEY: ${VPSD_MASTER_KEY:?set VPSD_MASTER_KEY in .env}
+      # Who may reach the API at all, checked before authentication.
+      VPSD_ALLOWED_CIDRS: ${VPSD_ALLOWED_CIDRS:-127.0.0.1/32,::1/128}
+      VPSD_TRUSTED_PROXIES: ${VPSD_TRUSTED_PROXIES:-127.0.0.1/32}
+      VPSD_ALLOWED_ORIGINS: ${VPSD_ALLOWED_ORIGINS:-}
+      VPSD_REQUIRE_2FA: ${VPSD_REQUIRE_2FA:-true}
+      VPSD_TERMINAL_ENABLED: ${VPSD_TERMINAL_ENABLED:-true}
+      VPSD_DOCKER_HOST: unix:///var/run/docker.sock
+      VPSD_COMPOSE_ROOTS: ${VPSD_COMPOSE_ROOTS:-/opt,/srv,/home}
+      VPSD_LOG_ROOTS: ${VPSD_LOG_ROOTS:-/var/log}
+      VPSD_FILE_ROOTS: ${VPSD_FILE_ROOTS:-/}
+      VPSD_BACKUP_DIR: ${VPSD_BACKUP_DIR:-/var/backups/vps-dashboard}
+      VPSD_LOG_LEVEL: ${VPSD_LOG_LEVEL:-info}
+    volumes:
+      # Root-equivalent access. Everything that reaches it is authenticated,
+      # capability-checked and written to the audit trail.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /:/host:rslave
+      - /etc:/etc
+      - /var/log:/var/log
+      - /var/lib/vps-dashboard:/var/lib/vps-dashboard
+      - /var/backups/vps-dashboard:/var/backups/vps-dashboard
+      - /run/systemd:/run/systemd
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+
+  frontend:
+    build:
+      context: ./frontend
+    image: vps-dashboard-frontend:latest
+    restart: unless-stopped
+    # No host access of its own: it serves the UI and nothing else.
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      # Bound to loopback by default. Change the host part to a WireGuard
+      # address (for example 10.8.0.1:8443) to reach it over the tunnel —
+      # never to 0.0.0.0.
+      - "${VPSD_BIND:-127.0.0.1}:8443:8443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    extra_hosts:
+      # The backend runs in the host namespace, so the proxy reaches it via
+      # the host gateway rather than a compose-network alias.
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  caddy-data:
+  caddy-config:

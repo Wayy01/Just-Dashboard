@@ -136,19 +136,28 @@ export function XtermPane({
   }, [path, JSON.stringify(query ?? {})])
 
   return (
-    <div className={cn("relative flex flex-col overflow-hidden rounded-lg border bg-[#09090b]", className)}>
+    <div
+      className={cn(
+        "relative flex flex-col overflow-hidden rounded-lg border bg-[#09090b]",
+        className,
+      )}
+    >
       <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{path}</span>
         <Badge variant={state === "open" ? "default" : "secondary"} className="gap-1.5 text-[10px]">
           <span
             className={
-              state === "open" ? "size-1.5 rounded-full bg-emerald-900" : "size-1.5 rounded-full bg-muted-foreground"
+              state === "open"
+                ? "size-1.5 rounded-full bg-emerald-900"
+                : "size-1.5 rounded-full bg-muted-foreground"
             }
           />
           {state}
         </Badge>
       </div>
-      {error && <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{error}</p>
+      )}
       <div ref={hostRef} className="min-h-0 flex-1 p-2" />
     </div>
   )

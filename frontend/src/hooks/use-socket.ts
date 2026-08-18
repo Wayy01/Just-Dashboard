@@ -29,18 +29,23 @@ export type SocketState = "connecting" | "open" | "closed" | "error"
  */
 export function useSocket(path: string, options: SocketOptions = {}) {
   const { enabled = true } = options
-  const [state, setState] = useState<SocketState>("closed")
+  const [liveState, setState] = useState<SocketState>("closed")
+  // A disabled socket is closed by definition; reporting that from the
+  // parameter rather than from state avoids a render just to say so.
+  const state: SocketState = enabled ? liveState : "closed"
+  // Handlers live in a ref so a caller passing a fresh closure each render
+  // does not tear down and rebuild the socket. Syncing it in an effect keeps
+  // render itself free of side effects.
   const handlers = useRef(options)
-  handlers.current = options
+  useEffect(() => {
+    handlers.current = options
+  })
   const socketRef = useRef<WebSocket | null>(null)
 
   const queryKey = JSON.stringify(options.query ?? {})
 
   useEffect(() => {
-    if (!enabled) {
-      setState("closed")
-      return
-    }
+    if (!enabled) return
     let attempt = 0
     let closedByUs = false
     let retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -86,7 +91,6 @@ export function useSocket(path: string, options: SocketOptions = {}) {
       socketRef.current?.close()
       socketRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, enabled, queryKey])
 
   const send = (payload: unknown) => {

@@ -34,13 +34,13 @@ func TestClassify(t *testing.T) {
 
 func TestReturnsRows(t *testing.T) {
 	cases := map[string]bool{
-		"SELECT 1":                              true,
-		"  -- a comment\n SELECT 1":             true,
+		"SELECT 1":                  true,
+		"  -- a comment\n SELECT 1": true,
 		"/* block */ WITH x AS (SELECT 1) SELECT * FROM x": true,
-		"INSERT INTO t(a) VALUES(1)":            false,
-		"INSERT INTO t(a) VALUES(1) RETURNING a": true,
-		"UPDATE t SET a = 1":                    false,
-		"SHOW TABLES":                           true,
+		"INSERT INTO t(a) VALUES(1)":                       false,
+		"INSERT INTO t(a) VALUES(1) RETURNING a":           true,
+		"UPDATE t SET a = 1":                               false,
+		"SHOW TABLES":                                      true,
 	}
 	for query, want := range cases {
 		if got := returnsRows(query); got != want {

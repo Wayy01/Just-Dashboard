@@ -25,8 +25,13 @@ export function usePoll<T>(
   const [error, setError] = useState<Error>()
   const [loading, setLoading] = useState(true)
   const [tick, setTick] = useState(0)
+  // The fetcher is closed over by the interval, so it is kept in a ref that
+  // is synced after render rather than assigned during it — writing a ref
+  // mid-render is what makes a component's output depend on when it ran.
   const fetcherRef = useRef(fetcher)
-  fetcherRef.current = fetcher
+  useEffect(() => {
+    fetcherRef.current = fetcher
+  })
 
   const refresh = useCallback(() => setTick((t) => t + 1), [])
 

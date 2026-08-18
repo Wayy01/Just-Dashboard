@@ -1,16 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-} from "recharts"
+import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { Cpu, HardDrive, MemoryStick, Network, Server, Timer } from "lucide-react"
 import { get } from "@/lib/api"
 import { bytes, clock, duration, percent, rate } from "@/lib/format"
@@ -126,7 +117,8 @@ export default function OverviewPage() {
         description={
           <span className="flex flex-wrap items-center gap-2">
             <span>
-              {host.platform} {host.platformVersion} · kernel {host.kernelVersion} · {host.kernelArch}
+              {host.platform} {host.platformVersion} · kernel {host.kernelVersion} ·{" "}
+              {host.kernelArch}
             </span>
             {host.virtualization && <Badge variant="outline">{host.virtualization}</Badge>}
           </span>
@@ -192,7 +184,13 @@ export default function OverviewPage() {
             <ChartContainer config={cpuConfig} className="h-[200px] w-full">
               <AreaChart data={history} margin={{ left: -20, right: 4, top: 4 }}>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={11} />
+                <XAxis
+                  dataKey="t"
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={48}
+                  fontSize={11}
+                />
                 <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={11} unit="%" />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Area
@@ -218,7 +216,13 @@ export default function OverviewPage() {
             <ChartContainer config={memConfig} className="h-[200px] w-full">
               <LineChart data={history} margin={{ left: -20, right: 4, top: 4 }}>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={11} />
+                <XAxis
+                  dataKey="t"
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={48}
+                  fontSize={11}
+                />
                 <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={11} unit="%" />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Line
@@ -255,7 +259,12 @@ export default function OverviewPage() {
             <AreaChart data={history} margin={{ left: 4, right: 4, top: 4 }}>
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
               <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={11} />
-              <YAxis tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => bytes(v)} />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                fontSize={11}
+                tickFormatter={(v) => bytes(v)}
+              />
               <ChartTooltip
                 content={<ChartTooltipContent formatter={(value) => rate(Number(value))} />}
               />
@@ -294,9 +303,7 @@ function PerCoreBars({ cores }: { cores: number[] }) {
     <div className="mt-4 space-y-1.5">
       {cores.map((value, i) => (
         <div key={i} className="flex items-center gap-2">
-          <span className="w-10 shrink-0 font-mono text-[11px] text-muted-foreground">
-            cpu{i}
-          </span>
+          <span className="w-10 shrink-0 font-mono text-[11px] text-muted-foreground">cpu{i}</span>
           <Progress value={value} className="h-1.5 flex-1" />
           <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
             {value.toFixed(0)}%
@@ -395,7 +402,9 @@ function MountsCard({ snapshot }: { snapshot: Snapshot }) {
             )}
           </div>
         ))}
-        {snapshot.mounts.length === 0 && <EmptyState title="No filesystems reported" icon={HardDrive} />}
+        {snapshot.mounts.length === 0 && (
+          <EmptyState title="No filesystems reported" icon={HardDrive} />
+        )}
       </CardContent>
     </Card>
   )

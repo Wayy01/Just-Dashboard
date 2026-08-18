@@ -49,15 +49,16 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false 
 export default function DatabasesPage() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
-  const [active, setActive] = useState<DbConnection | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const connections = usePoll(
     (signal) => get<DbConnection[]>("/databases/", undefined, signal),
     60000,
   )
 
-  useEffect(() => {
-    if (!active && connections.data?.length) setActive(connections.data[0])
-  }, [connections.data, active])
+  // Derived rather than stored: the first connection is the default until the
+  // operator picks another, which needs no extra render to settle.
+  const active = connections.data?.find((c) => c.id === selectedId) ?? connections.data?.[0] ?? null
+  const setActive = (conn: DbConnection | null) => setSelectedId(conn?.id ?? null)
 
   return (
     <>
@@ -171,7 +172,8 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
   const [offset, setOffset] = useState(0)
 
   const schemas = usePoll(
-    (signal) => get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
+    (signal) =>
+      get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
     0,
     [conn.id],
   )
@@ -200,7 +202,13 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
           <CardTitle className="text-base">Schemas</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-3">
-          <Select value={schema} onValueChange={(v) => { setSchema(v); setTable(undefined) }}>
+          <Select
+            value={schema}
+            onValueChange={(v) => {
+              setSchema(v)
+              setTable(undefined)
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Database" />
             </SelectTrigger>
@@ -256,7 +264,12 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
           </div>
           {table && (
             <div className="flex gap-1">
-              <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - 100))}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={offset === 0}
+                onClick={() => setOffset((o) => Math.max(0, o - 100))}
+              >
                 Previous
               </Button>
               <Button size="sm" variant="outline" onClick={() => setOffset((o) => o + 100)}>
@@ -417,9 +430,7 @@ function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: ConfirmFn })
               {busy ? <Spinner /> : <Play className="size-4" />}
               Run
             </Button>
-            {risk && !risk.destructive && (
-              <Badge variant="secondary">{risk.level}</Badge>
-            )}
+            {risk && !risk.destructive && <Badge variant="secondary">{risk.level}</Badge>}
             {!can("service.control") && (
               <span className="text-xs text-muted-foreground">
                 Your role can browse but not execute statements.

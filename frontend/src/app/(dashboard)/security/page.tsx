@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Ban, Plus, Shield, ShieldAlert, Trash2, Users } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
-import { relativeTime, timestamp } from "@/lib/format"
+import { timestamp } from "@/lib/format"
 import type { Fail2banJail, FirewallStatus, LoginSession } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -99,7 +99,9 @@ function FirewallTab() {
               <CardTitle className="text-base">
                 {data.backend} · {data.enabled ? "active" : "inactive"}
               </CardTitle>
-              <CardDescription>{data.defaultPolicy ?? "no default policy reported"}</CardDescription>
+              <CardDescription>
+                {data.defaultPolicy ?? "no default policy reported"}
+              </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {can("system.admin") && data.backend === "ufw" && (
@@ -174,9 +176,7 @@ function FirewallTab() {
                               title: "Delete firewall rule",
                               phrase: `delete rule ${rule.number}`,
                               confirmLabel: "Delete",
-                              description: (
-                                <p className="font-mono text-xs">{rule.raw}</p>
-                              ),
+                              description: <p className="font-mono text-xs">{rule.raw}</p>,
                               action: async (c) => {
                                 await del(`/firewall/rules/${rule.number}`, { confirm: c })
                                 refresh()
@@ -272,11 +272,21 @@ function AddRuleDialog({ onDone }: { onDone: () => void }) {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rule-port">Port or range</Label>
-            <Input id="rule-port" value={port} onChange={(e) => setPort(e.target.value)} placeholder="443 or 8000:8010" />
+            <Input
+              id="rule-port"
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+              placeholder="443 or 8000:8010"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rule-from">Source (optional)</Label>
-            <Input id="rule-from" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="10.0.0.0/8" />
+            <Input
+              id="rule-from"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              placeholder="10.0.0.0/8"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rule-comment">Comment</Label>
@@ -309,7 +319,13 @@ function Fail2banTab() {
   if (error) return <ErrorState error={error} />
   if (!data?.available) return <EmptyState icon={Ban} title="fail2ban is not installed" />
   if (!data.running) {
-    return <EmptyState icon={Ban} title="fail2ban is installed but not responding" description={data.error} />
+    return (
+      <EmptyState
+        icon={Ban}
+        title="fail2ban is installed but not responding"
+        description={data.error}
+      />
+    )
   }
 
   const unban = async (jail: string, ip: string) => {
@@ -329,8 +345,8 @@ function Fail2banTab() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">{jail.name}</CardTitle>
             <CardDescription>
-              {jail.currentlyBanned} banned now · {jail.totalBanned} total ·{" "}
-              {jail.currentlyFailed} failing
+              {jail.currentlyBanned} banned now · {jail.totalBanned} total · {jail.currentlyFailed}{" "}
+              failing
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -339,10 +355,18 @@ function Fail2banTab() {
             ) : (
               <div className="space-y-1">
                 {jail.bannedIps.map((ip) => (
-                  <div key={ip} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-accent">
+                  <div
+                    key={ip}
+                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-accent"
+                  >
                     <span className="font-mono text-xs">{ip}</span>
                     {can("system.admin") && (
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => unban(jail.name, ip)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => unban(jail.name, ip)}
+                      >
                         Unban
                       </Button>
                     )}
@@ -390,7 +414,9 @@ function SessionsTab() {
                 <TableCell className="text-xs text-muted-foreground">
                   {session.loginTime ? timestamp(session.loginTime) : "—"}
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">{session.idle ?? "—"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {session.idle ?? "—"}
+                </TableCell>
                 <TableCell>
                   <Badge variant={session.isSsh ? "default" : "secondary"}>
                     {session.isSsh ? "ssh" : "local"}

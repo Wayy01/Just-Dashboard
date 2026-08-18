@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
-import { bytes, duration, percent, relativeTime, truncateMiddle } from "@/lib/format"
+import { bytes, percent, relativeTime, truncateMiddle } from "@/lib/format"
 import type {
   ComposeStack,
   Container,
@@ -58,7 +58,12 @@ export default function DockerPage() {
   const [filter, setFilter] = useState("")
 
   const ping = usePoll(
-    (signal) => get<{ available: boolean; error?: string; serverVersion?: string }>("/docker/ping", undefined, signal),
+    (signal) =>
+      get<{ available: boolean; error?: string; serverVersion?: string }>(
+        "/docker/ping",
+        undefined,
+        signal,
+      ),
     30000,
   )
 
@@ -79,7 +84,9 @@ export default function DockerPage() {
 
   const act = async (container: Container, action: string, confirmText?: string) => {
     try {
-      await post(`/docker/containers/${container.id}/${action}`, undefined, { confirm: confirmText })
+      await post(`/docker/containers/${container.id}/${action}`, undefined, {
+        confirm: confirmText,
+      })
       toast.success(`${container.name} ${action}ed`)
     } catch (err) {
       toast.error(`Could not ${action} ${container.name}`, { description: String(err) })
@@ -221,7 +228,10 @@ export default function DockerPage() {
                         <TableCell className="text-right">
                           {stat ? (
                             <div className="flex items-center justify-end gap-2">
-                              <Progress value={Math.min(stat.cpuPercent, 100)} className="h-1 w-12" />
+                              <Progress
+                                value={Math.min(stat.cpuPercent, 100)}
+                                className="h-1 w-12"
+                              />
                               <span className="w-12 font-mono text-xs tabular-nums">
                                 {percent(stat.cpuPercent)}
                               </span>
@@ -234,7 +244,10 @@ export default function DockerPage() {
                           {stat ? (
                             <>
                               {bytes(stat.memUsage)}
-                              <span className="text-muted-foreground"> / {bytes(stat.memLimit)}</span>
+                              <span className="text-muted-foreground">
+                                {" "}
+                                / {bytes(stat.memLimit)}
+                              </span>
                             </>
                           ) : (
                             "—"
@@ -446,7 +459,9 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
                   {stack.workingDir || "location unknown"}
                 </CardDescription>
               </div>
-              <Badge variant={stack.running === stack.total && stack.total > 0 ? "default" : "secondary"}>
+              <Badge
+                variant={stack.running === stack.total && stack.total > 0 ? "default" : "secondary"}
+              >
                 {stack.running}/{stack.total}
               </Badge>
             </div>
@@ -454,7 +469,10 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
           <CardContent className="space-y-3">
             <div className="space-y-1">
               {stack.services.map((svc) => (
-                <div key={svc.container} className="flex items-center justify-between gap-2 text-sm">
+                <div
+                  key={svc.container}
+                  className="flex items-center justify-between gap-2 text-sm"
+                >
                   <span className="truncate">{svc.name}</span>
                   <StatusBadge state={svc.state} />
                 </div>
@@ -467,7 +485,11 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {can("service.control") && (
-                  <Button size="sm" variant="outline" onClick={() => run(stack, "up").catch((e) => toast.error(String(e)))}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => run(stack, "up").catch((e) => toast.error(String(e)))}
+                  >
                     <Play className="size-3.5" />
                     Up
                   </Button>
@@ -482,7 +504,11 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
                           title: "Restart stack",
                           phrase: stack.name,
                           confirmLabel: "Restart",
-                          description: <p>Every service in <b>{stack.name}</b> restarts.</p>,
+                          description: (
+                            <p>
+                              Every service in <b>{stack.name}</b> restarts.
+                            </p>
+                          ),
                           action: (c) => run(stack, "restart", c),
                         })
                       }
@@ -552,7 +578,11 @@ function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                 confirmLabel: "Prune",
                 description: <p>Removes dangling images that no container references.</p>,
                 action: async (c) => {
-                  const rep = await post<{ spaceReclaimed: number }>("/docker/images/prune", undefined, { confirm: c })
+                  const rep = await post<{ spaceReclaimed: number }>(
+                    "/docker/images/prune",
+                    undefined,
+                    { confirm: c },
+                  )
                   toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                   refresh()
                 },
@@ -589,7 +619,9 @@ function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                 <TableCell className="text-right font-mono text-xs tabular-nums">
                   {bytes(image.size)}
                 </TableCell>
-                <TableCell className="text-right text-xs tabular-nums">{image.containers}</TableCell>
+                <TableCell className="text-right text-xs tabular-nums">
+                  {image.containers}
+                </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {relativeTime(image.created)}
                 </TableCell>
@@ -670,7 +702,11 @@ function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                   </p>
                 ),
                 action: async (c) => {
-                  const rep = await post<{ spaceReclaimed: number }>("/docker/volumes/prune", undefined, { confirm: c })
+                  const rep = await post<{ spaceReclaimed: number }>(
+                    "/docker/volumes/prune",
+                    undefined,
+                    { confirm: c },
+                  )
                   toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                   refresh()
                 },
@@ -732,7 +768,9 @@ function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                             </p>
                           ),
                           action: async (c) => {
-                            await del(`/docker/volumes/${encodeURIComponent(volume.name)}`, { confirm: c })
+                            await del(`/docker/volumes/${encodeURIComponent(volume.name)}`, {
+                              confirm: c,
+                            })
                             refresh()
                           },
                         })
@@ -793,7 +831,9 @@ function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {network.subnets.join(", ") || "—"}
                 </TableCell>
-                <TableCell className="text-right text-xs tabular-nums">{network.containers}</TableCell>
+                <TableCell className="text-right text-xs tabular-nums">
+                  {network.containers}
+                </TableCell>
                 <TableCell>
                   {can("destructive") && !["bridge", "host", "none"].includes(network.name) && (
                     <IconAction
@@ -805,7 +845,11 @@ function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                           title: "Delete network",
                           phrase: "delete network",
                           confirmLabel: "Delete",
-                          description: <p>Removes <b>{network.name}</b>.</p>,
+                          description: (
+                            <p>
+                              Removes <b>{network.name}</b>.
+                            </p>
+                          ),
                           action: async (c) => {
                             await del(`/docker/networks/${network.id}`, { confirm: c })
                             refresh()

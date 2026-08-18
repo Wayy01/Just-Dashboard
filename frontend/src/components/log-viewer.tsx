@@ -109,7 +109,9 @@ export function LogViewer({
                   {line.timestamp ? clock(line.timestamp) : ""}
                 </span>
               )}
-              <span className={cn("flex-1", line.level && LEVEL_CLASS[line.level])}>{line.text}</span>
+              <span className={cn("flex-1", line.level && LEVEL_CLASS[line.level])}>
+                {line.text}
+              </span>
             </div>
           ))
         )}

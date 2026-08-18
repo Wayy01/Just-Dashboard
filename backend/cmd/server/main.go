@@ -9,11 +9,13 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +27,17 @@ import (
 )
 
 func main() {
+	// The container healthcheck re-executes this binary rather than shipping
+	// curl into the image, which keeps the runtime surface smaller.
+	healthcheck := flag.Bool("healthcheck", false, "probe the local server and exit non-zero if it is unhealthy")
+	flag.Parse()
+	if *healthcheck {
+		if err := probe(); err != nil {
+			fmt.Fprintln(os.Stderr, "unhealthy:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
@@ -98,6 +111,29 @@ func run() error {
 		defer cancel()
 		return httpSrv.Shutdown(shutCtx)
 	}
+}
+
+// probe asks the local server whether it is serving. It deliberately targets
+// the configured bind address so a healthcheck cannot pass against some other
+// process that happens to be listening.
+func probe() error {
+	addr := os.Getenv("VPSD_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		addr = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get("http://" + addr + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz returned %s", resp.Status)
+	}
+	return nil
 }
 
 // janitor sweeps expired sessions so a stolen cookie cannot outlive its window

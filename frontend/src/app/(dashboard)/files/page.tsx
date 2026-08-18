@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import {
   ArrowUp,
   Download,
@@ -54,7 +54,13 @@ export default function FilesPage() {
   const [path, setPath] = useState("/")
   const [showHidden, setShowHidden] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
-  const [selection, setSelection] = useState<Set<string>>(new Set())
+  // The selection is scoped to the directory it was made in, so navigating
+  // away discards it without a reset effect.
+  const [selection, setSelection] = useState<{ dir: string; paths: Set<string> }>({
+    dir: path,
+    paths: new Set(),
+  })
+  const selected = selection.dir === path ? [...selection.paths] : []
   const uploadRef = useRef<HTMLInputElement>(null)
 
   const listing = usePoll(
@@ -62,8 +68,6 @@ export default function FilesPage() {
     0,
     [path, showHidden],
   )
-
-  useEffect(() => setSelection(new Set()), [path])
 
   const crumbs = useMemo(() => {
     const parts = path.split("/").filter(Boolean)
@@ -81,11 +85,14 @@ export default function FilesPage() {
     const form = new FormData()
     for (const file of Array.from(files)) form.append("file", file)
     try {
-      const res = await fetch(`${API_BASE}/files/upload?path=${encodeURIComponent(path)}&overwrite=true`, {
-        method: "POST",
-        credentials: "include",
-        body: form,
-      })
+      const res = await fetch(
+        `${API_BASE}/files/upload?path=${encodeURIComponent(path)}&overwrite=true`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: form,
+        },
+      )
       if (!res.ok) throw new Error((await res.json()).error?.message ?? res.statusText)
       toast.success(`Uploaded ${files.length} file(s)`)
       listing.refresh()
@@ -95,8 +102,6 @@ export default function FilesPage() {
       if (uploadRef.current) uploadRef.current.value = ""
     }
   }
-
-  const selected = [...selection]
 
   return (
     <>
@@ -109,10 +114,12 @@ export default function FilesPage() {
             {selected.length > 0 && (
               <Button variant="outline" size="sm" asChild>
                 <a
-                  href={downloadUrl("/files/archive", {
-                    base: path,
-                    format: "tar.gz",
-                  }) + selected.map((p) => `&path=${encodeURIComponent(p)}`).join("")}
+                  href={
+                    downloadUrl("/files/archive", {
+                      base: path,
+                      format: "tar.gz",
+                    }) + selected.map((p) => `&path=${encodeURIComponent(p)}`).join("")
+                  }
                   download
                 >
                   <FileArchive className="size-4" />
@@ -141,10 +148,16 @@ export default function FilesPage() {
       />
 
       <div className="flex flex-wrap items-center gap-1 text-sm">
-        <Button size="icon" variant="ghost" className="size-7" onClick={() => setPath("/")} title="Root">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          onClick={() => setPath("/")}
+          title="Root"
+        >
           <Home className="size-4" />
         </Button>
-        {crumbs.slice(1).map((crumb, i) => (
+        {crumbs.slice(1).map((crumb) => (
           <span key={crumb.href} className="flex items-center gap-1">
             <span className="text-muted-foreground">/</span>
             <button className="hover:underline" onClick={() => setPath(crumb.href)}>
@@ -196,13 +209,13 @@ export default function FilesPage() {
                   <FileRow
                     key={entry.path}
                     entry={entry}
-                    selected={selection.has(entry.path)}
+                    selected={selected.includes(entry.path)}
                     onToggle={(checked) =>
                       setSelection((prev) => {
-                        const next = new Set(prev)
-                        if (checked) next.add(entry.path)
-                        else next.delete(entry.path)
-                        return next
+                        const paths = new Set(prev.dir === path ? prev.paths : [])
+                        if (checked) paths.add(entry.path)
+                        else paths.delete(entry.path)
+                        return { dir: path, paths }
                       })
                     }
                     onOpen={() => (entry.isDir ? setPath(entry.path) : setEditing(entry.path))}
@@ -295,7 +308,9 @@ function FileRow({
       <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
         {entry.isDir ? "—" : bytes(entry.size)}
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground">{relativeTime(entry.modified)}</TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {relativeTime(entry.modified)}
+      </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {entry.owner}:{entry.group}
       </TableCell>

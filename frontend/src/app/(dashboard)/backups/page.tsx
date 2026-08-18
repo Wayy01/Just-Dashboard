@@ -270,7 +270,12 @@ function HistorySheet({
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setLogFor(run)}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setLogFor(run)}
+                        >
                           Log
                         </Button>
                         {run.status === "success" && can("destructive") && (
@@ -402,15 +407,22 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
   const submit = async () => {
     const body = {
       name,
-      sources: sources.split("\n").map((s) => s.trim()).filter(Boolean),
-      excludes: excludes.split("\n").map((s) => s.trim()).filter(Boolean),
+      sources: sources
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      excludes: excludes
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
       targetKind,
       target: targetKind === "local" ? { path } : { bucket, region, endpoint, prefix },
       schedule,
       retention: Number(retention),
       enabled,
       // Omitted when blank so editing a schedule does not wipe stored keys.
-      secrets: accessKey || secretKey ? { accessKeyId: accessKey, secretAccessKey: secretKey } : undefined,
+      secrets:
+        accessKey || secretKey ? { accessKeyId: accessKey, secretAccessKey: secretKey } : undefined,
     }
     try {
       if (job) await put(`/backups/${job.id}`, body)
@@ -488,18 +500,32 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
           {targetKind === "local" ? (
             <div className="space-y-1.5">
               <Label htmlFor="job-path">Directory</Label>
-              <Input id="job-path" value={path} onChange={(e) => setPath(e.target.value)} className="font-mono text-sm" />
+              <Input
+                id="job-path"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                className="font-mono text-sm"
+              />
             </div>
           ) : (
             <div className="grid gap-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="job-bucket">Bucket</Label>
-                  <Input id="job-bucket" value={bucket} onChange={(e) => setBucket(e.target.value)} />
+                  <Input
+                    id="job-bucket"
+                    value={bucket}
+                    onChange={(e) => setBucket(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="job-region">Region</Label>
-                  <Input id="job-region" value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" />
+                  <Input
+                    id="job-region"
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    placeholder="us-east-1"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -509,12 +535,18 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                     id="job-endpoint"
                     value={endpoint}
                     onChange={(e) => setEndpoint(e.target.value)}
-                    placeholder={targetKind === "b2" ? "s3.us-west-004.backblazeb2.com" : "leave blank for AWS"}
+                    placeholder={
+                      targetKind === "b2" ? "s3.us-west-004.backblazeb2.com" : "leave blank for AWS"
+                    }
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="job-prefix">Prefix</Label>
-                  <Input id="job-prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+                  <Input
+                    id="job-prefix"
+                    value={prefix}
+                    onChange={(e) => setPrefix(e.target.value)}
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">

@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post, put } from "@/lib/api"
-import { relativeTime, timestamp } from "@/lib/format"
+import { timestamp } from "@/lib/format"
 import type { Certificate, Listener, VHost } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -121,7 +121,9 @@ function VHostsTab() {
           </p>
         ),
         action: async (c) => {
-          await post(`/proxy/vhosts/${encodeURIComponent(vhost.name)}/enabled`, body, { confirm: c })
+          await post(`/proxy/vhosts/${encodeURIComponent(vhost.name)}/enabled`, body, {
+            confirm: c,
+          })
           refresh()
         },
       })
@@ -154,7 +156,10 @@ function VHostsTab() {
               {data.map((vhost) => (
                 <TableRow key={vhost.path}>
                   <TableCell>
-                    <button className="font-medium hover:underline" onClick={() => setEditing(vhost)}>
+                    <button
+                      className="font-medium hover:underline"
+                      onClick={() => setEditing(vhost)}
+                    >
                       {vhost.name}
                     </button>
                     <p className="truncate font-mono text-[11px] text-muted-foreground">
@@ -162,7 +167,9 @@ function VHostsTab() {
                     </p>
                   </TableCell>
                   <TableCell className="text-xs">
-                    {vhost.serverNames.join(", ") || <span className="text-muted-foreground">—</span>}
+                    {vhost.serverNames.join(", ") || (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="font-mono text-[11px] text-muted-foreground">
                     {vhost.upstreams.slice(0, 2).join(", ") || "—"}
@@ -194,7 +201,11 @@ function VHostsTab() {
           </Table>
         </CardContent>
       </Card>
-      <ConfigEditor vhost={editing} onOpenChange={(o) => !o && setEditing(null)} onSaved={refresh} />
+      <ConfigEditor
+        vhost={editing}
+        onOpenChange={(o) => !o && setEditing(null)}
+        onSaved={refresh}
+      />
       {dialog}
     </>
   )
@@ -209,6 +220,28 @@ function ConfigEditor({
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
+  if (!vhost) return null
+  // Keyed on the file so opening another vhost never inherits the previous
+  // one's buffer — saving that to the wrong path would be a real outage.
+  return (
+    <ConfigEditorBody
+      key={vhost.path}
+      vhost={vhost}
+      onOpenChange={onOpenChange}
+      onSaved={onSaved}
+    />
+  )
+}
+
+function ConfigEditorBody({
+  vhost,
+  onOpenChange,
+  onSaved,
+}: {
+  vhost: VHost
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
   const { can } = useAuth()
   const [content, setContent] = useState("")
   const [original, setOriginal] = useState("")
@@ -216,9 +249,6 @@ function ConfigEditor({
   const [validation, setValidation] = useState<{ valid: boolean; output: string } | null>(null)
 
   useEffect(() => {
-    setContent("")
-    setValidation(null)
-    if (!vhost) return
     const controller = new AbortController()
     get<{ content: string }>("/proxy/config", { path: vhost.path }, controller.signal)
       .then((r) => {
@@ -229,14 +259,10 @@ function ConfigEditor({
     return () => controller.abort()
   }, [vhost])
 
-  if (!vhost) return null
-
   const validate = async () => {
     setBusy(true)
     try {
-      setValidation(
-        await post("/proxy/validate", { kind: vhost.kind, path: vhost.path, content }),
-      )
+      setValidation(await post("/proxy/validate", { kind: vhost.kind, path: vhost.path, content }))
     } catch (err) {
       toast.error("Validation failed", { description: String(err) })
     } finally {
@@ -308,7 +334,9 @@ function ConfigEditor({
             ) : (
               <XCircle className="size-4 shrink-0 text-destructive" />
             )}
-            <pre className="whitespace-pre-wrap font-mono">{validation.output || "Config is valid."}</pre>
+            <pre className="whitespace-pre-wrap font-mono">
+              {validation.output || "Config is valid."}
+            </pre>
           </div>
         )}
 
@@ -319,7 +347,11 @@ function ConfigEditor({
               Test config
             </Button>
             <span className="flex-1" />
-            <Button variant="outline" onClick={() => save(false)} disabled={busy || content === original}>
+            <Button
+              variant="outline"
+              onClick={() => save(false)}
+              disabled={busy || content === original}
+            >
               Save only
             </Button>
             <Button onClick={() => save(true)} disabled={busy || content === original}>

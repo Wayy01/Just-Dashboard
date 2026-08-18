@@ -40,8 +40,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
-    refresh().catch(() => setLoading(false))
-  }, [refresh])
+    // Establishing who the caller is on mount: the canonical case for an
+    // effect, since it subscribes this app to state the server owns.
+    let cancelled = false
+    get<AuthStatus>("/auth/session")
+      .then((next) => !cancelled && setStatus(next))
+      .catch((err) => {
+        if (cancelled) return
+        if (!(err instanceof ApiError && err.isAuthProblem)) {
+          console.error("session probe failed", err)
+        }
+        setStatus(null)
+      })
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const login = useCallback(async (username: string, password: string) => {
     const next = await post<AuthStatus>("/auth/login", { username, password })

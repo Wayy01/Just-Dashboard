@@ -24,7 +24,9 @@ type Step = "credentials" | "totp" | "enroll"
 export default function LoginPage() {
   const router = useRouter()
   const { status, loading, login, verifyTotp, refresh } = useAuth()
-  const [step, setStep] = useState<Step>("credentials")
+  // "auto" defers to whatever the session says; the explicit values are set
+  // only once the user has moved the flow forward themselves.
+  const [chosenStep, setChosenStep] = useState<Step | "auto">("auto")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [code, setCode] = useState("")
@@ -32,11 +34,18 @@ export default function LoginPage() {
   const [enrollment, setEnrollment] = useState<{ secret: string; otpauthUrl: string } | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
 
+  const step: Step =
+    chosenStep !== "auto"
+      ? chosenStep
+      : status?.needsTotp
+        ? "totp"
+        : status?.needsEnrollment
+          ? "enroll"
+          : "credentials"
+  const setStep = setChosenStep
+
   useEffect(() => {
-    if (loading) return
-    if (status?.authenticated) router.replace("/")
-    else if (status?.needsTotp) setStep("totp")
-    else if (status?.needsEnrollment) setStep("enroll")
+    if (!loading && status?.authenticated) router.replace("/")
   }, [loading, status, router])
 
   const submitCredentials = async (e: React.FormEvent) => {
@@ -117,7 +126,11 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            {step === "credentials" ? <KeyRound className="size-5" /> : <ShieldCheck className="size-5" />}
+            {step === "credentials" ? (
+              <KeyRound className="size-5" />
+            ) : (
+              <ShieldCheck className="size-5" />
+            )}
           </div>
           <CardTitle>
             {step === "credentials" && "Sign in"}
