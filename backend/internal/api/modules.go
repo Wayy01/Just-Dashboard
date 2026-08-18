@@ -8,6 +8,7 @@ import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/deploy"
 	"github.com/Wayy01/vps-dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/files"
+	"github.com/Wayy01/vps-dashboard/backend/internal/gitx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/linuxusers"
 	"github.com/Wayy01/vps-dashboard/backend/internal/logsx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/netsec"
@@ -30,6 +31,7 @@ type moduleSet struct {
 	logs         *logsx.Service
 	term         *term.Manager
 	files        *files.Service
+	git          *gitx.Service
 	proxy        *proxysvc.Service
 	dbs          *dbx.Manager
 	linuxUsers   *linuxusers.Service
@@ -55,6 +57,7 @@ func (s *Server) initModules() {
 	s.modules.logs = logsx.New(s.Cfg.LogRoots)
 	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell)
 	s.modules.files = files.New(s.Cfg.FileRoots)
+	s.modules.git = gitx.New(s.Cfg.GitRoots)
 	s.modules.proxy = proxysvc.New(s.Cfg.NginxDir, s.Cfg.CaddyFile)
 	s.modules.dbs = dbx.NewManager()
 	s.modules.linuxUsers = linuxusers.New()

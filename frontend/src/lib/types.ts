@@ -661,3 +661,69 @@ export type SessionInfo = {
   expiresAt: string
   current: boolean
 }
+
+// --- Git ---
+
+export type GitRepo = {
+  path: string
+  name: string
+  branch: string
+  remote?: string
+  head?: string
+  subject?: string
+  author?: string
+  commitAt?: string
+  dirty: boolean
+  changes: number
+  ahead: number
+  behind: number
+  detached: boolean
+  untracked: number
+}
+
+export type GitFileChange = {
+  path: string
+  index: string
+  worktree: string
+  label: string
+  staged: boolean
+}
+
+export type GitStatus = {
+  repo: GitRepo
+  files: GitFileChange[]
+  clean: boolean
+  stashes: number
+}
+
+export type GitCommit = {
+  sha: string
+  short: string
+  subject: string
+  author: string
+  email: string
+  at: string
+  refs?: string
+  insertions: number
+  deletions: number
+  files: number
+  isMerge: boolean
+}
+
+export type GitBranch = {
+  name: string
+  current: boolean
+  remote: boolean
+  upstream?: string
+  head?: string
+  subject?: string
+  at?: string
+  ahead: number
+  behind: number
+}
+
+export type GitResult = {
+  command: string
+  output: string
+  ok: boolean
+}

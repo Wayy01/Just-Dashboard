@@ -30,6 +30,7 @@ type Config struct {
 	NginxDir       string
 	CaddyFile      string
 	ComposeRoots   []string
+	GitRoots       []string
 	DeployRoot     string
 	BackupLocalDir string
 	Dev            bool
@@ -51,6 +52,7 @@ func Load() (*Config, error) {
 		NginxDir:       env("VPSD_NGINX_DIR", "/etc/nginx"),
 		CaddyFile:      env("VPSD_CADDYFILE", "/etc/caddy/Caddyfile"),
 		ComposeRoots:   envList("VPSD_COMPOSE_ROOTS", "/opt,/srv,/home"),
+		GitRoots:       envList("VPSD_GIT_ROOTS", "/opt,/srv,/home,/root"),
 		DeployRoot:     env("VPSD_DEPLOY_ROOT", "/srv"),
 		BackupLocalDir: env("VPSD_BACKUP_DIR", "/var/backups/vps-dashboard"),
 		Dev:            envBool("VPSD_DEV", false),

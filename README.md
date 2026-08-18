@@ -130,6 +130,7 @@ All settings are environment variables read by the backend at boot.
 | `VPSD_FILE_ROOTS` | `/` | Directories the file manager may reach. Narrow this if you want it scoped. |
 | `VPSD_LOG_ROOTS` | `/var/log` | Directories the log viewer may read. |
 | `VPSD_COMPOSE_ROOTS` | `/opt,/srv,/home` | Where compose stacks are discovered. |
+| `VPSD_GIT_ROOTS` | `/opt,/srv,/home,/root` | Where the Git page looks for repositories. |
 | `VPSD_NGINX_DIR` | `/etc/nginx` | nginx configuration root. |
 | `VPSD_CADDYFILE` | `/etc/caddy/Caddyfile` | Caddy configuration file. |
 | `VPSD_BACKUP_DIR` | `/var/backups/vps-dashboard` | Local backup destination and staging area. |
@@ -153,9 +154,10 @@ controls a role cannot use, but the server re-decides every request on its own.
 | --- | :---: | :---: | :---: |
 | View everything | ✅ | ✅ | ✅ |
 | Start / stop / restart services | | ✅ | ✅ |
+| Git fetch / pull / push / checkout / stash | | ✅ | ✅ |
 | Edit files | | ✅ | ✅ |
 | Web terminal and container shells | | | ✅ |
-| Delete, prune, kill, restore | | | ✅ |
+| Delete, prune, kill, restore, git discard / reset | | | ✅ |
 | Host accounts, firewall, dashboard users, tokens | | | ✅ |
 
 Manage accounts under **Account → Dashboard users**. New users must change
@@ -173,6 +175,7 @@ their password and enroll 2FA before anything works.
 | **Logs** | One viewer over files, container output, PM2 processes and the journal. Grep and level filters are applied **server-side** before lines are sent. Export by date range. |
 | **Terminal** | A real PTY over WebSocket. tmux-backed, so sessions survive a closed tab or a dashboard restart, and detached ones can be reattached. |
 | **Files** | Browse, upload, download, in-browser editing (Monaco), chmod/chown, search by name or content, archive create and extract. |
+| **Git** | Every repository under the configured roots: branch, working tree, ahead/behind, history with per-commit diffs, branch switching, and fetch/pull/push/stash. Git runs as the account that owns each repository, so nothing it writes changes ownership. |
 | **Proxy & TLS** | nginx/Caddy config editor that validates with the server's own test before anything is written or reloaded, vhost enable/disable, certificate inventory, live TLS checks, listening ports joined to owning processes. |
 | **Databases** | Postgres, MySQL and MongoDB: schema browsing, paged table browser, a query runner that classifies destructive statements before running them, dumps and restores. |
 | **Security** | Firewall rules, fail2ban jails with unban, active SSH sessions. |
@@ -290,6 +293,34 @@ Docker socket. That is what makes "restart this unit", "kill this process" and
 the network perimeter plus 2FA, **not** the container. Read
 `docker-compose.yml` before deploying and narrow the mounts if your use case
 allows it.
+
+### Reaching the host, not the container
+
+The dashboard manages a server, so everything it reports has to be about the
+server rather than about the container it happens to run in. Two mechanisms
+keep that true, and both matter if you change the compose file:
+
+**The directories it manages are mounted at their real paths.** `/home`,
+`/opt`, `/srv`, `/root`, `/etc` and `/var/log` appear inside the container
+under the same names they have outside it, because the dashboard addresses
+files by the path you would type over SSH. Remove one of those mounts and the
+file manager, git discovery and compose-stack scanning will quietly browse the
+container's own empty filesystem instead of your server's. Narrow the mounts if
+you like, but narrow `VPSD_FILE_ROOTS`, `VPSD_GIT_ROOTS` and
+`VPSD_COMPOSE_ROOTS` to match.
+
+**Host tools run on the host.** Some things cannot be mounted. nginx's config
+is readable here but its binary is not, and shipping a second copy would
+validate your config against different modules than the server actually uses.
+Anything in that category — `nginx`, `caddy`, `ufw`, `fail2ban-client`, `who` —
+is executed in the host's namespaces through `nsenter`, using the privilege the
+container already holds. This is also why the dashboard can tell you fail2ban
+is *not installed* rather than reporting on a copy that came with its own
+image.
+
+Where a tool writes files, it runs as the account that owns the directory it is
+working in, so a `git pull` on a repository owned by `deploy` leaves files
+owned by `deploy` rather than by root.
 
 ---
 

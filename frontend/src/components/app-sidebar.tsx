@@ -9,6 +9,7 @@ import {
   Database,
   FileText,
   FolderTree,
+  GitBranch,
   Globe,
   ListChecks,
   LogOut,
@@ -61,6 +62,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
     items: [
       { title: "Terminal", href: "/terminal", icon: TerminalSquare, capability: "terminal" },
       { title: "Files", href: "/files", icon: FolderTree },
+      { title: "Git", href: "/git", icon: GitBranch },
       { title: "Databases", href: "/databases", icon: Database },
     ],
   },
