@@ -1,0 +1,50 @@
+package dbx
+
+import "testing"
+
+func TestClassify(t *testing.T) {
+	cases := []struct {
+		query       string
+		level       string
+		destructive bool
+	}{
+		{"SELECT * FROM users", "read", false},
+		{"select id from orders where total > 10", "read", false},
+		{"DELETE FROM sessions WHERE expires_at < now()", "high", true},
+		{"DELETE FROM sessions", "critical", true},
+		{"delete\nfrom sessions", "critical", true},
+		{"UPDATE users SET role = 'admin' WHERE id = 3", "high", true},
+		{"UPDATE users SET role = 'admin'", "critical", true},
+		{"DROP TABLE audit_log", "critical", true},
+		{"TRUNCATE orders", "critical", true},
+		{"INSERT INTO users(name) VALUES('a')", "medium", false},
+		{"CREATE INDEX idx ON users(name)", "medium", false},
+		{"ALTER TABLE users ADD COLUMN x int", "high", true},
+	}
+	for _, c := range cases {
+		got := Classify(c.query)
+		if got.Level != c.level {
+			t.Errorf("Classify(%q).Level = %q, want %q", c.query, got.Level, c.level)
+		}
+		if got.Destructive != c.destructive {
+			t.Errorf("Classify(%q).Destructive = %v, want %v", c.query, got.Destructive, c.destructive)
+		}
+	}
+}
+
+func TestReturnsRows(t *testing.T) {
+	cases := map[string]bool{
+		"SELECT 1":                              true,
+		"  -- a comment\n SELECT 1":             true,
+		"/* block */ WITH x AS (SELECT 1) SELECT * FROM x": true,
+		"INSERT INTO t(a) VALUES(1)":            false,
+		"INSERT INTO t(a) VALUES(1) RETURNING a": true,
+		"UPDATE t SET a = 1":                    false,
+		"SHOW TABLES":                           true,
+	}
+	for query, want := range cases {
+		if got := returnsRows(query); got != want {
+			t.Errorf("returnsRows(%q) = %v, want %v", query, got, want)
+		}
+	}
+}

@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"bufio"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -38,9 +40,31 @@ func (w *statusWriter) Status() int {
 	return w.status
 }
 
-// Unwrap lets http.ResponseController reach the underlying writer, which the
-// WebSocket upgrade and streaming endpoints depend on.
+// Unwrap lets http.ResponseController reach the underlying writer.
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Hijack forwards to the underlying writer. Without it a wrapped writer
+// silently breaks every WebSocket route in the dashboard: the upgrader needs
+// the raw connection, and not every version of it goes through
+// http.ResponseController to ask for one.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return h.Hijack()
+}
+
+// Flush keeps long-lived streaming responses (log exports, archive downloads)
+// from being buffered until the handler returns.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		if w.status == 0 {
+			w.status = http.StatusOK
+		}
+		f.Flush()
+	}
+}
 
 func Recoverer(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

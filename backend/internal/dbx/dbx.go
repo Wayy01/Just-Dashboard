@@ -462,27 +462,46 @@ type Risk struct {
 	Reasons     []string `json:"reasons"`
 }
 
+// Go's regexp package is RE2, which has no negative lookahead, so "mutates
+// every row" is expressed as a positive match plus an absence check rather
+// than one pattern.
+var (
+	deleteFromRe = regexp.MustCompile(`(?is)\bdelete\s+from\b`)
+	updateSetRe  = regexp.MustCompile(`(?is)\bupdate\s+\S+\s+set\b`)
+	whereRe      = regexp.MustCompile(`(?is)\bwhere\b`)
+)
+
+func matches(re *regexp.Regexp) func(string) bool {
+	return re.MatchString
+}
+
+// unscoped reports a statement that mutates without a WHERE clause — the
+// difference between "deletes rows" and "empties the table".
+func unscoped(re *regexp.Regexp) func(string) bool {
+	return func(q string) bool { return re.MatchString(q) && !whereRe.MatchString(q) }
+}
+
 var riskPatterns = []struct {
-	re     *regexp.Regexp
+	match  func(string) bool
 	level  string
 	reason string
 }{
-	{regexp.MustCompile(`(?is)\bdrop\s+(database|schema|table|view|index|column)\b`), "critical", "drops a database object"},
-	{regexp.MustCompile(`(?is)\btruncate\b`), "critical", "truncates a table"},
-	{regexp.MustCompile(`(?is)\bdelete\s+from\b(?![\s\S]*\bwhere\b)`), "critical", "deletes every row (no WHERE clause)"},
-	{regexp.MustCompile(`(?is)\bupdate\s+\S+\s+set\b(?![\s\S]*\bwhere\b)`), "critical", "updates every row (no WHERE clause)"},
-	{regexp.MustCompile(`(?is)\bdelete\s+from\b`), "high", "deletes rows"},
-	{regexp.MustCompile(`(?is)\bupdate\b`), "high", "updates rows"},
-	{regexp.MustCompile(`(?is)\balter\s+table\b`), "high", "alters a table definition"},
-	{regexp.MustCompile(`(?is)\bgrant\b|\brevoke\b`), "high", "changes permissions"},
-	{regexp.MustCompile(`(?is)\binsert\s+into\b|\breplace\s+into\b`), "medium", "inserts rows"},
-	{regexp.MustCompile(`(?is)\bcreate\b`), "medium", "creates a database object"},
+	{matches(regexp.MustCompile(`(?is)\bdrop\s+(database|schema|table|view|index|column)\b`)), "critical", "drops a database object"},
+	{matches(regexp.MustCompile(`(?is)\btruncate\b`)), "critical", "truncates a table"},
+	{unscoped(deleteFromRe), "critical", "deletes every row (no WHERE clause)"},
+	{unscoped(updateSetRe), "critical", "updates every row (no WHERE clause)"},
+	{matches(deleteFromRe), "high", "deletes rows"},
+	{matches(regexp.MustCompile(`(?is)\bupdate\b`)), "high", "updates rows"},
+	{matches(regexp.MustCompile(`(?is)\balter\s+table\b`)), "high", "alters a table definition"},
+	{matches(regexp.MustCompile(`(?is)\bgrant\b|\brevoke\b`)), "high", "changes permissions"},
+	{matches(regexp.MustCompile(`(?is)\binsert\s+into\b|\breplace\s+into\b`)), "medium", "inserts rows"},
+	{matches(regexp.MustCompile(`(?is)\bcreate\b`)), "medium", "creates a database object"},
 }
 
 func Classify(query string) Risk {
 	risk := Risk{Level: "read", Reasons: []string{}}
 	for _, p := range riskPatterns {
-		if p.re.MatchString(query) {
+		if p.match(query) {
 			risk.Reasons = append(risk.Reasons, p.reason)
 			if rank(p.level) > rank(risk.Level) {
 				risk.Level = p.level
