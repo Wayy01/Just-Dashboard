@@ -35,8 +35,9 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
 }
 
 /** Header classes for a table inside a capped-height container: the column
- *  names stay put while the rows scroll under them. */
-const stickyTableHeader = "sticky top-0 z-10 bg-card [&_tr]:border-b"
+ *  names stay put while the rows scroll under them. The background comes from
+ *  the rule in globals.css, so a sticky header and a static one match. */
+const stickyTableHeader = "sticky top-0 z-10 [&_tr]:border-b"
 
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
   return (
@@ -109,7 +110,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "h-10 px-2 text-left align-middle text-xs font-medium tracking-wide whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className,
       )}
       {...props}

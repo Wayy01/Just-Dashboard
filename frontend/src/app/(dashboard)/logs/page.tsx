@@ -5,6 +5,7 @@ import { Download, FileText, RefreshCw, ScrollText } from "lucide-react"
 import { toast } from "sonner"
 import { downloadUrl, get } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { JournalEntry, LogLine, LogSource } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
@@ -72,17 +73,11 @@ export default function LogsPage() {
                 placeholder="Server-side grep — matched before the lines are sent"
                 className="flex-1"
               />
-              <Button type="submit" variant="secondary" size="sm">
+              <Button type="submit" variant="secondary">
                 Apply
               </Button>
             </form>
-            <ToggleGroup
-              type="multiple"
-              size="sm"
-              value={levels}
-              onValueChange={setLevels}
-              variant="outline"
-            >
+            <ToggleGroup type="multiple" value={levels} onValueChange={setLevels} variant="outline">
               {LEVELS.map((level) => (
                 <ToggleGroupItem key={level} value={level} className="px-2 text-xs">
                   {level}
@@ -218,11 +213,14 @@ function SourceList({
                     <button
                       key={source.id}
                       onClick={() => onSelect(source)}
-                      className={
+                      // The selected source says so the same way the active nav
+                      // item does — one "you are here" language for both.
+                      className={cn(
+                        "flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors",
                         selected?.id === source.id
-                          ? "flex w-full flex-col rounded-md bg-accent px-2 py-1.5 text-left"
-                          : "flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-accent/50"
-                      }
+                          ? "bg-primary/12 font-medium text-foreground"
+                          : "hover:bg-accent",
+                      )}
                     >
                       <span className="truncate text-sm">{source.label}</span>
                       {source.size !== undefined && source.size > 0 && (

@@ -85,7 +85,6 @@ export default function AuditPage() {
           {data ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.total)} of ${data.total}` : ""}
         </span>
         <Button
-          size="sm"
           variant="outline"
           disabled={offset === 0}
           onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
@@ -93,7 +92,6 @@ export default function AuditPage() {
           Previous
         </Button>
         <Button
-          size="sm"
           variant="outline"
           disabled={!data || offset + PAGE_SIZE >= data.total}
           onClick={() => setOffset((o) => o + PAGE_SIZE)}

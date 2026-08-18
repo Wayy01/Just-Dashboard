@@ -196,7 +196,7 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
   )
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
+    <div className="grid gap-4 lg:grid-cols-[16rem_1fr] [&>*]:min-w-0">
       <Card className="min-h-0">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Schemas</CardTitle>

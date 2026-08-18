@@ -87,7 +87,7 @@ export default function BackupsPage() {
         />
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data?.map((job) => (
           <Card key={job.id}>
             <CardHeader className="pb-3">
@@ -458,7 +458,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
             <Label htmlFor="job-name">Name</Label>
             <Input id="job-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="job-sources">Sources (one per line)</Label>
               <Textarea
@@ -509,7 +509,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
             </div>
           ) : (
             <div className="grid gap-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="job-bucket">Bucket</Label>
                   <Input
@@ -528,7 +528,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="job-endpoint">Endpoint</Label>
                   <Input
@@ -549,7 +549,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="job-access">Access key ID</Label>
                   <Input
@@ -573,7 +573,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
             </div>
           )}
 
-          <div className="grid grid-cols-3 items-end gap-3">
+          <div className="grid items-end gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="job-schedule">Schedule (cron)</Label>
               <Input

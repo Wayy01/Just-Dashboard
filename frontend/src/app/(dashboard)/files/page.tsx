@@ -155,7 +155,7 @@ export default function FilesPage() {
         }
       />
 
-      <Card>
+      <Card className="gap-0">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b">
           <Breadcrumb>
             <BreadcrumbList className="gap-1 sm:gap-1">
@@ -193,10 +193,19 @@ export default function FilesPage() {
               ))}
             </BreadcrumbList>
           </Breadcrumb>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
-            Show hidden
-          </label>
+          <div className="flex items-center gap-4">
+            {listing.data && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {selected.length > 0
+                  ? `${selected.length} selected`
+                  : `${listing.data.entries.length} item${listing.data.entries.length === 1 ? "" : "s"}`}
+              </span>
+            )}
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
+              Show hidden
+            </label>
+          </div>
         </CardHeader>
 
         <CardContent className="p-0">

@@ -251,7 +251,7 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
             <Label htmlFor="new-comment">Full name</Label>
             <Input id="new-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="new-shell">Shell</Label>
               <Input id="new-shell" value={shell} onChange={(e) => setShell(e.target.value)} />

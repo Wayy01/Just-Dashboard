@@ -93,7 +93,7 @@ export default function DeployPage() {
         />
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data?.map((project) => (
           <Card key={project.id}>
             <CardHeader className="pb-3">
@@ -645,7 +645,7 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
                 placeholder="/srv/my-app"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="p-branch">Branch</Label>
                 <Input id="p-branch" value={branch} onChange={(e) => setBranch(e.target.value)} />

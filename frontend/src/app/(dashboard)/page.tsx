@@ -9,7 +9,7 @@ import { bytes, clock, duration, percent, rate } from "@/lib/format"
 import type { DirEntry, HostInfo, Snapshot } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { PageHeader } from "@/components/page-header"
-import { StatCard, utilisationTone } from "@/components/stat-card"
+import { StatCard, utilisationBar, utilisationTone } from "@/components/stat-card"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,8 @@ import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -225,6 +227,7 @@ export default function OverviewPage() {
                 />
                 <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={11} unit="%" />
                 <ChartTooltip content={<ChartTooltipContent />} />
+                <ChartLegend content={<ChartLegendContent />} />
                 <Line
                   dataKey="mem"
                   type="monotone"
@@ -260,6 +263,7 @@ export default function OverviewPage() {
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
               <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={11} />
               <YAxis
+                width={58}
                 tickLine={false}
                 axisLine={false}
                 fontSize={11}
@@ -268,6 +272,7 @@ export default function OverviewPage() {
               <ChartTooltip
                 content={<ChartTooltipContent formatter={(value) => rate(Number(value))} />}
               />
+              <ChartLegend content={<ChartLegendContent />} />
               <Area
                 dataKey="rx"
                 type="monotone"
@@ -304,7 +309,10 @@ function PerCoreBars({ cores }: { cores: number[] }) {
       {cores.map((value, i) => (
         <div key={i} className="flex items-center gap-2">
           <span className="w-10 shrink-0 font-mono text-[11px] text-muted-foreground">cpu{i}</span>
-          <Progress value={value} className="h-1.5 flex-1" />
+          <Progress
+            value={value}
+            className={cn("h-1.5 flex-1", utilisationBar(utilisationTone(value)))}
+          />
           <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
             {value.toFixed(0)}%
           </span>
@@ -368,13 +376,19 @@ function MountsCard({ snapshot }: { snapshot: Snapshot }) {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Progress value={mount.usedPercent} className="h-1.5 flex-1" />
+              <Progress
+                value={mount.usedPercent}
+                className={cn("h-1.5 flex-1", utilisationBar(utilisationTone(mount.usedPercent)))}
+              />
               <span
-                className={
+                className={cn(
+                  "w-12 text-right font-mono text-xs",
                   mount.usedPercent >= 90
-                    ? "w-12 text-right font-mono text-xs text-destructive"
-                    : "w-12 text-right font-mono text-xs text-muted-foreground"
-                }
+                    ? "text-destructive"
+                    : mount.usedPercent >= 75
+                      ? "text-warning"
+                      : "text-muted-foreground",
+                )}
               >
                 {mount.usedPercent.toFixed(0)}%
               </span>

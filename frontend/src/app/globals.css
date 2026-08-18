@@ -145,6 +145,13 @@
   }
 }
 
+/* A table header is chrome, not data. The tint separates it from the rows
+ * without a heavier rule, and being opaque rather than a translucent utility
+ * it also holds up as a sticky header with rows scrolling under it. */
+[data-slot="card"] [data-slot="table-container"] thead {
+  background-color: color-mix(in oklab, var(--muted) 50%, var(--card));
+}
+
 /* An empty state nested in a card would draw a second frame just inside the
  * first. The card is already the container — the dashed border is for when the
  * empty state stands on its own. */

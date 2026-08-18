@@ -107,7 +107,7 @@ function SecurityTab() {
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Change password</CardTitle>
@@ -155,9 +155,7 @@ function SecurityTab() {
         <CardHeader>
           <CardTitle className="text-base">Two-factor authentication</CardTitle>
           <CardDescription>
-            {status?.user?.totpEnabled
-              ? "Enrolled and required at every sign in."
-              : "Not enrolled."}
+            A code from your authenticator app, checked at every sign in.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -445,7 +443,7 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
                 placeholder="ci-deploy"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Role</Label>
                 <Select value={role} onValueChange={(v) => setRole(v as Role)}>

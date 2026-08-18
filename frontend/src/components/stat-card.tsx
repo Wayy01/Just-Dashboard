@@ -33,11 +33,24 @@ export function StatCard({
         >
           {value}
         </div>
-        {percent !== undefined && <Progress value={Math.min(percent, 100)} className="h-1.5" />}
+        {percent !== undefined && (
+          <Progress value={Math.min(percent, 100)} className={cn("h-1.5", utilisationBar(tone))} />
+        )}
         {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
       </CardContent>
     </Card>
   )
+}
+
+/**
+ * Bar colours for a utilisation tone. A figure that has gone amber next to a
+ * bar that is still the default blue reads as two different measurements.
+ */
+export function utilisationBar(tone: "default" | "warning" | "danger") {
+  if (tone === "danger")
+    return "bg-destructive/20 [&>[data-slot=progress-indicator]]:bg-destructive"
+  if (tone === "warning") return "bg-warning/20 [&>[data-slot=progress-indicator]]:bg-warning"
+  return ""
 }
 
 /** Thresholds used consistently wherever a utilisation figure is coloured. */

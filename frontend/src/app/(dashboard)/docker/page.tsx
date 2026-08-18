@@ -452,7 +452,7 @@ function StacksTab({ confirm }: { confirm: ConfirmFn }) {
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       {data.map((stack) => (
         <Card key={stack.name}>
           <CardHeader className="pb-3">
