@@ -145,6 +145,17 @@
   }
 }
 
+/* The sign-in screen is the only full-bleed surface in the app, and a flat
+ * rectangle of near-black is a poor first impression of a product whose colour
+ * is blue. One soft wash of the primary from the top edge, nothing more. */
+.auth-backdrop {
+  background-image: radial-gradient(
+    62% 46% at 50% 0%,
+    color-mix(in oklab, var(--primary) 15%, transparent),
+    transparent 72%
+  );
+}
+
 /* A table header is chrome, not data. The tint separates it from the rows
  * without a heavier rule, and being opaque rather than a translucent utility
  * it also holds up as a sticky header with rows scrolling under it. */
