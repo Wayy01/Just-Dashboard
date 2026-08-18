@@ -10,9 +10,9 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 
 const LEVEL_CLASS: Record<string, string> = {
-  critical: "text-red-400",
-  error: "text-red-400",
-  warn: "text-amber-400",
+  critical: "text-destructive",
+  error: "text-destructive",
+  warn: "text-warning",
   info: "text-foreground",
   debug: "text-muted-foreground",
 }

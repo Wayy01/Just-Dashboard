@@ -27,7 +27,7 @@ export function StatCard({
         <div
           className={cn(
             "text-2xl font-semibold tabular-nums",
-            tone === "warning" && "text-amber-400",
+            tone === "warning" && "text-warning",
             tone === "danger" && "text-destructive",
           )}
         >

@@ -3,54 +3,78 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Stock shadcn "zinc" tokens. The dashboard runs dark-only — an operator
-   stares at this during incidents, often at night — so the dark palette is
-   applied at the root rather than behind a toggle. */
+/* The dashboard runs dark-only — an operator stares at this during incidents,
+   often at night — so the dark palette is applied at the root rather than
+   behind a toggle. */
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.21 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.552 0.016 285.938);
+
+  /* Every neutral carries a little of the primary's hue (258) rather than
+     being flat grey. It is the difference between a surface that reads as
+     part of the product and one that reads as an unstyled default. */
+  --background: oklch(0.165 0.014 258);
+  --foreground: oklch(0.975 0.004 250);
+  --card: oklch(0.212 0.017 257);
+  --card-foreground: oklch(0.975 0.004 250);
+  --popover: oklch(0.222 0.018 257);
+  --popover-foreground: oklch(0.975 0.004 250);
+
+  /* The one saturated colour in the system. Everything that is the answer to
+     "what do I press" is this blue, and nothing else is. */
+  --primary: oklch(0.606 0.192 259);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.278 0.021 257);
+  --secondary-foreground: oklch(0.975 0.004 250);
+  --muted: oklch(0.271 0.019 257);
+  --muted-foreground: oklch(0.712 0.024 257);
+  --accent: oklch(0.312 0.035 259);
+  --accent-foreground: oklch(0.985 0.004 250);
+  --destructive: oklch(0.645 0.209 25.5);
+  --destructive-foreground: oklch(1 0 0);
+
+  /* Status colours live as tokens so a running container, a healthy mount and
+     an up interface are the same green everywhere, and stay tunable in one
+     place. */
+  --success: oklch(0.72 0.163 162);
+  --success-foreground: oklch(0.18 0.05 162);
+  --warning: oklch(0.79 0.152 78);
+  --warning-foreground: oklch(0.22 0.05 78);
+
+  --border: oklch(0.72 0.045 258 / 16%);
+  --input: oklch(0.72 0.045 258 / 22%);
+  --ring: oklch(0.606 0.192 259);
+
+  /* Chart 1 is the primary, so a single series matches the buttons beside it;
+     the rest walk away around the wheel far enough to stay separable. */
+  --chart-1: oklch(0.632 0.188 259);
+  --chart-2: oklch(0.724 0.147 213);
+  --chart-3: oklch(0.72 0.163 162);
+  --chart-4: oklch(0.667 0.208 297);
+  --chart-5: oklch(0.79 0.152 78);
+
+  /* The sidebar sits below the page in depth: darker than the canvas, so the
+     content area reads as the lit surface. */
+  --sidebar: oklch(0.182 0.017 258);
+  --sidebar-foreground: oklch(0.94 0.006 250);
+  --sidebar-primary: oklch(0.606 0.192 259);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.286 0.032 259);
+  --sidebar-accent-foreground: oklch(0.985 0.004 250);
+  --sidebar-border: oklch(0.72 0.045 258 / 14%);
+  --sidebar-ring: oklch(0.606 0.192 259);
 }
 
 @theme inline {
   /* System font stacks rather than a webfont: this dashboard is built and run
      on locked-down networks, and next/font/google would make every image build
      depend on reaching fonts.googleapis.com. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji";
-  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono",
-    "Fira Code", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -67,6 +91,10 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -96,6 +124,32 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Tailwind v4 dropped the browser's pointer cursor on buttons, which leaves
+   * every control in the app feeling inert under the mouse. Restored once here
+   * rather than as a class on each component. The ARIA roles cover menu and
+   * listbox rows, which Radix renders as divs. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([data-disabled]),
+  [role="menuitemcheckbox"]:not([data-disabled]),
+  [role="menuitemradio"]:not([data-disabled]),
+  [role="option"]:not([data-disabled]) {
+    cursor: pointer;
+  }
+
+  /* A label wrapping a control belongs to that control: clicking the words is
+   * the same gesture as clicking the box, so it should say so. */
+  label:has(button[role="checkbox"], button[role="switch"], button[role="radio"]) {
+    cursor: pointer;
+  }
+}
+
+/* An empty state nested in a card would draw a second frame just inside the
+ * first. The card is already the container — the dashed border is for when the
+ * empty state stands on its own. */
+[data-slot="card"] [data-slot="empty-state"] {
+  border: 0;
 }
 
 /* A horizontally scrollable region that says so.
@@ -127,4 +181,27 @@
     12px 100%,
     12px 100%;
   background-attachment: local, local, scroll, scroll;
+}
+
+/* A table that runs to the card's edge still lines its outer columns up with
+ * the card's own padding, so the first column reads as a continuation of the
+ * title above it rather than a grid that merely shares the frame.
+ *
+ * In @layer components so a cell that needs its own padding can still say so
+ * with a utility class — utilities are layered after components and win. */
+@layer components {
+  [data-slot="card"]
+    > [data-slot="card-content"]
+    > [data-slot="table-container"]
+    tr
+    > *:first-child {
+    padding-left: 1.5rem;
+  }
+  [data-slot="card"]
+    > [data-slot="card-content"]
+    > [data-slot="table-container"]
+    tr
+    > *:last-child {
+    padding-right: 1.5rem;
+  }
 }

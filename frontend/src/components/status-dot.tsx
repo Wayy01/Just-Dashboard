@@ -4,9 +4,9 @@ import { Badge } from "@/components/ui/badge"
 type Tone = "running" | "stopped" | "warning" | "unknown"
 
 const TONE_CLASS: Record<Tone, string> = {
-  running: "bg-emerald-400",
+  running: "bg-success",
   stopped: "bg-muted-foreground",
-  warning: "bg-amber-400",
+  warning: "bg-warning",
   unknown: "bg-muted-foreground",
 }
 
@@ -46,14 +46,17 @@ export function StatusDot({ state, className }: { state?: string; className?: st
   )
 }
 
+const BADGE_VARIANT = {
+  running: "success",
+  warning: "warning",
+  stopped: "secondary",
+  unknown: "secondary",
+} as const
+
 export function StatusBadge({ state, label }: { state?: string; label?: string }) {
-  const tone = toneFor(state)
   return (
-    <Badge
-      variant={tone === "running" ? "default" : tone === "warning" ? "destructive" : "secondary"}
-      className="gap-1.5 font-normal"
-    >
-      <StatusDot state={state} className={tone === "running" ? "bg-emerald-900" : undefined} />
+    <Badge variant={BADGE_VARIANT[toneFor(state)]} className="gap-1.5 font-normal">
+      <StatusDot state={state} />
       {label ?? state ?? "unknown"}
     </Badge>
   )

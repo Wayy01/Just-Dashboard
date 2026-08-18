@@ -58,14 +58,47 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+/** Anything inside a row that owns its own click. */
+const INTERACTIVE =
+  "a, button, input, select, textarea, label, [role='checkbox'], [role='menuitem'], [contenteditable='true']"
+
+function TableRow({
+  className,
+  onActivate,
+  onClick,
+  onKeyDown,
+  ...props
+}: React.ComponentProps<"tr"> & {
+  /**
+   * Makes the whole row the hit target for its primary action, rather than
+   * asking for a click on the few characters of the name. A click that landed
+   * on a control inside the row is left to that control, so the row's gesture
+   * and its buttons never fight over the same press.
+   */
+  onActivate?: () => void
+}) {
   return (
     <tr
       data-slot="table-row"
+      tabIndex={onActivate ? 0 : undefined}
       className={cn(
         "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        onActivate && "cursor-pointer outline-none focus-visible:bg-muted/50",
         className,
       )}
+      onClick={(event) => {
+        onClick?.(event)
+        if (!onActivate || event.defaultPrevented) return
+        if ((event.target as HTMLElement).closest(INTERACTIVE)) return
+        onActivate()
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event)
+        if (!onActivate || event.defaultPrevented) return
+        if (event.key !== "Enter" || event.target !== event.currentTarget) return
+        event.preventDefault()
+        onActivate()
+      }}
       {...props}
     />
   )
@@ -107,4 +140,14 @@ function TableCaption({ className, ...props }: React.ComponentProps<"caption">) 
   )
 }
 
-export { stickyTableHeader, Table, TableHeader, TableBody, TableFooter, TableHead, TableRow, TableCell, TableCaption }
+export {
+  stickyTableHeader,
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableCaption,
+}

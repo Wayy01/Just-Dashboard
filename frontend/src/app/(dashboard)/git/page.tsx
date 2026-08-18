@@ -127,7 +127,11 @@ export default function GitPage() {
                   </TableHeader>
                   <TableBody>
                     {visible.map((repo) => (
-                      <TableRow key={repo.path} className="group">
+                      <TableRow
+                        key={repo.path}
+                        className="group"
+                        onActivate={() => setSelected(repo)}
+                      >
                         <TableCell>
                           <div className="max-w-[22rem] min-w-0">
                             <button
@@ -201,13 +205,13 @@ function AheadBehind({ ahead, behind }: { ahead: number; behind: number }) {
   return (
     <div className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
       {ahead > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-emerald-400" title="commits to push">
+        <span className="inline-flex items-center gap-0.5 text-success" title="commits to push">
           <ArrowUpFromLine className="size-3" />
           {ahead}
         </span>
       )}
       {behind > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-amber-400" title="commits to pull">
+        <span className="inline-flex items-center gap-0.5 text-warning" title="commits to pull">
           <ArrowDownToLine className="size-3" />
           {behind}
         </span>
@@ -290,7 +294,11 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
           size="sm"
           variant="outline"
           disabled={!!busy}
-          onClick={() => run("Fetched", () => post<GitResult>("/git/fetch", undefined, { query: { path: repo.path, prune: true } }))}
+          onClick={() =>
+            run("Fetched", () =>
+              post<GitResult>("/git/fetch", undefined, { query: { path: repo.path, prune: true } }),
+            )
+          }
         >
           <RefreshCw className="size-4" />
           Fetch
@@ -301,7 +309,11 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
               size="sm"
               variant="outline"
               disabled={!!busy}
-              onClick={() => run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: { path: repo.path } }))}
+              onClick={() =>
+                run("Pulled", () =>
+                  post<GitResult>("/git/pull", undefined, { query: { path: repo.path } }),
+                )
+              }
             >
               <ArrowDownToLine className="size-4" />
               Pull
@@ -310,7 +322,11 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
               size="sm"
               variant="outline"
               disabled={!!busy}
-              onClick={() => run("Pushed", () => post<GitResult>("/git/push", undefined, { query: { path: repo.path } }))}
+              onClick={() =>
+                run("Pushed", () =>
+                  post<GitResult>("/git/push", undefined, { query: { path: repo.path } }),
+                )
+              }
             >
               <ArrowUpFromLine className="size-4" />
               Push
@@ -319,7 +335,11 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
               size="sm"
               variant="outline"
               disabled={!!busy || status.data?.clean}
-              onClick={() => run("Stashed", () => post<GitResult>("/git/stash", {}, { query: { path: repo.path } }))}
+              onClick={() =>
+                run("Stashed", () =>
+                  post<GitResult>("/git/stash", {}, { query: { path: repo.path } }),
+                )
+              }
             >
               <Undo2 className="size-4" />
               Stash
@@ -329,7 +349,11 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
                 size="sm"
                 variant="outline"
                 disabled={!!busy}
-                onClick={() => run("Stash popped", () => post<GitResult>("/git/stash/pop", undefined, { query: { path: repo.path } }))}
+                onClick={() =>
+                  run("Stash popped", () =>
+                    post<GitResult>("/git/stash/pop", undefined, { query: { path: repo.path } }),
+                  )
+                }
               >
                 <RotateCcw className="size-4" />
                 Pop stash ({status.data?.stashes})
@@ -426,7 +450,10 @@ function WorkingTree({
               key={f.path}
               className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted"
             >
-              <Badge variant={f.label === "untracked" ? "outline" : "secondary"} className="w-24 justify-center">
+              <Badge
+                variant={f.label === "untracked" ? "outline" : "secondary"}
+                className="w-24 justify-center"
+              >
                 {f.label}
               </Badge>
               <button
@@ -454,7 +481,11 @@ function WorkingTree({
                         </p>
                       ),
                       action: async (c) => {
-                        await post("/git/discard", { file: f.path }, { confirm: c, query: { path: repo.path } })
+                        await post(
+                          "/git/discard",
+                          { file: f.path },
+                          { confirm: c, query: { path: repo.path } },
+                        )
                         onDone()
                       },
                     })
@@ -488,10 +519,11 @@ function DiffBody({ body }: { body: string }) {
     <pre className="overflow-x-auto p-4 font-mono text-xs leading-relaxed">
       {body.split("\n").map((line, i) => {
         let cls = ""
-        if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-emerald-400"
-        else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-red-400"
-        else if (line.startsWith("@@")) cls = "text-sky-400"
-        else if (line.startsWith("diff ") || line.startsWith("index ")) cls = "text-muted-foreground"
+        if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-success"
+        else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-destructive"
+        else if (line.startsWith("@@")) cls = "text-primary"
+        else if (line.startsWith("diff ") || line.startsWith("index "))
+          cls = "text-muted-foreground"
         return (
           <div key={i} className={cls}>
             {line || " "}
@@ -505,11 +537,9 @@ function DiffBody({ body }: { body: string }) {
 function HistoryTab({ path }: { path: string }) {
   const [open, setOpen] = useState<GitCommit | null>(null)
   const [diff, setDiff] = useState("")
-  const log = usePoll(
-    (signal) => get<GitCommit[]>("/git/log", { path, limit: 100 }, signal),
-    0,
-    [path],
-  )
+  const log = usePoll((signal) => get<GitCommit[]>("/git/log", { path, limit: 100 }, signal), 0, [
+    path,
+  ])
 
   if (log.error) return <ErrorState error={log.error} />
   if (log.loading && !log.data) return <LoadingRows />
@@ -542,15 +572,14 @@ function HistoryTab({ path }: { path: string }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">{c.subject}</p>
                 <p className="truncate text-[11px] text-muted-foreground">
-                  <span className="font-mono">{c.short}</span> · {c.author} ·{" "}
-                  {relativeTime(c.at)}
+                  <span className="font-mono">{c.short}</span> · {c.author} · {relativeTime(c.at)}
                   {c.isMerge ? " · merge" : ""}
                 </p>
               </div>
               {(c.insertions > 0 || c.deletions > 0) && (
                 <span className="shrink-0 font-mono text-[11px] tabular-nums">
-                  <span className="text-emerald-400">+{c.insertions}</span>{" "}
-                  <span className="text-red-400">−{c.deletions}</span>
+                  <span className="text-success">+{c.insertions}</span>{" "}
+                  <span className="text-destructive">−{c.deletions}</span>
                 </span>
               )}
             </button>
@@ -588,7 +617,9 @@ function BranchesTab({
 }) {
   const { can } = useAuth()
   const [newBranch, setNewBranch] = useState("")
-  const branches = usePoll((signal) => get<GitBranch[]>("/git/branches", { path }, signal), 0, [path])
+  const branches = usePoll((signal) => get<GitBranch[]>("/git/branches", { path }, signal), 0, [
+    path,
+  ])
 
   if (branches.error) return <ErrorState error={branches.error} />
   if (branches.loading && !branches.data) return <LoadingRows />
@@ -620,14 +651,17 @@ function BranchesTab({
       <ScrollArea className="min-h-0 flex-1 pr-3">
         <div className="space-y-1">
           {branches.data?.map((b) => (
-            <div key={b.name} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted">
+            <div
+              key={b.name}
+              className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted"
+            >
               <GitBranchIcon
-                className={`size-3.5 shrink-0 ${b.current ? "text-emerald-400" : "text-muted-foreground"}`}
+                className={`size-3.5 shrink-0 ${b.current ? "text-success" : "text-muted-foreground"}`}
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-mono text-xs">
                   {b.name}
-                  {b.current && <span className="ml-2 text-[10px] text-emerald-400">current</span>}
+                  {b.current && <span className="ml-2 text-[10px] text-success">current</span>}
                 </p>
                 {b.subject && (
                   <p className="truncate text-[11px] text-muted-foreground">{b.subject}</p>

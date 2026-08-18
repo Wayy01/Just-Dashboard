@@ -154,7 +154,7 @@ function VHostsTab() {
             </TableHeader>
             <TableBody>
               {data.map((vhost) => (
-                <TableRow key={vhost.path}>
+                <TableRow key={vhost.path} onActivate={() => setEditing(vhost)}>
                   <TableCell>
                     <button
                       className="font-medium hover:underline"
@@ -325,12 +325,12 @@ function ConfigEditorBody({
           <div
             className={
               validation.valid
-                ? "mx-4 flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs"
+                ? "mx-4 flex items-start gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-xs"
                 : "mx-4 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
             }
           >
             {validation.valid ? (
-              <CheckCircle2 className="size-4 shrink-0 text-emerald-400" />
+              <CheckCircle2 className="size-4 shrink-0 text-success" />
             ) : (
               <XCircle className="size-4 shrink-0 text-destructive" />
             )}

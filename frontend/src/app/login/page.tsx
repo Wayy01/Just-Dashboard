@@ -146,7 +146,7 @@ export default function LoginPage() {
         </CardHeader>
 
         {step === "credentials" && (
-          <form onSubmit={submitCredentials}>
+          <form onSubmit={submitCredentials} className="flex flex-col gap-6">
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
@@ -181,7 +181,7 @@ export default function LoginPage() {
         )}
 
         {step === "totp" && (
-          <form onSubmit={submitTotp}>
+          <form onSubmit={submitTotp} className="flex flex-col gap-6">
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="code">Verification code</Label>
@@ -211,45 +211,43 @@ export default function LoginPage() {
         )}
 
         {step === "enroll" && !recoveryCodes && (
-          <>
-            <CardContent className="space-y-4">
-              {!enrollment ? (
-                <Button className="w-full" onClick={beginEnrollment} disabled={busy}>
+          <CardContent className="space-y-4">
+            {!enrollment ? (
+              <Button className="w-full" onClick={beginEnrollment} disabled={busy}>
+                {busy && <Loader2 className="size-4 animate-spin" />}
+                Generate a secret
+              </Button>
+            ) : (
+              <form onSubmit={submitEnrollment} className="flex flex-col gap-4">
+                <div className="space-y-2">
+                  <Label>Secret</Label>
+                  <code className="block rounded-md border bg-muted p-3 font-mono text-xs break-all">
+                    {enrollment.secret}
+                  </code>
+                  <p className="text-xs text-muted-foreground">
+                    Add this to your authenticator app, then enter the code it shows.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="enroll-code">Verification code</Label>
+                  <Input
+                    id="enroll-code"
+                    autoFocus
+                    inputMode="numeric"
+                    placeholder="000000"
+                    className="text-center font-mono text-lg tracking-[0.4em]"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={busy}>
                   {busy && <Loader2 className="size-4 animate-spin" />}
-                  Generate a secret
+                  Enable two-factor
                 </Button>
-              ) : (
-                <form onSubmit={submitEnrollment} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Secret</Label>
-                    <code className="block rounded-md border bg-muted p-3 font-mono text-xs break-all">
-                      {enrollment.secret}
-                    </code>
-                    <p className="text-xs text-muted-foreground">
-                      Add this to your authenticator app, then enter the code it shows.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="enroll-code">Verification code</Label>
-                    <Input
-                      id="enroll-code"
-                      autoFocus
-                      inputMode="numeric"
-                      placeholder="000000"
-                      className="text-center font-mono text-lg tracking-[0.4em]"
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={busy}>
-                    {busy && <Loader2 className="size-4 animate-spin" />}
-                    Enable two-factor
-                  </Button>
-                </form>
-              )}
-            </CardContent>
-          </>
+              </form>
+            )}
+          </CardContent>
         )}
 
         {recoveryCodes && (

@@ -164,9 +164,7 @@ function SecurityTab() {
           <div className="flex items-center gap-2">
             <ShieldCheck
               className={
-                status?.user?.totpEnabled
-                  ? "size-5 text-emerald-400"
-                  : "size-5 text-muted-foreground"
+                status?.user?.totpEnabled ? "size-5 text-success" : "size-5 text-muted-foreground"
               }
             />
             <Badge variant={status?.user?.totpEnabled ? "default" : "secondary"}>

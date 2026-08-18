@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { Cpu, HardDrive, MemoryStick, Network, Server, Timer } from "lucide-react"
 import { get } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { bytes, clock, duration, percent, rate } from "@/lib/format"
 import type { DirEntry, HostInfo, Snapshot } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
@@ -124,13 +125,12 @@ export default function OverviewPage() {
           </span>
         }
         actions={
-          <Badge variant={state === "open" ? "default" : "secondary"} className="gap-1.5">
+          <Badge variant={state === "open" ? "success" : "secondary"} className="gap-1.5">
             <span
-              className={
-                state === "open"
-                  ? "size-1.5 rounded-full bg-emerald-400"
-                  : "size-1.5 rounded-full bg-muted-foreground"
-              }
+              className={cn(
+                "size-1.5 rounded-full",
+                state === "open" ? "bg-success" : "bg-muted-foreground",
+              )}
             />
             {state === "open" ? "live" : state}
           </Badge>
@@ -430,7 +430,7 @@ function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
           {bytes(total.rx)} in · {bytes(total.tx)} out since boot
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
@@ -446,11 +446,10 @@ function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <span
-                      className={
-                        iface.isUp
-                          ? "size-1.5 rounded-full bg-emerald-400"
-                          : "size-1.5 rounded-full bg-muted-foreground"
-                      }
+                      className={cn(
+                        "size-1.5 rounded-full",
+                        iface.isUp ? "bg-success" : "bg-muted-foreground",
+                      )}
                     />
                     <span className="font-mono text-xs">{iface.interface}</span>
                   </div>

@@ -54,8 +54,8 @@ export function XtermPane({
         convertEol: true,
         scrollback: 10000,
         theme: {
-          background: "#09090b",
-          foreground: "#e4e4e7",
+          background: "#0e1117",
+          foreground: "#e3e6ee",
           cursor: "#e4e4e7",
           selectionBackground: "#3f3f46",
           black: "#18181b",
@@ -138,19 +138,18 @@ export function XtermPane({
   return (
     <div
       className={cn(
-        "relative flex flex-col overflow-hidden rounded-lg border bg-[#09090b]",
+        "relative flex flex-col overflow-hidden rounded-lg border bg-[#0e1117]",
         className,
       )}
     >
       <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{path}</span>
-        <Badge variant={state === "open" ? "default" : "secondary"} className="gap-1.5 text-[10px]">
+        <Badge variant={state === "open" ? "success" : "secondary"} className="gap-1.5 text-[10px]">
           <span
-            className={
-              state === "open"
-                ? "size-1.5 rounded-full bg-emerald-900"
-                : "size-1.5 rounded-full bg-muted-foreground"
-            }
+            className={cn(
+              "size-1.5 rounded-full",
+              state === "open" ? "bg-success" : "bg-muted-foreground",
+            )}
           />
           {state}
         </Badge>

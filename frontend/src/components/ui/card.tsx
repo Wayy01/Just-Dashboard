@@ -8,6 +8,12 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="card"
       className={cn(
         "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
+        // A card whose body is a full-bleed table drops its padding on the
+        // edges the table meets, so rows reach the frame on all four sides
+        // rather than only two. Without this the first and last row's hover
+        // highlight stops short of the border and the card looks misaligned.
+        "has-[>[data-slot=card-content]>[data-slot=table-container]]:overflow-hidden has-[>[data-slot=card-content]>[data-slot=table-container]]:pb-0",
+        "has-[>[data-slot=card-content]:first-child>[data-slot=table-container]]:pt-0",
         className,
       )}
       {...props}

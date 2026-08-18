@@ -201,7 +201,11 @@ export default function DockerPage() {
                   {visible.map((container) => {
                     const stat = stats[container.id]
                     return (
-                      <TableRow key={container.id} className="group">
+                      <TableRow
+                        key={container.id}
+                        className="group"
+                        onActivate={() => setSelected(container.id)}
+                      >
                         <TableCell>
                           <button
                             className="text-left font-medium hover:underline"

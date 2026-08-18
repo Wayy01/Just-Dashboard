@@ -113,8 +113,8 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
       {!file && !error && <LoadingRows className="p-4" />}
 
       {file?.binary && (
-        <div className="m-4 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          <ShieldAlert className="size-4 text-amber-400" />
+        <div className="m-4 flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          <ShieldAlert className="size-4 text-warning" />
           This looks like a binary file ({bytes(file.size)}); it is not shown in the editor.
         </div>
       )}

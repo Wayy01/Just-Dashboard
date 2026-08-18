@@ -129,7 +129,7 @@ function PM2Tab() {
             </TableHeader>
             <TableBody>
               {data.processes.map((proc) => (
-                <TableRow key={proc.id} className="group">
+                <TableRow key={proc.id} className="group" onActivate={() => setLogsFor(proc.name)}>
                   <TableCell>
                     <button
                       className="font-medium hover:underline"
@@ -337,7 +337,11 @@ function SystemdTab() {
             </TableHeader>
             <TableBody>
               {visible.slice(0, 200).map((unit) => (
-                <TableRow key={unit.name} className="group">
+                <TableRow
+                  key={unit.name}
+                  className="group"
+                  onActivate={() => setJournalFor(unit.name)}
+                >
                   <TableCell>
                     <button
                       className="font-medium hover:underline"
@@ -750,7 +754,9 @@ function CronTab() {
                         {/* /etc/crontab and /etc/cron.d put the account between
                             the schedule and the command; a personal crontab
                             does not, so this column only appears when parsed. */}
-                        {job.user && <span className="w-20 shrink-0 text-muted-foreground">{job.user}</span>}
+                        {job.user && (
+                          <span className="w-20 shrink-0 text-muted-foreground">{job.user}</span>
+                        )}
                         <span className="break-all">{job.command}</span>
                       </div>
                     ))}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { Fragment, useMemo, useRef, useState } from "react"
 import {
   ArrowUp,
   Download,
@@ -30,7 +30,15 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
 import {
   Table,
   TableBody,
@@ -107,7 +115,7 @@ export default function FilesPage() {
     <>
       <PageHeader
         title="Files"
-        description={<span className="font-mono text-xs">{listing.data?.path ?? path}</span>}
+        description="Browse, edit and transfer files on the host"
         actions={
           <>
             <SearchDialog path={path} onOpen={(p, isDir) => (isDir ? setPath(p) : setEditing(p))} />
@@ -147,37 +155,54 @@ export default function FilesPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-1 text-sm">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          onClick={() => setPath("/")}
-          title="Root"
-        >
-          <Home className="size-4" />
-        </Button>
-        {crumbs.slice(1).map((crumb) => (
-          <span key={crumb.href} className="flex items-center gap-1">
-            <span className="text-muted-foreground">/</span>
-            <button className="hover:underline" onClick={() => setPath(crumb.href)}>
-              {crumb.label}
-            </button>
-          </span>
-        ))}
-        <span className="flex-1" />
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
-          Show hidden
-        </label>
-      </div>
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b">
+          <Breadcrumb>
+            <BreadcrumbList className="gap-1 sm:gap-1">
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <button
+                    type="button"
+                    className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => setPath("/")}
+                  >
+                    <Home className="size-4" />
+                    <span className="sr-only">Root</span>
+                  </button>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              {crumbs.slice(1).map((crumb, i, all) => (
+                <Fragment key={crumb.href}>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    {i === all.length - 1 ? (
+                      <BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
+                    ) : (
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          className="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
+                          onClick={() => setPath(crumb.href)}
+                        >
+                          {crumb.label}
+                        </button>
+                      </BreadcrumbLink>
+                    )}
+                  </BreadcrumbItem>
+                </Fragment>
+              ))}
+            </BreadcrumbList>
+          </Breadcrumb>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
+            Show hidden
+          </label>
+        </CardHeader>
 
-      {listing.loading && <LoadingRows />}
-      {listing.error && <ErrorState error={listing.error} />}
-
-      {listing.data && (
-        <Card>
-          <CardContent className="p-0">
+        <CardContent className="p-0">
+          {listing.loading && <LoadingRows className="p-4" />}
+          {listing.error && <ErrorState error={listing.error} className="m-4" />}
+          {listing.data && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -192,16 +217,16 @@ export default function FilesPage() {
               </TableHeader>
               <TableBody>
                 {path !== "/" && (
-                  <TableRow>
+                  <TableRow
+                    className="select-none"
+                    onActivate={() => setPath(listing.data!.parent)}
+                  >
                     <TableCell />
                     <TableCell colSpan={6}>
-                      <button
-                        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-                        onClick={() => setPath(listing.data!.parent)}
-                      >
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
                         <ArrowUp className="size-4" />
                         Parent directory
-                      </button>
+                      </span>
                     </TableCell>
                   </TableRow>
                 )}
@@ -250,9 +275,9 @@ export default function FilesPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       <FileEditorSheet
         path={editing}
@@ -278,15 +303,40 @@ function FileRow({
   onDelete: () => void
 }) {
   const { can } = useAuth()
+  // Double-click opens, the way every file manager works. The name stays
+  // clickable on its own for a single deliberate click, but hitting those few
+  // characters exactly is no longer the only way in.
+  const openOnEnter = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.key !== "Enter" || e.target !== e.currentTarget) return
+    e.preventDefault()
+    onOpen()
+  }
+
   return (
-    <TableRow className="group">
-      <TableCell>
-        <Checkbox checked={selected} onCheckedChange={(v) => onToggle(v === true)} />
+    <TableRow
+      className="group cursor-pointer select-none"
+      data-state={selected ? "selected" : undefined}
+      tabIndex={0}
+      onDoubleClick={onOpen}
+      onKeyDown={openOnEnter}
+    >
+      {/* The controls carry their own gestures; a double-click on them is not
+          a request to open the row underneath. */}
+      <TableCell onDoubleClick={(e) => e.stopPropagation()}>
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(v) => onToggle(v === true)}
+          aria-label={`Select ${entry.name}`}
+        />
       </TableCell>
       <TableCell>
-        <button className="flex items-center gap-2 text-left hover:underline" onClick={onOpen}>
+        <button
+          className="flex max-w-full items-center gap-2 text-left hover:underline"
+          onClick={onOpen}
+          title={entry.name}
+        >
           {entry.isDir ? (
-            <Folder className="size-4 shrink-0 text-sky-400" />
+            <Folder className="size-4 shrink-0 fill-primary/20 text-primary" />
           ) : entry.isSymlink ? (
             <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
           ) : (
@@ -315,8 +365,8 @@ function FileRow({
         {entry.owner}:{entry.group}
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">{entry.modeOctal}</TableCell>
-      <TableCell>
-        <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+      <TableCell onDoubleClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {!entry.isDir && (
             <>
               <Button size="icon" variant="ghost" className="size-7" title="Edit" onClick={onOpen}>

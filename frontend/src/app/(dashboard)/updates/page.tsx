@@ -33,17 +33,15 @@ export default function UpdatesPage() {
   const [filter, setFilter] = useState("")
   const [applying, setApplying] = useState(false)
 
-  const report = usePoll(
-    (signal) => get<UpdateReport>("/updates/", undefined, signal),
-    300000,
-  )
+  const report = usePoll((signal) => get<UpdateReport>("/updates/", undefined, signal), 300000)
 
   const visible = useMemo(() => {
     const list = report.data?.packages ?? []
     const needle = filter.trim().toLowerCase()
     if (!needle) return list
     return list.filter(
-      (p) => p.name.toLowerCase().includes(needle) || (p.origin ?? "").toLowerCase().includes(needle),
+      (p) =>
+        p.name.toLowerCase().includes(needle) || (p.origin ?? "").toLowerCase().includes(needle),
     )
   }, [report.data, filter])
 
