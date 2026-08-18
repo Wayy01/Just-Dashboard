@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
@@ -89,10 +90,18 @@ func principalKind(p *Principal) string {
 	return p.Kind
 }
 
+// apiVersionSegment matches the leading "v1/" of a trimmed API path.
+var apiVersionSegment = regexp.MustCompile(`^v[0-9]+/`)
+
 // defaultAction derives a stable label from the path so an un-annotated route
 // still produces a meaningful audit entry.
+//
+// The version segment is stripped along with the prefix: an audit trail should
+// read "docker.container.restart" for the life of the action, not gain a "v1."
+// today and a "v2." the day the API is revised.
 func defaultAction(r *http.Request) string {
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
+	path = apiVersionSegment.ReplaceAllString(path, "")
 	parts := strings.Split(path, "/")
 	keep := make([]string, 0, 3)
 	for _, p := range parts {

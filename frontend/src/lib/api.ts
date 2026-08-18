@@ -9,7 +9,7 @@
  *    calling the API directly.
  */
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api"
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1"
 
 export type ApiErrorBody = {
   error: { code: string; message: string }

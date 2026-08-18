@@ -56,7 +56,7 @@ func mapDeployError(err error) error {
 }
 
 func (s *Server) enrichProject(r *http.Request, p *deploy.Project) {
-	p.HookURL = "/api/hooks/deploy/" + p.HookID
+	p.HookURL = "/api/v1/hooks/deploy/" + p.HookID
 	if state, err := s.modules.deployer.Inspect(r.Context(), p); err == nil {
 		p.CurrentSHA, p.CurrentRef, p.Dirty = state.SHA, state.Ref, state.Dirty
 	}

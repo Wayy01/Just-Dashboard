@@ -193,7 +193,7 @@ their password and enroll 2FA before anything works.
 For scripting. Create one under **Account → API tokens**, then:
 
 ```bash
-curl -H "Authorization: Bearer vpsd_…" https://localhost:8443/api/system/metrics
+curl -H "Authorization: Bearer vpsd_…" https://localhost:8443/api/v1/system/metrics
 ```
 
 A token can narrow its creator's role but never widen it, and it is demoted
@@ -212,7 +212,7 @@ once. Point CI at it:
 BODY='{"ref":"refs/heads/main"}'
 SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
 
-curl -X POST "https://your-dashboard:8443/api/hooks/deploy/$HOOK_ID" \
+curl -X POST "https://your-dashboard:8443/api/v1/hooks/deploy/$HOOK_ID" \
   -H "Content-Type: application/json" \
   -H "X-Hub-Signature-256: $SIG" \
   -d "$BODY"

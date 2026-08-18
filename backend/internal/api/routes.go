@@ -33,7 +33,7 @@ func (s *Server) Routes() http.Handler {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	r.Route("/api", func(r chi.Router) {
+	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(httpx.AllowlistCIDRs(s.Cfg.AllowedCIDRs, s.Log))
 
 		// Deploy webhooks authenticate with their own per-project HMAC
