@@ -4,7 +4,9 @@ import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/dbx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/files"
+	"github.com/Wayy01/vps-dashboard/backend/internal/linuxusers"
 	"github.com/Wayy01/vps-dashboard/backend/internal/logsx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/netsec"
 	"github.com/Wayy01/vps-dashboard/backend/internal/procs"
 	"github.com/Wayy01/vps-dashboard/backend/internal/proxysvc"
 	"github.com/Wayy01/vps-dashboard/backend/internal/sysinfo"
@@ -26,7 +28,9 @@ type moduleSet struct {
 	term    *term.Manager
 	files   *files.Service
 	proxy   *proxysvc.Service
-	dbs     *dbx.Manager
+	dbs        *dbx.Manager
+	linuxUsers *linuxusers.Service
+	netsec     *netsec.Service
 }
 
 func (s *Server) initModules() {
@@ -41,9 +45,9 @@ func (s *Server) initModules() {
 	s.modules.files = files.New(s.Cfg.FileRoots)
 	s.modules.proxy = proxysvc.New(s.Cfg.NginxDir, s.Cfg.CaddyFile)
 	s.modules.dbs = dbx.NewManager()
+	s.modules.linuxUsers = linuxusers.New()
+	s.modules.netsec = netsec.New()
 }
 
-func (s *Server) mountLinuxUserRoutes(r chi.Router) {}
-func (s *Server) mountNetSecRoutes(r chi.Router)    {}
 func (s *Server) mountBackupRoutes(r chi.Router)    {}
 func (s *Server) mountDeployRoutes(r chi.Router)    {}

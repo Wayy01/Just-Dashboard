@@ -1,0 +1,160 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
+	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/netsec"
+	"github.com/go-chi/chi/v5"
+)
+
+func (s *Server) mountNetSecRoutes(r chi.Router) {
+	r.Route("/firewall", func(r chi.Router) {
+		r.Method(http.MethodGet, "/", s.handle(s.handleFirewallStatus))
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodPost, "/rules", s.handle(s.handleFirewallAddRule))
+			r.Method(http.MethodPost, "/enabled", s.handle(s.handleFirewallToggle))
+			r.Method(http.MethodDelete, "/rules/{number}", s.handle(s.handleFirewallDeleteRule))
+		})
+	})
+
+	r.Route("/fail2ban", func(r chi.Router) {
+		r.Method(http.MethodGet, "/", s.handle(s.handleFail2banStatus))
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodPost, "/{jail}/unban", s.handle(s.handleFail2banUnban))
+			r.Method(http.MethodPost, "/{jail}/ban", s.handle(s.handleFail2banBan))
+		})
+	})
+
+	r.Method(http.MethodGet, "/ssh-sessions", s.handle(s.handleSSHSessions))
+}
+
+func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) error {
+	st, err := s.modules.netsec.Status(r.Context())
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, st)
+	return nil
+}
+
+func (s *Server) handleFirewallAddRule(w http.ResponseWriter, r *http.Request) error {
+	var req netsec.RuleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	// The caller's own address is handed to the firewall layer so it can
+	// refuse a rule that would sever this very connection.
+	out, err := s.modules.netsec.AddRule(r.Context(), req, httpx.ClientIP(r))
+	if err != nil {
+		if errors.Is(err, netsec.ErrLockout) {
+			httpx.SetAudit(r, "firewall.rule.add", req.Port, map[string]any{"result": "refused_lockout"})
+			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
+		}
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "firewall.rule.add", req.Port, req)
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request) error {
+	number, err := strconv.Atoi(chi.URLParam(r, "number"))
+	if err != nil {
+		return httpx.BadRequest("invalid rule number")
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, "delete rule "+strconv.Itoa(number)); err != nil {
+		return err
+	}
+	out, err := s.modules.netsec.DeleteRule(r.Context(), number)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "firewall.rule.delete", strconv.Itoa(number), nil)
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+type firewallToggleRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (s *Server) handleFirewallToggle(w http.ResponseWriter, r *http.Request) error {
+	var req firewallToggleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	// Enabling ufw applies its default-deny policy immediately; if the
+	// dashboard's own port is not already allowed, that is a lockout.
+	phrase := "disable firewall"
+	if req.Enabled {
+		phrase = "enable firewall"
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
+		return err
+	}
+	out, err := s.modules.netsec.SetEnabled(r.Context(), req.Enabled)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "firewall.toggle", "", map[string]any{"enabled": req.Enabled})
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+func (s *Server) handleFail2banStatus(w http.ResponseWriter, r *http.Request) error {
+	st, err := s.modules.netsec.Fail2banStatus(r.Context())
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, st)
+	return nil
+}
+
+type banRequest struct {
+	IP string `json:"ip"`
+}
+
+func (s *Server) handleFail2banUnban(w http.ResponseWriter, r *http.Request) error {
+	var req banRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	jail := chi.URLParam(r, "jail")
+	out, err := s.modules.netsec.Unban(r.Context(), jail, req.IP)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "fail2ban.unban", jail, map[string]any{"ip": req.IP})
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+func (s *Server) handleFail2banBan(w http.ResponseWriter, r *http.Request) error {
+	var req banRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	jail := chi.URLParam(r, "jail")
+	out, err := s.modules.netsec.Ban(r.Context(), jail, req.IP)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "fail2ban.ban", jail, map[string]any{"ip": req.IP})
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+func (s *Server) handleSSHSessions(w http.ResponseWriter, r *http.Request) error {
+	sessions, err := s.modules.netsec.Sessions(r.Context())
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, sessions)
+	return nil
+}
