@@ -23,12 +23,12 @@ func (r Role) Valid() bool {
 type Capability string
 
 const (
-	CapRead            Capability = "read"             // any authenticated principal
-	CapServiceControl  Capability = "service.control"  // start/stop/restart containers, units, processes
-	CapFileWrite       Capability = "file.write"       // mutate the filesystem
-	CapTerminal        Capability = "terminal"         // PTY and container exec
-	CapDestructive     Capability = "destructive"      // remove, prune, kill, restore
-	CapSystemAdmin     Capability = "system.admin"     // linux users, firewall, dashboard accounts, tokens
+	CapRead           Capability = "read"            // any authenticated principal
+	CapServiceControl Capability = "service.control" // start/stop/restart containers, units, processes
+	CapFileWrite      Capability = "file.write"      // mutate the filesystem
+	CapTerminal       Capability = "terminal"        // PTY and container exec
+	CapDestructive    Capability = "destructive"     // remove, prune, kill, restore
+	CapSystemAdmin    Capability = "system.admin"    // linux users, firewall, dashboard accounts, tokens
 )
 
 var rolePermissions = map[Role]map[Capability]bool{

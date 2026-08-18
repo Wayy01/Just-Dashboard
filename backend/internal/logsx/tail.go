@@ -265,10 +265,10 @@ type SearchOptions struct {
 }
 
 type SearchResult struct {
-	Lines    []Line `json:"lines"`
-	Scanned  int    `json:"scanned"`
-	Matched  int    `json:"matched"`
-	Truncated bool  `json:"truncated"`
+	Lines     []Line `json:"lines"`
+	Scanned   int    `json:"scanned"`
+	Matched   int    `json:"matched"`
+	Truncated bool   `json:"truncated"`
 }
 
 // Search greps a file server-side. Doing it here rather than shipping the

@@ -44,15 +44,15 @@ type FirewallStatus struct {
 }
 
 type Rule struct {
-	Number   int    `json:"number,omitempty"`
-	Action   string `json:"action"`
-	Protocol string `json:"protocol,omitempty"`
-	From     string `json:"from"`
-	To       string `json:"to"`
-	Port     string `json:"port,omitempty"`
+	Number    int    `json:"number,omitempty"`
+	Action    string `json:"action"`
+	Protocol  string `json:"protocol,omitempty"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Port      string `json:"port,omitempty"`
 	Direction string `json:"direction,omitempty"`
-	Comment  string `json:"comment,omitempty"`
-	Raw      string `json:"raw"`
+	Comment   string `json:"comment,omitempty"`
+	Raw       string `json:"raw"`
 }
 
 type Service struct{}
@@ -77,6 +77,7 @@ func (s *Service) Status(ctx context.Context) (*FirewallStatus, error) {
 }
 
 // ufwNumberedRe matches ufw's numbered status output:
+//
 //	[ 1] 22/tcp   ALLOW IN  Anywhere   # ssh
 var ufwNumberedRe = regexp.MustCompile(`^\[\s*(\d+)\]\s+(.*)$`)
 

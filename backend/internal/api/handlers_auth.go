@@ -18,12 +18,12 @@ type loginRequest struct {
 }
 
 type authStatus struct {
-	Authenticated bool               `json:"authenticated"`
-	User          *auth.User         `json:"user,omitempty"`
-	Capabilities  []auth.Capability  `json:"capabilities,omitempty"`
-	NeedsTOTP     bool               `json:"needsTotp"`
-	NeedsEnroll   bool               `json:"needsEnrollment"`
-	Require2FA    bool               `json:"require2fa"`
+	Authenticated bool              `json:"authenticated"`
+	User          *auth.User        `json:"user,omitempty"`
+	Capabilities  []auth.Capability `json:"capabilities,omitempty"`
+	NeedsTOTP     bool              `json:"needsTotp"`
+	NeedsEnroll   bool              `json:"needsEnrollment"`
+	Require2FA    bool              `json:"require2fa"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) error {

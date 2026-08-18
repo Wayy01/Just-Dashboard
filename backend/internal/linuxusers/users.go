@@ -47,20 +47,20 @@ func ValidateUsername(name string) error {
 }
 
 type User struct {
-	Username  string     `json:"username"`
-	UID       int        `json:"uid"`
-	GID       int        `json:"gid"`
-	Comment   string     `json:"comment"`
-	Home      string     `json:"home"`
-	Shell     string     `json:"shell"`
-	Groups    []string   `json:"groups"`
-	System    bool       `json:"system"`
-	Locked    bool       `json:"locked"`
-	NoPassword bool      `json:"noPassword"`
-	LastLogin *time.Time `json:"lastLogin,omitempty"`
-	LastFrom  string     `json:"lastLoginFrom,omitempty"`
-	SSHKeys   int        `json:"sshKeyCount"`
-	CanLogin  bool       `json:"canLogin"`
+	Username   string     `json:"username"`
+	UID        int        `json:"uid"`
+	GID        int        `json:"gid"`
+	Comment    string     `json:"comment"`
+	Home       string     `json:"home"`
+	Shell      string     `json:"shell"`
+	Groups     []string   `json:"groups"`
+	System     bool       `json:"system"`
+	Locked     bool       `json:"locked"`
+	NoPassword bool       `json:"noPassword"`
+	LastLogin  *time.Time `json:"lastLogin,omitempty"`
+	LastFrom   string     `json:"lastLoginFrom,omitempty"`
+	SSHKeys    int        `json:"sshKeyCount"`
+	CanLogin   bool       `json:"canLogin"`
 }
 
 type Service struct{}
@@ -151,7 +151,7 @@ func parsePasswd(path string) ([]User, error) {
 			Username: fields[0], UID: uid, GID: gid,
 			Comment: strings.TrimRight(fields[4], ","),
 			Home:    fields[5], Shell: fields[6],
-			Groups:  []string{},
+			Groups: []string{},
 		})
 	}
 	return out, sc.Err()

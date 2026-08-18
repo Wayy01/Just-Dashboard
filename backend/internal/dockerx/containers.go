@@ -158,12 +158,12 @@ type MountPoint struct {
 }
 
 type NetworkBinding struct {
-	Name        string   `json:"name"`
-	IPAddress   string   `json:"ipAddress"`
-	Gateway     string   `json:"gateway"`
-	MacAddress  string   `json:"macAddress"`
-	Aliases     []string `json:"aliases"`
-	NetworkID   string   `json:"networkId"`
+	Name       string   `json:"name"`
+	IPAddress  string   `json:"ipAddress"`
+	Gateway    string   `json:"gateway"`
+	MacAddress string   `json:"macAddress"`
+	Aliases    []string `json:"aliases"`
+	NetworkID  string   `json:"networkId"`
 }
 
 // Inspect returns the full view an operator needs when debugging a container.
@@ -181,11 +181,11 @@ func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, erro
 	}
 	d := &ContainerDetail{
 		Container: Container{
-			ID:      insp.ID,
-			Name:    strings.TrimPrefix(insp.Name, "/"),
-			Names:   []string{strings.TrimPrefix(insp.Name, "/")},
-			ImageID: insp.Image,
-			Ports:   []Port{},
+			ID:       insp.ID,
+			Name:     strings.TrimPrefix(insp.Name, "/"),
+			Names:    []string{strings.TrimPrefix(insp.Name, "/")},
+			ImageID:  insp.Image,
+			Ports:    []Port{},
 			Networks: []string{},
 		},
 		Env:         []string{},

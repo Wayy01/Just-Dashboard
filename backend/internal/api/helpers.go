@@ -51,3 +51,13 @@ func (s *Server) recordAudit(r *http.Request, action, target string, detail any)
 		Detail:   audit.Detail(detail),
 	})
 }
+
+// detachedContext is for work that must outlive the request that started it —
+// a backup transfer keeps running after the browser has its 202.
+func detachedContext(seconds int) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), time.Duration(seconds)*time.Second)
+}
+
+func timeoutCtxSeconds(r *http.Request, seconds int) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), time.Duration(seconds)*time.Second)
+}

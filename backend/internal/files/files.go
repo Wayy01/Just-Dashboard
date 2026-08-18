@@ -95,28 +95,28 @@ func (s *Service) within(abs string) bool {
 }
 
 type Entry struct {
-	Name        string     `json:"name"`
-	Path        string     `json:"path"`
-	Size        int64      `json:"size"`
-	Mode        string     `json:"mode"`
-	ModeOctal   string     `json:"modeOctal"`
-	IsDir       bool       `json:"isDir"`
-	IsSymlink   bool       `json:"isSymlink"`
-	LinkTarget  string     `json:"linkTarget,omitempty"`
-	LinkBroken  bool       `json:"linkBroken,omitempty"`
-	Modified    time.Time  `json:"modified"`
-	Owner       string     `json:"owner"`
-	Group       string     `json:"group"`
-	UID         uint32     `json:"uid"`
-	GID         uint32     `json:"gid"`
-	MimeHint    string     `json:"mimeHint,omitempty"`
-	ChildCount  *int       `json:"childCount,omitempty"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	Size       int64     `json:"size"`
+	Mode       string    `json:"mode"`
+	ModeOctal  string    `json:"modeOctal"`
+	IsDir      bool      `json:"isDir"`
+	IsSymlink  bool      `json:"isSymlink"`
+	LinkTarget string    `json:"linkTarget,omitempty"`
+	LinkBroken bool      `json:"linkBroken,omitempty"`
+	Modified   time.Time `json:"modified"`
+	Owner      string    `json:"owner"`
+	Group      string    `json:"group"`
+	UID        uint32    `json:"uid"`
+	GID        uint32    `json:"gid"`
+	MimeHint   string    `json:"mimeHint,omitempty"`
+	ChildCount *int      `json:"childCount,omitempty"`
 }
 
 type Listing struct {
-	Path    string  `json:"path"`
-	Parent  string  `json:"parent"`
-	Entries []Entry `json:"entries"`
+	Path    string   `json:"path"`
+	Parent  string   `json:"parent"`
+	Entries []Entry  `json:"entries"`
 	Roots   []string `json:"roots"`
 }
 

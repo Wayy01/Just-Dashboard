@@ -34,7 +34,7 @@ func NewManager(enabled bool, shell string) *Manager {
 	return m
 }
 
-func (m *Manager) Enabled() bool  { return m.enabled }
+func (m *Manager) Enabled() bool       { return m.enabled }
 func (m *Manager) TmuxAvailable() bool { return m.useTmux }
 
 type CreateOptions struct {

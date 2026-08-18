@@ -12,19 +12,19 @@ import (
 // percentages and rates a dashboard needs. Doing the arithmetic here keeps the
 // frontend from having to understand cgroup counter semantics.
 type ContainerStats struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	TS          time.Time `json:"ts"`
-	CPUPercent  float64   `json:"cpuPercent"`
-	MemUsage    uint64    `json:"memUsage"`
-	MemLimit    uint64    `json:"memLimit"`
-	MemPercent  float64   `json:"memPercent"`
-	NetRx       uint64    `json:"netRx"`
-	NetTx       uint64    `json:"netTx"`
-	BlockRead   uint64    `json:"blockRead"`
-	BlockWrite  uint64    `json:"blockWrite"`
-	PIDs        uint64    `json:"pids"`
-	OnlineCPUs  uint32    `json:"onlineCpus"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	TS         time.Time `json:"ts"`
+	CPUPercent float64   `json:"cpuPercent"`
+	MemUsage   uint64    `json:"memUsage"`
+	MemLimit   uint64    `json:"memLimit"`
+	MemPercent float64   `json:"memPercent"`
+	NetRx      uint64    `json:"netRx"`
+	NetTx      uint64    `json:"netTx"`
+	BlockRead  uint64    `json:"blockRead"`
+	BlockWrite uint64    `json:"blockWrite"`
+	PIDs       uint64    `json:"pids"`
+	OnlineCPUs uint32    `json:"onlineCpus"`
 }
 
 // StatsStream follows one container's stats until the context ends.

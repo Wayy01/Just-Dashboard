@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -55,3 +56,19 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Servic
 }
 
 func (s *Server) handle(fn httpx.Handler) http.Handler { return fn }
+
+// Start brings up the background workers the API owns. It is separate from
+// New so that a failure to schedule backups is reported by main rather than
+// swallowed during construction.
+func (s *Server) Start(ctx context.Context) error {
+	return s.modules.backupSched.Start(ctx)
+}
+
+// Shutdown releases the resources that outlive a request: database pools,
+// live PTY sessions and the backup scheduler.
+func (s *Server) Shutdown() {
+	s.modules.backupSched.Stop()
+	s.modules.term.Shutdown()
+	s.modules.dbs.Shutdown()
+	s.modules.docker.Close()
+}

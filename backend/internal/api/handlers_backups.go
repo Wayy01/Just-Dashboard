@@ -1,0 +1,282 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
+	"github.com/Wayy01/vps-dashboard/backend/internal/backups"
+	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
+	"github.com/go-chi/chi/v5"
+)
+
+func (s *Server) mountBackupRoutes(r chi.Router) {
+	r.Route("/backups", func(r chi.Router) {
+		r.Method(http.MethodGet, "/", s.handle(s.handleBackupJobList))
+		r.Method(http.MethodGet, "/{id}", s.handle(s.handleBackupJobGet))
+		r.Method(http.MethodGet, "/{id}/runs", s.handle(s.handleBackupRuns))
+		r.Method(http.MethodGet, "/runs/{runID}/contents", s.handle(s.handleBackupContents))
+
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodPost, "/", s.handle(s.handleBackupJobCreate))
+			r.Method(http.MethodPut, "/{id}", s.handle(s.handleBackupJobUpdate))
+			r.Method(http.MethodPost, "/{id}/test", s.handle(s.handleBackupTestTarget))
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapServiceControl))
+			r.Method(http.MethodPost, "/{id}/run", s.handle(s.handleBackupRunNow))
+		})
+		s.destructive(r, func(r chi.Router) {
+			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleBackupJobDelete))
+			r.Method(http.MethodPost, "/runs/{runID}/restore", s.handle(s.handleBackupRestore))
+		})
+	})
+}
+
+// jobRequest carries credentials inbound only. They are sealed on arrival and
+// never echoed back in any response.
+type jobRequest struct {
+	Name       string                 `json:"name"`
+	Sources    []string               `json:"sources"`
+	Excludes   []string               `json:"excludes"`
+	TargetKind backups.TargetKind     `json:"targetKind"`
+	Target     backups.TargetConfig   `json:"target"`
+	Schedule   string                 `json:"schedule"`
+	Retention  int                    `json:"retention"`
+	Enabled    bool                   `json:"enabled"`
+	Secrets    *backups.TargetSecrets `json:"secrets,omitempty"`
+}
+
+func (req *jobRequest) toJob() *backups.Job {
+	return &backups.Job{
+		Name: req.Name, Sources: req.Sources, Excludes: req.Excludes,
+		TargetKind: req.TargetKind, Target: req.Target,
+		Schedule: req.Schedule, Retention: req.Retention, Enabled: req.Enabled,
+	}
+}
+
+func mapBackupError(err error) error {
+	switch {
+	case errors.Is(err, backups.ErrNotFound):
+		return httpx.ErrNotFound
+	case errors.Is(err, backups.ErrAlreadyRunning):
+		return httpx.Err(http.StatusConflict, "already_running", err.Error())
+	default:
+		return httpx.BadRequest("%v", err)
+	}
+}
+
+func (s *Server) handleBackupJobList(w http.ResponseWriter, r *http.Request) error {
+	jobs, err := s.modules.backupStore.List(r.Context())
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	for _, j := range jobs {
+		j.NextRun = s.modules.backupSched.NextRun(j.ID)
+	}
+	httpx.JSON(w, http.StatusOK, jobs)
+	return nil
+}
+
+func (s *Server) handleBackupJobGet(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	job, err := s.modules.backupStore.Get(r.Context(), id)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	job.NextRun = s.modules.backupSched.NextRun(id)
+	if last, err := s.modules.backupStore.LastRun(r.Context(), id); err == nil {
+		job.LastRun = last
+	}
+	httpx.JSON(w, http.StatusOK, job)
+	return nil
+}
+
+func (s *Server) handleBackupJobCreate(w http.ResponseWriter, r *http.Request) error {
+	var req jobRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if err := backups.ValidateSchedule(req.Schedule); err != nil {
+		return httpx.BadRequest("schedule is not a valid cron expression: %v", err)
+	}
+	job, err := s.modules.backupStore.Create(r.Context(), req.toJob(), req.Secrets)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	if err := s.modules.backupSched.Reload(r.Context()); err != nil {
+		s.Log.Warn("backup schedule reload failed", "err", err)
+	}
+	httpx.SetAudit(r, "backup.job.create", job.Name,
+		map[string]any{"target": job.TargetKind, "schedule": job.Schedule, "sources": len(job.Sources)})
+	httpx.JSON(w, http.StatusCreated, job)
+	return nil
+}
+
+func (s *Server) handleBackupJobUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req jobRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if err := backups.ValidateSchedule(req.Schedule); err != nil {
+		return httpx.BadRequest("schedule is not a valid cron expression: %v", err)
+	}
+	job, err := s.modules.backupStore.Update(r.Context(), id, req.toJob(), req.Secrets)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	if err := s.modules.backupSched.Reload(r.Context()); err != nil {
+		s.Log.Warn("backup schedule reload failed", "err", err)
+	}
+	httpx.SetAudit(r, "backup.job.update", job.Name,
+		map[string]any{"target": job.TargetKind, "schedule": job.Schedule, "enabled": job.Enabled})
+	httpx.JSON(w, http.StatusOK, job)
+	return nil
+}
+
+func (s *Server) handleBackupJobDelete(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	job, err := s.modules.backupStore.Get(r.Context(), id)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, job.Name); err != nil {
+		return err
+	}
+	if err := s.modules.backupStore.Delete(r.Context(), id); err != nil {
+		return httpx.Internal(err)
+	}
+	if err := s.modules.backupSched.Reload(r.Context()); err != nil {
+		s.Log.Warn("backup schedule reload failed", "err", err)
+	}
+	// Stored artifacts are deliberately left alone: deleting the job should
+	// not destroy the backups it already took.
+	httpx.SetAudit(r, "backup.job.delete", job.Name, nil)
+	httpx.NoContent(w)
+	return nil
+}
+
+func (s *Server) handleBackupTestTarget(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	job, err := s.modules.backupStore.Get(r.Context(), id)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	secrets, err := s.modules.backupStore.Secrets(r.Context(), id)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	if err := backups.TestTarget(r.Context(), job, secrets); err != nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return nil
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
+}
+
+func (s *Server) handleBackupRunNow(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	job, err := s.modules.backupStore.Get(r.Context(), id)
+	if err != nil {
+		return mapBackupError(err)
+	}
+	if s.modules.backupRunner.IsRunning(id) {
+		return httpx.Err(http.StatusConflict, "already_running", backups.ErrAlreadyRunning.Error())
+	}
+	// A backup can take hours, so it runs detached from the request rather
+	// than holding a connection open for the whole transfer. The run row that
+	// Execute creates is the progress record the UI polls.
+	go func() {
+		ctx, cancel := detachedContext(12 * 60 * 60)
+		defer cancel()
+		if _, err := s.modules.backupRunner.Execute(ctx, id, "manual"); err != nil {
+			s.Log.Error("manual backup failed", "job", job.Name, "err", err)
+		}
+	}()
+	httpx.SetAudit(r, "backup.run", job.Name, nil)
+	httpx.JSON(w, http.StatusAccepted, map[string]any{"started": true, "job": job.Name})
+	return nil
+}
+
+func (s *Server) handleBackupRuns(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	runs, err := s.modules.backupStore.Runs(r.Context(), id, atoiDefault(r.URL.Query().Get("limit"), 50))
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"runs":    runs,
+		"running": s.modules.backupRunner.IsRunning(id),
+	})
+	return nil
+}
+
+func (s *Server) handleBackupContents(w http.ResponseWriter, r *http.Request) error {
+	runID, err := strconv.ParseInt(chi.URLParam(r, "runID"), 10, 64)
+	if err != nil {
+		return httpx.BadRequest("invalid run id")
+	}
+	entries, err := s.modules.backupRunner.ListArchive(r.Context(), runID,
+		atoiDefault(r.URL.Query().Get("limit"), 2000))
+	if err != nil {
+		return mapBackupError(err)
+	}
+	httpx.JSON(w, http.StatusOK, entries)
+	return nil
+}
+
+type restoreRequest struct {
+	Destination string `json:"destination"`
+}
+
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) error {
+	runID, err := strconv.ParseInt(chi.URLParam(r, "runID"), 10, 64)
+	if err != nil {
+		return httpx.BadRequest("invalid run id")
+	}
+	var req restoreRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Destination == "" {
+		return httpx.BadRequest("destination is required")
+	}
+	// A restore overwrites whatever is at the destination, so the operator
+	// types the destination path back to confirm they read it.
+	if err := httpx.RequireTypedConfirmation(w, r, req.Destination); err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtxSeconds(r, 6*60*60)
+	defer cancel()
+	res, err := s.modules.backupRunner.Restore(ctx, runID, req.Destination)
+	if err != nil {
+		httpx.SetAudit(r, "backup.restore", strconv.FormatInt(runID, 10),
+			map[string]any{"destination": req.Destination, "error": err.Error()})
+		return mapBackupError(err)
+	}
+	httpx.SetAudit(r, "backup.restore", strconv.FormatInt(runID, 10),
+		map[string]any{"destination": res.Destination, "entries": res.Entries, "bytes": res.Bytes})
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}

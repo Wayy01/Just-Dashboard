@@ -22,9 +22,9 @@ import (
 )
 
 var (
-	ErrNoProxy      = errors.New("neither nginx nor Caddy was found on this host")
-	ErrInvalidConf  = errors.New("configuration failed validation")
-	ErrUnsafePath   = errors.New("path is outside the proxy configuration directory")
+	ErrNoProxy     = errors.New("neither nginx nor Caddy was found on this host")
+	ErrInvalidConf = errors.New("configuration failed validation")
+	ErrUnsafePath  = errors.New("path is outside the proxy configuration directory")
 )
 
 type Kind string
@@ -44,13 +44,13 @@ func New(nginxDir, caddyFile string) *Service {
 }
 
 type Availability struct {
-	Nginx      bool   `json:"nginx"`
-	Caddy      bool   `json:"caddy"`
-	NginxVer   string `json:"nginxVersion,omitempty"`
-	CaddyVer   string `json:"caddyVersion,omitempty"`
-	NginxDir   string `json:"nginxDir"`
-	CaddyFile  string `json:"caddyFile"`
-	Certbot    bool   `json:"certbot"`
+	Nginx     bool   `json:"nginx"`
+	Caddy     bool   `json:"caddy"`
+	NginxVer  string `json:"nginxVersion,omitempty"`
+	CaddyVer  string `json:"caddyVersion,omitempty"`
+	NginxDir  string `json:"nginxDir"`
+	CaddyFile string `json:"caddyFile"`
+	Certbot   bool   `json:"certbot"`
 }
 
 func (s *Service) Availability(ctx context.Context) Availability {
@@ -77,18 +77,18 @@ func (s *Service) Availability(ctx context.Context) Availability {
 // symlink in sites-enabled, which is the convention Debian-family packages use
 // and the one operators expect the toggle to drive.
 type VHost struct {
-	Name        string   `json:"name"`
-	Kind        Kind     `json:"kind"`
-	Path        string   `json:"path"`
-	EnabledPath string   `json:"enabledPath,omitempty"`
-	Enabled     bool     `json:"enabled"`
-	ServerNames []string `json:"serverNames"`
-	Listen      []string `json:"listen"`
-	Upstreams   []string `json:"upstreams"`
-	TLS         bool     `json:"tls"`
-	CertPath    string   `json:"certPath,omitempty"`
+	Name        string    `json:"name"`
+	Kind        Kind      `json:"kind"`
+	Path        string    `json:"path"`
+	EnabledPath string    `json:"enabledPath,omitempty"`
+	Enabled     bool      `json:"enabled"`
+	ServerNames []string  `json:"serverNames"`
+	Listen      []string  `json:"listen"`
+	Upstreams   []string  `json:"upstreams"`
+	TLS         bool      `json:"tls"`
+	CertPath    string    `json:"certPath,omitempty"`
 	Modified    time.Time `json:"modified"`
-	Size        int64    `json:"size"`
+	Size        int64     `json:"size"`
 }
 
 var (

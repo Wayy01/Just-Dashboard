@@ -14,15 +14,15 @@ const tokenPrefix = "vpsd_"
 var ErrTokenInvalid = errors.New("api token invalid, revoked or expired")
 
 type APIToken struct {
-	ID         int64     `json:"id"`
-	UserID     int64     `json:"userId"`
-	Name       string    `json:"name"`
-	Prefix     string    `json:"prefix"`
-	Role       Role      `json:"role"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID         int64      `json:"id"`
+	UserID     int64      `json:"userId"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Role       Role       `json:"role"`
+	CreatedAt  time.Time  `json:"createdAt"`
 	ExpiresAt  *time.Time `json:"expiresAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt"`
-	Revoked    bool      `json:"revoked"`
+	Revoked    bool       `json:"revoked"`
 }
 
 // CreateAPIToken mints a scripting credential. The role may narrow the owner's
@@ -73,10 +73,10 @@ func (s *Service) apiTokenByID(ctx context.Context, id int64) (*APIToken, error)
 
 func scanAPIToken(row interface{ Scan(...any) error }) (*APIToken, error) {
 	var (
-		t                       APIToken
-		role                    string
-		created, expires, used  int64
-		revoked                 int
+		t                      APIToken
+		role                   string
+		created, expires, used int64
+		revoked                int
 	)
 	if err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.Prefix, &role, &created, &expires, &used, &revoked); err != nil {
 		return nil, err

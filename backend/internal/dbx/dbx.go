@@ -140,9 +140,9 @@ func (m *Manager) Stats(id int64) *PoolStats {
 }
 
 type Database struct {
-	Name  string `json:"name"`
-	Size  int64  `json:"size,omitempty"`
-	Owner string `json:"owner,omitempty"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size,omitempty"`
+	Owner    string `json:"owner,omitempty"`
 	Encoding string `json:"encoding,omitempty"`
 }
 
@@ -334,14 +334,14 @@ func BrowseTable(ctx context.Context, db *sql.DB, driver Driver, schema, table s
 }
 
 type QueryResult struct {
-	Columns   []string         `json:"columns"`
-	Types     []string         `json:"types"`
-	Rows      [][]any          `json:"rows"`
-	RowCount  int              `json:"rowCount"`
-	Affected  int64            `json:"rowsAffected"`
-	Duration  string           `json:"duration"`
-	Truncated bool             `json:"truncated"`
-	Statement string           `json:"statement"`
+	Columns   []string `json:"columns"`
+	Types     []string `json:"types"`
+	Rows      [][]any  `json:"rows"`
+	RowCount  int      `json:"rowCount"`
+	Affected  int64    `json:"rowsAffected"`
+	Duration  string   `json:"duration"`
+	Truncated bool     `json:"truncated"`
+	Statement string   `json:"statement"`
 }
 
 // RunQuery executes a statement and materialises the result set. Rows beyond

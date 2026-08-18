@@ -12,13 +12,13 @@ import (
 )
 
 type Jail struct {
-	Name          string   `json:"name"`
-	Currently     int      `json:"currentlyFailed"`
-	TotalFailed   int      `json:"totalFailed"`
-	CurrentlyBan  int      `json:"currentlyBanned"`
-	TotalBanned   int      `json:"totalBanned"`
-	BannedIPs     []string `json:"bannedIps"`
-	FileList      []string `json:"fileList"`
+	Name         string   `json:"name"`
+	Currently    int      `json:"currentlyFailed"`
+	TotalFailed  int      `json:"totalFailed"`
+	CurrentlyBan int      `json:"currentlyBanned"`
+	TotalBanned  int      `json:"totalBanned"`
+	BannedIPs    []string `json:"bannedIps"`
+	FileList     []string `json:"fileList"`
 }
 
 type Fail2banStatus struct {

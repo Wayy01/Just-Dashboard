@@ -1,7 +1,11 @@
 package api
 
 import (
+	"path/filepath"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/backups"
 	"github.com/Wayy01/vps-dashboard/backend/internal/dbx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/deploy"
 	"github.com/Wayy01/vps-dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/vps-dashboard/backend/internal/files"
 	"github.com/Wayy01/vps-dashboard/backend/internal/linuxusers"
@@ -11,26 +15,30 @@ import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/proxysvc"
 	"github.com/Wayy01/vps-dashboard/backend/internal/sysinfo"
 	"github.com/Wayy01/vps-dashboard/backend/internal/term"
-	"github.com/go-chi/chi/v5"
 )
 
 // moduleSet holds the feature backends. Each is optional: a host without
 // Docker, systemd or PM2 still serves everything else, and the corresponding
 // routes report a precise "unavailable on this host" error instead.
 type moduleSet struct {
-	sys     *sysinfo.Collector
-	docker  *dockerx.Client
-	pm2     *procs.PM2
-	systemd *procs.Systemd
-	table   *procs.Table
-	cron    *procs.Cron
-	logs    *logsx.Service
-	term    *term.Manager
-	files   *files.Service
-	proxy   *proxysvc.Service
-	dbs        *dbx.Manager
-	linuxUsers *linuxusers.Service
-	netsec     *netsec.Service
+	sys          *sysinfo.Collector
+	docker       *dockerx.Client
+	pm2          *procs.PM2
+	systemd      *procs.Systemd
+	table        *procs.Table
+	cron         *procs.Cron
+	logs         *logsx.Service
+	term         *term.Manager
+	files        *files.Service
+	proxy        *proxysvc.Service
+	dbs          *dbx.Manager
+	linuxUsers   *linuxusers.Service
+	netsec       *netsec.Service
+	backupStore  *backups.Store
+	backupRunner *backups.Runner
+	backupSched  *backups.Scheduler
+	deployStore  *deploy.Store
+	deployer     *deploy.Deployer
 }
 
 func (s *Server) initModules() {
@@ -47,7 +55,12 @@ func (s *Server) initModules() {
 	s.modules.dbs = dbx.NewManager()
 	s.modules.linuxUsers = linuxusers.New()
 	s.modules.netsec = netsec.New()
-}
 
-func (s *Server) mountBackupRoutes(r chi.Router)    {}
-func (s *Server) mountDeployRoutes(r chi.Router)    {}
+	s.modules.backupStore = backups.NewStore(s.Store, s.Sealer)
+	s.modules.backupRunner = backups.NewRunner(s.modules.backupStore,
+		filepath.Join(s.Cfg.DataDir, "staging"), s.Log)
+	s.modules.backupSched = backups.NewScheduler(s.modules.backupStore, s.modules.backupRunner, s.Log)
+
+	s.modules.deployStore = deploy.NewStore(s.Store, s.Sealer)
+	s.modules.deployer = deploy.NewDeployer(s.modules.deployStore, s.Log)
+}

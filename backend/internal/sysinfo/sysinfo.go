@@ -79,19 +79,19 @@ type MountStats struct {
 }
 
 type NetStats struct {
-	Interface   string  `json:"interface"`
-	BytesSent   uint64  `json:"bytesSent"`
-	BytesRecv   uint64  `json:"bytesRecv"`
-	PacketsSent uint64  `json:"packetsSent"`
-	PacketsRecv uint64  `json:"packetsRecv"`
-	ErrIn       uint64  `json:"errIn"`
-	ErrOut      uint64  `json:"errOut"`
-	DropIn      uint64  `json:"dropIn"`
-	DropOut     uint64  `json:"dropOut"`
-	SendRate    float64 `json:"sendRate"`
-	RecvRate    float64 `json:"recvRate"`
+	Interface   string   `json:"interface"`
+	BytesSent   uint64   `json:"bytesSent"`
+	BytesRecv   uint64   `json:"bytesRecv"`
+	PacketsSent uint64   `json:"packetsSent"`
+	PacketsRecv uint64   `json:"packetsRecv"`
+	ErrIn       uint64   `json:"errIn"`
+	ErrOut      uint64   `json:"errOut"`
+	DropIn      uint64   `json:"dropIn"`
+	DropOut     uint64   `json:"dropOut"`
+	SendRate    float64  `json:"sendRate"`
+	RecvRate    float64  `json:"recvRate"`
 	Addrs       []string `json:"addrs"`
-	IsUp        bool    `json:"isUp"`
+	IsUp        bool     `json:"isUp"`
 }
 
 // Snapshot is one frame of the live dashboard. Rates are per second and are

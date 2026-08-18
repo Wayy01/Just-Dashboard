@@ -61,6 +61,7 @@ func run() error {
 	}
 
 	srv := api.New(cfg, log, st, svc, sealer, aud)
+	defer srv.Shutdown()
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -74,6 +75,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if err := srv.Start(ctx); err != nil {
+		return fmt.Errorf("start background workers: %w", err)
+	}
 	go janitor(ctx, svc, log)
 
 	errCh := make(chan error, 1)

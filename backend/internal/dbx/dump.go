@@ -95,13 +95,13 @@ func parseMySQLDSN(dsn string) (*ConnInfo, error) {
 }
 
 type DumpResult struct {
-	Path     string    `json:"path"`
-	Size     int64     `json:"size"`
-	Duration string    `json:"duration"`
-	Database string    `json:"database"`
-	Driver   Driver    `json:"driver"`
+	Path      string    `json:"path"`
+	Size      int64     `json:"size"`
+	Duration  string    `json:"duration"`
+	Database  string    `json:"database"`
+	Driver    Driver    `json:"driver"`
 	StartedAt time.Time `json:"startedAt"`
-	Output   string    `json:"output,omitempty"`
+	Output    string    `json:"output,omitempty"`
 }
 
 // Dump writes a backup of one database into outDir and returns where it landed.
@@ -168,7 +168,7 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	}
 	return &DumpResult{
 		Path: path, Size: st.Size(), Driver: driver, Database: database,
-		Duration: time.Since(start).Round(time.Millisecond).String(),
+		Duration:  time.Since(start).Round(time.Millisecond).String(),
 		StartedAt: start.UTC(), Output: strings.TrimSpace(buf.String()),
 	}, nil
 }
