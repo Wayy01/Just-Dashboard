@@ -15,7 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
+	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 )
@@ -27,6 +29,76 @@ type Client struct {
 	cli  *client.Client
 	host string
 	err  error
+
+	// Disk usage is the one Docker query that walks every layer and volume on
+	// disk; on a modest server it takes seconds. It is cached because the
+	// volume list needs it only to answer "how big, and is anything using
+	// it" — figures that do not move between two page refreshes.
+	duMu   sync.Mutex
+	duVal  *dtypes.DiskUsage
+	duAt   time.Time
+	duBusy bool
+}
+
+// diskUsageTTL is how long a cached disk-usage reading stays authoritative.
+const diskUsageTTL = 60 * time.Second
+
+// diskUsage returns Docker's disk accounting, refreshing it at most once per
+// TTL. A stale reading is served immediately while a refresh runs in the
+// background, so only the very first caller after startup waits for the walk.
+func (c *Client) diskUsage(ctx context.Context) *dtypes.DiskUsage {
+	cli, err := c.api()
+	if err != nil {
+		return nil
+	}
+
+	c.duMu.Lock()
+	val, at, busy := c.duVal, c.duAt, c.duBusy
+	fresh := val != nil && time.Since(at) < diskUsageTTL
+	if fresh {
+		c.duMu.Unlock()
+		return val
+	}
+	if val != nil {
+		// Stale but usable: hand it back now and refresh out of band.
+		if !busy {
+			c.duBusy = true
+			go func() {
+				bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+				defer cancel()
+				du, err := cli.DiskUsage(bg, dtypes.DiskUsageOptions{})
+				c.duMu.Lock()
+				if err == nil {
+					c.duVal, c.duAt = &du, time.Now()
+				}
+				c.duBusy = false
+				c.duMu.Unlock()
+			}()
+		}
+		c.duMu.Unlock()
+		return val
+	}
+	c.duMu.Unlock()
+
+	// Nothing cached at all, so this caller has to wait for the real thing.
+	du, err := cli.DiskUsage(ctx, dtypes.DiskUsageOptions{})
+	if err != nil {
+		return nil
+	}
+	c.duMu.Lock()
+	c.duVal, c.duAt = &du, time.Now()
+	c.duMu.Unlock()
+	return &du
+}
+
+// WarmCaches primes the expensive queries in the background so the first
+// operator to open a page does not pay for them.
+func (c *Client) WarmCaches() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		c.diskUsage(ctx)
+	}()
 }
 
 // New never fails hard: a host without Docker should still serve the rest of

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -54,6 +55,19 @@ func (s *Systemd) List(ctx context.Context) ([]Unit, error) {
 		Active      string `json:"active"`
 		Sub         string `json:"sub"`
 		Description string `json:"description"`
+	}
+	// systemctl exits 0 while printing nothing useful when it declines to talk
+	// to the host manager at all. Reporting that as a JSON parse failure sends
+	// the reader looking for a malformed unit; say what actually happened.
+	if strings.TrimSpace(res.Stdout) == "" {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(res.Stdout)
+		}
+		if detail == "" {
+			detail = "no output"
+		}
+		return nil, fmt.Errorf("systemctl returned no unit list: %s", detail)
 	}
 	if err := json.Unmarshal([]byte(res.Stdout), &raw); err != nil {
 		return nil, fmt.Errorf("parse systemctl output: %w", err)
@@ -228,7 +242,10 @@ func JournalCommand(ctx context.Context, unit string, lines int, follow bool, si
 	if follow {
 		args = append(args, "-f")
 	}
-	return exec.CommandContext(ctx, "journalctl", args...), nil
+	cmd := exec.CommandContext(ctx, "journalctl", args...)
+	// Same host-PID-namespace chroot detection that run() works around.
+	cmd.Env = append(os.Environ(), "SYSTEMD_IGNORE_CHROOT=1")
+	return cmd, nil
 }
 
 // journalctl accepts free-form time expressions ("2 hours ago", "today",

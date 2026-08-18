@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,6 +17,10 @@ import (
 type CronJob struct {
 	Line     int    `json:"line"`
 	Schedule string `json:"schedule"`
+	// User is set only for /etc/crontab and /etc/cron.d entries, where a
+	// username sits between the schedule and the command. A personal crontab
+	// has no such field and leaves this empty.
+	User     string `json:"user,omitempty"`
 	Command  string `json:"command"`
 	Comment  string `json:"comment,omitempty"`
 	Raw      string `json:"raw"`
@@ -52,7 +57,7 @@ func (c *Cron) UserCrontab(ctx context.Context, user string) (*Crontab, error) {
 		}
 		return nil, err
 	}
-	ct := parseCrontab(res.Stdout)
+	ct := parseCrontab(res.Stdout, false)
 	ct.User = user
 	ct.Source = "crontab -u " + user
 	return ct, nil
@@ -99,14 +104,18 @@ func ValidateCrontab(content string) error {
 		if strings.HasPrefix(trimmed, "@") {
 			continue
 		}
-		if len(strings.Fields(trimmed)) < 6 {
+		fields := strings.Fields(trimmed)
+		if len(fields) < 6 {
 			return fmt.Errorf("line %d is not a valid cron entry: %q", i+1, trimmed)
+		}
+		if !isCronSchedule(fields[:5]) {
+			return fmt.Errorf("line %d does not start with a valid five-field schedule: %q", i+1, trimmed)
 		}
 	}
 	return nil
 }
 
-func parseCrontab(content string) *Crontab {
+func parseCrontab(content string, withUser bool) *Crontab {
 	ct := &Crontab{Raw: content, Jobs: []CronJob{}, Env: []string{}, Comment: []string{}}
 	sc := bufio.NewScanner(strings.NewReader(content))
 	lineNo := 0
@@ -121,7 +130,7 @@ func parseCrontab(content string) *Crontab {
 		if strings.HasPrefix(trimmed, "#") {
 			body := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
 			// A commented-out schedule is a disabled job, not documentation.
-			if job, ok := splitCronLine(body); ok {
+			if job, ok := splitCronLine(body, withUser); ok {
 				job.Line = lineNo
 				job.Raw = raw
 				job.Disabled = true
@@ -138,7 +147,7 @@ func parseCrontab(content string) *Crontab {
 			ct.Env = append(ct.Env, trimmed)
 			continue
 		}
-		if job, ok := splitCronLine(trimmed); ok {
+		if job, ok := splitCronLine(trimmed, withUser); ok {
 			job.Line = lineNo
 			job.Raw = raw
 			job.Comment = pendingComment
@@ -149,24 +158,105 @@ func parseCrontab(content string) *Crontab {
 	return ct
 }
 
-func splitCronLine(line string) (CronJob, bool) {
+// cronNames are the symbolic month and weekday names cron accepts in place of
+// a number.
+var cronNames = map[string]bool{
+	"jan": true, "feb": true, "mar": true, "apr": true, "may": true, "jun": true,
+	"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
+	"sun": true, "mon": true, "tue": true, "wed": true, "thu": true, "fri": true,
+	"sat": true,
+}
+
+// cronNicknames are the @-prefixed shorthands cron understands. Anything else
+// after an @ is not a schedule.
+var cronNicknames = map[string]bool{
+	"@reboot": true, "@yearly": true, "@annually": true, "@monthly": true,
+	"@weekly": true, "@daily": true, "@midnight": true, "@hourly": true,
+}
+
+// isCronField reports whether one whitespace-separated token is a plausible
+// schedule field: a number, a star, a symbolic name, or those combined with
+// cron's range, list and step syntax.
+//
+// Rejecting prose here is the point. /etc/cron.d files are mostly explanatory
+// comments, and an English sentence of six or more words otherwise parses as a
+// five-field schedule plus a command — which rendered documentation as if it
+// were a job.
+func isCronField(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, part := range strings.FieldsFunc(field, func(r rune) bool {
+		return r == ',' || r == '-' || r == '/'
+	}) {
+		if part == "*" {
+			continue
+		}
+		if _, err := strconv.Atoi(part); err == nil {
+			continue
+		}
+		if cronNames[strings.ToLower(part)] {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isCronSchedule(fields []string) bool {
+	for _, f := range fields {
+		if !isCronField(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// splitCronLine parses one schedule line. withUser selects the /etc/crontab
+// and /etc/cron.d dialect, where a username sits between the schedule and the
+// command; a personal crontab has no such column.
+func splitCronLine(line string, withUser bool) (CronJob, bool) {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return CronJob{}, false
 	}
 	if strings.HasPrefix(fields[0], "@") {
-		if len(fields) < 2 {
+		if !cronNicknames[strings.ToLower(fields[0])] {
 			return CronJob{}, false
 		}
-		return CronJob{Schedule: fields[0], Command: strings.Join(fields[1:], " ")}, true
+		rest := fields[1:]
+		job := CronJob{Schedule: fields[0]}
+		if withUser {
+			if len(rest) < 2 {
+				return CronJob{}, false
+			}
+			job.User = rest[0]
+			rest = rest[1:]
+		}
+		if len(rest) == 0 {
+			return CronJob{}, false
+		}
+		job.Command = strings.Join(rest, " ")
+		return job, true
 	}
-	if len(fields) < 6 {
+	need := 6
+	if withUser {
+		need = 7
+	}
+	if len(fields) < need {
 		return CronJob{}, false
 	}
-	return CronJob{
-		Schedule: strings.Join(fields[:5], " "),
-		Command:  strings.Join(fields[5:], " "),
-	}, true
+	if !isCronSchedule(fields[:5]) {
+		return CronJob{}, false
+	}
+	job := CronJob{Schedule: strings.Join(fields[:5], " ")}
+	rest := fields[5:]
+	if withUser {
+		job.User = rest[0]
+		rest = rest[1:]
+	}
+	job.Command = strings.Join(rest, " ")
+	return job, true
 }
 
 // SystemCronFiles lists the drop-in crontabs that ship with packages. They are
@@ -192,7 +282,7 @@ func (c *Cron) SystemCronFiles(ctx context.Context) ([]Crontab, error) {
 		if err != nil {
 			continue
 		}
-		ct := parseCrontab(string(b))
+		ct := parseCrontab(string(b), true)
 		ct.Source = p
 		out = append(out, *ct)
 	}

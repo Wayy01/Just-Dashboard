@@ -189,7 +189,7 @@ func (c *Client) ListVolumes(ctx context.Context) ([]Volume, error) {
 		size int64
 		refs int64
 	}{}
-	if du, err := cli.DiskUsage(ctx, dtypes.DiskUsageOptions{}); err == nil {
+	if du := c.diskUsage(ctx); du != nil {
 		for _, v := range du.Volumes {
 			if v.UsageData != nil {
 				usage[v.Name] = struct {

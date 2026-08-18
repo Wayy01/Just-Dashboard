@@ -44,6 +44,10 @@ type moduleSet struct {
 func (s *Server) initModules() {
 	s.modules.sys = sysinfo.NewCollector()
 	s.modules.docker = dockerx.New(s.Cfg.DockerHost)
+	// Docker's disk accounting walks every layer and volume, which takes
+	// seconds on a busy host. Priming it here means the first operator to open
+	// the Volumes tab reads a warm cache instead of waiting for the walk.
+	s.modules.docker.WarmCaches()
 	s.modules.pm2 = procs.NewPM2()
 	s.modules.systemd = procs.NewSystemd()
 	s.modules.table = procs.NewTable()

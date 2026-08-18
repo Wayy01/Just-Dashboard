@@ -286,6 +286,8 @@ export type ProcessRow = {
 export type CronJob = {
   line: number
   schedule: string
+  /** Set only for /etc/crontab and /etc/cron.d entries, which name an account. */
+  user?: string
   command: string
   comment?: string
   raw: string

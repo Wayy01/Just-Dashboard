@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -47,6 +48,14 @@ func run(ctx context.Context, timeout time.Duration, name string, args ...string
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	// The dashboard shares the host PID namespace, so PID 1's root is the
+	// host's while this process's root is the container image. systemd reads
+	// that difference as a chroot and refuses every command with "Running in
+	// chroot, ignoring command", printing nothing to stdout — which surfaced
+	// as an unexplained JSON parse failure on the systemd page. The host's
+	// systemd is genuinely reachable over the mounted D-Bus socket, so the
+	// check is telling us about the mount layout, not about reachability.
+	cmd.Env = append(os.Environ(), "SYSTEMD_IGNORE_CHROOT=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
