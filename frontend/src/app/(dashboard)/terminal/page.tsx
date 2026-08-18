@@ -35,7 +35,7 @@ export default function TerminalPage() {
   if (!data?.enabled) {
     return (
       <>
-        <PageHeader title="Terminal" />
+        <PageHeader title="Terminal" description="A shell on the host, in the browser" />
         <EmptyState
           icon={TerminalSquare}
           title="The web terminal is disabled"

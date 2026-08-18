@@ -6,6 +6,7 @@ import { Database, DownloadCloud, Play, Plus, ShieldAlert, Table2, Trash2 } from
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { DbConnection, DbTable, QueryResult, QueryRisk } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -230,11 +231,12 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
                     setSchema(t.schema)
                     setOffset(0)
                   }}
-                  className={
+                  className={cn(
+                    "flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors",
                     table === t.name
-                      ? "flex w-full flex-col rounded-md bg-accent px-2 py-1.5 text-left"
-                      : "flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-accent/50"
-                  }
+                      ? "bg-primary/12 font-medium text-foreground"
+                      : "hover:bg-accent",
+                  )}
                 >
                   <span className="truncate text-sm">{t.name}</span>
                   <span className="text-[11px] text-muted-foreground">

@@ -27,6 +27,7 @@ import { FileEditorSheet } from "@/components/files/file-editor"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -378,26 +379,20 @@ function FileRow({
         <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {!entry.isDir && (
             <>
-              <Button size="icon" variant="ghost" className="size-7" title="Edit" onClick={onOpen}>
+              <IconAction label="Edit" onClick={onOpen}>
                 <Pencil className="size-3.5" />
-              </Button>
-              <Button size="icon" variant="ghost" className="size-7" title="Download" asChild>
+              </IconAction>
+              <IconAction label="Download" asChild>
                 <a href={downloadUrl("/files/download", { path: entry.path })} download>
                   <Download className="size-3.5" />
                 </a>
-              </Button>
+              </IconAction>
             </>
           )}
           {can("destructive") && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-7 text-destructive"
-              title="Delete"
-              onClick={onDelete}
-            >
+            <IconAction label="Delete" className="text-destructive" onClick={onDelete}>
               <Trash2 className="size-3.5" />
-            </Button>
+            </IconAction>
           )}
         </div>
       </TableCell>

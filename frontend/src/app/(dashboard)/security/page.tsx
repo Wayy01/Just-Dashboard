@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/page-header"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -166,11 +167,9 @@ function FirewallTab() {
                     <TableCell className="text-xs text-muted-foreground">{rule.comment}</TableCell>
                     <TableCell>
                       {can("system.admin") && rule.number !== undefined && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-7 text-destructive"
-                          title="Delete rule"
+                        <IconAction
+                          label="Delete rule"
+                          className="text-destructive"
                           onClick={() =>
                             confirm({
                               title: "Delete firewall rule",
@@ -185,7 +184,7 @@ function FirewallTab() {
                           }
                         >
                           <Trash2 className="size-3.5" />
-                        </Button>
+                        </IconAction>
                       )}
                     </TableCell>
                   </TableRow>

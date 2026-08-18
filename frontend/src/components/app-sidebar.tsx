@@ -48,7 +48,7 @@ type NavItem = {
   capability?: Capability
 }
 
-const NAV: { label: string; items: NavItem[] }[] = [
+export const NAV: { label: string; items: NavItem[] }[] = [
   {
     label: "Server",
     items: [
@@ -86,12 +86,28 @@ const NAV: { label: string; items: NavItem[] }[] = [
   },
 ]
 
+/** Whether a nav entry owns the given path. */
+export function navMatches(href: string, pathname: string) {
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
+}
+
+/** The group and item a path belongs to, for the breadcrumb in the top bar. */
+export function navLocation(pathname: string): { group?: string; title: string } | null {
+  for (const group of NAV) {
+    const item = group.items.find((i) => navMatches(i.href, pathname))
+    if (item) return { group: group.label, title: item.title }
+  }
+  // Account lives in the sidebar footer rather than a group, so it has no
+  // parent to name.
+  if (pathname.startsWith("/account")) return { title: "Account" }
+  return null
+}
+
 export function AppSidebar() {
   const pathname = usePathname()
   const { status, can, logout } = useAuth()
 
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
+  const isActive = (href: string) => navMatches(href, pathname)
 
   return (
     <Sidebar collapsible="icon">

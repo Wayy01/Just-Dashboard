@@ -27,6 +27,7 @@ import { UnitJournalSheet } from "@/components/procs/unit-journal"
 import { PM2LogSheet } from "@/components/procs/pm2-logs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -164,23 +165,17 @@ function PM2Tab() {
                   <TableCell>
                     <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                       {proc.status !== "online" && can("service.control") && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-7"
-                          title="Start"
+                        <IconAction
+                          label="Start"
                           onClick={() => act(proc, "start").catch((e) => toast.error(String(e)))}
                         >
                           <Play className="size-3.5" />
-                        </Button>
+                        </IconAction>
                       )}
                       {can("destructive") && (
                         <>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-7"
-                            title="Restart"
+                          <IconAction
+                            label="Restart"
                             onClick={() =>
                               confirm({
                                 title: "Restart application",
@@ -196,12 +191,9 @@ function PM2Tab() {
                             }
                           >
                             <RotateCw className="size-3.5" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-7"
-                            title="Stop"
+                          </IconAction>
+                          <IconAction
+                            label="Stop"
                             onClick={() =>
                               confirm({
                                 title: "Stop application",
@@ -217,12 +209,10 @@ function PM2Tab() {
                             }
                           >
                             <Square className="size-3.5" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-7 text-destructive"
-                            title="Delete"
+                          </IconAction>
+                          <IconAction
+                            label="Delete"
+                            className="text-destructive"
                             onClick={() =>
                               confirm({
                                 title: "Delete from PM2",
@@ -242,7 +232,7 @@ function PM2Tab() {
                             }
                           >
                             <Trash2 className="size-3.5" />
-                          </Button>
+                          </IconAction>
                         </>
                       )}
                     </div>
@@ -365,23 +355,17 @@ function SystemdTab() {
                   <TableCell>
                     <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                       {unit.activeState !== "active" && can("service.control") && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-7"
-                          title="Start"
+                        <IconAction
+                          label="Start"
                           onClick={() => act(unit, "start").catch((e) => toast.error(String(e)))}
                         >
                           <Play className="size-3.5" />
-                        </Button>
+                        </IconAction>
                       )}
                       {can("destructive") && (
                         <>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-7"
-                            title="Restart"
+                          <IconAction
+                            label="Restart"
                             onClick={() =>
                               confirm({
                                 title: "Restart unit",
@@ -397,13 +381,10 @@ function SystemdTab() {
                             }
                           >
                             <RotateCw className="size-3.5" />
-                          </Button>
+                          </IconAction>
                           {unit.activeState === "active" && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="size-7"
-                              title="Stop"
+                            <IconAction
+                              label="Stop"
                               onClick={() =>
                                 confirm({
                                   title: "Stop unit",
@@ -419,7 +400,7 @@ function SystemdTab() {
                               }
                             >
                               <Square className="size-3.5" />
-                            </Button>
+                            </IconAction>
                           )}
                         </>
                       )}

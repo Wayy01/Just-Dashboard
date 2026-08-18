@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/page-header"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -140,11 +141,9 @@ export default function SystemUsersPage() {
                             <Lock className="size-3.5" />
                           )}
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-7 text-destructive"
-                          title="Delete"
+                        <IconAction
+                          label="Delete"
+                          className="text-destructive"
                           onClick={() =>
                             confirm({
                               title: "Delete system user",
@@ -166,7 +165,7 @@ export default function SystemUsersPage() {
                           }
                         >
                           <Trash2 className="size-3.5" />
-                        </Button>
+                        </IconAction>
                       </div>
                     </TableCell>
                   </TableRow>

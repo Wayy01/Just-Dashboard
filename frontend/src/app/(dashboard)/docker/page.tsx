@@ -110,7 +110,7 @@ export default function DockerPage() {
   if (!available) {
     return (
       <>
-        <PageHeader title="Docker" />
+        <PageHeader title="Docker" description="Containers, images, volumes and networks" />
         <EmptyState
           icon={Box}
           title="Docker is not reachable"
