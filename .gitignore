@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+*.log
+.env
+.env.local
+.env.*.local
+.DS_Store
+backend/vps-dashboard-server
+data/
+*.db
+*.db-wal
+*.db-shm
