@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, duration, percent, relativeTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -38,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -160,7 +162,7 @@ function PM2Tab() {
                     {proc.uptimeMs > 0 ? duration(proc.uptimeMs / 1000) : "—"}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                       {proc.status !== "online" && can("service.control") && (
                         <Button
                           size="icon"
@@ -324,8 +326,8 @@ function SystemdTab() {
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
+          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+            <TableHeader className={stickyTableHeader}>
               <TableRow>
                 <TableHead>Unit</TableHead>
                 <TableHead>State</TableHead>
@@ -357,7 +359,7 @@ function SystemdTab() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                       {unit.activeState !== "active" && can("service.control") && (
                         <Button
                           size="icon"
@@ -476,10 +478,17 @@ function ProcessTableTab() {
           className="pl-8"
         />
       </div>
+      {data && data.length >= 200 && (
+        // The server caps the reply at 200 rows. Saying so beats letting
+        // someone conclude a process is not running when it was simply cut.
+        <p className="mb-2 text-xs text-muted-foreground">
+          Showing the 200 heaviest processes. Filter to reach the rest.
+        </p>
+      )}
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
+          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+            <TableHeader className={stickyTableHeader}>
               <TableRow>
                 <TableHead className="w-20">PID</TableHead>
                 <TableHead>Process</TableHead>
@@ -495,10 +504,20 @@ function ProcessTableTab() {
                 <TableRow key={proc.pid} className="group">
                   <TableCell className="font-mono text-xs tabular-nums">{proc.pid}</TableCell>
                   <TableCell>
-                    <div className="font-medium">{proc.name}</div>
-                    <p className="max-w-md truncate font-mono text-[11px] text-muted-foreground">
-                      {proc.cmdline}
-                    </p>
+                    {/* A process name can be a full Chromium argv — hundreds of
+                        characters. Bounding it here is what keeps one row from
+                        setting the width of the whole table. */}
+                    <div className="max-w-[28rem] min-w-0">
+                      <div className="truncate font-medium" title={proc.name}>
+                        {proc.name}
+                      </div>
+                      <p
+                        className="truncate font-mono text-[11px] text-muted-foreground"
+                        title={proc.cmdline}
+                      >
+                        {proc.cmdline}
+                      </p>
+                    </div>
                   </TableCell>
                   <TableCell className="text-xs">{proc.username}</TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">
@@ -515,7 +534,7 @@ function ProcessTableTab() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 px-2 text-xs text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+                        className="h-7 px-2 text-xs text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                         onClick={() =>
                           confirm({
                             title: "Signal process",
@@ -714,8 +733,24 @@ function CronTab() {
                 ) : (
                   <div className="space-y-1 rounded-md border p-2">
                     {file.jobs.map((job, i) => (
-                      <div key={i} className="flex gap-3 font-mono text-[11px]">
-                        <span className="w-32 shrink-0 text-muted-foreground">{job.schedule}</span>
+                      <div
+                        key={i}
+                        className={cn(
+                          "flex gap-3 font-mono text-[11px]",
+                          // A commented-out schedule is real syntax, not a
+                          // running job — /etc/crontab ships one as its own
+                          // worked example. Dimming it keeps the two apart.
+                          job.disabled && "opacity-55",
+                        )}
+                      >
+                        <span className="w-32 shrink-0 text-muted-foreground">
+                          {job.disabled && <span className="mr-1">#</span>}
+                          {job.schedule}
+                        </span>
+                        {/* /etc/crontab and /etc/cron.d put the account between
+                            the schedule and the command; a personal crontab
+                            does not, so this column only appears when parsed. */}
+                        {job.user && <span className="w-20 shrink-0 text-muted-foreground">{job.user}</span>}
                         <span className="break-all">{job.command}</span>
                       </div>
                     ))}

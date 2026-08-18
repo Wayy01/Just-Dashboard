@@ -54,7 +54,7 @@ export default function LogsPage() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[18rem_1fr]">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[18rem_1fr] [&>*]:min-w-0">
         <SourceList sources={sources} selected={selected} onSelect={setSelected} />
 
         <div className="flex min-h-0 flex-col gap-3">
@@ -166,7 +166,10 @@ function LogStream({
         {state}
       </Badge>
       <LogViewer
-        className="min-h-0 flex-1"
+        // The app shell grows with its content, so without a cap a long tail
+        // stretches the page and scrolls the filters out of reach. Bounding it
+        // here keeps the toolbar fixed and the scrolling inside the pane.
+        className="max-h-[calc(100svh-18rem)] min-h-[24rem] flex-1"
         lines={lines}
         onClear={() => setLines([])}
         emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}

@@ -97,3 +97,34 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* A horizontally scrollable region that says so.
+ *
+ * Wide tables — listening ports, the audit log, the process table — scroll
+ * sideways on a narrow screen. Without a cue that is indistinguishable from a
+ * table that simply ends, and the hidden column is often the one that matters
+ * most: whether a port is exposed, whether an action succeeded.
+ *
+ * The gradients pinned with `local` travel with the content while the shadows
+ * pinned with `scroll` stay put, so each shadow is only visible while there is
+ * actually something past that edge. No JavaScript, no resize observer, and it
+ * stays correct as the content or the viewport changes. */
+.scroll-affordance {
+  background-image:
+    linear-gradient(to right, var(--card) 20%, transparent),
+    linear-gradient(to left, var(--card) 20%, transparent),
+    linear-gradient(to right, rgb(0 0 0 / 0.28), transparent),
+    linear-gradient(to left, rgb(0 0 0 / 0.28), transparent);
+  background-position:
+    left center,
+    right center,
+    left center,
+    right center;
+  background-repeat: no-repeat;
+  background-size:
+    32px 100%,
+    32px 100%,
+    12px 100%,
+    12px 100%;
+  background-attachment: local, local, scroll, scroll;
+}

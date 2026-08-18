@@ -117,7 +117,7 @@ export default function SystemUsersPage() {
                       {!user.canLogin && <Badge variant="outline">no shell</Badge>}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                         <Button
                           size="sm"
                           variant="ghost"

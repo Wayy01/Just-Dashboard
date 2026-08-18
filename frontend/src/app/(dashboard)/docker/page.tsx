@@ -264,7 +264,7 @@ export default function DockerPage() {
                             ))}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                             {container.state === "running" ? (
                               <>
                                 {can("service.control") && (

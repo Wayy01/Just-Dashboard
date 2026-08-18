@@ -137,7 +137,7 @@ export default function OverviewPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
         <StatCard
           title="CPU"
           icon={Cpu}
@@ -174,7 +174,7 @@ export default function OverviewPage() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">CPU</CardTitle>
@@ -289,7 +289,7 @@ export default function OverviewPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <MountsCard snapshot={snapshot} />
         <InterfacesCard snapshot={snapshot} />
       </div>

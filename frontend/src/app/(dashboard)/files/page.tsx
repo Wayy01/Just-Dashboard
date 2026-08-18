@@ -316,7 +316,7 @@ function FileRow({
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">{entry.modeOctal}</TableCell>
       <TableCell>
-        <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {!entry.isDir && (
             <>
               <Button size="icon" variant="ghost" className="size-7" title="Edit" onClick={onOpen}>
