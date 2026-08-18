@@ -2,6 +2,8 @@ package api
 
 import (
 	"github.com/Wayy01/vps-dashboard/backend/internal/dockerx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/logsx"
+	"github.com/Wayy01/vps-dashboard/backend/internal/procs"
 	"github.com/Wayy01/vps-dashboard/backend/internal/sysinfo"
 	"github.com/go-chi/chi/v5"
 )
@@ -10,17 +12,25 @@ import (
 // Docker, systemd or PM2 still serves everything else, and the corresponding
 // routes report a precise "unavailable on this host" error instead.
 type moduleSet struct {
-	sys    *sysinfo.Collector
-	docker *dockerx.Client
+	sys     *sysinfo.Collector
+	docker  *dockerx.Client
+	pm2     *procs.PM2
+	systemd *procs.Systemd
+	table   *procs.Table
+	cron    *procs.Cron
+	logs    *logsx.Service
 }
 
 func (s *Server) initModules() {
 	s.modules.sys = sysinfo.NewCollector()
 	s.modules.docker = dockerx.New(s.Cfg.DockerHost)
+	s.modules.pm2 = procs.NewPM2()
+	s.modules.systemd = procs.NewSystemd()
+	s.modules.table = procs.NewTable()
+	s.modules.cron = procs.NewCron()
+	s.modules.logs = logsx.New(s.Cfg.LogRoots)
 }
 
-func (s *Server) mountProcessRoutes(r chi.Router)   {}
-func (s *Server) mountLogRoutes(r chi.Router)       {}
 func (s *Server) mountTerminalRoutes(r chi.Router)  {}
 func (s *Server) mountFileRoutes(r chi.Router)      {}
 func (s *Server) mountProxyRoutes(r chi.Router)     {}
