@@ -3,13 +3,14 @@ package netsec
 import (
 	"bufio"
 	"context"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
 )
 
 // LoginSession is one interactive login currently on the machine. Both `who`
@@ -59,7 +60,11 @@ func (s *Service) Sessions(ctx context.Context) ([]LoginSession, error) {
 func parseWho(ctx context.Context) []LoginSession {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "who", "-u").Output()
+	// Login sessions live in the host's namespaces: modern systemd tracks
+	// them under /run/systemd/sessions rather than utmp, and a container's
+	// own view of both is empty. Running who on the host is what makes this
+	// list the server's sessions instead of this container's.
+	out, err := hostexec.CommandOnHost(ctx, "who", "-u").Output()
 	if err != nil {
 		return []LoginSession{}
 	}

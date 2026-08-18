@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
 )
 
 var (
@@ -55,19 +57,22 @@ type Availability struct {
 
 func (s *Service) Availability(ctx context.Context) Availability {
 	a := Availability{NginxDir: s.nginxDir, CaddyFile: s.caddyFile}
-	if _, err := exec.LookPath("nginx"); err == nil {
+	// nginx is deliberately not installed in this image — a second copy with
+	// different modules would validate against a config the running server
+	// would reject. It is detected and driven on the host instead.
+	if hostexec.Available("nginx") {
 		a.Nginx = true
-		if out, err := exec.CommandContext(ctx, "nginx", "-v").CombinedOutput(); err == nil || len(out) > 0 {
+		if out, err := hostexec.Command(ctx, "nginx", "-v").CombinedOutput(); err == nil || len(out) > 0 {
 			a.NginxVer = strings.TrimSpace(string(out))
 		}
 	}
-	if _, err := exec.LookPath("caddy"); err == nil {
+	if hostexec.Available("caddy") {
 		a.Caddy = true
-		if out, err := exec.CommandContext(ctx, "caddy", "version").Output(); err == nil {
+		if out, err := hostexec.Command(ctx, "caddy", "version").Output(); err == nil {
 			a.CaddyVer = strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 		}
 	}
-	if _, err := exec.LookPath("certbot"); err == nil {
+	if hostexec.Available("certbot") {
 		a.Certbot = true
 	}
 	return a
@@ -300,7 +305,7 @@ func (s *Service) validateCaddy(ctx context.Context, content string) (*Validatio
 func runValidator(ctx context.Context, name string, args ...string) *ValidationResult {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := hostexec.Command(ctx, name, args...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -382,10 +387,10 @@ func (s *Service) Reload(ctx context.Context, kind Kind) (*ReloadResult, error) 
 	switch kind {
 	case KindCaddy:
 		validation = runValidator(ctx, "caddy", "validate", "--config", s.caddyFile, "--adapter", "caddyfile")
-		reload = exec.CommandContext(ctx, "caddy", "reload", "--config", s.caddyFile)
+		reload = hostexec.Command(ctx, "caddy", "reload", "--config", s.caddyFile)
 	default:
 		validation = runValidator(ctx, "nginx", "-t")
-		reload = exec.CommandContext(ctx, "nginx", "-s", "reload")
+		reload = hostexec.Command(ctx, "nginx", "-s", "reload")
 	}
 	res := &ReloadResult{Validation: validation}
 	if !validation.Valid {

@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
 )
 
 type Jail struct {
@@ -29,8 +30,7 @@ type Fail2banStatus struct {
 }
 
 func (s *Service) Fail2banAvailable() bool {
-	_, err := exec.LookPath("fail2ban-client")
-	return err == nil
+	return hostexec.AvailableOnHost("fail2ban-client")
 }
 
 // Fail2banStatus queries fail2ban-client. Its output is a fixed-shape text

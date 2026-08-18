@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	dtypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -315,13 +314,14 @@ type DiskUsage struct {
 }
 
 func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
-	cli, err := c.api()
-	if err != nil {
+	if _, err := c.api(); err != nil {
 		return DiskUsage{}, err
 	}
-	du, err := cli.DiskUsage(ctx, dtypes.DiskUsageOptions{})
-	if err != nil {
-		return DiskUsage{}, err
+	// Shares the cache with the volume list: the same multi-second walk of
+	// every layer and volume answers both, and it is not worth doing twice.
+	du := c.diskUsage(ctx)
+	if du == nil {
+		return DiskUsage{}, ErrUnavailable
 	}
 	out := DiskUsage{LayersSize: du.LayersSize}
 	for _, i := range du.Images {

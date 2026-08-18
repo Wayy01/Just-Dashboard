@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
 )
 
 var (
@@ -60,17 +62,17 @@ type Service struct{}
 func New() *Service { return &Service{} }
 
 func (s *Service) Backend() Backend {
-	if _, err := exec.LookPath("ufw"); err == nil {
+	if hostexec.AvailableOnHost("ufw") {
 		return BackendUFW
 	}
 	return BackendIPTables
 }
 
 func (s *Service) Status(ctx context.Context) (*FirewallStatus, error) {
-	if _, err := exec.LookPath("ufw"); err == nil {
+	if hostexec.AvailableOnHost("ufw") {
 		return s.ufwStatus(ctx)
 	}
-	if _, err := exec.LookPath("iptables"); err == nil {
+	if hostexec.AvailableOnHost("iptables") {
 		return s.iptablesStatus(ctx)
 	}
 	return &FirewallStatus{Rules: []Rule{}, Error: ErrNoFirewall.Error()}, nil
@@ -305,7 +307,9 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) (string, error) 
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	// These manage host services, so they run on the host. A copy of ufw or
+	// fail2ban inside this image would otherwise report on the container.
+	cmd := hostexec.CommandOnHost(ctx, name, args...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

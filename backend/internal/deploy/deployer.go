@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
 )
 
 var ErrAlreadyDeploying = fmt.Errorf("a deployment for this project is already running")
@@ -214,6 +216,11 @@ func (d *Deployer) git(ctx context.Context, dir string, args ...string) (string,
 		"GIT_ASKPASS=/bin/true",
 		"GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
 	)
+	// A checked-out project is rarely owned by root. Running as its owner
+	// avoids git's "dubious ownership" refusal — which would otherwise fail
+	// every deployment of a normally-owned repository — and keeps the pulled
+	// files owned by the account that runs the project.
+	hostexec.AsOwner(cmd)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

@@ -38,8 +38,12 @@ services:
       VPSD_ALLOWED_ORIGINS: ${VPSD_ALLOWED_ORIGINS:-}
       VPSD_REQUIRE_2FA: ${VPSD_REQUIRE_2FA:-true}
       VPSD_TERMINAL_ENABLED: ${VPSD_TERMINAL_ENABLED:-true}
+      # First run only: creates the bootstrap admin with this username/password.
+      VPSD_BOOTSTRAP_USER: ${VPSD_BOOTSTRAP_USER:-admin}
+      VPSD_BOOTSTRAP_PASSWORD: ${VPSD_BOOTSTRAP_PASSWORD:-}
       VPSD_DOCKER_HOST: unix:///var/run/docker.sock
       VPSD_COMPOSE_ROOTS: ${VPSD_COMPOSE_ROOTS:-/opt,/srv,/home}
+      VPSD_GIT_ROOTS: ${VPSD_GIT_ROOTS:-/opt,/srv,/home,/root}
       VPSD_LOG_ROOTS: ${VPSD_LOG_ROOTS:-/var/log}
       VPSD_FILE_ROOTS: ${VPSD_FILE_ROOTS:-/}
       VPSD_BACKUP_DIR: ${VPSD_BACKUP_DIR:-/var/backups/vps-dashboard}
@@ -49,6 +53,16 @@ services:
       # capability-checked and written to the audit trail.
       - /var/run/docker.sock:/var/run/docker.sock
       - /:/host:rslave
+      # The dashboard addresses the server by its real paths, so the
+      # directories it manages have to appear here under those same paths.
+      # Without this the file manager, git discovery and compose-stack
+      # scanning quietly operate on this container's own empty filesystem
+      # while appearing to browse the server. Narrow this list if you have
+      # narrowed VPSD_FILE_ROOTS and friends to match.
+      - /home:/home
+      - /opt:/opt
+      - /srv:/srv
+      - /root:/root
       - /etc:/etc
       - /var/log:/var/log
       - /var/lib/vps-dashboard:/var/lib/vps-dashboard
