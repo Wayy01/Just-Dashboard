@@ -205,21 +205,12 @@
  * the card's own padding, so the first column reads as a continuation of the
  * title above it rather than a grid that merely shares the frame.
  *
- * In @layer components so a cell that needs its own padding can still say so
- * with a utility class — utilities are layered after components and win. */
-@layer components {
-  [data-slot="card"]
-    > [data-slot="card-content"]
-    > [data-slot="table-container"]
-    tr
-    > *:first-child {
-    padding-left: 1.5rem;
-  }
-  [data-slot="card"]
-    > [data-slot="card-content"]
-    > [data-slot="table-container"]
-    tr
-    > *:last-child {
-    padding-right: 1.5rem;
-  }
+ * Deliberately unlayered: every cell already carries Tailwind's p-2, and a
+ * layered rule would lose to it on every row. The selector is narrow enough
+ * that this only reaches the outer columns of a full-bleed table. */
+[data-slot="card"] > [data-slot="card-content"] > [data-slot="table-container"] tr > *:first-child {
+  padding-left: 1.5rem;
+}
+[data-slot="card"] > [data-slot="card-content"] > [data-slot="table-container"] tr > *:last-child {
+  padding-right: 1.5rem;
 }
