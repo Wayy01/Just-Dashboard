@@ -20,16 +20,16 @@ import type { DeployCommit, DeployProject, DeployRun, EnvVar } from "@/lib/types
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Detail, DetailList, Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
+import { SidePanel } from "@/components/side-panel"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Table,
@@ -48,13 +48,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 
 export default function DeployPage() {
   const { can } = useAuth()
@@ -76,14 +69,15 @@ export default function DeployPage() {
   }
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Operations"
         title="Deployments"
         description="Git pull plus container rebuild, triggered by hand or by a signed webhook"
         actions={can("system.admin") && <ProjectDialog onDone={refresh} />}
       />
 
-      {loading && <LoadingRows />}
+      {loading && <LoadingPanel />}
       {error && <ErrorState error={error} />}
       {data?.length === 0 && (
         <EmptyState
@@ -93,42 +87,39 @@ export default function DeployPage() {
         />
       )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data?.map((project) => (
-          <Card key={project.id}>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <CardTitle className="truncate text-base">{project.name}</CardTitle>
-                  <CardDescription className="truncate font-mono text-xs">
-                    {project.repoPath}
-                  </CardDescription>
-                </div>
-                <Badge variant={project.enabled ? "default" : "secondary"}>
+          <Panel key={project.id}>
+            <PanelHeader
+              icon={Rocket}
+              title={project.name}
+              description={project.repoPath}
+              actions={
+                <Badge variant={project.enabled ? "success" : "secondary"} className="font-normal">
                   {project.enabled ? "hook live" : "hook off"}
                 </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                <dt className="text-muted-foreground">Branch</dt>
-                <dd className="flex items-center gap-1 font-mono">
-                  <GitBranch className="size-3" />
-                  {project.branch}
-                </dd>
-                <dt className="text-muted-foreground">At commit</dt>
-                <dd className="font-mono">
-                  {shortSha(project.currentSha)}
-                  {project.dirty && (
-                    <Badge variant="destructive" className="ml-1 text-[10px]">
-                      dirty
-                    </Badge>
-                  )}
-                </dd>
-                <dt className="text-muted-foreground">Env vars</dt>
-                <dd>{project.envVarCount}</dd>
-                <dt className="text-muted-foreground">Last deploy</dt>
-                <dd>
+              }
+            />
+            <PanelBody>
+              <DetailList>
+                <Detail label="Branch">
+                  <span className="flex items-center gap-1 font-mono">
+                    <GitBranch className="size-3" />
+                    {project.branch}
+                  </span>
+                </Detail>
+                <Detail label="At commit">
+                  <span className="font-mono">
+                    {shortSha(project.currentSha)}
+                    {project.dirty && (
+                      <Badge variant="destructive" className="ml-1 text-[10px] font-normal">
+                        dirty
+                      </Badge>
+                    )}
+                  </span>
+                </Detail>
+                <Detail label="Env vars">{project.envVarCount}</Detail>
+                <Detail label="Last deploy">
                   {project.lastRun ? (
                     <span className="flex items-center gap-1.5">
                       <StatusBadge state={project.lastRun.status} />
@@ -137,52 +128,52 @@ export default function DeployPage() {
                   ) : (
                     "never"
                   )}
-                </dd>
-              </dl>
-
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => setDetailFor(project)}>
-                  <History className="size-3.5" />
-                  History
+                </Detail>
+              </DetailList>
+            </PanelBody>
+            <PanelFooter>
+              <Button size="sm" variant="outline" onClick={() => setDetailFor(project)}>
+                <History className="size-3.5" />
+                History
+              </Button>
+              {can("service.control") && (
+                <Button size="sm" onClick={() => deploy(project)}>
+                  <Rocket className="size-3.5" />
+                  Deploy
                 </Button>
-                {can("service.control") && (
-                  <Button size="sm" onClick={() => deploy(project)}>
-                    <Rocket className="size-3.5" />
-                    Deploy
+              )}
+              {can("system.admin") && (
+                <>
+                  <HookDialog project={project} />
+                  <span className="flex-1" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() =>
+                      confirm({
+                        title: "Delete project",
+                        phrase: project.name,
+                        confirmLabel: "Delete",
+                        description: (
+                          <p>
+                            Removes <b>{project.name}</b> and its webhook. The checkout on disk and
+                            its running containers are left alone.
+                          </p>
+                        ),
+                        action: async (c) => {
+                          await del(`/deploy/${project.id}`, { confirm: c })
+                          refresh()
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 className="size-3.5" />
                   </Button>
-                )}
-                {can("system.admin") && (
-                  <>
-                    <HookDialog project={project} />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive"
-                      onClick={() =>
-                        confirm({
-                          title: "Delete project",
-                          phrase: project.name,
-                          confirmLabel: "Delete",
-                          description: (
-                            <p>
-                              Removes <b>{project.name}</b> and its webhook. The checkout on disk
-                              and its running containers are left alone.
-                            </p>
-                          ),
-                          action: async (c) => {
-                            await del(`/deploy/${project.id}`, { confirm: c })
-                            refresh()
-                          },
-                        })
-                      }
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                </>
+              )}
+            </PanelFooter>
+          </Panel>
         ))}
       </div>
 
@@ -192,7 +183,7 @@ export default function DeployPage() {
         onChanged={refresh}
       />
       {dialog}
-    </>
+    </Page>
   )
 }
 
@@ -237,13 +228,11 @@ function HookDialog({ project }: { project: DeployProject }) {
             </div>
           </div>
           {secret ? (
-            <Alert>
-              <KeyRound className="size-4" />
-              <AlertTitle>New secret — copy it now</AlertTitle>
-              <AlertDescription className="font-mono text-xs break-all">{secret}</AlertDescription>
-            </Alert>
+            <Notice tone="warning" icon={KeyRound} title="New secret — copy it now">
+              <code className="font-mono text-xs break-all">{secret}</code>
+            </Notice>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               The existing secret is stored encrypted and cannot be shown again. Rotating issues a
               new one and immediately invalidates the old.
             </p>
@@ -281,42 +270,42 @@ function ProjectSheet({
   const [logFor, setLogFor] = useState<DeployRun | null>(null)
 
   return (
-    <Sheet open={project !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-auto sm:max-w-3xl">
-        <SheetHeader>
-          <SheetTitle>{project?.name}</SheetTitle>
-          <SheetDescription className="font-mono text-xs">{project?.repoPath}</SheetDescription>
-        </SheetHeader>
-        {project && (
-          <Tabs defaultValue="runs" className="px-4">
-            <TabsList>
-              <TabsTrigger value="runs">Runs</TabsTrigger>
-              <TabsTrigger value="rollback">Rollback</TabsTrigger>
-              <TabsTrigger value="env">Environment</TabsTrigger>
-            </TabsList>
-            <TabsContent value="runs" className="space-y-3">
-              <RunsTable project={project} onSelect={setLogFor} />
-              {logFor && (
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">
-                    Log · {shortSha(logFor.fromCommit)} → {shortSha(logFor.toCommit)}
-                  </p>
-                  <pre className="max-h-96 overflow-auto rounded-md border bg-black/40 p-3 font-mono text-xs">
-                    {logFor.log || "No output recorded."}
-                  </pre>
-                </div>
-              )}
-            </TabsContent>
-            <TabsContent value="rollback">
-              <RollbackTab project={project} onDone={onChanged} />
-            </TabsContent>
-            <TabsContent value="env">
-              <EnvTab project={project} onChanged={onChanged} />
-            </TabsContent>
-          </Tabs>
-        )}
-      </SheetContent>
-    </Sheet>
+    <SidePanel
+      open={project !== null}
+      onOpenChange={onOpenChange}
+      icon={Rocket}
+      title={project?.name ?? "Project"}
+      description={project?.repoPath}
+    >
+      {project && (
+        <Tabs defaultValue="runs" className="min-w-0 gap-3">
+          <TabsList>
+            <TabsTrigger value="runs">Runs</TabsTrigger>
+            <TabsTrigger value="rollback">Rollback</TabsTrigger>
+            <TabsTrigger value="env">Environment</TabsTrigger>
+          </TabsList>
+          <TabsContent value="runs" className="min-w-0 space-y-3">
+            <RunsTable project={project} onSelect={setLogFor} />
+            {logFor && (
+              <div className="space-y-1.5">
+                <p className="eyebrow">
+                  Log · {shortSha(logFor.fromCommit)} → {shortSha(logFor.toCommit)}
+                </p>
+                <Well className="max-h-96 whitespace-pre-wrap">
+                  {logFor.log || "No output recorded."}
+                </Well>
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="rollback" className="min-w-0">
+            <RollbackTab project={project} onDone={onChanged} />
+          </TabsContent>
+          <TabsContent value="env" className="min-w-0">
+            <EnvTab project={project} onChanged={onChanged} />
+          </TabsContent>
+        </Tabs>
+      )}
+    </SidePanel>
   )
 }
 
@@ -337,47 +326,46 @@ function RunsTable({
   if (!data?.runs.length) return <EmptyState icon={History} title="No deployments yet" />
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Started</TableHead>
-          <TableHead>Trigger</TableHead>
-          <TableHead>Commit</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead className="w-px" />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {data.runs.map((run) => (
-          <TableRow key={run.id}>
-            <TableCell className="text-xs">
-              <div>{timestamp(run.startedAt)}</div>
-              <p className="text-[11px] text-muted-foreground">{run.duration ?? "running"}</p>
-            </TableCell>
-            <TableCell className="text-xs">
-              {run.trigger}
-              {run.actor && <p className="text-[11px] text-muted-foreground">{run.actor}</p>}
-            </TableCell>
-            <TableCell className="font-mono text-xs">
-              {shortSha(run.fromCommit)} → {shortSha(run.toCommit)}
-            </TableCell>
-            <TableCell>
-              <StatusBadge state={run.status} />
-            </TableCell>
-            <TableCell>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => onSelect(run)}
-              >
-                Log
-              </Button>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <Panel>
+      <PanelBody flush>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Started</TableHead>
+              <TableHead>Trigger</TableHead>
+              <TableHead className="w-full">Commit</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-px" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.runs.map((run) => (
+              <TableRow key={run.id}>
+                <TableCell className="text-xs">
+                  <div>{timestamp(run.startedAt)}</div>
+                  <p className="text-[11px] text-muted-foreground">{run.duration ?? "running"}</p>
+                </TableCell>
+                <TableCell className="text-xs">
+                  {run.trigger}
+                  {run.actor && <p className="text-[11px] text-muted-foreground">{run.actor}</p>}
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {shortSha(run.fromCommit)} → {shortSha(run.toCommit)}
+                </TableCell>
+                <TableCell>
+                  <StatusBadge state={run.status} />
+                </TableCell>
+                <TableCell>
+                  <Button size="xs" variant="ghost" onClick={() => onSelect(run)}>
+                    Log
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </PanelBody>
+    </Panel>
   )
 }
 
@@ -396,24 +384,26 @@ function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () =
   return (
     <>
       <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           Rolling back re-runs the same pipeline against an older commit, so it is exercised by
           exactly the code path that deploys.
         </p>
         {data?.map((commit) => (
           <div
             key={commit.sha}
-            className="flex items-center justify-between gap-3 rounded-md border p-3"
+            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-hairline p-3"
           >
             <div className="min-w-0">
-              <p className="truncate text-sm">{commit.subject}</p>
-              <p className="font-mono text-[11px] text-muted-foreground">
+              <p className="truncate text-[13px]">{commit.subject}</p>
+              <p className="truncate font-mono text-[11px] text-muted-foreground">
                 {commit.short} · {commit.author} · {relativeTime(commit.date)}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {commit.sha === project.currentSha ? (
-                <Badge>current</Badge>
+                <Badge variant="success" className="font-normal">
+                  current
+                </Badge>
               ) : (
                 can("destructive") && (
                   <Button
@@ -487,14 +477,10 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
 
   return (
     <div className="space-y-4">
-      <Alert>
-        <KeyRound className="size-4" />
-        <AlertTitle>Encrypted at rest</AlertTitle>
-        <AlertDescription>
-          These are written into the project&apos;s .env at deploy time. Revealing them is a
-          separate action that is recorded in the audit log.
-        </AlertDescription>
-      </Alert>
+      <Notice icon={KeyRound} title="Encrypted at rest">
+        These are written into the project&apos;s .env at deploy time. Revealing them is a separate
+        action that is recorded in the audit log.
+      </Notice>
 
       {loading && <LoadingRows />}
 
@@ -502,16 +488,19 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
         {vars.map((v) => (
           <div
             key={v.key}
-            className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-hairline px-3 py-2"
           >
-            <span className="font-mono text-xs">{v.key}</span>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">{v.value ?? v.masked}</span>
+            <span className="truncate font-mono text-xs">{v.key}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="truncate font-mono text-xs text-muted-foreground">
+                {v.value ?? v.masked}
+              </span>
               {can("system.admin") && (
                 <Button
-                  size="icon"
+                  size="icon-xs"
                   variant="ghost"
-                  className="size-7 text-destructive"
+                  aria-label={`Delete ${v.key}`}
+                  className="text-destructive"
                   onClick={async () => {
                     await del(`/deploy/${project.id}/env/${encodeURIComponent(v.key)}`)
                     setRevealed(null)
@@ -519,19 +508,19 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
                     onChanged()
                   }}
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash2 />
                 </Button>
               )}
             </div>
           </div>
         ))}
         {vars.length === 0 && !loading && (
-          <p className="text-sm text-muted-foreground">No variables set.</p>
+          <p className="text-[13px] text-muted-foreground">No variables set.</p>
         )}
       </div>
 
       {can("system.admin") && (
-        <>
+        <div className="space-y-3">
           <Button
             size="sm"
             variant="outline"
@@ -551,25 +540,25 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
             {revealed ? "Hide values" : "Reveal values"}
           </Button>
 
-          <div className="flex gap-2 border-t pt-4">
+          <div className="flex flex-wrap gap-2 border-t border-hairline pt-4">
             <Input
               value={key}
               onChange={(e) => setKey(e.target.value.toUpperCase())}
               placeholder="DATABASE_URL"
-              className="w-56 font-mono text-xs"
+              className="w-52 font-mono text-xs"
             />
             <Input
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="value"
-              className="flex-1 font-mono text-xs"
+              className="min-w-40 flex-1 font-mono text-xs"
               type="password"
             />
             <Button onClick={save} disabled={!key}>
               Set
             </Button>
           </div>
-        </>
+        </div>
       )}
     </div>
   )
@@ -624,11 +613,9 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
         </DialogHeader>
 
         {secret ? (
-          <Alert>
-            <KeyRound className="size-4" />
-            <AlertTitle>Webhook secret — shown once</AlertTitle>
-            <AlertDescription className="font-mono text-xs break-all">{secret}</AlertDescription>
-          </Alert>
+          <Notice tone="warning" icon={KeyRound} title="Webhook secret — shown once">
+            <code className="font-mono text-xs break-all">{secret}</code>
+          </Notice>
         ) : (
           <div className="grid gap-3">
             <div className="space-y-1.5">
@@ -641,7 +628,7 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
                 id="p-path"
                 value={repoPath}
                 onChange={(e) => setRepoPath(e.target.value)}
-                className="font-mono text-sm"
+                className="font-mono text-[13px]"
                 placeholder="/srv/my-app"
               />
             </div>
@@ -679,7 +666,7 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
                 className="font-mono text-xs"
               />
             </div>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-[13px]">
               <Switch checked={enabled} onCheckedChange={setEnabled} />
               Accept webhook deployments
             </label>

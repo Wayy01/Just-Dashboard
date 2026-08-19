@@ -2,19 +2,20 @@
 
 import { useMemo, useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
-import { Cpu, HardDrive, MemoryStick, Network, Server, Timer } from "lucide-react"
+import { Activity, Cpu, HardDrive, MemoryStick, Network, Server, Waves } from "lucide-react"
 import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { bytes, duration, percent, rate } from "@/lib/format"
 import type { DirEntry, Snapshot } from "@/lib/types"
 import { useMetrics } from "@/hooks/use-metrics"
-import { PageHeader } from "@/components/page-header"
-import { StatCard, utilisationBar, utilisationTone } from "@/components/stat-card"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader, Metric, MetricStrip } from "@/components/page"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { StatTile, utilisationBar, utilisationTone } from "@/components/stat-tile"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ChartContainer,
   ChartLegend,
@@ -50,130 +51,175 @@ export default function OverviewPage() {
   // The stream itself is owned by the dashboard shell, so this page is a pure
   // reader: arriving here shows the history collected while you were away
   // rather than an empty chart and a fresh handshake.
-  const { host, snapshot, history, connection, error } = useMetrics()
+  const { host, snapshot, history, error } = useMetrics()
 
-  if (error && !snapshot) return <ErrorState error={new Error(error)} />
-  if (!snapshot || !host) return <LoadingRows rows={6} />
+  if (error && !snapshot) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Server" title="Overview" />
+        <ErrorState error={new Error(error)} />
+      </Page>
+    )
+  }
 
-  const live = connection === "open"
+  if (!snapshot || !host) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Server" title="Overview" description="Waiting for the first frame…" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[7.5rem] rounded-xl" />
+          ))}
+        </div>
+        <LoadingPanel rows={5} />
+      </Page>
+    )
+  }
+
   const memTone = utilisationTone(snapshot.memory.usedPercent)
+  const latest = history.at(-1)
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Server"
         title={host.hostname}
         description={
-          <span className="flex flex-wrap items-center gap-2">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
-              {host.platform} {host.platformVersion} · kernel {host.kernelVersion} ·{" "}
-              {host.kernelArch}
+              {host.platform} {host.platformVersion}
             </span>
-            {host.virtualization && <Badge variant="outline">{host.virtualization}</Badge>}
+            <Dot />
+            <span>kernel {host.kernelVersion}</span>
+            <Dot />
+            <span>{host.kernelArch}</span>
+            {host.virtualization && (
+              <Badge variant="outline" className="font-normal">
+                {host.virtualization}
+              </Badge>
+            )}
           </span>
         }
         actions={
-          <Badge variant={live ? "success" : "secondary"} className="gap-1.5">
-            <span
-              className={cn("size-1.5 rounded-full", live ? "bg-success" : "bg-muted-foreground")}
-            />
-            {live ? "live" : connection}
-          </Badge>
+          <MetricStrip>
+            <Metric label="Uptime" value={duration(snapshot.uptimeSeconds)} />
+            <Metric label="Processes" value={host.processes} />
+            <Metric label="Cores" value={snapshot.cpu.cores} />
+          </MetricStrip>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
-        <StatCard
-          title="CPU"
+        <StatTile
+          label="CPU"
           icon={Cpu}
           value={percent(snapshot.cpu.totalPercent)}
-          percent={snapshot.cpu.totalPercent}
+          meter={snapshot.cpu.totalPercent}
           tone={utilisationTone(snapshot.cpu.totalPercent)}
-          detail={`${snapshot.cpu.cores} cores · load ${snapshot.cpu.loadAvg1.toFixed(2)} ${snapshot.cpu.loadAvg5.toFixed(2)} ${snapshot.cpu.loadAvg15.toFixed(2)}`}
+          hint={`load ${snapshot.cpu.loadAvg1.toFixed(2)} · ${snapshot.cpu.loadAvg5.toFixed(2)} · ${snapshot.cpu.loadAvg15.toFixed(2)}`}
+          trailing={
+            <span className="text-[11px] text-muted-foreground">{snapshot.cpu.cores} cores</span>
+          }
         />
-        <StatCard
-          title="Memory"
+        <StatTile
+          label="Memory"
           icon={MemoryStick}
           value={percent(snapshot.memory.usedPercent)}
-          percent={snapshot.memory.usedPercent}
+          meter={snapshot.memory.usedPercent}
           tone={memTone}
-          detail={`${bytes(snapshot.memory.used)} of ${bytes(snapshot.memory.total)} · ${bytes(snapshot.memory.available)} available`}
+          hint={`${bytes(snapshot.memory.available)} available`}
+          trailing={
+            <span className="numeric text-[11px] text-muted-foreground">
+              {bytes(snapshot.memory.used)} / {bytes(snapshot.memory.total)}
+            </span>
+          }
         />
-        <StatCard
-          title="Swap"
+        <StatTile
+          label="Swap"
           icon={HardDrive}
           value={snapshot.swap.total === 0 ? "none" : percent(snapshot.swap.usedPercent)}
-          percent={snapshot.swap.total === 0 ? 0 : snapshot.swap.usedPercent}
+          meter={snapshot.swap.total === 0 ? 0 : snapshot.swap.usedPercent}
           tone={utilisationTone(snapshot.swap.usedPercent)}
-          detail={
+          hint={
             snapshot.swap.total === 0
               ? "no swap configured"
               : `${bytes(snapshot.swap.used)} of ${bytes(snapshot.swap.total)}`
           }
         />
-        <StatCard
-          title="Uptime"
-          icon={Timer}
-          value={duration(snapshot.uptimeSeconds)}
-          detail={`${host.processes} processes · booted ${new Date(host.bootTime).toLocaleDateString()}`}
+        <StatTile
+          label="Network"
+          icon={Waves}
+          value={rate(latest?.rx ?? 0)}
+          hint={`${rate(latest?.tx ?? 0)} out · ${snapshot.net.length} interfaces`}
+          trailing={<span className="text-[11px] text-muted-foreground">in</span>}
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">CPU</CardTitle>
-            <CardDescription className="font-mono text-xs">{host.cpuModel}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer config={cpuConfig} className="h-[200px] w-full">
-              <AreaChart data={history} margin={{ left: -20, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <Panel>
+          <PanelHeader
+            icon={Cpu}
+            title="Processor"
+            description={host.cpuModel}
+            actions={
+              <span className="numeric text-sm font-medium">
+                {percent(snapshot.cpu.totalPercent)}
+              </span>
+            }
+          />
+          <PanelBody className="space-y-4">
+            <ChartContainer config={cpuConfig} className="h-[190px] w-full">
+              <AreaChart data={history} margin={{ left: -22, right: 4, top: 4 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                 <XAxis
                   dataKey="t"
                   tickLine={false}
                   axisLine={false}
                   minTickGap={48}
-                  fontSize={11}
+                  fontSize={10}
                 />
-                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={11} unit="%" />
+                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={10} unit="%" />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Area
                   dataKey="cpu"
                   type="monotone"
                   stroke="var(--color-cpu)"
+                  strokeWidth={1.5}
                   fill="var(--color-cpu)"
-                  fillOpacity={0.15}
+                  fillOpacity={0.14}
                   isAnimationActive={false}
                 />
               </AreaChart>
             </ChartContainer>
             <PerCoreBars cores={snapshot.cpu.perCore} />
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Memory and swap</CardTitle>
-            <CardDescription>Share of total, sampled every 2 seconds</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChartContainer config={memConfig} className="h-[200px] w-full">
-              <LineChart data={history} margin={{ left: -20, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <Panel>
+          <PanelHeader
+            icon={MemoryStick}
+            title="Memory and swap"
+            description="Share of total, sampled every 2 seconds"
+          />
+          <PanelBody className="space-y-4">
+            <ChartContainer config={memConfig} className="h-[190px] w-full">
+              <LineChart data={history} margin={{ left: -22, right: 4, top: 4 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                 <XAxis
                   dataKey="t"
                   tickLine={false}
                   axisLine={false}
                   minTickGap={48}
-                  fontSize={11}
+                  fontSize={10}
                 />
-                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={11} unit="%" />
+                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={10} unit="%" />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <ChartLegend content={<ChartLegendContent />} />
                 <Line
                   dataKey="mem"
                   type="monotone"
                   stroke="var(--color-mem)"
+                  strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
                 />
@@ -181,34 +227,36 @@ export default function OverviewPage() {
                   dataKey="swap"
                   type="monotone"
                   stroke="var(--color-swap)"
+                  strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
                 />
               </LineChart>
             </ChartContainer>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
-              <div>Cached {bytes(snapshot.memory.cached)}</div>
-              <div>Buffers {bytes(snapshot.memory.buffers)}</div>
-            </div>
-          </CardContent>
-        </Card>
+            <MetricStrip>
+              <Metric label="Used" value={bytes(snapshot.memory.used)} />
+              <Metric label="Cached" value={bytes(snapshot.memory.cached)} />
+              <Metric label="Buffers" value={bytes(snapshot.memory.buffers)} />
+              <Metric label="Available" value={bytes(snapshot.memory.available)} />
+            </MetricStrip>
+          </PanelBody>
+        </Panel>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Network throughput</CardTitle>
-          <CardDescription>Combined across all interfaces</CardDescription>
-        </CardHeader>
-        <CardContent>
+      <Panel>
+        <PanelHeader icon={Activity} title="Network throughput" description="All interfaces">
+          <span className="flex-1" />
+        </PanelHeader>
+        <PanelBody>
           <ChartContainer config={netConfig} className="h-[180px] w-full">
             <AreaChart data={history} margin={{ left: 4, right: 4, top: 4 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={11} />
+              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+              <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={10} />
               <YAxis
-                width={58}
+                width={56}
                 tickLine={false}
                 axisLine={false}
-                fontSize={11}
+                fontSize={10}
                 tickFormatter={(v) => bytes(v)}
               />
               <ChartTooltip
@@ -219,43 +267,49 @@ export default function OverviewPage() {
                 dataKey="rx"
                 type="monotone"
                 stroke="var(--color-rx)"
+                strokeWidth={1.5}
                 fill="var(--color-rx)"
-                fillOpacity={0.15}
+                fillOpacity={0.14}
                 isAnimationActive={false}
               />
               <Area
                 dataKey="tx"
                 type="monotone"
                 stroke="var(--color-tx)"
+                strokeWidth={1.5}
                 fill="var(--color-tx)"
-                fillOpacity={0.15}
+                fillOpacity={0.14}
                 isAnimationActive={false}
               />
             </AreaChart>
           </ChartContainer>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
 
-      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <MountsCard snapshot={snapshot} />
-        <InterfacesCard snapshot={snapshot} />
+      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+        <MountsPanel snapshot={snapshot} />
+        <InterfacesPanel snapshot={snapshot} />
       </div>
-    </>
+    </Page>
   )
+}
+
+function Dot() {
+  return <span className="text-muted-foreground/40">·</span>
 }
 
 function PerCoreBars({ cores }: { cores: number[] }) {
   if (cores.length === 0) return null
   return (
-    <div className="mt-4 space-y-1.5">
+    <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
       {cores.map((value, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="w-10 shrink-0 font-mono text-[11px] text-muted-foreground">cpu{i}</span>
+        <div key={i} className="flex min-w-0 items-center gap-2">
+          <span className="w-9 shrink-0 font-mono text-[10px] text-muted-foreground">cpu{i}</span>
           <Progress
             value={value}
-            className={cn("h-1.5 flex-1", utilisationBar(utilisationTone(value)))}
+            className={cn("h-1 flex-1", utilisationBar(utilisationTone(value)))}
           />
-          <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+          <span className="numeric w-8 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
             {value.toFixed(0)}%
           </span>
         </div>
@@ -264,7 +318,7 @@ function PerCoreBars({ cores }: { cores: number[] }) {
   )
 }
 
-function MountsCard({ snapshot }: { snapshot: Snapshot }) {
+function MountsPanel({ snapshot }: { snapshot: Snapshot }) {
   const [scanning, setScanning] = useState<string | null>(null)
   const [breakdown, setBreakdown] = useState<Record<string, DirEntry[]>>({})
   const abortRef = useRef<AbortController>(null)
@@ -290,83 +344,90 @@ function MountsCard({ snapshot }: { snapshot: Snapshot }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Filesystems</CardTitle>
-        <CardDescription>Expand a mount to see what is using it</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {snapshot.mounts.map((mount) => (
-          <div key={mount.mountpoint} className="space-y-2">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">{mount.mountpoint}</span>
-                  <Badge variant="outline" className="shrink-0 text-[10px]">
-                    {mount.fstype}
-                  </Badge>
-                </div>
-                <p className="truncate font-mono text-xs text-muted-foreground">{mount.device}</p>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="tabular-nums">
-                  {bytes(mount.used)} / {bytes(mount.total)}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {rate(mount.readRate)} read · {rate(mount.writeRate)} write
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Progress
-                value={mount.usedPercent}
-                className={cn("h-1.5 flex-1", utilisationBar(utilisationTone(mount.usedPercent)))}
-              />
-              <span
-                className={cn(
-                  "w-12 text-right font-mono text-xs",
-                  mount.usedPercent >= 90
-                    ? "text-destructive"
-                    : mount.usedPercent >= 75
-                      ? "text-warning"
-                      : "text-muted-foreground",
-                )}
-              >
-                {mount.usedPercent.toFixed(0)}%
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 px-2 text-xs"
-                disabled={scanning !== null}
-                onClick={() => scan(mount.mountpoint)}
-              >
-                {scanning === mount.mountpoint ? "scanning…" : "scan"}
-              </Button>
-            </div>
-            {breakdown[mount.mountpoint] && (
-              <div className="space-y-1 rounded-md border bg-muted/40 p-2">
-                {breakdown[mount.mountpoint].map((entry) => (
-                  <div key={entry.path} className="flex justify-between gap-2 text-xs">
-                    <span className="truncate font-mono">{entry.name}</span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {bytes(entry.size)}
-                    </span>
+    <Panel>
+      <PanelHeader
+        icon={HardDrive}
+        title="Filesystems"
+        description="Expand a mount to see what is using it"
+      />
+      <PanelBody className="space-y-4">
+        {snapshot.mounts.map((mount) => {
+          const tone = utilisationTone(mount.usedPercent)
+          return (
+            <div key={mount.mountpoint} className="min-w-0 space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-[13px] font-medium">{mount.mountpoint}</span>
+                    <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
+                      {mount.fstype}
+                    </Badge>
                   </div>
-                ))}
+                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                    {mount.device}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="numeric text-[13px]">
+                    {bytes(mount.used)}{" "}
+                    <span className="text-muted-foreground">/ {bytes(mount.total)}</span>
+                  </div>
+                  <p className="numeric text-[11px] text-muted-foreground">
+                    {rate(mount.readRate)} read · {rate(mount.writeRate)} write
+                  </p>
+                </div>
               </div>
-            )}
-          </div>
-        ))}
+              <div className="flex items-center gap-2">
+                <Progress
+                  value={mount.usedPercent}
+                  className={cn("h-1 flex-1", utilisationBar(tone))}
+                />
+                <span
+                  className={cn(
+                    "numeric w-9 text-right font-mono text-[11px]",
+                    tone === "danger"
+                      ? "text-destructive"
+                      : tone === "warning"
+                        ? "text-warning"
+                        : "text-muted-foreground",
+                  )}
+                >
+                  {mount.usedPercent.toFixed(0)}%
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  disabled={scanning !== null}
+                  onClick={() => scan(mount.mountpoint)}
+                >
+                  {scanning === mount.mountpoint ? "scanning…" : "scan"}
+                </Button>
+              </div>
+              {breakdown[mount.mountpoint] && (
+                <div className="space-y-1 rounded-lg border border-hairline bg-surface-sunken p-2">
+                  {breakdown[mount.mountpoint].map((entry) => (
+                    <div key={entry.path} className="flex justify-between gap-2 text-[11px]">
+                      <span className="truncate font-mono">{entry.name}</span>
+                      <span className="numeric shrink-0 text-muted-foreground">
+                        {bytes(entry.size)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
         {snapshot.mounts.length === 0 && (
           <EmptyState title="No filesystems reported" icon={HardDrive} />
         )}
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }
 
-function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
+function InterfacesPanel({ snapshot }: { snapshot: Snapshot }) {
   const total = useMemo(
     () => ({
       rx: snapshot.net.reduce((s, n) => s + n.bytesRecv, 0),
@@ -376,17 +437,13 @@ function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
   )
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Network className="size-4" />
-          Interfaces
-        </CardTitle>
-        <CardDescription>
-          {bytes(total.rx)} in · {bytes(total.tx)} out since boot
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
+    <Panel>
+      <PanelHeader
+        icon={Network}
+        title="Interfaces"
+        description={`${bytes(total.rx)} in · ${bytes(total.tx)} out since boot`}
+      />
+      <PanelBody flush>
         <Table>
           <TableHeader>
             <TableRow>
@@ -413,27 +470,27 @@ function InterfacesCard({ snapshot }: { snapshot: Snapshot }) {
                     {iface.addrs.join(", ") || "no address"}
                   </p>
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">
+                <TableCell className="numeric text-right font-mono text-xs">
                   {rate(iface.recvRate)}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">
+                <TableCell className="numeric text-right font-mono text-xs">
                   {rate(iface.sendRate)}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                <TableCell className="numeric text-right font-mono text-xs text-muted-foreground">
                   {iface.errIn + iface.errOut}
                 </TableCell>
               </TableRow>
             ))}
             {snapshot.net.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4}>
+                <TableCell colSpan={4} className="p-0">
                   <EmptyState title="No interfaces reported" icon={Server} />
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }

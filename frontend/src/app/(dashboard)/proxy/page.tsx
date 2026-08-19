@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import dynamic from "next/dynamic"
 import {
   CheckCircle2,
+  FileCode,
   Globe,
   Loader2,
   Plug,
@@ -15,20 +15,23 @@ import {
 import { toast } from "sonner"
 import { del, get, post, put } from "@/lib/api"
 import { timestamp } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { Certificate, Listener, VHost } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { CodeEditor } from "@/components/code-editor"
+import { Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { SidePanel } from "@/components/side-panel"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -36,16 +39,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
-
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
 
 type ProxyStatus = {
   nginx: boolean
@@ -59,8 +52,9 @@ export default function ProxyPage() {
   const status = usePoll((signal) => get<ProxyStatus>("/proxy/status", undefined, signal), 60000)
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Network"
         title="Proxy and TLS"
         description={
           status.data
@@ -71,26 +65,26 @@ export default function ProxyPage() {
               ]
                 .filter(Boolean)
                 .join(" · ") || "No reverse proxy detected"
-            : undefined
+            : "Checking what this host runs…"
         }
       />
-      <Tabs defaultValue="vhosts">
+      <Tabs defaultValue="vhosts" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="vhosts">Virtual hosts</TabsTrigger>
           <TabsTrigger value="certs">Certificates</TabsTrigger>
           <TabsTrigger value="ports">Listening ports</TabsTrigger>
         </TabsList>
-        <TabsContent value="vhosts">
+        <TabsContent value="vhosts" className="min-w-0">
           <VHostsTab />
         </TabsContent>
-        <TabsContent value="certs">
+        <TabsContent value="certs" className="min-w-0">
           <CertsTab />
         </TabsContent>
-        <TabsContent value="ports">
+        <TabsContent value="ports" className="min-w-0">
           <PortsTab />
         </TabsContent>
       </Tabs>
-    </>
+    </Page>
   )
 }
 
@@ -103,7 +97,7 @@ function VHostsTab() {
     30000,
   )
 
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.length) return <EmptyState icon={Globe} title="No virtual hosts found" />
 
@@ -138,14 +132,21 @@ function VHostsTab() {
     }
   }
 
+  const secured = data.filter((v) => v.tls).length
+
   return (
     <>
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
+      <Panel>
+        <PanelHeader
+          icon={Globe}
+          title="Virtual hosts"
+          description={`${data.length} defined · ${secured} on TLS`}
+        />
+        <PanelBody flush>
+          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+            <TableHeader className={stickyTableHeader}>
               <TableRow>
-                <TableHead>Host</TableHead>
+                <TableHead className="w-full">Host</TableHead>
                 <TableHead>Server names</TableHead>
                 <TableHead>Upstreams</TableHead>
                 <TableHead>TLS</TableHead>
@@ -156,15 +157,17 @@ function VHostsTab() {
               {data.map((vhost) => (
                 <TableRow key={vhost.path} onActivate={() => setEditing(vhost)}>
                   <TableCell>
-                    <button
-                      className="font-medium hover:underline"
-                      onClick={() => setEditing(vhost)}
-                    >
-                      {vhost.name}
-                    </button>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">
-                      {vhost.path}
-                    </p>
+                    <div className="max-w-[20rem] min-w-0">
+                      <button
+                        className="truncate text-[13px] font-medium hover:underline"
+                        onClick={() => setEditing(vhost)}
+                      >
+                        {vhost.name}
+                      </button>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {vhost.path}
+                      </p>
+                    </div>
                   </TableCell>
                   <TableCell className="text-xs">
                     {vhost.serverNames.join(", ") || (
@@ -176,12 +179,14 @@ function VHostsTab() {
                   </TableCell>
                   <TableCell>
                     {vhost.tls ? (
-                      <Badge className="gap-1">
+                      <Badge variant="success" className="font-normal">
                         <ShieldCheck className="size-3" />
                         yes
                       </Badge>
                     ) : (
-                      <Badge variant="secondary">no</Badge>
+                      <Badge variant="secondary" className="font-normal">
+                        no
+                      </Badge>
                     )}
                   </TableCell>
                   <TableCell>
@@ -199,8 +204,8 @@ function VHostsTab() {
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       <ConfigEditor
         vhost={editing}
         onOpenChange={(o) => !o && setEditing(null)}
@@ -220,12 +225,11 @@ function ConfigEditor({
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
-  if (!vhost) return null
   // Keyed on the file so opening another vhost never inherits the previous
   // one's buffer — saving that to the wrong path would be a real outage.
   return (
     <ConfigEditorBody
-      key={vhost.path}
+      key={vhost?.path ?? "none"}
       vhost={vhost}
       onOpenChange={onOpenChange}
       onSaved={onSaved}
@@ -238,7 +242,7 @@ function ConfigEditorBody({
   onOpenChange,
   onSaved,
 }: {
-  vhost: VHost
+  vhost: VHost | null
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
@@ -249,6 +253,7 @@ function ConfigEditorBody({
   const [validation, setValidation] = useState<{ valid: boolean; output: string } | null>(null)
 
   useEffect(() => {
+    if (!vhost) return
     const controller = new AbortController()
     get<{ content: string }>("/proxy/config", { path: vhost.path }, controller.signal)
       .then((r) => {
@@ -260,6 +265,7 @@ function ConfigEditorBody({
   }, [vhost])
 
   const validate = async () => {
+    if (!vhost) return
     setBusy(true)
     try {
       setValidation(await post("/proxy/validate", { kind: vhost.kind, path: vhost.path, content }))
@@ -271,6 +277,7 @@ function ConfigEditorBody({
   }
 
   const save = async (reload: boolean) => {
+    if (!vhost) return
     setBusy(true)
     try {
       await put("/proxy/config", { kind: vhost.kind, path: vhost.path, content, reload })
@@ -285,82 +292,75 @@ function ConfigEditorBody({
   }
 
   return (
-    <Sheet open onOpenChange={(o) => !busy && onOpenChange(o)}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-4xl">
-        <SheetHeader className="border-b p-4">
-          <SheetTitle>{vhost.name}</SheetTitle>
-          <SheetDescription className="font-mono text-xs">{vhost.path}</SheetDescription>
-        </SheetHeader>
-
-        <Alert className="m-4 mb-0">
-          <ShieldCheck className="size-4" />
-          <AlertTitle>Validated before it takes effect</AlertTitle>
-          <AlertDescription>
-            The server runs its own config test first. A config that fails is rolled back and never
-            reloaded, so a typo here cannot take your sites offline.
-          </AlertDescription>
-        </Alert>
-
-        <div className="min-h-0 flex-1 p-4">
-          <MonacoEditor
-            height="100%"
-            theme="vs-dark"
-            language={vhost.kind === "caddy" ? "ini" : "ini"}
-            value={content}
-            onChange={(v) => {
-              setContent(v ?? "")
-              setValidation(null)
-            }}
-            options={{
-              readOnly: !can("system.admin"),
-              minimap: { enabled: false },
-              fontSize: 13,
-              automaticLayout: true,
-              scrollBeyondLastLine: false,
-            }}
-          />
-        </div>
-
-        {validation && (
-          <div
-            className={
-              validation.valid
-                ? "mx-4 flex items-start gap-2 rounded-md border border-success/40 bg-success/10 p-3 text-xs"
-                : "mx-4 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
-            }
-          >
-            {validation.valid ? (
-              <CheckCircle2 className="size-4 shrink-0 text-success" />
-            ) : (
-              <XCircle className="size-4 shrink-0 text-destructive" />
-            )}
-            <pre className="whitespace-pre-wrap font-mono">
-              {validation.output || "Config is valid."}
-            </pre>
-          </div>
-        )}
-
-        {can("system.admin") && (
-          <SheetFooter className="flex-row gap-2 border-t p-4">
-            <Button variant="outline" onClick={validate} disabled={busy}>
+    <SidePanel
+      open={vhost !== null}
+      onOpenChange={(o) => !busy && onOpenChange(o)}
+      width="xl"
+      icon={FileCode}
+      title={vhost?.name ?? "Configuration"}
+      description={vhost?.path}
+      bodyClassName="flex min-h-0 flex-1 flex-col gap-3 p-4"
+      footer={
+        can("system.admin") && vhost ? (
+          <>
+            <Button size="sm" variant="outline" onClick={validate} disabled={busy}>
               {busy && <Loader2 className="size-4 animate-spin" />}
               Test config
             </Button>
             <span className="flex-1" />
             <Button
+              size="sm"
               variant="outline"
               onClick={() => save(false)}
               disabled={busy || content === original}
             >
               Save only
             </Button>
-            <Button onClick={() => save(true)} disabled={busy || content === original}>
+            <Button size="sm" onClick={() => save(true)} disabled={busy || content === original}>
               Save and reload
             </Button>
-          </SheetFooter>
-        )}
-      </SheetContent>
-    </Sheet>
+          </>
+        ) : undefined
+      }
+    >
+      <Notice icon={ShieldCheck} title="Validated before it takes effect">
+        The server runs its own config test first. A config that fails is rolled back and never
+        reloaded, so a typo here cannot take your sites offline.
+      </Notice>
+
+      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-hairline bg-surface-sunken">
+        <CodeEditor
+          className="h-full"
+          language="ini"
+          value={content}
+          readOnly={!can("system.admin")}
+          onChange={(v) => {
+            setContent(v)
+            setValidation(null)
+          }}
+        />
+      </div>
+
+      {validation && (
+        <div
+          className={cn(
+            "flex shrink-0 items-start gap-2 rounded-lg border p-3 text-xs",
+            validation.valid
+              ? "border-success/40 bg-success/10"
+              : "border-destructive/40 bg-destructive/10",
+          )}
+        >
+          {validation.valid ? (
+            <CheckCircle2 className="size-4 shrink-0 text-success" />
+          ) : (
+            <XCircle className="size-4 shrink-0 text-destructive" />
+          )}
+          <pre className="font-mono whitespace-pre-wrap">
+            {validation.output || "Config is valid."}
+          </pre>
+        </div>
+      )}
+    </SidePanel>
   )
 }
 
@@ -389,42 +389,48 @@ function CertsTab() {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Installed certificates</CardTitle>
-          <CardDescription>From certbot and from the proxy configuration on disk</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {certs.loading && <LoadingRows className="p-4" />}
+    <div className="flex min-w-0 flex-col gap-4">
+      <Panel>
+        <PanelHeader
+          icon={ShieldCheck}
+          title="Installed certificates"
+          description="From certbot and from the proxy configuration on disk"
+        />
+        <PanelBody flush>
+          {certs.loading && <LoadingPanel />}
           {certs.error && <ErrorState error={certs.error} className="m-4" />}
           {certs.data && <CertTable certs={certs.data} />}
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Watched domains</CardTitle>
-          <CardDescription>
-            Checked with a live TLS handshake, which catches a certificate renewed on disk but never
-            reloaded
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {can("system.admin") && (
-            <div className="flex max-w-md gap-2">
-              <Input
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addDomain()}
-                placeholder="example.com"
-              />
-              <Button onClick={addDomain} disabled={!domain}>
-                Watch
-              </Button>
-            </div>
-          )}
-          {watched.loading && <LoadingRows />}
+      <Panel>
+        <PanelHeader
+          icon={Globe}
+          title="Watched domains"
+          description="Checked with a live TLS handshake, which catches a certificate renewed on disk but never reloaded"
+          actions={
+            <Button variant="outline" size="sm" onClick={() => watched.refresh()}>
+              <RefreshCw className="size-3.5" />
+              Re-check now
+            </Button>
+          }
+        />
+        {can("system.admin") && (
+          <PanelToolbar>
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addDomain()}
+              placeholder="example.com"
+              className="h-8 w-full text-[13px] sm:w-72"
+            />
+            <Button size="sm" onClick={addDomain} disabled={!domain}>
+              Watch
+            </Button>
+          </PanelToolbar>
+        )}
+        <PanelBody flush>
+          {watched.loading && <LoadingPanel rows={3} />}
           {watched.data?.length === 0 && (
             <EmptyState icon={ShieldX} title="No domains watched yet" />
           )}
@@ -432,7 +438,7 @@ function CertsTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Domain</TableHead>
+                  <TableHead className="w-full">Domain</TableHead>
                   <TableHead>Issuer</TableHead>
                   <TableHead>Expires</TableHead>
                   <TableHead>Status</TableHead>
@@ -441,8 +447,8 @@ function CertsTab() {
               </TableHeader>
               <TableBody>
                 {watched.data.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium">{row.domain}</TableCell>
+                  <TableRow key={row.id} className="group">
+                    <TableCell className="text-[13px] font-medium">{row.domain}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.certificate?.issuer ?? "—"}
                     </TableCell>
@@ -455,9 +461,9 @@ function CertsTab() {
                     <TableCell>
                       {can("system.admin") && (
                         <Button
-                          size="sm"
+                          size="xs"
                           variant="ghost"
-                          className="h-7 text-xs"
+                          className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                           onClick={async () => {
                             await del(`/certificates/watched/${row.id}`)
                             watched.refresh()
@@ -472,12 +478,8 @@ function CertsTab() {
               </TableBody>
             </Table>
           )}
-          <Button variant="outline" size="sm" onClick={() => watched.refresh()}>
-            <RefreshCw className="size-4" />
-            Re-check now
-          </Button>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
     </div>
   )
 }
@@ -485,11 +487,11 @@ function CertsTab() {
 function CertTable({ certs }: { certs: Certificate[] }) {
   if (certs.length === 0) return <EmptyState icon={ShieldX} title="No certificates found" />
   return (
-    <Table>
-      <TableHeader>
+    <Table containerClassName="max-h-[26rem]">
+      <TableHeader className={stickyTableHeader}>
         <TableRow>
           <TableHead>Name</TableHead>
-          <TableHead>Domains</TableHead>
+          <TableHead className="w-full">Domains</TableHead>
           <TableHead>Issuer</TableHead>
           <TableHead>Expires</TableHead>
           <TableHead>Status</TableHead>
@@ -499,8 +501,12 @@ function CertTable({ certs }: { certs: Certificate[] }) {
         {certs.map((cert) => (
           <TableRow key={cert.path || cert.name}>
             <TableCell>
-              <div className="font-medium">{cert.name}</div>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">{cert.source}</p>
+              <div className="max-w-[16rem] min-w-0">
+                <div className="truncate text-[13px] font-medium">{cert.name}</div>
+                <p className="truncate font-mono text-[11px] text-muted-foreground">
+                  {cert.source}
+                </p>
+              </div>
             </TableCell>
             <TableCell className="max-w-xs truncate text-xs">{cert.domains.join(", ")}</TableCell>
             <TableCell className="text-xs text-muted-foreground">{cert.issuer}</TableCell>
@@ -516,11 +522,35 @@ function CertTable({ certs }: { certs: Certificate[] }) {
 }
 
 function ExpiryBadge({ cert }: { cert?: Certificate }) {
-  if (!cert) return <Badge variant="secondary">unchecked</Badge>
-  if (cert.error) return <Badge variant="destructive">{cert.error.slice(0, 40)}</Badge>
-  if (cert.expired) return <Badge variant="destructive">expired</Badge>
-  if (cert.expiring) return <Badge variant="destructive">{cert.daysLeft}d left</Badge>
-  return <Badge>{cert.daysLeft}d left</Badge>
+  if (!cert)
+    return (
+      <Badge variant="secondary" className="font-normal">
+        unchecked
+      </Badge>
+    )
+  if (cert.error)
+    return (
+      <Badge variant="destructive" className="font-normal">
+        {cert.error.slice(0, 40)}
+      </Badge>
+    )
+  if (cert.expired)
+    return (
+      <Badge variant="destructive" className="font-normal">
+        expired
+      </Badge>
+    )
+  if (cert.expiring)
+    return (
+      <Badge variant="warning" className="font-normal">
+        {cert.daysLeft}d left
+      </Badge>
+    )
+  return (
+    <Badge variant="success" className="font-normal">
+      {cert.daysLeft}d left
+    </Badge>
+  )
 }
 
 function PortsTab() {
@@ -528,28 +558,26 @@ function PortsTab() {
     (signal) => get<Listener[]>("/ports", undefined, signal),
     15000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
   const exposed = data?.filter((l) => l.exposed).length ?? 0
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Listening ports</CardTitle>
-        <CardDescription>
-          {exposed} of {data?.length ?? 0} bound to a wildcard address and therefore reachable from
-          off the machine
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
+    <Panel>
+      <PanelHeader
+        icon={Plug}
+        title="Listening ports"
+        description={`${exposed} of ${data?.length ?? 0} bound to a wildcard address and therefore reachable from off the machine`}
+      />
+      <PanelBody flush>
+        <Table containerClassName="max-h-[calc(100svh-20rem)]">
+          <TableHeader className={stickyTableHeader}>
             <TableRow>
-              <TableHead className="w-24">Port</TableHead>
+              <TableHead className="w-20">Port</TableHead>
               <TableHead className="w-20">Proto</TableHead>
               <TableHead>Bound to</TableHead>
-              <TableHead>Process</TableHead>
+              <TableHead className="w-full">Process</TableHead>
               <TableHead>User</TableHead>
               <TableHead>Reach</TableHead>
             </TableRow>
@@ -557,33 +585,37 @@ function PortsTab() {
           <TableBody>
             {data?.map((listener, i) => (
               <TableRow key={`${listener.protocol}-${listener.address}-${listener.port}-${i}`}>
-                <TableCell className="font-mono text-sm tabular-nums">{listener.port}</TableCell>
+                <TableCell className="numeric font-mono text-[13px]">{listener.port}</TableCell>
                 <TableCell className="text-xs uppercase text-muted-foreground">
                   {listener.protocol}
                 </TableCell>
                 <TableCell className="font-mono text-xs">{listener.address || "*"}</TableCell>
                 <TableCell>
-                  <div className="text-sm">{listener.process || "unknown"}</div>
-                  <p className="max-w-sm truncate font-mono text-[11px] text-muted-foreground">
-                    {listener.cmdline}
-                  </p>
+                  <div className="max-w-[22rem] min-w-0">
+                    <div className="truncate text-[13px]">{listener.process || "unknown"}</div>
+                    <p className="truncate font-mono text-[11px] text-muted-foreground">
+                      {listener.cmdline}
+                    </p>
+                  </div>
                 </TableCell>
                 <TableCell className="text-xs">{listener.user ?? "—"}</TableCell>
                 <TableCell>
                   {listener.exposed ? (
-                    <Badge variant="destructive" className="gap-1">
+                    <Badge variant="destructive" className="font-normal">
                       <Plug className="size-3" />
                       exposed
                     </Badge>
                   ) : (
-                    <Badge variant="secondary">loopback</Badge>
+                    <Badge variant="secondary" className="font-normal">
+                      loopback
+                    </Badge>
                   )}
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }

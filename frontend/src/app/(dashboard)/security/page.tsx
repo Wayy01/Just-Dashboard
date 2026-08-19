@@ -9,16 +9,15 @@ import type { Exposure, Fail2banJail, FirewallStatus, LoginSession } from "@/lib
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -28,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -46,26 +46,30 @@ import {
 
 export default function SecurityPage() {
   return (
-    <>
-      <PageHeader title="Security" description="Firewall, intrusion prevention and active logins" />
-      <ExposureCard />
-      <Tabs defaultValue="firewall">
+    <Page>
+      <PageHeader
+        eyebrow="Network"
+        title="Security"
+        description="Firewall, intrusion prevention and active logins"
+      />
+      <ExposurePanel />
+      <Tabs defaultValue="firewall" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="firewall">Firewall</TabsTrigger>
           <TabsTrigger value="fail2ban">fail2ban</TabsTrigger>
           <TabsTrigger value="sessions">SSH sessions</TabsTrigger>
         </TabsList>
-        <TabsContent value="firewall">
+        <TabsContent value="firewall" className="min-w-0">
           <FirewallTab />
         </TabsContent>
-        <TabsContent value="fail2ban">
+        <TabsContent value="fail2ban" className="min-w-0">
           <Fail2banTab />
         </TabsContent>
-        <TabsContent value="sessions">
+        <TabsContent value="sessions" className="min-w-0">
           <SessionsTab />
         </TabsContent>
       </Tabs>
-    </>
+    </Page>
   )
 }
 
@@ -77,7 +81,7 @@ export default function SecurityPage() {
  * machine that quietly became reachable from the internet says so here instead
  * of waiting to be discovered.
  */
-function ExposureCard() {
+function ExposurePanel() {
   const { data } = usePoll<Exposure>((signal) => get("/exposure", undefined, signal), 60_000)
   if (!data) return null
 
@@ -93,30 +97,39 @@ function ExposureCard() {
   }
 
   return (
-    <Alert variant={safe ? "default" : "destructive"}>
-      {safe ? <ShieldCheck className="size-4" /> : <ShieldAlert className="size-4" />}
-      <AlertTitle className="flex flex-wrap items-center gap-2">
-        Reachable from
-        <Badge variant={alarming ? "destructive" : safe ? "success" : "warning"}>
-          {label[data.grade]}
-        </Badge>
-      </AlertTitle>
-      <AlertDescription className="flex flex-col gap-2">
-        <span>{data.summary}</span>
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">allowlist</span>
+    <Notice
+      tone={safe ? "success" : alarming ? "danger" : "warning"}
+      icon={safe ? ShieldCheck : ShieldAlert}
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          Reachable from
+          <Badge
+            variant={alarming ? "destructive" : safe ? "success" : "warning"}
+            className="font-normal"
+          >
+            {label[data.grade]}
+          </Badge>
+        </span>
+      }
+    >
+      <div className="space-y-1.5">
+        <p>{data.summary}</p>
+        <p className="flex flex-wrap items-center gap-1.5">
+          <span className="eyebrow">allowlist</span>
           {data.allowlist.map((cidr) => (
             <code
               key={cidr}
-              className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+              className="rounded border border-hairline bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px]"
             >
               {cidr}
             </code>
           ))}
-        </span>
-        {data.recommendation && <span className="font-medium">{data.recommendation}</span>}
-      </AlertDescription>
-    </Alert>
+        </p>
+        {data.recommendation && (
+          <p className="font-medium text-foreground">{data.recommendation}</p>
+        )}
+      </div>
+    </Notice>
   )
 }
 
@@ -128,7 +141,7 @@ function FirewallTab() {
     20000,
   )
 
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.available) {
     return <EmptyState icon={Shield} title="No firewall tool found" description={data?.error} />
@@ -136,28 +149,20 @@ function FirewallTab() {
 
   return (
     <>
-      <div className="space-y-4">
-        <Alert>
-          <ShieldAlert className="size-4" />
-          <AlertTitle>Lockout protection</AlertTitle>
-          <AlertDescription>
-            A rule that would block the address you are connected from is refused before it is
-            applied — a firewall change should never be the thing that costs you access to the box.
-          </AlertDescription>
-        </Alert>
+      <div className="flex min-w-0 flex-col gap-4">
+        <Notice icon={ShieldAlert} title="Lockout protection">
+          A rule that would block the address you are connected from is refused before it is applied
+          — a firewall change should never be the thing that costs you access to the box.
+        </Notice>
 
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between">
-            <div>
-              <CardTitle className="text-base">
-                {data.backend} · {data.enabled ? "active" : "inactive"}
-              </CardTitle>
-              <CardDescription>
-                {data.defaultPolicy ?? "no default policy reported"}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {can("system.admin") && data.backend === "ufw" && (
+        <Panel>
+          <PanelHeader
+            icon={Shield}
+            title={`${data.backend} · ${data.enabled ? "active" : "inactive"}`}
+            description={data.defaultPolicy ?? "no default policy reported"}
+            actions={
+              can("system.admin") &&
+              data.backend === "ufw" && (
                 <>
                   <AddRuleDialog onDone={refresh} />
                   <Switch
@@ -185,27 +190,30 @@ function FirewallTab() {
                     }
                   />
                 </>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
+              )
+            }
+          />
+          <PanelBody flush>
+            <Table containerClassName="max-h-[calc(100svh-26rem)]">
+              <TableHeader className={stickyTableHeader}>
                 <TableRow>
                   <TableHead className="w-12">#</TableHead>
                   <TableHead>Action</TableHead>
                   <TableHead>To</TableHead>
                   <TableHead>From</TableHead>
-                  <TableHead>Comment</TableHead>
+                  <TableHead className="w-full">Comment</TableHead>
                   <TableHead className="w-px" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.rules.map((rule, i) => (
-                  <TableRow key={`${rule.number}-${i}`}>
-                    <TableCell className="font-mono text-xs tabular-nums">{rule.number}</TableCell>
+                  <TableRow key={`${rule.number}-${i}`} className="group">
+                    <TableCell className="numeric font-mono text-xs">{rule.number}</TableCell>
                     <TableCell>
-                      <Badge variant={rule.action === "ALLOW" ? "default" : "destructive"}>
+                      <Badge
+                        variant={rule.action === "ALLOW" ? "success" : "destructive"}
+                        className="font-normal"
+                      >
                         {rule.action}
                       </Badge>
                       {rule.direction && (
@@ -221,7 +229,7 @@ function FirewallTab() {
                       {can("system.admin") && rule.number !== undefined && (
                         <IconAction
                           label="Delete rule"
-                          className="text-destructive"
+                          className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                           onClick={() =>
                             confirm({
                               title: "Delete firewall rule",
@@ -235,7 +243,7 @@ function FirewallTab() {
                             })
                           }
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 />
                         </IconAction>
                       )}
                     </TableCell>
@@ -250,8 +258,8 @@ function FirewallTab() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
       </div>
       {dialog}
     </>
@@ -297,7 +305,7 @@ function AddRuleDialog({ onDone }: { onDone: () => void }) {
             <div className="space-y-1.5">
               <Label>Action</Label>
               <Select value={action} onValueChange={setAction}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -311,7 +319,7 @@ function AddRuleDialog({ onDone }: { onDone: () => void }) {
             <div className="space-y-1.5">
               <Label>Protocol</Label>
               <Select value={protocol} onValueChange={setProtocol}>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -366,7 +374,7 @@ function Fail2banTab() {
     20000,
   )
 
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.available) return <EmptyState icon={Ban} title="fail2ban is not installed" />
   if (!data.running) {
@@ -390,34 +398,27 @@ function Fail2banTab() {
   }
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+    <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       {data.jails.map((jail) => (
-        <Card key={jail.name}>
-          <CardHeader>
-            <CardTitle className="text-base">{jail.name}</CardTitle>
-            <CardDescription>
-              {jail.currentlyBanned} banned now · {jail.totalBanned} total · {jail.currentlyFailed}{" "}
-              failing
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+        <Panel key={jail.name}>
+          <PanelHeader
+            icon={Ban}
+            title={jail.name}
+            description={`${jail.currentlyBanned} banned now · ${jail.totalBanned} total · ${jail.currentlyFailed} failing`}
+          />
+          <PanelBody>
             {jail.bannedIps.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nothing currently banned.</p>
+              <p className="text-[13px] text-muted-foreground">Nothing currently banned.</p>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {jail.bannedIps.map((ip) => (
                   <div
                     key={ip}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-accent"
+                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-[var(--row-hover)]"
                   >
                     <span className="font-mono text-xs">{ip}</span>
                     {can("system.admin") && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
-                        onClick={() => unban(jail.name, ip)}
-                      >
+                      <Button size="xs" variant="ghost" onClick={() => unban(jail.name, ip)}>
                         Unban
                       </Button>
                     )}
@@ -425,8 +426,8 @@ function Fail2banTab() {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
       ))}
       {data.jails.length === 0 && <EmptyState icon={Ban} title="No jails configured" />}
     </div>
@@ -438,19 +439,24 @@ function SessionsTab() {
     (signal) => get<LoginSession[]>("/ssh-sessions", undefined, signal),
     10000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.length) return <EmptyState icon={Users} title="No interactive logins" />
 
   return (
-    <Card>
-      <CardContent className="p-0">
+    <Panel>
+      <PanelHeader
+        icon={Users}
+        title="Interactive logins"
+        description={`${data.length} session${data.length === 1 ? "" : "s"} on this host right now`}
+      />
+      <PanelBody flush>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
               <TableHead>Terminal</TableHead>
-              <TableHead>From</TableHead>
+              <TableHead className="w-full">From</TableHead>
               <TableHead>Logged in</TableHead>
               <TableHead>Idle</TableHead>
               <TableHead>Type</TableHead>
@@ -459,7 +465,7 @@ function SessionsTab() {
           <TableBody>
             {data.map((session, i) => (
               <TableRow key={`${session.user}-${session.tty}-${i}`}>
-                <TableCell className="font-medium">{session.user}</TableCell>
+                <TableCell className="text-[13px] font-medium">{session.user}</TableCell>
                 <TableCell className="font-mono text-xs">{session.tty}</TableCell>
                 <TableCell className="font-mono text-xs">{session.from || "local"}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
@@ -469,7 +475,7 @@ function SessionsTab() {
                   {session.idle ?? "—"}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={session.isSsh ? "default" : "secondary"}>
+                  <Badge variant={session.isSsh ? "outline" : "secondary"} className="font-normal">
                     {session.isSsh ? "ssh" : "local"}
                   </Badge>
                 </TableCell>
@@ -477,7 +483,7 @@ function SessionsTab() {
             ))}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }

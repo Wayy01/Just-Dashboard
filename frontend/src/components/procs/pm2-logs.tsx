@@ -3,14 +3,9 @@
 import { useCallback, useState } from "react"
 import type { LogLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
+import { Activity } from "lucide-react"
 import { LogViewer } from "@/components/log-viewer"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { SidePanel } from "@/components/side-panel"
 
 const LOG_LIMIT = 5000
 
@@ -22,17 +17,18 @@ export function PM2LogSheet({
   onOpenChange: (open: boolean) => void
 }) {
   return (
-    <Sheet open={name !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
-        <SheetHeader className="border-b p-4">
-          <SheetTitle>{name}</SheetTitle>
-          <SheetDescription>stdout and stderr, merged live</SheetDescription>
-        </SheetHeader>
-        {/* Keyed on the process, so switching to another one starts with a
-            clean buffer instead of appending to the previous process's. */}
-        {name && <PM2LogStream key={name} name={name} />}
-      </SheetContent>
-    </Sheet>
+    <SidePanel
+      open={name !== null}
+      onOpenChange={onOpenChange}
+      icon={Activity}
+      title={name ?? "PM2"}
+      description="stdout and stderr, merged live"
+      bodyClassName="flex min-h-0 flex-1 flex-col p-4"
+    >
+      {/* Keyed on the process, so switching to another one starts with a
+          clean buffer instead of appending to the previous process's. */}
+      {name && <PM2LogStream key={name} name={name} />}
+    </SidePanel>
   )
 }
 
@@ -62,13 +58,11 @@ function PM2LogStream({ name }: { name: string }) {
   })
 
   return (
-    <div className="min-h-0 flex-1 p-4">
-      <LogViewer
-        className="h-full"
-        lines={lines}
-        showTimestamps={false}
-        onClear={() => setLines([])}
-      />
-    </div>
+    <LogViewer
+      className="h-full"
+      lines={lines}
+      showTimestamps={false}
+      onClear={() => setLines([])}
+    />
   )
 }

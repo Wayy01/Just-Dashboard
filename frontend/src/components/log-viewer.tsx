@@ -58,8 +58,16 @@ export function LogViewer({
   const visible = needle ? lines.filter((l) => l.text.toLowerCase().includes(needle)) : lines
 
   return (
-    <div className={cn("flex flex-col overflow-hidden rounded-lg border bg-black/40", className)}>
-      <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2">
+    // bg-surface-sunken rather than a flat black: this pane appears inside a
+    // light palette too, where a black rectangle is a hole in the page rather
+    // than a terminal.
+    <div
+      className={cn(
+        "flex min-w-0 flex-col overflow-hidden rounded-xl border bg-surface-sunken",
+        className,
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface-header px-2.5 py-2">
         <div className="relative min-w-40 flex-1">
           <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -70,7 +78,7 @@ export function LogViewer({
           />
         </div>
         {toolbar}
-        <Badge variant="outline" className="text-[10px] tabular-nums">
+        <Badge variant="outline" className="numeric text-[10px] font-normal">
           {visible.length} lines
         </Badge>
         <Button
@@ -97,7 +105,7 @@ export function LogViewer({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="flex-1 overflow-auto p-3 font-mono text-xs leading-relaxed"
+        className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-relaxed"
       >
         {visible.length === 0 ? (
           <p className="text-muted-foreground">{emptyMessage}</p>
@@ -119,7 +127,7 @@ export function LogViewer({
 
       {!following && (
         <button
-          className="flex items-center justify-center gap-1.5 border-t bg-muted/60 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+          className="flex items-center justify-center gap-1.5 border-t border-hairline bg-surface-header py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
           onClick={() => {
             setFollowing(true)
             if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight

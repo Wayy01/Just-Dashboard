@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Loader2, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
+import { KeyRound, Loader2, Lock, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
@@ -9,15 +9,14 @@ import type { ApiToken, DashboardUser, Role, SessionInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -48,34 +47,48 @@ export default function AccountPage() {
   const { status, can } = useAuth()
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="You"
         title="Account"
-        description={`${status?.user?.username} · ${status?.user?.role}`}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <span>{status?.user?.username}</span>
+            <Badge variant="outline" className="font-normal capitalize">
+              {status?.user?.role}
+            </Badge>
+            <Badge
+              variant={status?.user?.totpEnabled ? "success" : "warning"}
+              className="font-normal"
+            >
+              {status?.user?.totpEnabled ? "2FA enabled" : "2FA not enrolled"}
+            </Badge>
+          </span>
+        }
       />
-      <Tabs defaultValue="security">
+      <Tabs defaultValue="security" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="tokens">API tokens</TabsTrigger>
           {can("system.admin") && <TabsTrigger value="users">Dashboard users</TabsTrigger>}
         </TabsList>
-        <TabsContent value="security">
+        <TabsContent value="security" className="min-w-0">
           <SecurityTab />
         </TabsContent>
-        <TabsContent value="sessions">
+        <TabsContent value="sessions" className="min-w-0">
           <SessionsTab />
         </TabsContent>
-        <TabsContent value="tokens">
+        <TabsContent value="tokens" className="min-w-0">
           <TokensTab />
         </TabsContent>
         {can("system.admin") && (
-          <TabsContent value="users">
+          <TabsContent value="users" className="min-w-0">
             <UsersTab />
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </Page>
   )
 }
 
@@ -107,21 +120,20 @@ function SecurityTab() {
   }
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Change password</CardTitle>
-          <CardDescription>
-            At least 12 characters, mixing three of: uppercase, lowercase, digits, symbols. Changing
-            it signs out every session, including this one.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+    <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      <Panel>
+        <PanelHeader
+          icon={Lock}
+          title="Change password"
+          description="At least 12 characters, mixing three character classes"
+        />
+        <PanelBody className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="cur-pw">Current password</Label>
             <Input
               id="cur-pw"
               type="password"
+              autoComplete="current-password"
               value={current}
               onChange={(e) => setCurrent(e.target.value)}
             />
@@ -131,6 +143,7 @@ function SecurityTab() {
             <Input
               id="new-pw"
               type="password"
+              autoComplete="new-password"
               value={next}
               onChange={(e) => setNext(e.target.value)}
             />
@@ -140,51 +153,61 @@ function SecurityTab() {
             <Input
               id="conf-pw"
               type="password"
+              autoComplete="new-password"
               value={confirmPw}
               onChange={(e) => setConfirmPw(e.target.value)}
             />
           </div>
-          <Button onClick={change} disabled={busy || !current || !next}>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Changing it signs out every session, including this one.
+          </p>
+        </PanelBody>
+        <PanelFooter>
+          <Button size="sm" onClick={change} disabled={busy || !current || !next}>
             {busy && <Loader2 className="size-4 animate-spin" />}
             Change password
           </Button>
-        </CardContent>
-      </Card>
+        </PanelFooter>
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Two-factor authentication</CardTitle>
-          <CardDescription>
-            A code from your authenticator app, checked at every sign in.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center gap-2">
-            <ShieldCheck
-              className={
-                status?.user?.totpEnabled ? "size-5 text-success" : "size-5 text-muted-foreground"
-              }
-            />
-            <Badge variant={status?.user?.totpEnabled ? "default" : "secondary"}>
+      <Panel>
+        <PanelHeader
+          icon={ShieldCheck}
+          title="Two-factor authentication"
+          description="A code from your authenticator app, checked at every sign in"
+          actions={
+            <Badge
+              variant={status?.user?.totpEnabled ? "success" : "secondary"}
+              className="font-normal"
+            >
               {status?.user?.totpEnabled ? "enabled" : "not enrolled"}
             </Badge>
-          </div>
-
-          {codes && (
-            <Alert>
-              <KeyRound className="size-4" />
-              <AlertTitle>New recovery codes</AlertTitle>
-              <AlertDescription>
-                <div className="mt-2 grid grid-cols-2 gap-1 font-mono text-xs">
-                  {codes.map((c) => (
-                    <span key={c}>{c}</span>
-                  ))}
-                </div>
-              </AlertDescription>
-            </Alert>
+          }
+        />
+        <PanelBody className="space-y-3">
+          {codes ? (
+            <>
+              <Notice tone="warning" icon={KeyRound} title="New recovery codes">
+                The previous set no longer works. These are shown only now.
+              </Notice>
+              <Well className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {codes.map((c) => (
+                  <span key={c} className="tracking-wider">
+                    {c}
+                  </span>
+                ))}
+              </Well>
+            </>
+          ) : (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Recovery codes are your way back in if you lose the authenticator. Regenerating issues
+              a fresh set and invalidates the old one immediately.
+            </p>
           )}
-
+        </PanelBody>
+        <PanelFooter>
           <Button
+            size="sm"
             variant="outline"
             onClick={async () => {
               try {
@@ -200,8 +223,8 @@ function SecurityTab() {
           >
             Regenerate recovery codes
           </Button>
-        </CardContent>
-      </Card>
+        </PanelFooter>
+      </Panel>
     </div>
   )
 }
@@ -211,21 +234,22 @@ function SessionsTab() {
     (signal) => get<SessionInfo[]>("/account/sessions", undefined, signal),
     20000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Active sessions</CardTitle>
-        <CardDescription>Signing one out takes effect immediately</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
+    <Panel>
+      <PanelHeader
+        icon={Monitor}
+        title="Active sessions"
+        description="Signing one out takes effect immediately"
+      />
+      <PanelBody flush>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Address</TableHead>
-              <TableHead>Client</TableHead>
+              <TableHead className="w-full">Client</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Last seen</TableHead>
               <TableHead className="w-px" />
@@ -233,10 +257,14 @@ function SessionsTab() {
           </TableHeader>
           <TableBody>
             {data?.map((session) => (
-              <TableRow key={session.id}>
+              <TableRow key={session.id} className="group">
                 <TableCell className="font-mono text-xs">
                   {session.ip}
-                  {session.current && <Badge className="ml-2 text-[10px]">this session</Badge>}
+                  {session.current && (
+                    <Badge variant="success" className="ml-2 text-[10px] font-normal">
+                      this session
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
                   {session.userAgent}
@@ -248,9 +276,9 @@ function SessionsTab() {
                 <TableCell>
                   {!session.current && (
                     <Button
-                      size="sm"
+                      size="xs"
                       variant="ghost"
-                      className="h-7 px-2 text-xs text-destructive"
+                      className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                       onClick={async () => {
                         await del(`/account/sessions/${session.id}`)
                         toast.success("Session revoked")
@@ -272,8 +300,8 @@ function SessionsTab() {
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }
 
@@ -286,25 +314,21 @@ function TokensTab() {
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">API tokens</CardTitle>
-            <CardDescription>
-              For scripting. A token can never exceed the role of the account that minted it, and is
-              demoted automatically if that account is.
-            </CardDescription>
-          </div>
-          <CreateTokenDialog onDone={refresh} />
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading && <LoadingRows className="p-4" />}
+      <Panel>
+        <PanelHeader
+          icon={KeyRound}
+          title="API tokens"
+          description="A token can never exceed the role of the account that minted it, and is demoted automatically if that account is"
+          actions={<CreateTokenDialog onDone={refresh} />}
+        />
+        <PanelBody flush>
+          {loading && <LoadingPanel rows={3} />}
           {error && <ErrorState error={error} className="m-4" />}
           {data && (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <TableHead className="w-full">Name</TableHead>
                   <TableHead>Prefix</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Last used</TableHead>
@@ -315,10 +339,12 @@ function TokensTab() {
               <TableBody>
                 {data.map((token) => (
                   <TableRow key={token.id} className={token.revoked ? "opacity-50" : undefined}>
-                    <TableCell className="font-medium">{token.name}</TableCell>
+                    <TableCell className="text-[13px] font-medium">{token.name}</TableCell>
                     <TableCell className="font-mono text-xs">{token.prefix}…</TableCell>
                     <TableCell>
-                      <Badge variant="outline">{token.role}</Badge>
+                      <Badge variant="outline" className="font-normal">
+                        {token.role}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {token.lastUsedAt ? relativeTime(token.lastUsedAt) : "never"}
@@ -328,12 +354,15 @@ function TokensTab() {
                     </TableCell>
                     <TableCell>
                       {token.revoked ? (
-                        <Badge variant="secondary">revoked</Badge>
+                        <Badge variant="secondary" className="font-normal">
+                          revoked
+                        </Badge>
                       ) : (
                         <Button
-                          size="icon"
+                          size="icon-xs"
                           variant="ghost"
-                          className="size-7 text-destructive"
+                          aria-label={`Revoke ${token.name}`}
+                          className="text-destructive"
                           onClick={() =>
                             confirm({
                               title: "Revoke token",
@@ -351,7 +380,7 @@ function TokensTab() {
                             })
                           }
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 />
                         </Button>
                       )}
                     </TableCell>
@@ -360,15 +389,19 @@ function TokensTab() {
                 {data.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="p-0">
-                      <EmptyState icon={KeyRound} title="No tokens" />
+                      <EmptyState
+                        icon={KeyRound}
+                        title="No tokens"
+                        description="Mint one to script against this dashboard from CI or a cron job."
+                      />
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       {dialog}
     </>
   )
@@ -427,11 +460,9 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
         </DialogHeader>
 
         {secret ? (
-          <Alert>
-            <KeyRound className="size-4" />
-            <AlertTitle>Copy it now — it is not shown again</AlertTitle>
-            <AlertDescription className="font-mono text-xs break-all">{secret}</AlertDescription>
-          </Alert>
+          <Notice tone="warning" icon={KeyRound} title="Copy it now — it is not shown again">
+            <code className="font-mono text-xs break-all">{secret}</code>
+          </Notice>
         ) : (
           <div className="grid gap-3">
             <div className="space-y-1.5">
@@ -447,7 +478,7 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
               <div className="space-y-1.5">
                 <Label>Role</Label>
                 <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -507,22 +538,21 @@ function UsersTab() {
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Dashboard users</CardTitle>
-            <CardDescription>Separate from the host&apos;s own Linux accounts</CardDescription>
-          </div>
-          <CreateDashboardUserDialog onDone={refresh} />
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading && <LoadingRows className="p-4" />}
+      <Panel>
+        <PanelHeader
+          icon={UserCog}
+          title="Dashboard users"
+          description="Separate from the host's own Linux accounts"
+          actions={<CreateDashboardUserDialog onDone={refresh} />}
+        />
+        <PanelBody flush>
+          {loading && <LoadingPanel rows={3} />}
           {error && <ErrorState error={error} className="m-4" />}
           {data && (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
+                  <TableHead className="w-full">User</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>2FA</TableHead>
                   <TableHead>Last login</TableHead>
@@ -532,23 +562,23 @@ function UsersTab() {
               </TableHeader>
               <TableBody>
                 {data.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">
+                  <TableRow key={user.id} className="group">
+                    <TableCell className="text-[13px] font-medium">
                       {user.username}
                       {user.id === status?.user?.id && (
-                        <Badge variant="outline" className="ml-2 text-[10px]">
+                        <Badge variant="outline" className="ml-2 text-[10px] font-normal">
                           you
                         </Badge>
                       )}
                       {user.mustChangePassword && (
-                        <Badge variant="destructive" className="ml-2 text-[10px]">
+                        <Badge variant="warning" className="ml-2 text-[10px] font-normal">
                           must change password
                         </Badge>
                       )}
                     </TableCell>
                     <TableCell>
                       <Select value={user.role} onValueChange={(v) => update(user, { role: v })}>
-                        <SelectTrigger className="h-7 w-28 text-xs">
+                        <SelectTrigger size="sm" className="w-28 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -559,7 +589,10 @@ function UsersTab() {
                       </Select>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={user.totpEnabled ? "default" : "secondary"}>
+                      <Badge
+                        variant={user.totpEnabled ? "success" : "secondary"}
+                        className="font-normal"
+                      >
                         {user.totpEnabled ? "enrolled" : "pending"}
                       </Badge>
                     </TableCell>
@@ -575,11 +608,10 @@ function UsersTab() {
                       />
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                         <Button
-                          size="sm"
+                          size="xs"
                           variant="ghost"
-                          className="h-7 px-2 text-xs"
                           title="Clear the 2FA enrollment so this user can re-enroll"
                           onClick={async () => {
                             await post(`/dashboard-users/${user.id}/reset-totp`)
@@ -590,9 +622,10 @@ function UsersTab() {
                           Reset 2FA
                         </Button>
                         <Button
-                          size="icon"
+                          size="icon-xs"
                           variant="ghost"
-                          className="size-7 text-destructive"
+                          aria-label={`Delete ${user.username}`}
+                          className="text-destructive"
                           onClick={() =>
                             confirm({
                               title: "Delete dashboard user",
@@ -611,7 +644,7 @@ function UsersTab() {
                             })
                           }
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 />
                         </Button>
                       </div>
                     </TableCell>
@@ -620,8 +653,8 @@ function UsersTab() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       {dialog}
     </>
   )
@@ -680,7 +713,7 @@ function CreateDashboardUserDialog({ onDone }: { onDone: () => void }) {
           <div className="space-y-1.5">
             <Label>Role</Label>
             <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

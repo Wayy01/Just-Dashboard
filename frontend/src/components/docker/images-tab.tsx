@@ -7,11 +7,13 @@ import { bytes, relativeTime } from "@/lib/format"
 import type { DockerImage } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
-import { IconActionButton, type ConfirmFn } from "@/components/docker/shared"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
+import { IconAction } from "@/components/icon-action"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import type { ConfirmFn } from "@/components/docker/shared"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -39,50 +41,51 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
     (signal) => get<DockerImage[]>("/docker/images/", undefined, signal),
     30000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
   const total = data?.reduce((s, i) => s + i.size, 0) ?? 0
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
-          <CardTitle className="text-base">Images</CardTitle>
-          <CardDescription>{bytes(total)} on disk</CardDescription>
-        </div>
-        {can("destructive") && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              confirm({
-                title: "Prune images",
-                phrase: "prune images",
-                confirmLabel: "Prune",
-                description: <p>Removes dangling images that no container references.</p>,
-                action: async (c) => {
-                  const rep = await post<{ spaceReclaimed: number }>(
-                    "/docker/images/prune",
-                    undefined,
-                    { confirm: c },
-                  )
-                  toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
-                  refresh()
-                },
-              })
-            }
-          >
-            <Trash2 className="size-4" />
-            Prune dangling
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
+    <Panel>
+      <PanelHeader
+        icon={Box}
+        title="Images"
+        description={`${data?.length ?? 0} images · ${bytes(total)} on disk`}
+        actions={
+          can("destructive") && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                confirm({
+                  title: "Prune images",
+                  phrase: "prune images",
+                  confirmLabel: "Prune",
+                  description: <p>Removes dangling images that no container references.</p>,
+                  action: async (c) => {
+                    const rep = await post<{ spaceReclaimed: number }>(
+                      "/docker/images/prune",
+                      undefined,
+                      { confirm: c },
+                    )
+                    toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
+                    refresh()
+                  },
+                })
+              }
+            >
+              <Trash2 className="size-4" />
+              Prune dangling
+            </Button>
+          )
+        }
+      />
+      <PanelBody flush>
+        <Table containerClassName="max-h-[calc(100svh-24rem)]">
+          <TableHeader className={stickyTableHeader}>
             <TableRow>
-              <TableHead>Repository</TableHead>
+              <TableHead className="w-full">Repository</TableHead>
               <TableHead className="text-right">Size</TableHead>
               <TableHead className="text-right">Containers</TableHead>
               <TableHead>Created</TableHead>
@@ -91,30 +94,29 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
           </TableHeader>
           <TableBody>
             {data?.map((image) => (
-              <TableRow key={image.id}>
+              <TableRow key={image.id} className="group">
                 <TableCell>
-                  <div className="font-mono text-xs">
-                    {image.repoTags.length ? image.repoTags.join(", ") : <em>untagged</em>}
+                  <div className="max-w-[26rem] min-w-0">
+                    <div className="truncate font-mono text-xs">
+                      {image.repoTags.length ? image.repoTags.join(", ") : <em>untagged</em>}
+                    </div>
+                    <p className="font-mono text-[11px] text-muted-foreground">
+                      {image.id.replace("sha256:", "").slice(0, 12)}
+                    </p>
                   </div>
-                  <p className="font-mono text-[11px] text-muted-foreground">
-                    {image.id.replace("sha256:", "").slice(0, 12)}
-                  </p>
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">
+                <TableCell className="numeric text-right font-mono text-xs">
                   {bytes(image.size)}
                 </TableCell>
-                <TableCell className="text-right text-xs tabular-nums">
-                  {image.containers}
-                </TableCell>
+                <TableCell className="numeric text-right text-xs">{image.containers}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {relativeTime(image.created)}
                 </TableCell>
                 <TableCell>
                   {can("destructive") && (
-                    <IconActionButton
-                      title="Remove"
-                      icon={Trash2}
-                      destructive
+                    <IconAction
+                      label="Remove"
+                      className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                       onClick={() =>
                         confirm({
                           title: "Delete image",
@@ -122,8 +124,8 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                           confirmLabel: "Delete",
                           description: (
                             <p>
-                              Deletes <b>{imagePhrase(image)}</b>. Any
-                              container that needs it will have to pull it again.
+                              Deletes <b>{imagePhrase(image)}</b>. Any container that needs it will
+                              have to pull it again.
                             </p>
                           ),
                           action: async (c) => {
@@ -135,7 +137,9 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                           },
                         })
                       }
-                    />
+                    >
+                      <Trash2 />
+                    </IconAction>
                   )}
                 </TableCell>
               </TableRow>
@@ -149,7 +153,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }

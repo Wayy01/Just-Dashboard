@@ -6,24 +6,26 @@ import {
   Activity,
   Archive,
   Box,
+  ChevronsUpDown,
   Database,
   FileText,
   FolderTree,
   GitBranch,
   Globe,
   ListChecks,
-  PackageCheck,
   LogOut,
+  PackageCheck,
   Palette,
   Rocket,
   ScrollText,
-  Server,
-  Shield,
+  Search,
   ShieldCheck,
+  Shield,
   TerminalSquare,
   Users,
 } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
+import { useCommandPalette } from "@/components/command-palette"
 import type { Capability } from "@/lib/types"
 import {
   Sidebar,
@@ -37,9 +39,16 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 type NavItem = {
   title: string
@@ -87,6 +96,12 @@ export const NAV: { label: string; items: NavItem[] }[] = [
   },
 ]
 
+/** Entries that live in the footer menu rather than a nav group. */
+export const PERSONAL_NAV: NavItem[] = [
+  { title: "Account", href: "/account", icon: ShieldCheck },
+  { title: "Appearance", href: "/appearance", icon: Palette },
+]
+
 /** Whether a nav entry owns the given path. */
 export function navMatches(href: string, pathname: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
@@ -98,56 +113,68 @@ export function navLocation(pathname: string): { group?: string; title: string }
     const item = group.items.find((i) => navMatches(i.href, pathname))
     if (item) return { group: group.label, title: item.title }
   }
-  // These live in the sidebar footer rather than a group, so they have no
-  // parent to name.
-  if (pathname.startsWith("/account")) return { title: "Account" }
-  if (pathname.startsWith("/appearance")) return { title: "Appearance" }
+  const personal = PERSONAL_NAV.find((i) => navMatches(i.href, pathname))
+  if (personal) return { group: "You", title: personal.title }
   return null
 }
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { status, can, logout } = useAuth()
+  const { can } = useAuth()
+  const palette = useCommandPalette()
+  const { state } = useSidebar()
+  const collapsed = state === "collapsed"
 
   const isActive = (href: string) => navMatches(href, pathname)
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link href="/">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Server className="size-4" />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Just Dashboard</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {status?.user?.username ?? "not signed in"}
-                  </span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      <SidebarHeader className="gap-3 p-3">
+        <Link
+          href="/"
+          className="flex min-w-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50"
+        >
+          <span className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <Activity className="size-4" />
+          </span>
+          <span className="grid min-w-0 flex-1 text-left group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-[13px] leading-tight font-semibold">Just Dashboard</span>
+            <span className="eyebrow truncate">Control panel</span>
+          </span>
+        </Link>
+
+        {/* The palette is the fastest route to any of fifteen pages, so it gets
+            a permanent affordance rather than only a shortcut nobody
+            discovers. Collapsed, it keeps its place in the rail as an icon. */}
+        <button
+          type="button"
+          onClick={palette.open}
+          className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2 text-left text-[13px] text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0"
+        >
+          <Search className="size-3.5 shrink-0" />
+          <span className="flex-1 truncate group-data-[collapsible=icon]:hidden">Search</span>
+          <kbd className="pointer-events-none rounded border border-sidebar-border bg-sidebar px-1 font-mono text-[10px] group-data-[collapsible=icon]:hidden">
+            ⌘K
+          </kbd>
+        </button>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="gap-0 px-2">
         {NAV.map((group) => {
           const items = group.items.filter((item) => !item.capability || can(item.capability))
           if (items.length === 0) return null
           return (
-            <SidebarGroup key={group.label}>
-              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroup key={group.label} className="px-0 py-1.5">
+              <SidebarGroupLabel className="eyebrow h-6 px-2">{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
-                <SidebarMenu>
+                <SidebarMenu className="gap-0.5">
                   {items.map((item) => (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton
                         asChild
                         isActive={isActive(item.href)}
                         tooltip={item.title}
+                        className="h-8 text-[13px]"
                       >
                         <Link href={item.href}>
                           <item.icon className="size-4" />
@@ -163,43 +190,76 @@ export function AppSidebar() {
         })}
       </SidebarContent>
 
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={isActive("/appearance")} tooltip="Appearance">
-              <Link href="/appearance">
-                <Palette className="size-4" />
-                <span>Appearance</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={isActive("/account")} tooltip="Account">
-              <Link href="/account">
-                <ShieldCheck className="size-4" />
-                <span className="flex-1">Account</span>
-                {status?.user && (
-                  <Badge variant="outline" className="text-[10px] uppercase">
-                    {status.user.role}
-                  </Badge>
-                )}
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2 px-2 text-muted-foreground"
-              onClick={() => logout()}
-            >
-              <LogOut className="size-4" />
-              <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
-            </Button>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="p-2">
+        <UserCard collapsed={collapsed} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+  )
+}
+
+/**
+ * Who is signed in, and everything that belongs to them rather than to the
+ * server: the account page, the palette, signing out.
+ *
+ * A card at the foot of the rail rather than three more nav rows, because none
+ * of it is a place in the product — it is the same identity menu on every
+ * page, and mixing it into the nav made the nav look longer than it is.
+ */
+function UserCard({ collapsed }: { collapsed: boolean }) {
+  const pathname = usePathname()
+  const { status, logout } = useAuth()
+  const user = status?.user
+  const initials = (user?.username ?? "?").slice(0, 2).toUpperCase()
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-sidebar-border bg-sidebar-accent/35 p-1.5 text-left transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50 data-[state=open]:bg-sidebar-accent group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:p-0"
+        >
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/15 text-[11px] font-semibold text-primary">
+            {initials}
+          </span>
+          <span className="grid min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-[13px] leading-tight font-medium">
+              {user?.username ?? "not signed in"}
+            </span>
+            <span className="truncate text-[11px] leading-tight text-muted-foreground capitalize">
+              {user?.role ?? "—"}
+            </span>
+          </span>
+          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side={collapsed ? "right" : "top"}
+        align="start"
+        className="w-56"
+        sideOffset={8}
+      >
+        <DropdownMenuLabel className="flex flex-col gap-0.5">
+          <span className="text-[13px]">{user?.username}</span>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            {user?.totpEnabled ? "Two-factor enabled" : "Two-factor not enrolled"}
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {PERSONAL_NAV.map((item) => (
+          <DropdownMenuItem key={item.href} asChild>
+            <Link href={item.href} data-active={navMatches(item.href, pathname) || undefined}>
+              <item.icon className="size-4" />
+              {item.title}
+            </Link>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onSelect={() => logout()}>
+          <LogOut className="size-4" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

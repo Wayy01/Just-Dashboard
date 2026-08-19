@@ -9,15 +9,13 @@ import { cn } from "@/lib/utils"
 import type { JournalEntry, LogLine, LogSource } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
-import { PageHeader } from "@/components/page-header"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { LogViewer } from "@/components/log-viewer"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Dialog,
@@ -32,16 +30,23 @@ const LOG_LIMIT = 8000
 const LEVELS = ["critical", "error", "warn", "info", "debug"] as const
 
 export default function LogsPage() {
-  const [selected, setSelected] = useState<LogSource | null>(null)
+  const [picked, setPicked] = useState<LogSource | null>(null)
   const [levels, setLevels] = useState<string[]>([])
   const [grep, setGrep] = useState("")
   const [appliedGrep, setAppliedGrep] = useState("")
 
   const sources = usePoll((signal) => get<LogSource[]>("/logs/sources", undefined, signal), 60000)
 
+  // The first source is streaming before you choose one. Landing on an empty
+  // pane and a "pick something" sign wastes the visit: nine times out of ten
+  // the answer is in syslog, and the operator can switch in one click if it is
+  // not. Derived rather than stored, so no effect has to sync it.
+  const selected = picked ?? sources.data?.[0] ?? null
+
   return (
-    <>
+    <Page fill>
       <PageHeader
+        eyebrow="Server"
         title="Logs"
         description="System, nginx, container, PM2 and application logs in one live view"
         actions={
@@ -55,36 +60,44 @@ export default function LogsPage() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[18rem_1fr] [&>*]:min-w-0">
-        <SourceList sources={sources} selected={selected} onSelect={setSelected} />
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] [&>*]:min-w-0">
+        <SourceList sources={sources} selected={selected} onSelect={setPicked} />
 
-        <div className="flex min-h-0 flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <form
-              className="flex min-w-64 flex-1 gap-2"
-              onSubmit={(e) => {
-                e.preventDefault()
-                setAppliedGrep(grep)
-              }}
-            >
-              <Input
-                value={grep}
-                onChange={(e) => setGrep(e.target.value)}
-                placeholder="Server-side grep — matched before the lines are sent"
-                className="flex-1"
-              />
-              <Button type="submit" variant="secondary">
-                Apply
-              </Button>
-            </form>
-            <ToggleGroup type="multiple" value={levels} onValueChange={setLevels} variant="outline">
-              {LEVELS.map((level) => (
-                <ToggleGroupItem key={level} value={level} className="px-2 text-xs">
-                  {level}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
+          <Panel className="shrink-0">
+            <PanelToolbar className="border-b-0">
+              <form
+                className="flex min-w-56 flex-1 gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setAppliedGrep(grep)
+                }}
+              >
+                <Input
+                  value={grep}
+                  onChange={(e) => setGrep(e.target.value)}
+                  placeholder="Server-side grep — matched before the lines are sent"
+                  className="h-8 flex-1 text-[13px]"
+                />
+                <Button type="submit" size="sm" variant="secondary">
+                  Apply
+                </Button>
+              </form>
+              <ToggleGroup
+                type="multiple"
+                value={levels}
+                onValueChange={setLevels}
+                variant="outline"
+                size="sm"
+              >
+                {LEVELS.map((level) => (
+                  <ToggleGroupItem key={level} value={level} className="px-2 text-[11px]">
+                    {level}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </PanelToolbar>
+          </Panel>
 
           {selected ? (
             // Keyed on everything that changes what the socket delivers, so a
@@ -97,6 +110,7 @@ export default function LogsPage() {
             />
           ) : (
             <EmptyState
+              className="flex-1"
               icon={ScrollText}
               title="Pick a log source"
               description="Files, container output, PM2 processes and the systemd journal all stream here."
@@ -104,7 +118,7 @@ export default function LogsPage() {
           )}
         </div>
       </div>
-    </>
+    </Page>
   )
 }
 
@@ -156,20 +170,32 @@ function LogStream({
   const { state } = useSocket("/logs/stream", { onMessage, query })
 
   return (
-    <>
-      <Badge variant={state === "open" ? "default" : "secondary"} className="w-fit">
-        {state}
-      </Badge>
-      <LogViewer
-        // The app shell grows with its content, so without a cap a long tail
-        // stretches the page and scrolls the filters out of reach. Bounding it
-        // here keeps the toolbar fixed and the scrolling inside the pane.
-        className="max-h-[calc(100svh-18rem)] min-h-[24rem] flex-1"
-        lines={lines}
-        onClear={() => setLines([])}
-        emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
-      />
-    </>
+    <LogViewer
+      // The pane owns the remaining height rather than growing with its
+      // content: the filters above stay put and the scrolling happens inside.
+      className="min-h-0 flex-1"
+      lines={lines}
+      onClear={() => setLines([])}
+      emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
+      toolbar={
+        <span
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+            state === "open"
+              ? "border-success/25 bg-success/10 text-success"
+              : "border-border text-muted-foreground",
+          )}
+        >
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              state === "open" ? "bg-success" : "bg-muted-foreground",
+            )}
+          />
+          {state}
+        </span>
+      }
+    />
   )
 }
 
@@ -182,61 +208,75 @@ function SourceList({
   selected: LogSource | null
   onSelect: (source: LogSource) => void
 }) {
+  const [filter, setFilter] = useState("")
+
   const grouped = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
     const map = new Map<string, LogSource[]>()
     for (const s of sources.data ?? []) {
+      if (needle && !s.label.toLowerCase().includes(needle) && !s.kind.includes(needle)) continue
       const list = map.get(s.kind) ?? []
       list.push(s)
       map.set(s.kind, list)
     }
     return [...map.entries()]
-  }, [sources.data])
+  }, [sources.data, filter])
 
   return (
-    <Card className="min-h-0">
-      <CardHeader>
-        <CardTitle className="text-base">Sources</CardTitle>
-        <CardDescription>{sources.data?.length ?? 0} available</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-[calc(100vh-20rem)]">
-          {sources.loading && <LoadingRows className="p-4" />}
-          {sources.error && <ErrorState error={sources.error} className="m-4" />}
-          <div className="space-y-4 p-3">
-            {grouped.map(([kind, items]) => (
-              <div key={kind}>
-                <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {kind}
-                </p>
-                <div className="space-y-0.5">
-                  {items.map((source) => (
-                    <button
-                      key={source.id}
-                      onClick={() => onSelect(source)}
-                      // The selected source says so the same way the active nav
-                      // item does — one "you are here" language for both.
-                      className={cn(
-                        "flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors",
-                        selected?.id === source.id
-                          ? "bg-primary/12 font-medium text-foreground"
-                          : "hover:bg-accent",
-                      )}
-                    >
-                      <span className="truncate text-sm">{source.label}</span>
-                      {source.size !== undefined && source.size > 0 && (
-                        <span className="text-[11px] text-muted-foreground">
-                          {bytes(source.size)} · {relativeTime(source.modified)}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+    <Panel className="min-h-0 lg:max-h-full">
+      <PanelHeader
+        icon={ScrollText}
+        title="Sources"
+        description={`${sources.data?.length ?? 0} available`}
+      />
+      <PanelToolbar>
+        <SearchInput
+          containerClassName="w-full"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter sources"
+        />
+      </PanelToolbar>
+      <PanelBody flush scroll className="p-2">
+        {sources.loading && <LoadingRows className="p-2" />}
+        {sources.error && <ErrorState error={sources.error} className="m-2" />}
+        <div className="space-y-3">
+          {grouped.map(([kind, items]) => (
+            <div key={kind}>
+              <p className="eyebrow mb-1 px-2">{kind}</p>
+              <div className="space-y-0.5">
+                {items.map((source) => (
+                  <button
+                    key={source.id}
+                    onClick={() => onSelect(source)}
+                    // The selected source says so the same way the active nav
+                    // item does — one "you are here" language for both.
+                    className={cn(
+                      "flex w-full min-w-0 flex-col rounded-md px-2 py-1.5 text-left transition-colors",
+                      selected?.id === source.id
+                        ? "bg-primary/12 font-medium text-foreground"
+                        : "hover:bg-accent",
+                    )}
+                  >
+                    <span className="truncate text-[13px]">{source.label}</span>
+                    {source.size !== undefined && source.size > 0 && (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {bytes(source.size)} · {relativeTime(source.modified)}
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
+            </div>
+          ))}
+          {!sources.loading && grouped.length === 0 && (
+            <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+              Nothing matches that filter.
+            </p>
+          )}
+        </div>
+      </PanelBody>
+    </Panel>
   )
 }
 
@@ -281,7 +321,7 @@ function DownloadDialog({ source }: { source: LogSource }) {
               onChange={(e) => setUntil(e.target.value)}
             />
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Leave both empty to export the whole file. Lines without a parseable timestamp are kept,
             since they continue the record above them.
           </p>

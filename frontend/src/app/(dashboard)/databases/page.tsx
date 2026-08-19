@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import dynamic from "next/dynamic"
 import { Database, DownloadCloud, Play, Plus, ShieldAlert, Table2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
@@ -11,15 +10,21 @@ import type { DbConnection, DbTable, QueryResult, QueryRisk } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
+import { CodeEditor } from "@/components/code-editor"
+import { Page, PageHeader, Toolbar } from "@/components/page"
+import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
+import {
+  EmptyState,
+  ErrorState,
+  LoadingPanel,
+  LoadingRows,
+  Notice,
+  Spinner,
+} from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -29,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -45,8 +51,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false })
-
 export default function DatabasesPage() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
@@ -62,14 +66,15 @@ export default function DatabasesPage() {
   const setActive = (conn: DbConnection | null) => setSelectedId(conn?.id ?? null)
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Access"
         title="Databases"
         description="Browse schemas, run queries and take dumps"
         actions={can("system.admin") && <AddConnectionDialog onDone={connections.refresh} />}
       />
 
-      {connections.loading && <LoadingRows />}
+      {connections.loading && <LoadingPanel />}
       {connections.error && <ErrorState error={connections.error} />}
 
       {connections.data?.length === 0 && (
@@ -82,14 +87,14 @@ export default function DatabasesPage() {
 
       {connections.data && connections.data.length > 0 && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <Toolbar>
             <Select
               value={active?.id.toString() ?? ""}
               onValueChange={(v) =>
                 setActive(connections.data!.find((c) => c.id.toString() === v) ?? null)
               }
             >
-              <SelectTrigger className="w-72">
+              <SelectTrigger size="sm" className="w-[22rem]">
                 <SelectValue placeholder="Select a connection" />
               </SelectTrigger>
               <SelectContent>
@@ -128,20 +133,21 @@ export default function DatabasesPage() {
                 }
               >
                 <Trash2 className="size-4" />
+                Remove
               </Button>
             )}
-          </div>
+          </Toolbar>
 
           {active && (
-            <Tabs defaultValue="browse" key={active.id}>
+            <Tabs defaultValue="browse" key={active.id} className="min-w-0 gap-4">
               <TabsList>
                 <TabsTrigger value="browse">Browse</TabsTrigger>
                 <TabsTrigger value="query">Query</TabsTrigger>
               </TabsList>
-              <TabsContent value="browse">
+              <TabsContent value="browse" className="min-w-0">
                 <BrowseTab conn={active} />
               </TabsContent>
-              <TabsContent value="query">
+              <TabsContent value="query" className="min-w-0">
                 <QueryTab conn={active} confirm={confirm} />
               </TabsContent>
             </Tabs>
@@ -149,7 +155,7 @@ export default function DatabasesPage() {
         </>
       )}
       {dialog}
-    </>
+    </Page>
   )
 }
 
@@ -159,9 +165,10 @@ function ConnectionStatus({ id }: { id: number }) {
     30000,
     [id],
   )
-  if (!data) return <Spinner />
+  if (!data) return <Spinner className="text-muted-foreground" />
   return (
-    <Badge variant={data.ok ? "default" : "destructive"} title={data.error}>
+    <Badge variant={data.ok ? "success" : "destructive"} className="font-normal" title={data.error}>
+      <span className={cn("size-1.5 rounded-full", data.ok ? "bg-success" : "bg-destructive")} />
       {data.ok ? "connected" : "unreachable"}
     </Badge>
   )
@@ -197,12 +204,14 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
   )
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[16rem_1fr] [&>*]:min-w-0">
-      <Card className="min-h-0">
-        <CardHeader>
-          <CardTitle className="text-base">Schemas</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 p-3">
+    <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] [&>*]:min-w-0">
+      <Panel>
+        <PanelHeader
+          icon={Database}
+          title="Schemas"
+          description={`${tables.data?.length ?? 0} tables`}
+        />
+        <PanelBody className="space-y-3">
           <Select
             value={schema}
             onValueChange={(v) => {
@@ -210,7 +219,7 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
               setTable(undefined)
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger size="sm" className="w-full">
               <SelectValue placeholder="Database" />
             </SelectTrigger>
             <SelectContent>
@@ -221,71 +230,69 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
               ))}
             </SelectContent>
           </Select>
-          <ScrollArea className="h-[calc(100vh-24rem)]">
-            <div className="space-y-0.5 pr-2">
-              {tables.data?.map((t) => (
-                <button
-                  key={`${t.schema}.${t.name}`}
-                  onClick={() => {
-                    setTable(t.name)
-                    setSchema(t.schema)
-                    setOffset(0)
-                  }}
-                  className={cn(
-                    "flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors",
-                    table === t.name
-                      ? "bg-primary/12 font-medium text-foreground"
-                      : "hover:bg-accent",
-                  )}
-                >
-                  <span className="truncate text-sm">{t.name}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {t.type} · {t.estimatedRows.toLocaleString()} rows
-                  </span>
-                </button>
-              ))}
-              {tables.loading && <LoadingRows rows={4} />}
-              {tables.data?.length === 0 && (
-                <p className="p-2 text-xs text-muted-foreground">No tables in this schema.</p>
-              )}
-            </div>
-          </ScrollArea>
-        </CardContent>
-      </Card>
-
-      <Card className="min-h-0">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">{table ?? "Pick a table"}</CardTitle>
-            {rows.data && (
-              <CardDescription>
-                {rows.data.rowCount} rows in {rows.data.duration}
-                {rows.data.truncated && " (truncated)"}
-              </CardDescription>
+          <div className="max-h-[calc(100svh-26rem)] space-y-0.5 overflow-y-auto">
+            {tables.data?.map((t) => (
+              <button
+                key={`${t.schema}.${t.name}`}
+                onClick={() => {
+                  setTable(t.name)
+                  setSchema(t.schema)
+                  setOffset(0)
+                }}
+                className={cn(
+                  "flex w-full min-w-0 flex-col rounded-md px-2 py-1.5 text-left transition-colors",
+                  table === t.name
+                    ? "bg-primary/12 font-medium text-foreground"
+                    : "hover:bg-accent",
+                )}
+              >
+                <span className="truncate text-[13px]">{t.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">
+                  {t.type} · {t.estimatedRows.toLocaleString()} rows
+                </span>
+              </button>
+            ))}
+            {tables.loading && <LoadingRows rows={4} />}
+            {tables.data?.length === 0 && (
+              <p className="p-2 text-xs text-muted-foreground">No tables in this schema.</p>
             )}
           </div>
-          {table && (
-            <div className="flex gap-1">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={offset === 0}
-                onClick={() => setOffset((o) => Math.max(0, o - 100))}
-              >
-                Previous
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setOffset((o) => o + 100)}>
-                Next
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent className="p-0">
+        </PanelBody>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          icon={Table2}
+          title={table ?? "Pick a table"}
+          description={
+            rows.data
+              ? `${rows.data.rowCount} rows in ${rows.data.duration}${rows.data.truncated ? " (truncated)" : ""}`
+              : undefined
+          }
+          actions={
+            table && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={offset === 0}
+                  onClick={() => setOffset((o) => Math.max(0, o - 100))}
+                >
+                  Previous
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setOffset((o) => o + 100)}>
+                  Next
+                </Button>
+              </>
+            )
+          }
+        />
+        <PanelBody flush>
           {rows.error && <ErrorState error={rows.error} className="m-4" />}
           {!table && <EmptyState icon={Table2} title="Select a table to browse" />}
           {rows.data && <ResultTable result={rows.data} />}
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
     </div>
   )
 }
@@ -293,47 +300,45 @@ function BrowseTab({ conn }: { conn: DbConnection }) {
 function ResultTable({ result }: { result: QueryResult }) {
   if (result.columns.length === 0) {
     return (
-      <p className="p-4 text-sm text-muted-foreground">
+      <p className="p-4 text-[13px] text-muted-foreground">
         {result.rowsAffected} row(s) affected in {result.duration}.
       </p>
     )
   }
   return (
-    <ScrollArea className="max-h-[calc(100vh-24rem)]">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {result.columns.map((col, i) => (
-              <TableHead key={col} className="whitespace-nowrap">
-                {col}
-                {result.types[i] && (
-                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                    {result.types[i].toLowerCase()}
-                  </span>
+    <Table containerClassName="max-h-[calc(100svh-24rem)]">
+      <TableHeader className={stickyTableHeader}>
+        <TableRow>
+          {result.columns.map((col, i) => (
+            <TableHead key={col} className="whitespace-nowrap">
+              {col}
+              {result.types[i] && (
+                <span className="ml-1 text-[10px] font-normal normal-case text-muted-foreground/70">
+                  {result.types[i].toLowerCase()}
+                </span>
+              )}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {result.rows.map((row, i) => (
+          <TableRow key={i}>
+            {row.map((cell, j) => (
+              <TableCell key={j} className="max-w-xs truncate font-mono text-xs">
+                {cell === null ? (
+                  <span className="text-muted-foreground italic">null</span>
+                ) : typeof cell === "object" ? (
+                  JSON.stringify(cell)
+                ) : (
+                  String(cell)
                 )}
-              </TableHead>
+              </TableCell>
             ))}
           </TableRow>
-        </TableHeader>
-        <TableBody>
-          {result.rows.map((row, i) => (
-            <TableRow key={i}>
-              {row.map((cell, j) => (
-                <TableCell key={j} className="max-w-xs truncate font-mono text-xs">
-                  {cell === null ? (
-                    <span className="text-muted-foreground italic">null</span>
-                  ) : typeof cell === "object" ? (
-                    JSON.stringify(cell)
-                  ) : (
-                    String(cell)
-                  )}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </ScrollArea>
+        ))}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -388,9 +393,7 @@ function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: ConfirmFn })
         description: (
           <>
             <p className="text-destructive">This statement {risk.reasons.join(", ")}.</p>
-            <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 font-mono text-xs">
-              {sql}
-            </pre>
+            <Well className="mt-2 max-h-32">{sql}</Well>
           </>
         ),
         action: (c) => execute(c),
@@ -401,57 +404,47 @@ function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: ConfirmFn })
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex min-w-0 flex-col gap-4">
       {risk?.destructive && (
-        <Alert variant="destructive">
-          <ShieldAlert className="size-4" />
-          <AlertTitle>Destructive statement ({risk.level})</AlertTitle>
-          <AlertDescription>{risk.reasons.join(" · ")}</AlertDescription>
-        </Alert>
+        <Notice tone="danger" icon={ShieldAlert} title={`Destructive statement (${risk.level})`}>
+          {risk.reasons.join(" · ")}
+        </Notice>
       )}
 
-      <Card>
-        <CardContent className="p-0">
-          <div className="h-56 border-b">
-            <MonacoEditor
-              height="100%"
-              theme="vs-dark"
-              language="sql"
-              value={sql}
-              onChange={(v) => setSql(v ?? "")}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 13,
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-              }}
-            />
-          </div>
-          <div className="flex items-center gap-2 p-3">
-            <Button onClick={run} disabled={busy || !can("service.control")}>
-              {busy ? <Spinner /> : <Play className="size-4" />}
-              Run
-            </Button>
-            {risk && !risk.destructive && <Badge variant="secondary">{risk.level}</Badge>}
-            {!can("service.control") && (
-              <span className="text-xs text-muted-foreground">
-                Your role can browse but not execute statements.
-              </span>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <Panel>
+        <PanelHeader
+          icon={Database}
+          title="SQL"
+          description={`${conn.driver} · ${conn.database}`}
+        />
+        <PanelBody flush>
+          <CodeEditor className="h-56" language="sql" value={sql} onChange={setSql} />
+        </PanelBody>
+        <PanelFooter>
+          <Button size="sm" onClick={run} disabled={busy || !can("service.control")}>
+            {busy ? <Spinner /> : <Play className="size-3.5" />}
+            Run
+          </Button>
+          {risk && !risk.destructive && (
+            <Badge variant="secondary" className="font-normal">
+              {risk.level}
+            </Badge>
+          )}
+          {!can("service.control") && (
+            <span className="text-xs text-muted-foreground">
+              Your role can browse but not execute statements.
+            </span>
+          )}
+        </PanelFooter>
+      </Panel>
 
       {result && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Result</CardTitle>
-            <CardDescription className="font-mono text-xs">{result.statement}</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
+        <Panel>
+          <PanelHeader icon={Table2} title="Result" description={result.statement} />
+          <PanelBody flush>
             <ResultTable result={result} />
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
       )}
     </div>
   )
@@ -528,7 +521,7 @@ function AddConnectionDialog({ onDone }: { onDone: () => void }) {
           <div className="space-y-1.5">
             <Label>Driver</Label>
             <Select value={driver} onValueChange={setDriver}>
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

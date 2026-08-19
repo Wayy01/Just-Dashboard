@@ -1,19 +1,20 @@
 "use client"
 
 import { useState } from "react"
-import { FileText, Search } from "lucide-react"
+import { FileText } from "lucide-react"
 import { get } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { AuditEntry } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Card, CardContent } from "@/components/ui/card"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -42,77 +43,62 @@ export default function AuditPage() {
   )
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Operations"
         title="Audit log"
         description="Every state-changing request, with who made it and from where"
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={username}
-            onChange={(e) => {
-              setUsername(e.target.value)
-              setOffset(0)
-            }}
-            placeholder="User"
-            className="w-40 pl-8"
-          />
-        </div>
-        <Input
-          value={action}
-          onChange={(e) => {
-            setAction(e.target.value)
-            setOffset(0)
-          }}
-          placeholder="Action, e.g. docker.container"
-          className="w-64"
-        />
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Checkbox
-            checked={onlyFailed}
-            onCheckedChange={(v) => {
-              setOnlyFailed(v === true)
-              setOffset(0)
-            }}
-          />
-          Failures only
-        </label>
-        <span className="flex-1" />
-        <span className="text-sm text-muted-foreground">
-          {data ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.total)} of ${data.total}` : ""}
-        </span>
-        <Button
-          variant="outline"
-          disabled={offset === 0}
-          onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-        >
-          Previous
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!data || offset + PAGE_SIZE >= data.total}
-          onClick={() => setOffset((o) => o + PAGE_SIZE)}
-        >
-          Next
-        </Button>
-      </div>
-
-      {loading && !data && <LoadingRows rows={8} />}
       {error && <ErrorState error={error} />}
+      {loading && !data && <LoadingPanel rows={8} />}
 
       {data && (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
+        <Panel>
+          <PanelHeader
+            icon={FileText}
+            title="Recorded requests"
+            description={`${data.total.toLocaleString()} entries kept`}
+          />
+          <PanelToolbar>
+            <SearchInput
+              containerClassName="w-40"
+              value={username}
+              onChange={(e) => {
+                setUsername(e.target.value)
+                setOffset(0)
+              }}
+              placeholder="User"
+            />
+            <Input
+              value={action}
+              onChange={(e) => {
+                setAction(e.target.value)
+                setOffset(0)
+              }}
+              placeholder="Action, e.g. docker.container"
+              className="h-8 w-60 text-[13px]"
+            />
+            <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+              <Checkbox
+                checked={onlyFailed}
+                onCheckedChange={(v) => {
+                  setOnlyFailed(v === true)
+                  setOffset(0)
+                }}
+              />
+              Failures only
+            </label>
+          </PanelToolbar>
+
+          <PanelBody flush>
+            <Table containerClassName="max-h-[calc(100svh-22rem)]">
+              <TableHeader className={stickyTableHeader}>
                 <TableRow>
                   <TableHead className="w-44">When</TableHead>
                   <TableHead>Who</TableHead>
                   <TableHead>Action</TableHead>
-                  <TableHead>Target</TableHead>
+                  <TableHead className="w-full">Target</TableHead>
                   <TableHead className="w-20">Result</TableHead>
                 </TableRow>
               </TableHeader>
@@ -120,14 +106,14 @@ export default function AuditPage() {
                 {data.entries.map((entry) => (
                   <TableRow
                     key={entry.id}
-                    className={entry.success ? undefined : "bg-destructive/5"}
+                    className={entry.success ? undefined : "bg-destructive/[0.06]"}
                   >
                     <TableCell className="text-xs">
                       <div>{timestamp(entry.ts)}</div>
                       <p className="text-[11px] text-muted-foreground">{relativeTime(entry.ts)}</p>
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm">{entry.username || <em>anonymous</em>}</div>
+                      <div className="text-[13px]">{entry.username || <em>anonymous</em>}</div>
                       <p className="font-mono text-[11px] text-muted-foreground">
                         {entry.ip} · {entry.actor}
                       </p>
@@ -150,7 +136,10 @@ export default function AuditPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={entry.success ? "secondary" : "destructive"}>
+                      <Badge
+                        variant={entry.success ? "secondary" : "destructive"}
+                        className="numeric font-normal"
+                      >
                         {entry.status}
                       </Badge>
                     </TableCell>
@@ -165,9 +154,35 @@ export default function AuditPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </PanelBody>
+
+          <PanelFooter className="justify-between">
+            <span className="numeric text-xs text-muted-foreground">
+              {data.total === 0
+                ? "Nothing recorded yet"
+                : `${offset + 1}–${Math.min(offset + PAGE_SIZE, data.total)} of ${data.total.toLocaleString()}`}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={offset === 0}
+                onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={offset + PAGE_SIZE >= data.total}
+                onClick={() => setOffset((o) => o + PAGE_SIZE)}
+              >
+                Next
+              </Button>
+            </div>
+          </PanelFooter>
+        </Panel>
       )}
-    </>
+    </Page>
   )
 }

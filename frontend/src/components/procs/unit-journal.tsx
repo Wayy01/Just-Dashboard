@@ -3,14 +3,9 @@
 import { useCallback, useState } from "react"
 import type { JournalEntry, LogLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
+import { ListChecks } from "lucide-react"
 import { LogViewer } from "@/components/log-viewer"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { SidePanel } from "@/components/side-panel"
 
 const LOG_LIMIT = 5000
 
@@ -31,16 +26,17 @@ export function UnitJournalSheet({
   onOpenChange: (open: boolean) => void
 }) {
   return (
-    <Sheet open={unit !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
-        <SheetHeader className="border-b p-4">
-          <SheetTitle>{unit}</SheetTitle>
-          <SheetDescription>Live journal, newest at the bottom</SheetDescription>
-        </SheetHeader>
-        {/* Keyed on the unit so switching units starts a clean buffer. */}
-        {unit && <JournalStream key={unit} unit={unit} />}
-      </SheetContent>
-    </Sheet>
+    <SidePanel
+      open={unit !== null}
+      onOpenChange={onOpenChange}
+      icon={ListChecks}
+      title={unit ?? "Unit"}
+      description="Live journal, newest at the bottom"
+      bodyClassName="flex min-h-0 flex-1 flex-col p-4"
+    >
+      {/* Keyed on the unit so switching units starts a clean buffer. */}
+      {unit && <JournalStream key={unit} unit={unit} />}
+    </SidePanel>
   )
 }
 
@@ -69,9 +65,5 @@ function JournalStream({ unit }: { unit: string }) {
     query: { lines: 300 },
   })
 
-  return (
-    <div className="min-h-0 flex-1 p-4">
-      <LogViewer className="h-full" lines={lines} onClear={() => setLines([])} />
-    </div>
-  )
+  return <LogViewer className="h-full" lines={lines} onClear={() => setLines([])} />
 }

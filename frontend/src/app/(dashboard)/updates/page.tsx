@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { PackageCheck, RefreshCw, RotateCcw, Search, ShieldAlert } from "lucide-react"
+import { PackageCheck, RefreshCw, RotateCcw, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -9,14 +9,13 @@ import type { UpdateReport } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { StatTile } from "@/components/stat-tile"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-import { StatCard } from "@/components/stat-card"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   stickyTableHeader,
   Table,
@@ -81,21 +80,58 @@ export default function UpdatesPage() {
   const data = report.data
 
   return (
-    <>
+    <Page>
       {dialog}
       <PageHeader
+        eyebrow="Operations"
         title="Updates"
         description="Operating system packages this server is missing"
         actions={
-          <Button variant="outline" size="sm" onClick={() => report.refresh()} disabled={applying}>
-            <RefreshCw className="size-4" />
-            Re-check
-          </Button>
+          <>
+            {can("destructive") && data?.available && data.packages.length > 0 && (
+              <>
+                {data.securityCount > 0 && (
+                  <Button size="sm" disabled={applying} onClick={() => apply(true)}>
+                    <ShieldAlert className="size-4" />
+                    Install {data.securityCount} security update
+                    {data.securityCount === 1 ? "" : "s"}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={applying}
+                  onClick={() => apply(false)}
+                >
+                  <PackageCheck className="size-4" />
+                  Upgrade all {data.packages.length}
+                </Button>
+              </>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => report.refresh()}
+              disabled={applying}
+            >
+              <RefreshCw className="size-4" />
+              Re-check
+            </Button>
+          </>
         }
       />
 
       {report.error && <ErrorState error={report.error} />}
-      {report.loading && !data && <LoadingRows />}
+      {report.loading && !data && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-[7.5rem] rounded-xl" />
+            ))}
+          </div>
+          <LoadingPanel />
+        </>
+      )}
 
       {data && !data.available && (
         <EmptyState
@@ -108,65 +144,41 @@ export default function UpdatesPage() {
       {data?.available && (
         <>
           {data.rebootRequired && (
-            <Alert variant="destructive">
-              <RotateCcw className="size-4" />
-              <AlertTitle>This server needs a reboot</AlertTitle>
-              <AlertDescription>
-                An installed update cannot take effect until the machine restarts
-                {data.rebootPackages?.length
-                  ? `: ${data.rebootPackages.slice(0, 6).join(", ")}`
-                  : ""}
-                . Reboot from the Terminal when it suits you — the dashboard will not do it for you.
-              </AlertDescription>
-            </Alert>
+            <Notice tone="warning" icon={RotateCcw} title="This server needs a reboot">
+              An installed update cannot take effect until the machine restarts
+              {data.rebootPackages?.length ? `: ${data.rebootPackages.slice(0, 6).join(", ")}` : ""}
+              . Reboot from the Terminal when it suits you — the dashboard will not do it for you.
+            </Notice>
           )}
 
           {data.error && (
-            <Alert>
-              <ShieldAlert className="size-4" />
-              <AlertTitle>Could not read the package database</AlertTitle>
-              <AlertDescription className="font-mono text-xs">{data.error}</AlertDescription>
-            </Alert>
+            <Notice icon={ShieldAlert} title="Could not read the package database">
+              <span className="font-mono text-xs">{data.error}</span>
+            </Notice>
           )}
 
           <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
-            <StatCard
-              title="Updates available"
+            <StatTile
+              label="Updates available"
               value={data.packages.length}
-              detail={`checked ${relativeTime(data.lastChecked)}`}
+              hint={`checked ${relativeTime(data.lastChecked)}`}
               icon={PackageCheck}
             />
-            <StatCard
-              title="Security updates"
+            <StatTile
+              label="Security updates"
               value={data.securityCount}
-              detail={data.securityCount ? "apply these first" : "none outstanding"}
+              hint={data.securityCount ? "apply these first" : "none outstanding"}
               icon={ShieldAlert}
-              tone={data.securityCount > 0 ? "warning" : "default"}
+              tone={data.securityCount > 0 ? "warning" : "success"}
             />
-            <StatCard
-              title="Reboot"
+            <StatTile
+              label="Reboot"
               value={data.rebootRequired ? "required" : "not needed"}
-              detail={data.manager ?? ""}
+              hint={data.manager ?? ""}
               icon={RotateCcw}
               tone={data.rebootRequired ? "warning" : "default"}
             />
           </div>
-
-          {can("destructive") && data.packages.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {data.securityCount > 0 && (
-                <Button size="sm" disabled={applying} onClick={() => apply(true)}>
-                  <ShieldAlert className="size-4" />
-                  Install {data.securityCount} security update
-                  {data.securityCount === 1 ? "" : "s"}
-                </Button>
-              )}
-              <Button size="sm" variant="outline" disabled={applying} onClick={() => apply(false)}>
-                <PackageCheck className="size-4" />
-                Upgrade all {data.packages.length}
-              </Button>
-            </div>
-          )}
 
           {data.packages.length === 0 ? (
             <EmptyState
@@ -175,60 +187,65 @@ export default function UpdatesPage() {
               description="No packages are waiting to be upgraded."
             />
           ) : (
-            <>
-              <div className="relative max-w-sm">
-                <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
+            <Panel>
+              <PanelHeader
+                icon={PackageCheck}
+                title="Pending packages"
+                description={`${visible.length} shown of ${data.packages.length}`}
+              />
+              <PanelToolbar>
+                <SearchInput
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                   placeholder="Filter by package or origin"
-                  className="pl-8"
                 />
-              </div>
-              <Card>
-                <CardContent className="p-0">
-                  <Table containerClassName="max-h-[calc(100svh-30rem)]">
-                    <TableHeader className={stickyTableHeader}>
-                      <TableRow>
-                        <TableHead>Package</TableHead>
-                        <TableHead>Installed</TableHead>
-                        <TableHead>Available</TableHead>
-                        <TableHead>Origin</TableHead>
+              </PanelToolbar>
+              <PanelBody flush>
+                <Table containerClassName="max-h-[calc(100svh-28rem)]">
+                  <TableHeader className={stickyTableHeader}>
+                    <TableRow>
+                      <TableHead>Package</TableHead>
+                      <TableHead>Installed</TableHead>
+                      <TableHead>Available</TableHead>
+                      <TableHead className="w-full">Origin</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visible.map((p) => (
+                      <TableRow key={p.name}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium">{p.name}</span>
+                            {p.security && (
+                              <Badge variant="destructive" className="font-normal">
+                                security
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {p.current || "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{p.candidate}</TableCell>
+                        <TableCell>
+                          <div className="max-w-[18rem] min-w-0">
+                            <p
+                              className="truncate font-mono text-[11px] text-muted-foreground"
+                              title={p.origin}
+                            >
+                              {p.origin || "—"}
+                            </p>
+                          </div>
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visible.map((p) => (
-                        <TableRow key={p.name}>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{p.name}</span>
-                              {p.security && <Badge variant="destructive">security</Badge>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {p.current || "—"}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{p.candidate}</TableCell>
-                          <TableCell>
-                            <div className="max-w-[18rem] min-w-0">
-                              <p
-                                className="truncate font-mono text-[11px] text-muted-foreground"
-                                title={p.origin}
-                              >
-                                {p.origin || "—"}
-                              </p>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </>
+                    ))}
+                  </TableBody>
+                </Table>
+              </PanelBody>
+            </Panel>
           )}
         </>
       )}
-    </>
+    </Page>
   )
 }
