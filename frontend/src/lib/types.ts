@@ -749,3 +749,13 @@ export type UpdateReport = {
   lastChecked: string
   error?: string
 }
+
+/** How the dashboard itself can be reached, graded weakest-entry-first. */
+export type Exposure = {
+  grade: "tailscale" | "tunnel" | "private" | "public" | "open"
+  summary: string
+  allowlist: string[]
+  interfaces: string[]
+  tailscaleIp?: string
+  recommendation?: string
+}

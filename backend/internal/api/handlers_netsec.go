@@ -12,6 +12,11 @@ import (
 )
 
 func (s *Server) mountNetSecRoutes(r chi.Router) {
+	// How the dashboard itself is reachable. Any signed-in principal may read
+	// it: knowing you are exposed is not privileged information, and hiding it
+	// from a limited role would only delay somebody noticing.
+	r.Method(http.MethodGet, "/exposure", s.handle(s.handleExposure))
+
 	r.Route("/firewall", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFirewallStatus))
 		r.Group(func(r chi.Router) {
@@ -156,5 +161,14 @@ func (s *Server) handleSSHSessions(w http.ResponseWriter, r *http.Request) error
 		return httpx.Internal(err)
 	}
 	httpx.JSON(w, http.StatusOK, sessions)
+	return nil
+}
+
+// handleExposure reports who can reach this dashboard, graded. It reads the
+// allowlist the process actually booted with rather than re-reading a file, so
+// it describes the running configuration and not an edited one that has yet to
+// be applied.
+func (s *Server) handleExposure(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, http.StatusOK, netsec.DescribeExposure(s.Cfg.AllowedCIDRs))
 	return nil
 }

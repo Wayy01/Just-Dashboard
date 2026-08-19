@@ -36,14 +36,22 @@ git clone https://github.com/Wayy01/vps-dashboard.git
 cd vps-dashboard && sudo ./install.sh
 ```
 
-The installer asks how you intend to reach the dashboard — an SSH tunnel,
-Tailscale, WireGuard, or a public address with an allowlist — generates the
-master key and a first password, writes `.env`, builds the stack, waits for it
-to answer, and prints the exact command to get in.
+The installer asks how you intend to reach the dashboard and defaults to
+**Tailscale**, the recommended route: your laptop and phone reach it from
+anywhere, while the machine stays invisible to the internet. It installs and
+connects Tailscale for you if you do not already have it. An SSH tunnel is
+offered as the fallback — no extra software, no account, and it still works if
+Tailscale is ever down.
 
-It will offer to install Docker if it is missing, and Tailscale if you choose
-that route. Running it again on an existing install keeps your `.env` and just
-rebuilds, so it is safe to re-run after `git pull`.
+It then generates the master key and a first password, writes `.env`, builds
+the stack, waits for it to answer, and prints the exact command to get in.
+
+Whatever you pick, the Security page reports how the dashboard is *actually*
+reachable, and says so plainly when that is broader than a private network.
+
+It will offer to install Docker if it is missing. Running it again on an
+existing install keeps your `.env` and just rebuilds, so it is safe to re-run
+after `git pull`.
 
 <details>
 <summary>Or set it up by hand</summary>

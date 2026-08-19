@@ -1,11 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { Ban, Plus, Shield, ShieldAlert, Trash2, Users } from "lucide-react"
+import { Ban, Plus, Shield, ShieldAlert, ShieldCheck, Trash2, Users } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { timestamp } from "@/lib/format"
-import type { Fail2banJail, FirewallStatus, LoginSession } from "@/lib/types"
+import type { Exposure, Fail2banJail, FirewallStatus, LoginSession } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -48,6 +48,7 @@ export default function SecurityPage() {
   return (
     <>
       <PageHeader title="Security" description="Firewall, intrusion prevention and active logins" />
+      <ExposureCard />
       <Tabs defaultValue="firewall">
         <TabsList>
           <TabsTrigger value="firewall">Firewall</TabsTrigger>
@@ -65,6 +66,57 @@ export default function SecurityPage() {
         </TabsContent>
       </Tabs>
     </>
+  )
+}
+
+/**
+ * How this dashboard is reachable, above everything else on the page.
+ *
+ * It is the security property the whole product rests on, and it lives in an
+ * env file nobody opens again after install day. On screen it stays true: a
+ * machine that quietly became reachable from the internet says so here instead
+ * of waiting to be discovered.
+ */
+function ExposureCard() {
+  const { data } = usePoll<Exposure>((signal) => get("/exposure", undefined, signal), 60_000)
+  if (!data) return null
+
+  const safe = data.grade === "tailscale" || data.grade === "private" || data.grade === "tunnel"
+  const alarming = data.grade === "open"
+
+  const label: Record<Exposure["grade"], string> = {
+    tailscale: "Tailscale only",
+    tunnel: "SSH tunnel only",
+    private: "Private network",
+    public: "Public addresses",
+    open: "Open to the internet",
+  }
+
+  return (
+    <Alert variant={safe ? "default" : "destructive"}>
+      {safe ? <ShieldCheck className="size-4" /> : <ShieldAlert className="size-4" />}
+      <AlertTitle className="flex flex-wrap items-center gap-2">
+        Reachable from
+        <Badge variant={alarming ? "destructive" : safe ? "success" : "warning"}>
+          {label[data.grade]}
+        </Badge>
+      </AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        <span>{data.summary}</span>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">allowlist</span>
+          {data.allowlist.map((cidr) => (
+            <code
+              key={cidr}
+              className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+            >
+              {cidr}
+            </code>
+          ))}
+        </span>
+        {data.recommendation && <span className="font-medium">{data.recommendation}</span>}
+      </AlertDescription>
+    </Alert>
   )
 }
 

@@ -143,21 +143,26 @@ command -v tailscale >/dev/null 2>&1 && TS_IP="$(tailscale ip -4 2>/dev/null | h
 WG_IF="$(ip -o link show 2>/dev/null | awk -F': ' '/wg[0-9]/{print $2; exit}' || true)"
 [ -n "$WG_IF" ] && WG_IP="$(ip -4 -o addr show "$WG_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)"
 
-say "  ${BOLD}1${RESET}) SSH tunnel ${DIM}(safest, nothing is exposed, works from anywhere)${RESET}"
-say "  ${BOLD}2${RESET}) Tailscale ${DIM}(reachable from any device on your tailnet)${RESET}${TS_IP:+  ${GREEN}detected: $TS_IP${RESET}}"
-say "  ${BOLD}3${RESET}) WireGuard ${DIM}(reachable over your own VPN)${RESET}${WG_IP:+  ${GREEN}detected: $WG_IP${RESET}}"
-say "  ${BOLD}4${RESET}) Public IP with an address allowlist ${YELLOW}(not recommended)${RESET}"
+say "  ${BOLD}1${RESET}) ${GREEN}Tailscale${RESET} ${BOLD}— recommended${RESET}${TS_IP:+  ${GREEN}already connected: $TS_IP${RESET}}"
+say "     ${DIM}Reach it from your laptop or phone anywhere, with nothing exposed to${RESET}"
+say "     ${DIM}the internet. Set up for you if you do not have it.${RESET}"
+say ""
+say "  ${BOLD}2${RESET}) SSH tunnel"
+say "     ${DIM}No new software, no account, nothing listening. Needs an ssh -L${RESET}"
+say "     ${DIM}command open while you use it. The fallback if Tailscale is ever down.${RESET}"
+say ""
+say "  ${BOLD}3${RESET}) A private network you already run${WG_IP:+  ${GREEN}WireGuard detected: $WG_IP${RESET}}"
+say "     ${DIM}WireGuard, an internal LAN, any interface you already trust.${RESET}"
+say ""
+say "  ${BOLD}4${RESET}) Public address with an allowlist ${YELLOW}— discouraged${RESET}"
+say "     ${DIM}A root-equivalent panel on the open internet. Only the allowlist${RESET}"
+say "     ${DIM}stands in front of it.${RESET}"
 say ""
 
 CHOICE="$(ask "Choose 1-4" 1)"
 
 case "$CHOICE" in
 1)
-	SITE="localhost"
-	CIDRS="127.0.0.1/32,::1/128"
-	ACCESS_KIND="tunnel"
-	;;
-2)
 	if [ -z "$TS_IP" ]; then
 		if command -v tailscale >/dev/null 2>&1; then
 			warn "tailscale is installed but this machine is not on a tailnet."
@@ -167,23 +172,37 @@ case "$CHOICE" in
 		if yes_no "Install and connect Tailscale now?" y; then
 			command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh
 			say ""
-			say "  ${BOLD}Follow the URL Tailscale prints to authorise this machine.${RESET}"
-			tailscale up
+			say "  ${BOLD}Tailscale will print a URL. Open it to authorise this machine.${RESET}"
+			say ""
+			tailscale up || warn "tailscale up did not complete"
 			TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+			[ -n "$TS_IP" ] && ok "connected as $TS_IP"
 		fi
 	fi
-	[ -n "$TS_IP" ] || die "no Tailscale address available; re-run and pick another option."
-	SITE="$TS_IP"
-	CIDRS="100.64.0.0/10"
-	ACCESS_KIND="tailscale"
+	if [ -z "$TS_IP" ]; then
+		warn "Tailscale is not available; falling back to an SSH tunnel."
+		warn "You can switch later by editing VPSD_SITE and VPSD_ALLOWED_CIDRS in .env."
+		SITE="localhost"
+		CIDRS="127.0.0.1/32,::1/128"
+		ACCESS_KIND="tunnel"
+	else
+		SITE="$TS_IP"
+		CIDRS="100.64.0.0/10"
+		ACCESS_KIND="tailscale"
+	fi
+	;;
+2)
+	SITE="localhost"
+	CIDRS="127.0.0.1/32,::1/128"
+	ACCESS_KIND="tunnel"
 	;;
 3)
-	[ -n "$WG_IP" ] || WG_IP="$(ask "This machine's WireGuard address" "")"
-	[ -n "$WG_IP" ] || die "a WireGuard address is required for this option."
+	[ -n "$WG_IP" ] || WG_IP="$(ask "The address of this machine on that network" "")"
+	[ -n "$WG_IP" ] || die "an address is required for this option."
 	SITE="$WG_IP"
-	DEFAULT_WG_NET="$(printf '%s' "$WG_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')"
-	CIDRS="$(ask "Which addresses may reach it" "$DEFAULT_WG_NET")"
-	ACCESS_KIND="wireguard"
+	DEFAULT_NET="$(printf '%s' "$WG_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')"
+	CIDRS="$(ask "Which addresses may reach it" "$DEFAULT_NET")"
+	ACCESS_KIND="private"
 	;;
 4)
 	say ""
@@ -191,7 +210,7 @@ case "$CHOICE" in
 	warn "The address allowlist is the only thing in front of it, and it is"
 	warn "checked before authentication — so get it right."
 	say ""
-	yes_no "Continue anyway?" n || die "sensible. Re-run and pick option 1 or 2."
+	yes_no "Continue anyway?" n || die "sensible. Re-run and pick option 1 (Tailscale) or 2 (SSH tunnel)."
 	PUB_IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
 	SITE="$(ask "This machine's public address" "${PUB_IP:-}")"
 	[ -n "$SITE" ] || die "an address is required."
@@ -328,8 +347,8 @@ tailscale)
 	say ""
 	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
 	;;
-wireguard)
-	say "  ${BOLD}Reach it over your VPN:${RESET}"
+private)
+	say "  ${BOLD}Reach it over your private network:${RESET}"
 	say ""
 	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
 	;;
