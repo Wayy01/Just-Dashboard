@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,10 +16,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Wayy01/vps-dashboard/backend/internal/agent"
 	"github.com/Wayy01/vps-dashboard/backend/internal/api"
 	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
 	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
@@ -30,6 +33,8 @@ func main() {
 	// The container healthcheck re-executes this binary rather than shipping
 	// curl into the image, which keeps the runtime surface smaller.
 	healthcheck := flag.Bool("healthcheck", false, "probe the local server and exit non-zero if it is unhealthy")
+	agentMode := flag.Bool("agent", false, "run as an agent managed by a hub: no human login, mutual TLS only")
+	agentReset := flag.Bool("agent-reset", false, "forget the enrolled hub so this agent can be enrolled again, then exit")
 	flag.Parse()
 	if *healthcheck {
 		if err := probe(); err != nil {
@@ -38,13 +43,13 @@ func main() {
 		}
 		return
 	}
-	if err := run(); err != nil {
+	if err := run(*agentMode, *agentReset); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(agentFlag, agentReset bool) error {
 	level := slog.LevelInfo
 	if os.Getenv("VPSD_LOG_LEVEL") == "debug" {
 		level = slog.LevelDebug
@@ -56,6 +61,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// The flag is the ergonomic form; the environment variable is what the
+	// compose file sets. Either turns agent mode on.
+	cfg.AgentMode = cfg.AgentMode || agentFlag
 	st, err := store.Open(cfg.DataDir)
 	if err != nil {
 		return err
@@ -69,11 +77,32 @@ func run() error {
 	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
 	aud := audit.New(st, log)
 
-	if err := bootstrapAdmin(context.Background(), svc, st, log); err != nil {
-		return err
+	var identity *agent.Identity
+	if cfg.AgentMode {
+		identity, err = agent.Load(filepath.Join(cfg.DataDir, "agent"))
+		if err != nil {
+			return err
+		}
+		if agentReset {
+			if err := identity.Reset(); err != nil {
+				return err
+			}
+			log.Warn("agent enrolment cleared; start the agent again to mint a new token",
+				"agent_id", identity.ID())
+			return nil
+		}
+		if err := announceAgent(identity, log); err != nil {
+			return err
+		}
+	} else {
+		// An agent has no interactive account to bootstrap: the hub is the
+		// only caller, and it authenticates with a certificate.
+		if err := bootstrapAdmin(context.Background(), svc, st, log); err != nil {
+			return err
+		}
 	}
 
-	srv := api.New(cfg, log, st, svc, sealer, aud)
+	srv := api.New(cfg, log, st, svc, sealer, aud, identity)
 	defer srv.Shutdown()
 
 	httpSrv := &http.Server{
@@ -93,11 +122,27 @@ func run() error {
 	}
 	go janitor(ctx, svc, log)
 
+	if cfg.AgentMode {
+		tlsCfg, err := agentTLS(identity)
+		if err != nil {
+			return err
+		}
+		httpSrv.TLSConfig = tlsCfg
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("vps-dashboard listening",
-			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs), "require2fa", cfg.Require2FA)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs),
+			"require2fa", cfg.Require2FA, "agent", cfg.AgentMode)
+		var err error
+		if cfg.AgentMode {
+			// The certificate and key are already in the TLS config.
+			err = httpSrv.ListenAndServeTLS("", "")
+		} else {
+			err = httpSrv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -184,4 +229,45 @@ func bootstrapAdmin(ctx context.Context, svc *auth.Service, st *store.Store, log
 		log.Warn("bootstrap admin created from VPSD_BOOTSTRAP_PASSWORD", "username", username)
 	}
 	return st.SetSetting(ctx, "bootstrapped_at", time.Now().UTC().Format(time.RFC3339))
+}
+
+// announceAgent prints the enrolment token exactly once per boot while the
+// agent is unclaimed, in the same spirit as the generated bootstrap password:
+// the operator reads it out of the log, carries it to the hub, and it stops
+// working the moment it is used or the window closes.
+func announceAgent(id *agent.Identity, log *slog.Logger) error {
+	if id.Enrolled() {
+		log.Info("agent is enrolled",
+			"agent_id", id.ID(), "hub_fingerprint", id.HubFingerprint(),
+			"enrolled_at", id.EnrolledAt().Format(time.RFC3339))
+		return nil
+	}
+	token, err := id.NewEnrolmentToken()
+	if err != nil {
+		return err
+	}
+	log.Warn("agent is not enrolled — add it to a hub with this token",
+		"agent_id", id.ID(),
+		"fingerprint", id.Fingerprint(),
+		"enrolment_token", token,
+		"expires_in", agent.TokenTTL.String())
+	return nil
+}
+
+// agentTLS asks every caller for a certificate without requiring one at the
+// handshake. Requiring it here would lock out /agent/enrol, which by
+// definition runs before the hub is trusted; the HubOnly middleware does the
+// actual enforcement per route, so an unenrolled caller can reach enrolment
+// and nothing else.
+func agentTLS(id *agent.Identity) (*tls.Config, error) {
+	certPEM, keyPEM := id.TLSCertificate()
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("agent tls material: %w", err)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{pair},
+		MinVersion:   tls.VersionTLS12,
+		ClientAuth:   tls.RequestClientCert,
+	}, nil
 }

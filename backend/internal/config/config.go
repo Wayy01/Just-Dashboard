@@ -24,6 +24,7 @@ type Config struct {
 	IdleTTL        time.Duration
 	DockerHost     string
 	TerminalEnable bool
+	AgentMode      bool
 	TerminalShell  string
 	FileRoots      []string
 	LogRoots       []string
@@ -46,6 +47,7 @@ func Load() (*Config, error) {
 		IdleTTL:        envDur("VPSD_SESSION_IDLE_TTL", 60*time.Minute),
 		DockerHost:     env("VPSD_DOCKER_HOST", "unix:///var/run/docker.sock"),
 		TerminalEnable: envBool("VPSD_TERMINAL_ENABLED", true),
+		AgentMode:      envBool("VPSD_AGENT_MODE", false),
 		TerminalShell:  env("VPSD_TERMINAL_SHELL", "/bin/bash"),
 		FileRoots:      envList("VPSD_FILE_ROOTS", "/"),
 		LogRoots:       envList("VPSD_LOG_ROOTS", "/var/log"),

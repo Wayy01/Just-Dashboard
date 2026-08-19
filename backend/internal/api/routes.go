@@ -44,26 +44,39 @@ func (s *Server) Routes() http.Handler {
 			r.Method(http.MethodPost, "/deploy/{hookID}", s.handle(s.handleDeployWebhook))
 		})
 
-		r.Group(func(r chi.Router) {
-			r.Use(s.loginLim.Middleware)
-			r.Use(httpx.AuditMutations(s.Audit))
-			r.Method(http.MethodPost, "/auth/login", s.handle(s.handleLogin))
-		})
+		if s.Cfg.AgentMode {
+			// An agent has no human login surface at all: no password route,
+			// no session, no second factor. The only way in is the hub's
+			// certificate, and the only way to become that hub is /agent/enrol.
+			s.mountAgentRoutes(r)
+		} else {
+			r.Group(func(r chi.Router) {
+				r.Use(s.loginLim.Middleware)
+				r.Use(httpx.AuditMutations(s.Audit))
+				r.Method(http.MethodPost, "/auth/login", s.handle(s.handleLogin))
+			})
 
-		// Half-authenticated: password proved, second factor outstanding.
-		r.Group(func(r chi.Router) {
-			r.Use(s.Authn.AuthenticatePartial)
-			r.Use(httpx.AuditMutations(s.Audit))
-			r.Method(http.MethodGet, "/auth/session", s.handle(s.handleSession))
-			r.Method(http.MethodPost, "/auth/2fa/setup", s.handle(s.handleTOTPSetup))
-			r.Method(http.MethodPost, "/auth/2fa/enable", s.handle(s.handleTOTPEnable))
-			r.Method(http.MethodPost, "/auth/2fa/verify", s.handle(s.handleTOTPVerify))
-			r.Method(http.MethodPost, "/auth/logout", s.handle(s.handleLogout))
-		})
+			// Half-authenticated: password proved, second factor outstanding.
+			r.Group(func(r chi.Router) {
+				r.Use(s.Authn.AuthenticatePartial)
+				r.Use(httpx.AuditMutations(s.Audit))
+				r.Method(http.MethodGet, "/auth/session", s.handle(s.handleSession))
+				r.Method(http.MethodPost, "/auth/2fa/setup", s.handle(s.handleTOTPSetup))
+				r.Method(http.MethodPost, "/auth/2fa/enable", s.handle(s.handleTOTPEnable))
+				r.Method(http.MethodPost, "/auth/2fa/verify", s.handle(s.handleTOTPVerify))
+				r.Method(http.MethodPost, "/auth/logout", s.handle(s.handleLogout))
+			})
+		}
 
-		// Fully authenticated surface.
+		// The feature surface is the same program either way. What differs is
+		// who is allowed to reach it: a person with a session or token, or the
+		// one hub this agent was enrolled against.
 		r.Group(func(r chi.Router) {
-			r.Use(s.Authn.Authenticate)
+			if s.Cfg.AgentMode {
+				r.Use(httpx.HubOnly(s.Agent))
+			} else {
+				r.Use(s.Authn.Authenticate)
+			}
 			r.Use(s.apiLim.ByPrincipal)
 			r.Use(httpx.AuditMutations(s.Audit))
 

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Wayy01/vps-dashboard/backend/internal/agent"
 	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
 	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
 	"github.com/Wayy01/vps-dashboard/backend/internal/config"
@@ -18,14 +19,17 @@ import (
 // (no Docker socket, no systemd) degrades to a clear error on its own routes
 // instead of preventing the dashboard from starting.
 type Server struct {
-	Cfg      *config.Config
-	Log      *slog.Logger
-	Store    *store.Store
-	Auth     *auth.Service
-	Sealer   *auth.Sealer
-	Audit    *audit.Logger
-	Authn    *httpx.Authenticator
-	WS       *wsx.Upgrader
+	Cfg    *config.Config
+	Log    *slog.Logger
+	Store  *store.Store
+	Auth   *auth.Service
+	Sealer *auth.Sealer
+	Audit  *audit.Logger
+	Authn  *httpx.Authenticator
+	WS     *wsx.Upgrader
+	// Agent is non-nil only in agent mode, where it is both the TLS identity
+	// and the record of which hub this server answers to.
+	Agent    *agent.Identity
 	loginLim *httpx.Limiter
 	apiLim   *httpx.Limiter
 	destrLim *httpx.Limiter
@@ -33,7 +37,7 @@ type Server struct {
 	modules moduleSet
 }
 
-func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Service, sealer *auth.Sealer, aud *audit.Logger) *Server {
+func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Service, sealer *auth.Sealer, aud *audit.Logger, id *agent.Identity) *Server {
 	s := &Server{
 		Cfg:    cfg,
 		Log:    log,
@@ -41,6 +45,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Servic
 		Auth:   svc,
 		Sealer: sealer,
 		Audit:  aud,
+		Agent:  id,
 		Authn:  &httpx.Authenticator{Svc: svc, Secure: !cfg.Dev},
 		WS:     wsx.NewUpgrader(cfg.AllowedOrigins),
 		// Login is deliberately tight: five attempts a minute per address on
