@@ -20,6 +20,30 @@ func TestClassify(t *testing.T) {
 		{"INSERT INTO users(name) VALUES('a')", "medium", false},
 		{"CREATE INDEX idx ON users(name)", "medium", false},
 		{"ALTER TABLE users ADD COLUMN x int", "high", true},
+
+		// Everything below classified as a harmless read before the classifier
+		// stripped comments and started failing closed. Each one ran for a
+		// "limited" account with no destructive capability and no typed
+		// confirmation, because the query runner derives both from this
+		// verdict rather than from the route.
+		{"DELETE/**/FROM users", "critical", true},
+		{"DELETE\t/*x*/ FROM users", "critical", true},
+		{"DROP ROLE app_user", "critical", true},
+		{"DROP OWNED BY app_user", "critical", true},
+		{"DROP FUNCTION public.f()", "critical", true},
+		{"COPY t FROM PROGRAM 'id > /tmp/pwned'", "critical", true},
+		{"DO $$ BEGIN PERFORM 1; END $$", "high", true},
+		{"CALL wipe_everything()", "high", true},
+		{"VACUUM FULL", "high", true},
+
+		// A comment marker inside a string literal is data, not a comment:
+		// stripping to end of line here would hide the DELETE behind it.
+		{"SELECT 'x--' FROM t; DELETE FROM users", "critical", true},
+
+		// ...and the price of that is over-reporting a SELECT whose text
+		// happens to contain a verb, which is the side of wrong this
+		// classifier is allowed to be on.
+		{"SELECT 'delete' FROM t", "critical", true},
 	}
 	for _, c := range cases {
 		got := Classify(c.query)
@@ -28,6 +52,23 @@ func TestClassify(t *testing.T) {
 		}
 		if got.Destructive != c.destructive {
 			t.Errorf("Classify(%q).Destructive = %v, want %v", c.query, got.Destructive, c.destructive)
+		}
+	}
+}
+
+func TestNormaliseSQL(t *testing.T) {
+	cases := map[string]string{
+		"DELETE/**/FROM users":         "DELETE FROM users",
+		"SELECT 1 -- trailing\nFROM t": "SELECT 1 FROM t",
+		"SELECT 1 # mysql\nFROM t":     "SELECT 1 FROM t",
+		"SELECT   *\n\tFROM  t":        "SELECT * FROM t",
+		"SELECT '-- not a comment'":    "SELECT '-- not a comment'",
+		"SELECT '/* nor this */'":      "SELECT '/* nor this */'",
+		"SELECT 1 /* unterminated":     "SELECT 1",
+	}
+	for in, want := range cases {
+		if got := normaliseSQL(in); got != want {
+			t.Errorf("normaliseSQL(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

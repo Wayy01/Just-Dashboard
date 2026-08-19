@@ -149,8 +149,13 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 			"--result-file="+path, database)
 	case DriverMongo:
 		path = filepath.Join(outDir, fmt.Sprintf("%s-%s.archive", database, stamp))
+		conf, cleanup, err := mongoConfigFile(dsn)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
 		cmd = exec.CommandContext(ctx, "mongodump",
-			"--uri", dsn, "--db", database, "--archive="+path, "--gzip")
+			"--config", conf, "--db", database, "--archive="+path, "--gzip")
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
 	}
@@ -212,8 +217,13 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 		cmd = exec.CommandContext(ctx, "mysql", "--defaults-extra-file="+defaults, database)
 		cmd.Stdin = f
 	case DriverMongo:
+		conf, cleanup, err := mongoConfigFile(dsn)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
 		cmd = exec.CommandContext(ctx, "mongorestore",
-			"--uri", dsn, "--archive="+dumpPath, "--gzip", "--drop")
+			"--config", conf, "--archive="+dumpPath, "--gzip", "--drop")
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupported, driver)
 	}
@@ -225,6 +235,39 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 		return buf.String(), fmt.Errorf("restore failed: %s", strings.TrimSpace(buf.String()))
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// mongoConfigFile writes the connection string to a mode-0600 temporary file
+// for --config.
+//
+// --uri put "mongodb://user:password@host/db" straight into argv, which any
+// local user reads out of `ps auxww` or /proc/<pid>/cmdline — and this
+// container shares the host's PID namespace, so "local" means anyone on the
+// box. Postgres and MySQL already avoided argv; Mongo was the odd one out.
+func mongoConfigFile(dsn string) (string, func(), error) {
+	f, err := os.CreateTemp("", "vpsd-mongo-*.yaml")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { os.Remove(f.Name()) }
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	// A YAML single-quoted scalar escapes exactly one character — the quote
+	// itself, by doubling it — so there is no ambiguity to get wrong here.
+	content := "uri: '" + strings.ReplaceAll(dsn, "'", "''") + "'\n"
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return f.Name(), cleanup, nil
 }
 
 // mysqlDefaultsFile writes credentials to a mode-0600 temporary file. Passing
@@ -245,8 +288,20 @@ func mysqlDefaultsFile(info *ConnInfo) (string, func(), error) {
 	if port == 0 {
 		port = 3306
 	}
+	if strings.ContainsAny(info.Password, "\n\r") {
+		f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("password contains a line break, which a MySQL option file cannot carry")
+	}
+	// Order matters: the backslash has to be doubled before the quote is
+	// escaped, or the escape this adds is itself escaped away. Leaving the
+	// backslash alone entirely — as this did — sent MySQL "pa\tss" as a
+	// password containing a tab, and the dump failed on authentication with
+	// nothing to suggest why.
+	password := strings.ReplaceAll(info.Password, `\`, `\\`)
+	password = strings.ReplaceAll(password, `"`, `\"`)
 	content := fmt.Sprintf("[client]\nhost=%s\nport=%d\nuser=%s\npassword=\"%s\"\n",
-		info.Host, port, info.User, strings.ReplaceAll(info.Password, `"`, `\"`))
+		info.Host, port, info.User, password)
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
 		cleanup()

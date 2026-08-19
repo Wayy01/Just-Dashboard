@@ -424,7 +424,7 @@ func normaliseValue(v any) any {
 }
 
 func returnsRows(query string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(stripLeadingComments(query)))
+	trimmed := strings.ToLower(normaliseSQL(query))
 	for _, prefix := range []string{"select", "with", "show", "describe", "desc", "explain", "table", "values", "pragma"} {
 		if strings.HasPrefix(trimmed, prefix) {
 			return true
@@ -434,25 +434,55 @@ func returnsRows(query string) bool {
 	return strings.Contains(trimmed, " returning ")
 }
 
-func stripLeadingComments(q string) string {
-	for {
-		q = strings.TrimSpace(q)
-		if strings.HasPrefix(q, "--") {
-			if idx := strings.Index(q, "\n"); idx >= 0 {
-				q = q[idx+1:]
-				continue
+// normaliseSQL strips comments and collapses whitespace so that a statement
+// cannot hide its verb between the words the patterns below look for. The
+// classification is what decides whether the caller needs the destructive
+// capability, so a gap here is an authorisation gap: "DELETE/**/FROM users"
+// used to classify as a read and ran with no capability check and no typed
+// confirmation.
+//
+// String literals are copied through verbatim rather than removed. Removing
+// them would let `SELECT 'x--'` swallow the statement that follows it, and
+// keeping them can only over-report — a SELECT whose text contains the word
+// "delete" costs the operator one extra confirmation, which is the direction
+// this function is allowed to be wrong in.
+func normaliseSQL(q string) string {
+	var b strings.Builder
+	b.Grow(len(q))
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`':
+			quote := c
+			b.WriteByte(c)
+			for i++; i < len(q); i++ {
+				b.WriteByte(q[i])
+				if q[i] == '\\' && quote != '`' && i+1 < len(q) {
+					i++
+					b.WriteByte(q[i])
+					continue
+				}
+				if q[i] == quote {
+					break
+				}
 			}
-			return ""
-		}
-		if strings.HasPrefix(q, "/*") {
-			if idx := strings.Index(q, "*/"); idx >= 0 {
-				q = q[idx+2:]
-				continue
+		case c == '#', c == '-' && i+1 < len(q) && q[i+1] == '-':
+			for i < len(q) && q[i] != '\n' {
+				i++
 			}
-			return ""
+			b.WriteByte(' ')
+		case c == '/' && i+1 < len(q) && q[i+1] == '*':
+			i += 2
+			for i+1 < len(q) && !(q[i] == '*' && q[i+1] == '/') {
+				i++
+			}
+			i++
+			b.WriteByte(' ')
+		default:
+			b.WriteByte(c)
 		}
-		return q
 	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // Risk classifies a statement so the UI can warn before it runs.
@@ -466,9 +496,9 @@ type Risk struct {
 // every row" is expressed as a positive match plus an absence check rather
 // than one pattern.
 var (
-	deleteFromRe = regexp.MustCompile(`(?is)\bdelete\s+from\b`)
-	updateSetRe  = regexp.MustCompile(`(?is)\bupdate\s+\S+\s+set\b`)
-	whereRe      = regexp.MustCompile(`(?is)\bwhere\b`)
+	deleteRe    = regexp.MustCompile(`(?is)\bdelete\b`)
+	updateSetRe = regexp.MustCompile(`(?is)\bupdate\s+\S+\s+set\b`)
+	whereRe     = regexp.MustCompile(`(?is)\bwhere\b`)
 )
 
 func matches(re *regexp.Regexp) func(string) bool {
@@ -486,30 +516,69 @@ var riskPatterns = []struct {
 	level  string
 	reason string
 }{
-	{matches(regexp.MustCompile(`(?is)\bdrop\s+(database|schema|table|view|index|column)\b`)), "critical", "drops a database object"},
+	// Deliberately "any DROP" rather than a list of object types: the list
+	// omitted ROLE, OWNED, FUNCTION and everything a future dialect adds, and
+	// each omission was a statement that ran without confirmation.
+	{matches(regexp.MustCompile(`(?is)\bdrop\b`)), "critical", "drops a database object"},
 	{matches(regexp.MustCompile(`(?is)\btruncate\b`)), "critical", "truncates a table"},
-	{unscoped(deleteFromRe), "critical", "deletes every row (no WHERE clause)"},
+	{matches(regexp.MustCompile(`(?is)\bcopy\b.*\bfrom\s+program\b`)), "critical", "runs a shell command on the database host"},
+	{unscoped(deleteRe), "critical", "deletes every row (no WHERE clause)"},
 	{unscoped(updateSetRe), "critical", "updates every row (no WHERE clause)"},
-	{matches(deleteFromRe), "high", "deletes rows"},
+	{matches(deleteRe), "high", "deletes rows"},
 	{matches(regexp.MustCompile(`(?is)\bupdate\b`)), "high", "updates rows"},
-	{matches(regexp.MustCompile(`(?is)\balter\s+table\b`)), "high", "alters a table definition"},
+	{matches(regexp.MustCompile(`(?is)\balter\b`)), "high", "alters a database object"},
 	{matches(regexp.MustCompile(`(?is)\bgrant\b|\brevoke\b`)), "high", "changes permissions"},
 	{matches(regexp.MustCompile(`(?is)\binsert\s+into\b|\breplace\s+into\b`)), "medium", "inserts rows"},
 	{matches(regexp.MustCompile(`(?is)\bcreate\b`)), "medium", "creates a database object"},
 }
 
+// readOnlyLeaders are the statement forms that cannot change anything. PRAGMA
+// is absent on purpose — `PRAGMA journal_mode=WAL` writes.
+var readOnlyLeaders = map[string]bool{
+	"select": true, "with": true, "show": true, "describe": true,
+	"desc": true, "explain": true, "table": true, "values": true,
+}
+
 func Classify(query string) Risk {
+	q := normaliseSQL(query)
 	risk := Risk{Level: "read", Reasons: []string{}}
 	for _, p := range riskPatterns {
-		if p.match(query) {
+		if p.match(q) {
 			risk.Reasons = append(risk.Reasons, p.reason)
 			if rank(p.level) > rank(risk.Level) {
 				risk.Level = p.level
 			}
 		}
 	}
+	// Fail closed. An unrecognised statement — DO, CALL, VACUUM, whatever the
+	// next dialect adds — used to be indistinguishable from a SELECT, and the
+	// query runner derives its capability check from this verdict. Costing the
+	// operator a confirmation for a statement nobody enumerated is the right
+	// side to be wrong on.
+	if risk.Level == "read" && !readOnly(q) {
+		risk.Level = "high"
+		risk.Reasons = append(risk.Reasons, "statement is not a recognised read")
+	}
 	risk.Destructive = risk.Level == "critical" || risk.Level == "high"
 	return risk
+}
+
+// readOnly reports whether every statement in q leads with a read-only verb.
+func readOnly(q string) bool {
+	for _, stmt := range strings.Split(q, ";") {
+		stmt = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(stmt), "("))
+		if stmt == "" {
+			continue
+		}
+		word := strings.ToLower(stmt)
+		if i := strings.IndexAny(word, " \t(\""); i >= 0 {
+			word = word[:i]
+		}
+		if !readOnlyLeaders[word] {
+			return false
+		}
+	}
+	return true
 }
 
 func rank(level string) int {
