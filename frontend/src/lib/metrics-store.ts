@@ -1,0 +1,187 @@
+import { clock } from "@/lib/format"
+import type { HostInfo, Snapshot } from "@/lib/types"
+
+/**
+ * The live metrics the Overview page draws, kept outside React.
+ *
+ * Two problems this solves, both of which come from the same mistake — owning
+ * five minutes of history in a route component:
+ *
+ *  - Leaving the page threw the history away, so coming back showed an empty
+ *    chart that took five minutes to fill in again. The stream now runs for as
+ *    long as the dashboard shell is mounted, so the graph is continuous across
+ *    navigation and there is no re-connect handshake on arrival.
+ *  - Pushing every 2s frame through a context above the router would re-render
+ *    the whole app — including the terminal and the log tail — twice a second.
+ *    A store with explicit subscribers means only the components that actually
+ *    read metrics re-render.
+ *
+ * The history is mirrored into sessionStorage so a browser reload keeps its
+ * chart, and points older than STALE_MS are dropped on the way back in: a
+ * graph that silently stitches this minute onto one from an hour ago is worse
+ * than a graph that starts empty.
+ */
+
+export type MetricsPoint = {
+  /** Clock label for the x-axis. */
+  t: string
+  /** Epoch ms, used for staleness and gap detection — never rendered. */
+  ts: number
+  cpu: number
+  mem: number
+  swap: number
+  rx: number
+  tx: number
+}
+
+export type ConnectionState = "connecting" | "open" | "closed" | "error"
+
+export type MetricsState = {
+  host?: HostInfo
+  snapshot?: Snapshot
+  history: MetricsPoint[]
+  connection: ConnectionState
+  /** Set only when the very first fetch failed and there is nothing to draw. */
+  error?: string
+}
+
+/** How many samples the charts keep — roughly five minutes at 2s. */
+export const HISTORY = 150
+
+/** Restored history older than this is discarded rather than drawn. */
+const STALE_MS = 10 * 60 * 1000
+
+const STORAGE_KEY = "just-dashboard.metrics.v1"
+
+/** Persisting on every frame would be a synchronous JSON round trip at 2Hz. */
+const PERSIST_EVERY = 5
+
+const EMPTY: MetricsState = { history: [], connection: "closed" }
+
+let state: MetricsState = EMPTY
+let restored = false
+let sincePersist = 0
+
+const listeners = new Set<() => void>()
+
+function emit() {
+  for (const listener of listeners) listener()
+}
+
+function set(next: Partial<MetricsState>) {
+  state = { ...state, ...next }
+  emit()
+}
+
+export function subscribe(listener: () => void) {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function getState(): MetricsState {
+  if (!restored) {
+    restored = true
+    const history = readPersisted()
+    if (history.length > 0) state = { ...state, history }
+  }
+  return state
+}
+
+/** The server renders no history at all; this keeps that snapshot stable. */
+export function getServerState(): MetricsState {
+  return EMPTY
+}
+
+export function setHost(host: HostInfo) {
+  set({ host })
+}
+
+export function setConnection(connection: ConnectionState) {
+  if (state.connection !== connection) set({ connection })
+}
+
+export function setError(error: string | undefined) {
+  set({ error })
+}
+
+/** Seeds host and snapshot from the one-shot fetch, without clobbering the stream. */
+export function seed(host: HostInfo, snapshot: Snapshot) {
+  set({ host: state.host ?? host, snapshot: state.snapshot ?? snapshot })
+}
+
+/**
+ * Writes the buffered history out now.
+ *
+ * Called when the page is about to go away, because persisting every fifth
+ * sample otherwise loses up to ten seconds of chart across a reload — and a
+ * reload is exactly the moment the gap is visible.
+ */
+export function flush() {
+  if (sincePersist === 0) return
+  sincePersist = 0
+  persist(state.history)
+}
+
+export function pushSnapshot(snapshot: Snapshot) {
+  const point = toPoint(snapshot)
+  const history = getState().history
+  const next =
+    history.length >= HISTORY ? history.slice(history.length - HISTORY + 1) : [...history]
+  next.push(point)
+  set({ snapshot, history: next, error: undefined })
+
+  if (++sincePersist >= PERSIST_EVERY) {
+    sincePersist = 0
+    persist(next)
+  }
+}
+
+function toPoint(snapshot: Snapshot): MetricsPoint {
+  let rx = 0
+  let tx = 0
+  for (const n of snapshot.net) {
+    rx += n.recvRate
+    tx += n.sendRate
+  }
+  const ts = new Date(snapshot.ts).getTime()
+  return {
+    t: clock(snapshot.ts),
+    ts: Number.isNaN(ts) ? Date.now() : ts,
+    cpu: snapshot.cpu.totalPercent,
+    mem: snapshot.memory.usedPercent,
+    swap: snapshot.swap.usedPercent,
+    rx,
+    tx,
+  }
+}
+
+function persist(history: MetricsPoint[]) {
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(history))
+  } catch {
+    // A full or disabled sessionStorage costs continuity across a reload, not
+    // the live chart. Not worth surfacing.
+  }
+}
+
+function readPersisted(): MetricsPoint[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const cutoff = Date.now() - STALE_MS
+    return parsed
+      .filter(
+        (p): p is MetricsPoint =>
+          !!p && typeof p === "object" && typeof (p as MetricsPoint).ts === "number",
+      )
+      .filter((p) => p.ts >= cutoff)
+      .slice(-HISTORY)
+  } catch {
+    return []
+  }
+}

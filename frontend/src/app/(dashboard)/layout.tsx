@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
+import { MetricsStream } from "@/hooks/use-metrics"
 import { AppSidebar, navLocation } from "@/components/app-sidebar"
 import { Spinner } from "@/components/state"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
@@ -37,6 +38,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <SidebarProvider>
+      {/* Owns the metrics socket for the whole shell, so the Overview charts
+          keep filling while you are on another page. Renders nothing. */}
+      <MetricsStream />
       <AppSidebar />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur">

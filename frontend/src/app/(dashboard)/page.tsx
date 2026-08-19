@@ -1,13 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 import { Cpu, HardDrive, MemoryStick, Network, Server, Timer } from "lucide-react"
 import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { bytes, clock, duration, percent, rate } from "@/lib/format"
-import type { DirEntry, HostInfo, Snapshot } from "@/lib/types"
-import { useSocket, type Envelope } from "@/hooks/use-socket"
+import { bytes, duration, percent, rate } from "@/lib/format"
+import type { DirEntry, Snapshot } from "@/lib/types"
+import { useMetrics } from "@/hooks/use-metrics"
 import { PageHeader } from "@/components/page-header"
 import { StatCard, utilisationBar, utilisationTone } from "@/components/stat-card"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
@@ -32,18 +32,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-/** How many samples the live charts keep — roughly five minutes at 2s. */
-const HISTORY = 150
-
-type Point = {
-  t: string
-  cpu: number
-  mem: number
-  swap: number
-  rx: number
-  tx: number
-}
-
 const cpuConfig = {
   cpu: { label: "CPU", color: "var(--chart-1)" },
 } satisfies ChartConfig
@@ -59,58 +47,15 @@ const netConfig = {
 } satisfies ChartConfig
 
 export default function OverviewPage() {
-  const [host, setHost] = useState<HostInfo>()
-  const [snapshot, setSnapshot] = useState<Snapshot>()
-  const [history, setHistory] = useState<Point[]>([])
-  const [error, setError] = useState<Error>()
+  // The stream itself is owned by the dashboard shell, so this page is a pure
+  // reader: arriving here shows the history collected while you were away
+  // rather than an empty chart and a fresh handshake.
+  const { host, snapshot, history, connection, error } = useMetrics()
 
-  const onMessage = useCallback((envelope: Envelope) => {
-    if (envelope.type === "host") {
-      setHost(envelope.data as HostInfo)
-      return
-    }
-    if (envelope.type !== "metrics") return
-    const snap = envelope.data as Snapshot
-    setSnapshot(snap)
-    setHistory((prev) => {
-      const rx = snap.net.reduce((sum, n) => sum + n.recvRate, 0)
-      const tx = snap.net.reduce((sum, n) => sum + n.sendRate, 0)
-      const next = [
-        ...prev,
-        {
-          t: clock(snap.ts),
-          cpu: snap.cpu.totalPercent,
-          mem: snap.memory.usedPercent,
-          swap: snap.swap.usedPercent,
-          rx,
-          tx,
-        },
-      ]
-      return next.length > HISTORY ? next.slice(next.length - HISTORY) : next
-    })
-  }, [])
-
-  const { state } = useSocket("/system/stream", { onMessage, query: { interval: 2000 } })
-
-  // The socket carries everything once connected; this single fetch just
-  // avoids an empty screen during the handshake.
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([get<HostInfo>("/system/host"), get<Snapshot>("/system/metrics")])
-      .then(([h, m]) => {
-        if (cancelled) return
-        setHost((prev) => prev ?? h)
-        setSnapshot((prev) => prev ?? m)
-      })
-      .catch((err) => !cancelled && setError(err))
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (error && !snapshot) return <ErrorState error={error} />
+  if (error && !snapshot) return <ErrorState error={new Error(error)} />
   if (!snapshot || !host) return <LoadingRows rows={6} />
 
+  const live = connection === "open"
   const memTone = utilisationTone(snapshot.memory.usedPercent)
 
   return (
@@ -127,14 +72,11 @@ export default function OverviewPage() {
           </span>
         }
         actions={
-          <Badge variant={state === "open" ? "success" : "secondary"} className="gap-1.5">
+          <Badge variant={live ? "success" : "secondary"} className="gap-1.5">
             <span
-              className={cn(
-                "size-1.5 rounded-full",
-                state === "open" ? "bg-success" : "bg-muted-foreground",
-              )}
+              className={cn("size-1.5 rounded-full", live ? "bg-success" : "bg-muted-foreground")}
             />
-            {state === "open" ? "live" : state}
+            {live ? "live" : connection}
           </Badge>
         }
       />
