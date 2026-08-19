@@ -87,6 +87,14 @@ quietly became internet-facing announces itself instead of waiting to be found.
 Enforced per capability on the API, never in the UI alone — the frontend hides
 what a role cannot use, and the server re-decides every request anyway.
 
+Roles divide what you can *change*, not what you can *see*. "View everything"
+is meant literally: a `readonly` account reads any file inside `JD_FILE_ROOTS`,
+any compose file, any proxy config and any deploy log, and those routinely hold
+credentials. Container environments are redacted below `system.admin`, which
+raises the cost of reading a secret rather than preventing it. Give a `readonly`
+account to someone you would let read the disk, and narrow `JD_FILE_ROOTS` if
+that is not what you want.
+
 | | `readonly` | `limited` | `admin` |
 | --- | :---: | :---: | :---: |
 | View everything | ✅ | ✅ | ✅ |
@@ -120,7 +128,7 @@ installer writes the ones that matter; these are for tuning afterwards.
 | --- | --- | --- |
 | `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
 | `JD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale — keep loopback or you lose the tunnel. |
-| `JD_TRUSTED_PROXIES` | — | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof past the allowlist. |
+| `JD_TRUSTED_PROXIES` | — | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof past the allowlist. One reverse-proxy hop is supported: the bundled Caddy replaces the header with the client's own address, so anything placed *in front* of Caddy makes that front proxy the client as far as the allowlist is concerned. |
 | `JD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave on loopback; the proxy is the entry point. |
 | `JD_ALLOWED_ORIGINS` | — | Extra browser origins allowed to open WebSockets. Only if the UI is served from a different origin. |
 
@@ -135,6 +143,8 @@ installer writes the ones that matter; these are for tuning afterwards.
 | `JD_SESSION_IDLE_TTL` | `60m` | Idle timeout. |
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
 | `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
+| `JD_DEV` | `false` | Development only. Drops `Secure` from the session cookie so the UI works over plain HTTP. Never set it on a real host. |
+| `JD_LOG_LEVEL` | `info` | `debug` for verbose logs. |
 
 **Where it looks**
 
@@ -144,10 +154,15 @@ installer writes the ones that matter; these are for tuning afterwards.
 | `JD_LOG_ROOTS` | `/var/log` | Directories the log viewer may read. |
 | `JD_COMPOSE_ROOTS` | `/opt,/srv,/home` | Where compose stacks are discovered. |
 | `JD_GIT_ROOTS` | `/opt,/srv,/home,/root` | Where the Git page looks for repositories. |
+| `JD_DEPLOY_ROOTS` | `/opt,/srv,/home,/root` | Where a deploy project's repository may live. A project outside these is refused. |
 | `JD_NGINX_DIR` | `/etc/nginx` | nginx configuration root. |
 | `JD_CADDYFILE` | `/etc/caddy/Caddyfile` | Caddy configuration file. |
 | `JD_BACKUP_DIR` | `/var/backups/just-dashboard` | Local backup destination and staging. |
 | `JD_DATA_DIR` | `/var/lib/just-dashboard` | The dashboard's own database. **Back this up.** |
+
+Durations take a unit (`12h`, `60m`) and booleans take `true`/`false`. A value
+that cannot be parsed stops the dashboard at startup rather than being replaced
+by the default, so a typo is visible instead of silently in effect.
 
 **First run only**
 

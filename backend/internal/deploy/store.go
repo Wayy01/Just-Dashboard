@@ -23,10 +23,13 @@ var (
 type Store struct {
 	st     *store.Store
 	sealer *auth.Sealer
+	// roots bounds the repository paths a project may name, the way
+	// JD_FILE_ROOTS and JD_GIT_ROOTS bound their features.
+	roots []string
 }
 
-func NewStore(st *store.Store, sealer *auth.Sealer) *Store {
-	return &Store{st: st, sealer: sealer}
+func NewStore(st *store.Store, sealer *auth.Sealer, roots []string) *Store {
+	return &Store{st: st, sealer: sealer, roots: roots}
 }
 
 const projectCols = `id, name, repo_path, branch, compose_file, pre_command, post_command, hook_id, enabled, created_at`
@@ -103,7 +106,7 @@ func (s *Store) countEnv(ctx context.Context, projectID int64) int {
 // Create returns the webhook secret alongside the project. It is the only time
 // the secret is available: only its sealed form is retained.
 func (s *Store) Create(ctx context.Context, p *Project) (*Project, string, error) {
-	if err := p.Validate(); err != nil {
+	if err := p.Validate(s.roots); err != nil {
 		return nil, "", err
 	}
 	secret := auth.RandomToken(24)
@@ -136,7 +139,7 @@ func (s *Store) Create(ctx context.Context, p *Project) (*Project, string, error
 }
 
 func (s *Store) Update(ctx context.Context, id int64, p *Project) (*Project, error) {
-	if err := p.Validate(); err != nil {
+	if err := p.Validate(s.roots); err != nil {
 		return nil, err
 	}
 	if _, err := s.Get(ctx, id); err != nil {

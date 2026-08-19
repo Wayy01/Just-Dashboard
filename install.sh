@@ -337,6 +337,7 @@ JD_BOOTSTRAP_PASSWORD=$ADMIN_PW
 
 JD_COMPOSE_ROOTS=/opt,/srv,/home
 JD_GIT_ROOTS=/opt,/srv,/home,/root
+JD_DEPLOY_ROOTS=/opt,/srv,/home,/root
 JD_LOG_ROOTS=/var/log
 JD_FILE_ROOTS=/
 JD_BACKUP_DIR=/var/backups/just-dashboard

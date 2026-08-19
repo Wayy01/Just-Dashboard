@@ -71,6 +71,6 @@ func (s *Server) initModules() {
 		filepath.Join(s.Cfg.DataDir, "staging"), s.Log)
 	s.modules.backupSched = backups.NewScheduler(s.modules.backupStore, s.modules.backupRunner, s.Log)
 
-	s.modules.deployStore = deploy.NewStore(s.Store, s.Sealer)
+	s.modules.deployStore = deploy.NewStore(s.Store, s.Sealer, s.Cfg.DeployRoots)
 	s.modules.deployer = deploy.NewDeployer(s.modules.deployStore, s.Log)
 }

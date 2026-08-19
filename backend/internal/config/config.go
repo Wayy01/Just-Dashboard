@@ -35,22 +35,23 @@ type Config struct {
 	CaddyFile      string
 	ComposeRoots   []string
 	GitRoots       []string
-	DeployRoot     string
+	DeployRoots    []string
 	BackupLocalDir string
 	Dev            bool
 }
 
 func Load() (*Config, error) {
+	l := &loader{}
 	c := &Config{
 		Addr:           env("JD_ADDR", "127.0.0.1:8080"),
 		DataDir:        env("JD_DATA_DIR", "/var/lib/just-dashboard"),
 		MasterKeyHex:   Env("JD_MASTER_KEY"),
-		Require2FA:     envBool("JD_REQUIRE_2FA", true),
-		SessionTTL:     envDur("JD_SESSION_TTL", 12*time.Hour),
-		IdleTTL:        envDur("JD_SESSION_IDLE_TTL", 60*time.Minute),
+		Require2FA:     l.boolean("JD_REQUIRE_2FA", true),
+		SessionTTL:     l.duration("JD_SESSION_TTL", 12*time.Hour),
+		IdleTTL:        l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
 		DockerHost:     env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
-		TerminalEnable: envBool("JD_TERMINAL_ENABLED", true),
-		AgentMode:      envBool("JD_AGENT_MODE", false),
+		TerminalEnable: l.boolean("JD_TERMINAL_ENABLED", true),
+		AgentMode:      l.boolean("JD_AGENT_MODE", false),
 		TerminalShell:  env("JD_TERMINAL_SHELL", "/bin/bash"),
 		FileRoots:      envList("JD_FILE_ROOTS", "/"),
 		LogRoots:       envList("JD_LOG_ROOTS", "/var/log"),
@@ -58,9 +59,9 @@ func Load() (*Config, error) {
 		CaddyFile:      env("JD_CADDYFILE", "/etc/caddy/Caddyfile"),
 		ComposeRoots:   envList("JD_COMPOSE_ROOTS", "/opt,/srv,/home"),
 		GitRoots:       envList("JD_GIT_ROOTS", "/opt,/srv,/home,/root"),
-		DeployRoot:     env("JD_DEPLOY_ROOT", "/srv"),
+		DeployRoots:    envList("JD_DEPLOY_ROOTS", "/opt,/srv,/home,/root"),
 		BackupLocalDir: env("JD_BACKUP_DIR", "/var/backups/just-dashboard"),
-		Dev:            envBool("JD_DEV", false),
+		Dev:            l.boolean("JD_DEV", false),
 	}
 
 	// The dashboard is root-equivalent. It must never be reachable from the
@@ -99,7 +100,57 @@ func Load() (*Config, error) {
 	if len(c.MasterKeyHex) != 64 {
 		return nil, fmt.Errorf("JD_MASTER_KEY must be 64 hex characters (32 bytes); generate one with: openssl rand -hex 32")
 	}
+	if err := l.err(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// loader collects malformed settings so Load can refuse to start.
+//
+// These used to fall back to the default on a parse error, silently. That is
+// fine for JD_REQUIRE_2FA=ture, where the default is the secure answer, and
+// wrong for JD_SESSION_TTL=12 — no unit, so the operator who meant twelve
+// minutes gets twelve hours and nothing in the log disagrees with them. A
+// package whose doc comment promises to fail closed has to fail closed on the
+// settings it cannot read, too.
+type loader struct{ errs []string }
+
+func (l *loader) boolean(k string, def bool) bool {
+	v := Env(k)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q is not a boolean (true/false)", k, v))
+		return def
+	}
+	return b
+}
+
+func (l *loader) duration(k string, def time.Duration) time.Duration {
+	v := Env(k)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q is not a duration; use a unit, for example 12h or 60m", k, v))
+		return def
+	}
+	if d <= 0 {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q must be positive", k, v))
+		return def
+	}
+	return d
+}
+
+func (l *loader) err() error {
+	if len(l.errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("invalid configuration: %s", strings.Join(l.errs, "; "))
 }
 
 func parseCIDRs(raw string) ([]*net.IPNet, error) {
@@ -178,30 +229,6 @@ func env(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func envBool(k string, def bool) bool {
-	v := Env(k)
-	if v == "" {
-		return def
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return def
-	}
-	return b
-}
-
-func envDur(k string, def time.Duration) time.Duration {
-	v := Env(k)
-	if v == "" {
-		return def
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return def
-	}
-	return d
 }
 
 func envList(k, def string) []string {

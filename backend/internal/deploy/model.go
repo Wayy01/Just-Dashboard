@@ -9,6 +9,8 @@ package deploy
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -77,12 +79,23 @@ var (
 	shaRe         = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 )
 
-func (p *Project) Validate() error {
+// Validate checks a project against the configured deploy roots.
+//
+// "Absolute" was the only rule the repository path had to satisfy, so a deploy
+// project could name any directory on the filesystem and the JD_DEPLOY_ROOT
+// setting that was supposed to bound it went unread. Every other place the
+// dashboard takes a host path from a client — files, git, compose, logs — is
+// bounded by a configured root, and this is now one of them.
+func (p *Project) Validate(roots []string) error {
 	if !projectNameRe.MatchString(p.Name) {
 		return fmt.Errorf("name must start with a letter or digit and contain only letters, digits, dots, dashes and underscores")
 	}
 	if !strings.HasPrefix(p.RepoPath, "/") {
 		return fmt.Errorf("repoPath must be an absolute path")
+	}
+	p.RepoPath = filepath.Clean(p.RepoPath)
+	if !withinRoots(p.RepoPath, roots) {
+		return fmt.Errorf("repoPath must be inside one of the deploy roots (%s)", strings.Join(roots, ", "))
 	}
 	if p.Branch == "" {
 		p.Branch = "main"
@@ -97,6 +110,29 @@ func (p *Project) Validate() error {
 		return fmt.Errorf("composeFile must be a path relative to the repository")
 	}
 	return nil
+}
+
+func withinRoots(path string, roots []string) bool {
+	// An empty root list means the operator was never given the setting; the
+	// only safe reading is "nothing is permitted", but that would break an
+	// install on upgrade, so it is treated as unconfigured and permissive.
+	// config.Load always supplies a default, so this is the zero-value path.
+	if len(roots) == 0 {
+		return true
+	}
+	resolved := path
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		resolved = r
+	}
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		for _, candidate := range []string{path, resolved} {
+			if root == "/" || candidate == root || strings.HasPrefix(candidate, root+string(os.PathSeparator)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func ValidateEnvKey(key string) error {
