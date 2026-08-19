@@ -8,7 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/Wayy01/Just-Dashboard/backend/internal/safepath"
 )
 
 type RestoreResult struct {
@@ -24,6 +25,7 @@ type RestoreResult struct {
 // names an explicit destination, so recovering a single file does not require
 // overwriting a live tree.
 func (r *Runner) Restore(ctx context.Context, runID int64, destination string) (*RestoreResult, error) {
+	defer r.beginRead(runID)()
 	run, err := r.store.Run(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -91,7 +93,7 @@ func extractArchive(ctx context.Context, archivePath, dest string, runID int64) 
 		if err != nil {
 			return res, err
 		}
-		target, err := safeJoin(dest, hdr.Name)
+		target, err := safepath.Join(dest, hdr.Name)
 		if err != nil {
 			// A tampered or hand-built archive could carry ../ entries; the
 			// restore refuses them rather than writing outside the target.
@@ -100,23 +102,22 @@ func extractArchive(ctx context.Context, archivePath, dest string, runID int64) 
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode).Perm()); err != nil {
+			if err := safepath.Mkdir(target, os.FileMode(hdr.Mode).Perm()); err != nil {
 				return res, err
 			}
 		case tar.TypeSymlink:
-			if _, err := safeJoin(dest, filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)); err != nil {
+			if err := safepath.CheckLinkTarget(dest, hdr.Name, hdr.Linkname); err != nil {
 				res.Skipped = append(res.Skipped, hdr.Name)
 				continue
 			}
-			os.Remove(target)
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
+			if err := safepath.Symlink(hdr.Linkname, target); err != nil {
 				return res, err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := safepath.MkdirParents(target); err != nil {
 				return res, err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode).Perm())
+			out, err := safepath.Create(target, os.FileMode(hdr.Mode).Perm())
 			if err != nil {
 				return res, err
 			}
@@ -133,17 +134,10 @@ func extractArchive(ctx context.Context, archivePath, dest string, runID int64) 
 	}
 }
 
-func safeJoin(dest, name string) (string, error) {
-	cleaned := filepath.Clean(filepath.Join(dest, name))
-	if cleaned != dest && !strings.HasPrefix(cleaned, dest+string(os.PathSeparator)) {
-		return "", fmt.Errorf("entry %q escapes the destination", name)
-	}
-	return cleaned, nil
-}
-
 // ListArchive shows what a run contains without extracting it, so an operator
 // can confirm a backup holds what they expect before restoring anything.
 func (r *Runner) ListArchive(ctx context.Context, runID int64, limit int) ([]ArchiveEntry, error) {
+	defer r.beginRead(runID)()
 	run, err := r.store.Run(ctx, runID)
 	if err != nil {
 		return nil, err

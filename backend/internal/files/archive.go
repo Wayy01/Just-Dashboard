@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Wayy01/Just-Dashboard/backend/internal/safepath"
 )
 
 type ArchiveFormat string
@@ -152,16 +154,6 @@ func (s *Service) Extract(archivePath, dest string) ([]string, error) {
 	}
 }
 
-// safeJoin resolves an archive entry name against the destination and rejects
-// anything that would land outside it.
-func safeJoin(dest, name string) (string, error) {
-	cleaned := filepath.Clean(filepath.Join(dest, name))
-	if cleaned != dest && !strings.HasPrefix(cleaned, dest+string(os.PathSeparator)) {
-		return "", fmt.Errorf("archive entry %q would escape the destination directory", name)
-	}
-	return cleaned, nil
-}
-
 func extractTar(src, dest string, compressed bool) ([]string, error) {
 	f, err := os.Open(src)
 	if err != nil {
@@ -188,30 +180,29 @@ func extractTar(src, dest string, compressed bool) ([]string, error) {
 		if err != nil {
 			return written, err
 		}
-		path, err := safeJoin(dest, hdr.Name)
+		path, err := safepath.Join(dest, hdr.Name)
 		if err != nil {
 			return written, err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, os.FileMode(hdr.Mode).Perm()); err != nil {
+			if err := safepath.Mkdir(path, os.FileMode(hdr.Mode).Perm()); err != nil {
 				return written, err
 			}
 		case tar.TypeSymlink:
 			// A symlink whose target escapes the destination turns into an
 			// arbitrary write the next time anything follows it.
-			if _, err := safeJoin(dest, filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)); err != nil {
+			if err := safepath.CheckLinkTarget(dest, hdr.Name, hdr.Linkname); err != nil {
 				return written, err
 			}
-			os.Remove(path)
-			if err := os.Symlink(hdr.Linkname, path); err != nil {
+			if err := safepath.Symlink(hdr.Linkname, path); err != nil {
 				return written, err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			if err := safepath.MkdirParents(path); err != nil {
 				return written, err
 			}
-			out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode).Perm())
+			out, err := safepath.Create(path, os.FileMode(hdr.Mode).Perm())
 			if err != nil {
 				return written, err
 			}
@@ -236,25 +227,25 @@ func extractZip(src, dest string) ([]string, error) {
 
 	written := []string{}
 	for _, entry := range zr.File {
-		path, err := safeJoin(dest, entry.Name)
+		path, err := safepath.Join(dest, entry.Name)
 		if err != nil {
 			return written, err
 		}
 		if entry.FileInfo().IsDir() {
-			if err := os.MkdirAll(path, entry.Mode().Perm()); err != nil {
+			if err := safepath.Mkdir(path, entry.Mode().Perm()); err != nil {
 				return written, err
 			}
 			written = append(written, path)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := safepath.MkdirParents(path); err != nil {
 			return written, err
 		}
 		rc, err := entry.Open()
 		if err != nil {
 			return written, err
 		}
-		out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, entry.Mode().Perm())
+		out, err := safepath.Create(path, entry.Mode().Perm())
 		if err != nil {
 			rc.Close()
 			return written, err

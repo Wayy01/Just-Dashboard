@@ -24,10 +24,43 @@ type Runner struct {
 	log     *slog.Logger
 	mu      sync.Mutex
 	running map[int64]bool
+	// reading counts the restores and archive listings currently holding a
+	// run's artifact open. Retention pruning deletes artifacts the moment a
+	// run succeeds, with no regard for whoever is halfway through reading one;
+	// the result was a restore failing on an I/O error nothing explained.
+	reading map[int64]int
 }
 
 func NewRunner(store *Store, stageDir string, log *slog.Logger) *Runner {
-	return &Runner{store: store, stage: stageDir, log: log, running: map[int64]bool{}}
+	return &Runner{
+		store: store, stage: stageDir, log: log,
+		running: map[int64]bool{}, reading: map[int64]int{},
+	}
+}
+
+// beginRead marks a run's artifact as in use and returns the release.
+func (r *Runner) beginRead(runID int64) func() {
+	r.mu.Lock()
+	r.reading[runID]++
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			if r.reading[runID] <= 1 {
+				delete(r.reading, runID)
+			} else {
+				r.reading[runID]--
+			}
+			r.mu.Unlock()
+		})
+	}
+}
+
+func (r *Runner) beingRead(runID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reading[runID] > 0
 }
 
 func (r *Runner) IsRunning(jobID int64) bool {
@@ -257,6 +290,13 @@ func (r *Runner) prune(ctx context.Context, job *Job) error {
 		}
 	}
 	for _, old := range runs[job.Retention:] {
+		if r.beingRead(old.ID) {
+			// It will be pruned by the next run. Deleting an artifact out
+			// from under a restore in progress buys nothing and costs the
+			// operator the restore.
+			r.log.Info("skipping retention prune of a run being read", "run", old.ID)
+			continue
+		}
 		switch job.TargetKind {
 		case TargetLocal:
 			os.Remove(old.Artifact)

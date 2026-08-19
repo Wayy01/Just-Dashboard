@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/backups"
@@ -267,9 +268,17 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) err
 	if err := httpx.RequireTypedConfirmation(w, r, req.Destination); err != nil {
 		return err
 	}
-	ctx, cancel := timeoutCtxSeconds(r, 6*60*60)
+	// The typed phrase is a guard against a slip, not an authorisation check —
+	// it is a string the caller supplied twice. Invariant 6 is what bounds
+	// where an archive may be unpacked, and it is files.Resolve that enforces
+	// it; "not exactly /" was the only rule this destination had to satisfy.
+	dest, err := s.modules.files.Resolve(req.Destination)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	ctx, cancel := timeoutCtx(r, 6*time.Hour)
 	defer cancel()
-	res, err := s.modules.backupRunner.Restore(ctx, runID, req.Destination)
+	res, err := s.modules.backupRunner.Restore(ctx, runID, dest)
 	if err != nil {
 		httpx.SetAudit(r, "backup.restore", strconv.FormatInt(runID, 10),
 			map[string]any{"destination": req.Destination, "error": err.Error()})

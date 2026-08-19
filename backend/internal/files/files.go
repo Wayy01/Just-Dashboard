@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -83,6 +84,49 @@ func (s *Service) Resolve(path string) (string, error) {
 		return "", fmt.Errorf("%w: %s resolves outside the permitted roots", ErrOutsideRoot, path)
 	}
 	return resolved, nil
+}
+
+// ResolveEntry validates a client-supplied path the same way Resolve does, but
+// returns the entry itself rather than what it points at.
+//
+// Resolve dereferences, which is right for reading and writing *through* a
+// symlink and wrong for every operation that acts *on* one. With Resolve alone,
+// deleting the symlink "current -> releases/v1" removed the release directory
+// and left the link dangling, and Stat on it always reported isSymlink:false —
+// the listing showed a link and the operation hit the data. The containment
+// guarantee is unchanged: the parent chain is still resolved and still has to
+// land inside the roots.
+func (s *Service) ResolveEntry(path string) (string, error) {
+	if path == "" {
+		path = s.roots[0]
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	if !s.within(abs) {
+		return "", fmt.Errorf("%w: %s", ErrOutsideRoot, path)
+	}
+	// A configured root has no parent inside the roots to check against, so it
+	// is judged on the literal form alone — which has already passed.
+	for _, root := range s.roots {
+		if abs == root {
+			return abs, nil
+		}
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		// The parent does not exist; the literal check above is the strongest
+		// guarantee available and it already passed.
+		return abs, nil
+	}
+	if !s.within(parent) {
+		return "", fmt.Errorf("%w: %s resolves outside the permitted roots", ErrOutsideRoot, path)
+	}
+	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
 func (s *Service) within(abs string) bool {
@@ -199,32 +243,49 @@ func (s *Service) entry(full, name string) (*Entry, error) {
 
 // User and group lookups hit NSS, which can be slow; a directory listing does
 // hundreds of them, so results are memoised for the process lifetime.
+//
+// The lock is not optional. These are filled from entry(), which runs on the
+// request goroutine for /files/list, /files/stat and /files/search, so two
+// operators browsing at once wrote the same map concurrently. A concurrent map
+// write is a runtime throw, not a panic: httpx.Recoverer cannot catch it and
+// the process dies, taking every open PTY, log tail and metrics socket with it.
 var (
+	nssMu      sync.RWMutex
 	userCache  = map[uint32]string{}
 	groupCache = map[uint32]string{}
 )
 
 func lookupUser(uid uint32) string {
-	if v, ok := userCache[uid]; ok {
+	nssMu.RLock()
+	v, ok := userCache[uid]
+	nssMu.RUnlock()
+	if ok {
 		return v
 	}
 	name := strconv.FormatUint(uint64(uid), 10)
 	if u, err := user.LookupId(name); err == nil {
 		name = u.Username
 	}
+	nssMu.Lock()
 	userCache[uid] = name
+	nssMu.Unlock()
 	return name
 }
 
 func lookupGroup(gid uint32) string {
-	if v, ok := groupCache[gid]; ok {
+	nssMu.RLock()
+	v, ok := groupCache[gid]
+	nssMu.RUnlock()
+	if ok {
 		return v
 	}
 	name := strconv.FormatUint(uint64(gid), 10)
 	if g, err := user.LookupGroupId(name); err == nil {
 		name = g.Name
 	}
+	nssMu.Lock()
 	groupCache[gid] = name
+	nssMu.Unlock()
 	return name
 }
 
@@ -383,7 +444,7 @@ func (s *Service) Touch(path string) error {
 }
 
 func (s *Service) Delete(path string, recursive bool) error {
-	full, err := s.Resolve(path)
+	full, err := s.ResolveEntry(path)
 	if err != nil {
 		return err
 	}
@@ -399,11 +460,11 @@ func (s *Service) Delete(path string, recursive bool) error {
 }
 
 func (s *Service) Move(from, to string) error {
-	src, err := s.Resolve(from)
+	src, err := s.ResolveEntry(from)
 	if err != nil {
 		return err
 	}
-	dst, err := s.Resolve(to)
+	dst, err := s.ResolveEntry(to)
 	if err != nil {
 		return err
 	}
@@ -425,11 +486,14 @@ func (s *Service) Move(from, to string) error {
 }
 
 func (s *Service) Copy(from, to string) error {
-	src, err := s.Resolve(from)
+	// ResolveEntry, so copying a symlink copies the link — which is what
+	// copyPath's os.ModeSymlink branch has always been written to do and could
+	// never reach while its input arrived already dereferenced.
+	src, err := s.ResolveEntry(from)
 	if err != nil {
 		return err
 	}
-	dst, err := s.Resolve(to)
+	dst, err := s.ResolveEntry(to)
 	if err != nil {
 		return err
 	}
@@ -482,7 +546,7 @@ func copyPath(src, dst string) error {
 }
 
 func (s *Service) Chmod(path string, mode string, recursive bool) error {
-	full, err := s.Resolve(path)
+	full, err := s.ResolveEntry(path)
 	if err != nil {
 		return err
 	}
@@ -491,19 +555,33 @@ func (s *Service) Chmod(path string, mode string, recursive bool) error {
 		return fmt.Errorf("mode must be octal, for example 0644: %w", err)
 	}
 	perm := os.FileMode(parsed).Perm()
+	// Linux has no lchmod, so a symlink cannot be chmod-ed at all — os.Chmod
+	// would change the target instead, and the target may be anywhere. Chown
+	// below already uses Lchown for exactly this reason; refusing and skipping
+	// is the closest chmod can get to the same rule.
 	if !recursive {
+		st, err := os.Lstat(full)
+		if err != nil {
+			return err
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("cannot change the mode of a symlink: %s", path)
+		}
 		return os.Chmod(full, perm)
 	}
 	return filepath.WalkDir(full, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		return os.Chmod(p, perm)
 	})
 }
 
 func (s *Service) Chown(path, owner, group string, recursive bool) error {
-	full, err := s.Resolve(path)
+	full, err := s.ResolveEntry(path)
 	if err != nil {
 		return err
 	}
@@ -533,7 +611,7 @@ func (s *Service) Chown(path, owner, group string, recursive bool) error {
 		}
 	}
 	if !recursive {
-		return os.Chown(full, uid, gid)
+		return os.Lchown(full, uid, gid)
 	}
 	return filepath.WalkDir(full, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -544,16 +622,26 @@ func (s *Service) Chown(path, owner, group string, recursive bool) error {
 }
 
 func (s *Service) Symlink(target, link string) error {
-	full, err := s.Resolve(link)
+	full, err := s.ResolveEntry(link)
 	if err != nil {
 		return err
+	}
+	// The target was never checked, which made this endpoint an escape hatch
+	// out of JD_FILE_ROOTS for anything holding file.write: plant the link,
+	// then let any later write, upload or extraction follow it.
+	absTarget := target
+	if !filepath.IsAbs(absTarget) {
+		absTarget = filepath.Join(filepath.Dir(full), target)
+	}
+	if _, err := s.Resolve(absTarget); err != nil {
+		return fmt.Errorf("%w: symlink target %s", ErrOutsideRoot, target)
 	}
 	return os.Symlink(target, full)
 }
 
 // Stat is the single-entry form used by the details panel.
 func (s *Service) Stat(path string) (*Entry, error) {
-	full, err := s.Resolve(path)
+	full, err := s.ResolveEntry(path)
 	if err != nil {
 		return nil, err
 	}
