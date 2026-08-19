@@ -6,7 +6,6 @@
 #
 # This is the only listener in the stack bound to anything but loopback, which
 # makes it the single place where "who can reach the dashboard" is decided.
-
 {
 	admin off
 	# Disable only the redirect listener — certificate management stays on,
@@ -14,19 +13,26 @@
 	auto_https disable_redirects
 }
 
-# VPSD_SITE is the address you actually type into the browser — localhost for
-# an SSH tunnel, or the WireGuard address such as 10.8.0.1. It is both the
-# address Caddy binds and the name its certificate is issued for, so those two
+# VPSD_SITE is the address you actually type into the browser — your Tailscale
+# address, a WireGuard address such as 10.8.0.1, or localhost. It is both an
+# address Caddy binds and a name its certificate is issued for, so those two
 # can never drift apart.
-{$VPSD_SITE:localhost}:8443 {
-	# The site address above decides which Host/SNI this block answers for --
-	# it does NOT decide which interface the socket binds. Without an explicit
+#
+# Loopback is listed alongside it unconditionally, which is what makes an SSH
+# tunnel work no matter how the dashboard is configured. That is not a second
+# way in: reaching loopback requires an SSH session on this machine, and
+# anyone with one already has root. What it buys is that Tailscale being down,
+# or a key expiring, costs you a tunnel command rather than your dashboard.
+# When VPSD_SITE is already localhost, Caddy collapses the two into one.
+{$VPSD_SITE:localhost}:8443, localhost:8443 {
+	# The site addresses above decide which Host/SNI this block answers for --
+	# they do NOT decide which interfaces the socket binds. Without an explicit
 	# bind, Caddy listens on every interface, so VPSD_SITE=localhost would
 	# still leave a root-equivalent dashboard on a public port, defended only
-	# by whatever the host firewall happens to be doing. Binding to the same
-	# value keeps the two in step: localhost stays on loopback, and a
-	# WireGuard address binds only that tunnel interface.
-	bind {$VPSD_SITE:localhost}
+	# by whatever the host firewall happens to be doing. Binding the same
+	# values keeps the two in step: the site address binds only its own
+	# interface, and loopback stays loopback.
+	bind {$VPSD_SITE:localhost} localhost
 
 	# Caddy's own CA signs this. It is enough because the listener is only ever
 	# reached over a VPN tunnel or an SSH forward, both already encrypted and

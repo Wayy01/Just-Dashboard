@@ -102,9 +102,10 @@ services:
       - frontend
       - backend
     # Also on the host namespace, so it reaches both services on loopback.
-    # VPSD_SITE is the one address the stack answers on, and the name its
-    # certificate is issued for: leave it at localhost and tunnel in, or set
-    # it to a WireGuard address such as 10.8.0.1. Never set it to 0.0.0.0.
+    # VPSD_SITE is the address the stack answers on, and a name its certificate
+    # is issued for: leave it at localhost and tunnel in, or set it to your
+    # Tailscale or WireGuard address. Loopback is bound alongside it either
+    # way, so an SSH tunnel is always available. Never set it to 0.0.0.0.
     network_mode: host
     environment:
       VPSD_SITE: ${VPSD_SITE:-localhost}

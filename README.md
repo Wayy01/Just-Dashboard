@@ -115,8 +115,8 @@ installer writes the ones that matter; these are for tuning afterwards.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VPSD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Never `0.0.0.0`. |
-| `VPSD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. `100.64.0.0/10` for Tailscale. |
+| `VPSD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
+| `VPSD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale — keep loopback or you lose the tunnel. |
 | `VPSD_TRUSTED_PROXIES` | — | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof past the allowlist. |
 | `VPSD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave on loopback; the proxy is the entry point. |
 | `VPSD_ALLOWED_ORIGINS` | — | Extra browser origins allowed to open WebSockets. Only if the UI is served from a different origin. |
@@ -283,7 +283,8 @@ Edit it. Two settings matter more than the rest:
 VPSD_MASTER_KEY=$(openssl rand -hex 32)
 
 # The address the dashboard answers on. Your Tailscale address is recommended;
-# localhost means reachable only through an SSH tunnel.
+# localhost means reachable only through an SSH tunnel. Either way loopback is
+# bound too, so a tunnel is always available as a fallback.
 VPSD_SITE=localhost
 ```
 

@@ -86,3 +86,28 @@ func TestEmptyAllowlistIsTreatedAsLoopback(t *testing.T) {
 		t.Fatalf("grade = %q, want tunnel for an empty list", got.Grade)
 	}
 }
+
+// The proxy binds loopback in every configuration so that an SSH tunnel is
+// always available, which means every allowlist install.sh writes now carries
+// 127.0.0.1/32 and ::1/128 alongside whatever else was chosen. Loopback must
+// stay the one entry that cannot make a grade worse — otherwise the Security
+// page would raise an alarm on a perfectly ordinary Tailscale install.
+func TestLoopbackNeverWorsensAGrade(t *testing.T) {
+	loopback := []string{"127.0.0.1/32", "::1/128"}
+	for _, c := range []struct {
+		name string
+		with []string
+		want string
+	}{
+		{"tailscale install", []string{"100.64.0.0/10"}, "tailscale"},
+		{"wireguard install", []string{"10.8.0.0/24"}, "private"},
+		{"public install", []string{"203.0.113.7/32"}, "public"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := DescribeExposure(cidrs(t, append(c.with, loopback...)...))
+			if got.Grade != c.want {
+				t.Fatalf("grade = %q, want %q — loopback must not change it", got.Grade, c.want)
+			}
+		})
+	}
+}

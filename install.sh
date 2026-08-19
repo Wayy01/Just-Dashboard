@@ -136,6 +136,14 @@ say ""
 say "  This dashboard is ${BOLD}root-equivalent${RESET}: anyone who reaches it with a valid"
 say "  session effectively has root on this machine. Pick how it is exposed."
 say ""
+say "  ${DIM}Whatever you pick, an SSH tunnel always works as well — it costs nothing${RESET}"
+say "  ${DIM}to leave available, and it is what gets you in if the rest ever fails.${RESET}"
+say ""
+
+# The proxy binds loopback in every configuration, so the allowlist has to
+# admit it in every configuration too — otherwise the tunnel reaches Caddy and
+# then dies at the backend's perimeter check.
+LOOPBACK="127.0.0.1/32,::1/128"
 
 TS_IP=""
 WG_IP=""
@@ -147,9 +155,9 @@ say "  ${BOLD}1${RESET}) ${GREEN}Tailscale${RESET} ${BOLD}— recommended${RESET
 say "     ${DIM}Reach it from your laptop or phone anywhere, with nothing exposed to${RESET}"
 say "     ${DIM}the internet. Set up for you if you do not have it.${RESET}"
 say ""
-say "  ${BOLD}2${RESET}) SSH tunnel"
-say "     ${DIM}No new software, no account, nothing listening. Needs an ssh -L${RESET}"
-say "     ${DIM}command open while you use it. The fallback if Tailscale is ever down.${RESET}"
+say "  ${BOLD}2${RESET}) SSH tunnel only"
+say "     ${DIM}No new software, no account, nothing listening beyond loopback. Needs${RESET}"
+say "     ${DIM}an ssh -L command open the whole time you use it.${RESET}"
 say ""
 say "  ${BOLD}3${RESET}) A private network you already run${WG_IP:+  ${GREEN}WireGuard detected: $WG_IP${RESET}}"
 say "     ${DIM}WireGuard, an internal LAN, any interface you already trust.${RESET}"
@@ -183,17 +191,17 @@ case "$CHOICE" in
 		warn "Tailscale is not available; falling back to an SSH tunnel."
 		warn "You can switch later by editing VPSD_SITE and VPSD_ALLOWED_CIDRS in .env."
 		SITE="localhost"
-		CIDRS="127.0.0.1/32,::1/128"
+		CIDRS="$LOOPBACK"
 		ACCESS_KIND="tunnel"
 	else
 		SITE="$TS_IP"
-		CIDRS="100.64.0.0/10"
+		CIDRS="100.64.0.0/10,$LOOPBACK"
 		ACCESS_KIND="tailscale"
 	fi
 	;;
 2)
 	SITE="localhost"
-	CIDRS="127.0.0.1/32,::1/128"
+	CIDRS="$LOOPBACK"
 	ACCESS_KIND="tunnel"
 	;;
 3)
@@ -201,7 +209,7 @@ case "$CHOICE" in
 	[ -n "$WG_IP" ] || die "an address is required for this option."
 	SITE="$WG_IP"
 	DEFAULT_NET="$(printf '%s' "$WG_IP" | awk -F. '{print $1"."$2"."$3".0/24"}')"
-	CIDRS="$(ask "Which addresses may reach it" "$DEFAULT_NET")"
+	CIDRS="$(ask "Which addresses may reach it" "$DEFAULT_NET"),$LOOPBACK"
 	ACCESS_KIND="private"
 	;;
 4)
@@ -224,6 +232,7 @@ case "$CHOICE" in
 	say "  ${DIM}Your current address, as seen from here:${RESET} $(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || echo 'could not detect')"
 	CIDRS="$(ask "Which addresses may reach it (comma separated, e.g. 203.0.113.7/32)" "")"
 	[ -n "$CIDRS" ] || die "an allowlist is required; the backend refuses to start without one."
+	CIDRS="$CIDRS,$LOOPBACK"
 	ACCESS_KIND="public"
 	;;
 *)
@@ -340,11 +349,22 @@ say ""
 say "${GREEN}${BOLD}The dashboard is running.${RESET}"
 say ""
 
+PUBLIC_HOST="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+
+# Printed after every route except the loopback-only one, where it would just
+# be repeating the instructions above it.
+tunnel_fallback() {
+	say ""
+	say "  ${DIM}If that is ever unreachable, an SSH tunnel still works:${RESET}"
+	say "    ${DIM}ssh -L 8443:localhost:8443 $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
+	say "    ${DIM}then open https://localhost:8443${RESET}"
+}
+
 case "${ACCESS_KIND:-tunnel}" in
 tunnel)
 	say "  ${BOLD}Reach it over an SSH tunnel.${RESET} From your laptop:"
 	say ""
-	say "    ${BLUE}ssh -L 8443:localhost:8443 $(logname 2>/dev/null || echo root)@$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || echo YOUR_SERVER)${RESET}"
+	say "    ${BLUE}ssh -L 8443:localhost:8443 $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
 	say ""
 	say "  Then open ${BOLD}https://localhost:8443${RESET} while that stays open."
 	;;
@@ -352,11 +372,13 @@ tailscale)
 	say "  ${BOLD}Reach it from any device on your tailnet:${RESET}"
 	say ""
 	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
+	tunnel_fallback
 	;;
 private)
 	say "  ${BOLD}Reach it over your private network:${RESET}"
 	say ""
 	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
+	tunnel_fallback
 	;;
 public)
 	say "  ${BOLD}Reach it at:${RESET}"
@@ -365,6 +387,7 @@ public)
 	say ""
 	warn "This is on the public internet. Only the addresses you allowlisted"
 	warn "can reach it. Consider moving to Tailscale when you get a moment."
+	tunnel_fallback
 	;;
 esac
 
