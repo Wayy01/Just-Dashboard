@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -102,6 +103,15 @@ func run(agentFlag, agentReset bool) error {
 		}
 	}
 
+	// From here on the dashboard spawns children — docker compose, deploy
+	// hooks, dumps, git — and every one of them inherits os.Environ(). The
+	// master key decrypts TOTP seeds, database DSNs, deploy env and backup
+	// credentials, so a project's own compose file declaring
+	// `environment: [LEAK=${JD_MASTER_KEY}]` was enough to carry it into a
+	// container the pusher controls. It is already in memory; nothing below
+	// reads it from the environment again.
+	scrubSecretEnv()
+
 	srv := api.New(cfg, log, st, svc, sealer, aud, identity)
 	defer srv.Shutdown()
 
@@ -158,6 +168,17 @@ func run(agentFlag, agentReset bool) error {
 	}
 }
 
+// scrubSecretEnv removes the boot-time secrets from the process environment
+// once they have been consumed, so that nothing spawned later can read them.
+// Both prefixes are cleared: config.Env falls back to the legacy VPSD_ names,
+// so leaving those set would leave the same value readable under another name.
+func scrubSecretEnv() {
+	for _, name := range []string{"MASTER_KEY", "BOOTSTRAP_PASSWORD"} {
+		os.Unsetenv("JD_" + name)
+		os.Unsetenv("VPSD_" + name)
+	}
+}
+
 // probe asks the local server whether it is serving. It deliberately targets
 // the configured bind address so a healthcheck cannot pass against some other
 // process that happens to be listening.
@@ -169,8 +190,23 @@ func probe() error {
 	if strings.HasPrefix(addr, "0.0.0.0:") {
 		addr = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
 	}
+	// Agent mode serves TLS on this same address, so probing it with plain
+	// HTTP got a handshake error every time: the container went unhealthy
+	// after three attempts and stayed there while the agent was serving
+	// perfectly. The certificate is self-signed by design and the peer is
+	// loopback, so verifying it would be theatre.
+	//
+	// The environment variable is the only signal available here: the probe
+	// is a separate process from the server, so a server started with -agent
+	// rather than JD_AGENT_MODE=true is invisible to it. The compose file sets
+	// the variable, and the Dockerfile healthcheck inherits it.
+	scheme := "http://"
 	client := &http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Get("http://" + addr + "/healthz")
+	if agent, err := strconv.ParseBool(config.Env("JD_AGENT_MODE")); err == nil && agent {
+		scheme = "https://"
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	resp, err := client.Get(scheme + addr + "/healthz")
 	if err != nil {
 		return err
 	}

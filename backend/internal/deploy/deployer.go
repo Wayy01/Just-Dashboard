@@ -261,8 +261,22 @@ func (d *Deployer) shell(ctx context.Context, p *Project, command string, env ma
 	return cmd.Run()
 }
 
+// mergeEnv builds the environment for a deploy child process.
+//
+// The dashboard's own JD_*/VPSD_* settings are stripped rather than inherited.
+// The command being run is content the repository owner controls — a compose
+// file, a pre/post hook — and it has no business reading the dashboard's
+// configuration. main scrubs the master key at boot as well; this is the
+// second half of the same rule, and it is the half that keeps working if a new
+// secret-bearing variable is added later.
 func mergeEnv(extra map[string]string) []string {
-	out := os.Environ()
+	out := make([]string, 0, len(os.Environ())+len(extra))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "JD_") || strings.HasPrefix(kv, "VPSD_") {
+			continue
+		}
+		out = append(out, kv)
+	}
 	for _, k := range sortedKeys(extra) {
 		out = append(out, k+"="+extra[k])
 	}

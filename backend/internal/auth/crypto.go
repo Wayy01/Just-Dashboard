@@ -19,7 +19,9 @@ var ErrDecrypt = errors.New("decrypt failed")
 
 // Sealer encrypts at-rest secrets (TOTP seeds, database DSNs, deploy env vars,
 // backup provider credentials) with AES-256-GCM under the operator's master
-// key. The key never leaves the process; it is supplied via JD_MASTER_KEY.
+// key. It is supplied via JD_MASTER_KEY, which cmd/server removes from the
+// process environment as soon as this type has consumed it — otherwise every
+// child process the dashboard spawns would inherit it.
 type Sealer struct {
 	aead cipher.AEAD
 }
