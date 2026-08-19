@@ -6,29 +6,36 @@
  *    token is never readable from JS, which is the point of it.
  *  - the `X-Confirm` header, which irreversible endpoints require. The server
  *    rejects the request without it, so a confirmation cannot be skipped by
- *    calling the API directly.
+ *    calling the API directly, and it sends back the exact phrase it wants in
+ *    the error body rather than leaving the client to parse it out of prose.
  */
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1"
 
 export type ApiErrorBody = {
-  error: { code: string; message: string }
+  error: { code: string; message: string; phrase?: string }
 }
 
 export class ApiError extends Error {
   code: string
   status: number
-  /** The phrase the server wants echoed back, parsed out of its message. */
+  /**
+   * The phrase the server wants echoed back in X-Confirm.
+   *
+   * It arrives as its own field. It used to be recovered by matching the first
+   * quoted run in the human-readable message, which meant a phrase containing
+   * a double quote — a file named `my"file`, say — was truncated to `my`: the
+   * dialog asked for the wrong text and the server rejected every attempt, so
+   * the file could not be deleted from the UI at all.
+   */
   confirmPhrase?: string
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, phrase?: string) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.code = code
-    if (code === "confirmation_required" || code === "confirmation_mismatch") {
-      this.confirmPhrase = message.match(/"([^"]+)"/)?.[1]
-    }
+    this.confirmPhrase = phrase
   }
 
   get needsConfirmation() {
@@ -57,8 +64,12 @@ function buildUrl(path: string, query?: RequestOptions["query"]) {
   const url = `${API_BASE}${path}`
   if (!query) return url
   const params = new URLSearchParams()
+  // undefined and null mean "no opinion" and are dropped; "" is a value the
+  // caller chose and is sent. Dropping it too meant a filter that means
+  // "empty" could never be expressed, and the omission looked identical to
+  // never having set the parameter.
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") {
+    if (value !== undefined && value !== null) {
       params.set(key, String(value))
     }
   }
@@ -97,6 +108,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       res.status,
       body?.error?.code ?? "unknown",
       body?.error?.message ?? res.statusText,
+      body?.error?.phrase,
     )
   }
   return parsed as T

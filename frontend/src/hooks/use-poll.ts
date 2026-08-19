@@ -69,6 +69,11 @@ export function usePoll<T>(
       controller.abort()
       clearInterval(timer)
     }
+    // The spread is what the disable is for: the caller's deps cannot be
+    // named here, and React throws if a deps array changes length between
+    // renders. Every call site passes a fixed-length literal, which is the
+    // condition this relies on — a caller building `deps` conditionally would
+    // crash the page rather than poll wrongly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, tick, ...deps])
 

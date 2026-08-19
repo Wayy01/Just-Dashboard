@@ -97,20 +97,3 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used inside AuthProvider")
   return ctx
 }
-
-/**
- * Capability gate for UI affordances. It hides controls a role cannot use;
- * it is not a security boundary — the API re-checks every request on its own.
- */
-export function Can({
-  capability,
-  children,
-  fallback = null,
-}: {
-  capability: Capability
-  children: React.ReactNode
-  fallback?: React.ReactNode
-}) {
-  const { can } = useAuth()
-  return <>{can(capability) ? children : fallback}</>
-}

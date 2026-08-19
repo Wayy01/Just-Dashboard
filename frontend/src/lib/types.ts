@@ -79,6 +79,8 @@ export type MountStats = {
   usedPercent: number
   inodesTotal: number
   inodesUsed: number
+  readBytes: number
+  writeBytes: number
   readRate: number
   writeRate: number
 }
@@ -125,6 +127,8 @@ export type Container = {
   networks: string[]
   composeStack?: string
   composeService?: string
+  /** Writable-layer size. Present only when the listing was asked for sizes. */
+  sizeRw?: number
 }
 
 export type ContainerDetail = Container & {
@@ -244,6 +248,7 @@ export type PM2Process = {
   cwd: string
   outLogPath: string
   errLogPath: string
+  nodeVersion: string
   user: string
   watching: boolean
 }
@@ -318,6 +323,12 @@ export type LogLine = {
   level?: string
   timestamp?: string
   source?: string
+  /**
+   * "stdout" or "stderr", sent only by the container log socket, which streams
+   * dockerx.LogLine rather than logsx.Line. File and journal tails do not have
+   * two streams to distinguish.
+   */
+  stream?: string
 }
 
 export type JournalEntry = {
