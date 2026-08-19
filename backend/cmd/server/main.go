@@ -21,12 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/agent"
-	"github.com/Wayy01/vps-dashboard/backend/internal/api"
-	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
-	"github.com/Wayy01/vps-dashboard/backend/internal/config"
-	"github.com/Wayy01/vps-dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/agent"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/api"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 
 func run(agentFlag, agentReset bool) error {
 	level := slog.LevelInfo
-	if os.Getenv("VPSD_LOG_LEVEL") == "debug" {
+	if config.Env("JD_LOG_LEVEL") == "debug" {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
@@ -132,7 +132,7 @@ func run(agentFlag, agentReset bool) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("vps-dashboard listening",
+		log.Info("just-dashboard listening",
 			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs),
 			"require2fa", cfg.Require2FA, "agent", cfg.AgentMode)
 		var err error
@@ -162,7 +162,7 @@ func run(agentFlag, agentReset bool) error {
 // the configured bind address so a healthcheck cannot pass against some other
 // process that happens to be listening.
 func probe() error {
-	addr := os.Getenv("VPSD_ADDR")
+	addr := config.Env("JD_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
@@ -210,11 +210,11 @@ func bootstrapAdmin(ctx context.Context, svc *auth.Service, st *store.Store, log
 	if len(users) > 0 {
 		return nil
 	}
-	username := os.Getenv("VPSD_BOOTSTRAP_USER")
+	username := config.Env("JD_BOOTSTRAP_USER")
 	if username == "" {
 		username = "admin"
 	}
-	password := os.Getenv("VPSD_BOOTSTRAP_PASSWORD")
+	password := config.Env("JD_BOOTSTRAP_PASSWORD")
 	generated := password == ""
 	if generated {
 		password = auth.RandomToken(18)
@@ -226,7 +226,7 @@ func bootstrapAdmin(ctx context.Context, svc *auth.Service, st *store.Store, log
 		log.Warn("bootstrap admin created — change this password immediately",
 			"username", username, "password", password)
 	} else {
-		log.Warn("bootstrap admin created from VPSD_BOOTSTRAP_PASSWORD", "username", username)
+		log.Warn("bootstrap admin created from JD_BOOTSTRAP_PASSWORD", "username", username)
 	}
 	return st.SetSetting(ctx, "bootstrapped_at", time.Now().UTC().Format(time.RFC3339))
 }

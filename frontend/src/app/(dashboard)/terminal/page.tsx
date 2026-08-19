@@ -39,7 +39,7 @@ export default function TerminalPage() {
         <EmptyState
           icon={TerminalSquare}
           title="The web terminal is disabled"
-          description="Set VPSD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
+          description="Set JD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
         />
       </>
     )

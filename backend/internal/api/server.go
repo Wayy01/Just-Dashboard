@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/agent"
-	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
-	"github.com/Wayy01/vps-dashboard/backend/internal/config"
-	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
-	"github.com/Wayy01/vps-dashboard/backend/internal/store"
-	"github.com/Wayy01/vps-dashboard/backend/internal/wsx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/agent"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/wsx"
 )
 
 // Server owns the dependency graph the handlers close over. Feature modules

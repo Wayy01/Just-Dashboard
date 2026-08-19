@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# One-command setup for the VPS Dashboard.
+# One-command setup for Just Dashboard.
 #
-#   git clone https://github.com/Wayy01/vps-dashboard.git
-#   cd vps-dashboard && sudo ./install.sh
+#   git clone https://github.com/Wayy01/Just-Dashboard.git
+#   cd Just-Dashboard && sudo ./install.sh
 #
 # It asks a handful of questions, writes .env, builds the stack and leaves you
 # with a dashboard you can actually reach. The questions that matter are about
@@ -62,7 +62,7 @@ yes_no() {
 # ── preflight ───────────────────────────────────────────────────────────────
 
 say ""
-say "${BOLD}VPS Dashboard — setup${RESET}"
+say "${BOLD}Just Dashboard — setup${RESET}"
 say "${DIM}Self-hosted management for a single Linux server.${RESET}"
 
 [ "$(id -u)" -eq 0 ] || die "run this with sudo — the dashboard manages the host, so setup needs root."
@@ -106,11 +106,44 @@ if [ "$need_docker" -eq 1 ]; then
 	fi
 fi
 
+# ── upgrading from VPS Dashboard ────────────────────────────────────────────
+
+# The project was called VPS Dashboard, its settings were prefixed VPSD_ and it
+# kept its state under /var/lib/vps-dashboard. Compose now names the new paths
+# outright, so an install that predates the rename has to be moved across
+# before the stack is rebuilt — otherwise it comes up against an empty database
+# and bootstraps a second admin over a perfectly good one.
+
+if [ -f .env ] && grep -q '^VPSD_' .env; then
+	step "Migrating settings from the old VPSD_ prefix"
+	cp .env ".env.backup.$(date +%s)"
+	sed -i 's/^VPSD_/JD_/' .env
+	sed -i 's|/var/lib/vps-dashboard|/var/lib/just-dashboard|g; s|/var/backups/vps-dashboard|/var/backups/just-dashboard|g' .env
+	ok ".env now uses JD_* (a backup of the old one is alongside it)"
+fi
+
+for pair in "/var/lib/vps-dashboard /var/lib/just-dashboard" "/var/backups/vps-dashboard /var/backups/just-dashboard"; do
+	set -- $pair
+	if [ -d "$1" ] && [ ! -d "$2" ]; then
+		step "Moving $1 to $2"
+		mv "$1" "$2"
+		ok "moved — this is your database and your archives, so it is a move, not a copy"
+	fi
+done
+
+if docker compose ls --all 2>/dev/null | grep -q '^vps-dashboard'; then
+	step "Retiring the old vps-dashboard compose project"
+	# The project is named in docker-compose.yml, so a rename leaves the old
+	# containers running and holding the ports the new ones want.
+	docker compose -p vps-dashboard down --remove-orphans >/dev/null 2>&1 || true
+	ok "old stack stopped"
+fi
+
 # ── existing install ────────────────────────────────────────────────────────
 
 if [ -f .env ]; then
 	step "An .env already exists"
-	warn "It holds VPSD_MASTER_KEY, which encrypts your stored secrets."
+	warn "It holds JD_MASTER_KEY, which encrypts your stored secrets."
 	warn "Replacing it makes every stored TOTP seed, database password and"
 	warn "backup credential unreadable."
 	say ""
@@ -189,7 +222,7 @@ case "$CHOICE" in
 	fi
 	if [ -z "$TS_IP" ]; then
 		warn "Tailscale is not available; falling back to an SSH tunnel."
-		warn "You can switch later by editing VPSD_SITE and VPSD_ALLOWED_CIDRS in .env."
+		warn "You can switch later by editing JD_SITE and JD_ALLOWED_CIDRS in .env."
 		SITE="localhost"
 		CIDRS="$LOOPBACK"
 		ACCESS_KIND="tunnel"
@@ -284,30 +317,30 @@ cat > .env <<EOF
 
 # Encrypts TOTP seeds, database connection strings, deploy env vars and backup
 # credentials at rest. Losing it loses every stored secret.
-VPSD_MASTER_KEY=$MASTER_KEY
+JD_MASTER_KEY=$MASTER_KEY
 
 # The single address the stack answers on, and the name on its certificate.
-VPSD_SITE=$SITE
+JD_SITE=$SITE
 
 # Checked before authentication: an address outside this list cannot even
 # reach the login handler.
-VPSD_ALLOWED_CIDRS=$CIDRS
-VPSD_TRUSTED_PROXIES=127.0.0.1/32
-VPSD_ALLOWED_ORIGINS=
+JD_ALLOWED_CIDRS=$CIDRS
+JD_TRUSTED_PROXIES=127.0.0.1/32
+JD_ALLOWED_ORIGINS=
 
-VPSD_REQUIRE_2FA=$REQUIRE_2FA
-VPSD_TERMINAL_ENABLED=$TERMINAL
+JD_REQUIRE_2FA=$REQUIRE_2FA
+JD_TERMINAL_ENABLED=$TERMINAL
 
 # Used once, to create the first account. Safe to remove afterwards.
-VPSD_BOOTSTRAP_USER=$ADMIN_USER
-VPSD_BOOTSTRAP_PASSWORD=$ADMIN_PW
+JD_BOOTSTRAP_USER=$ADMIN_USER
+JD_BOOTSTRAP_PASSWORD=$ADMIN_PW
 
-VPSD_COMPOSE_ROOTS=/opt,/srv,/home
-VPSD_GIT_ROOTS=/opt,/srv,/home,/root
-VPSD_LOG_ROOTS=/var/log
-VPSD_FILE_ROOTS=/
-VPSD_BACKUP_DIR=/var/backups/vps-dashboard
-VPSD_LOG_LEVEL=info
+JD_COMPOSE_ROOTS=/opt,/srv,/home
+JD_GIT_ROOTS=/opt,/srv,/home,/root
+JD_LOG_ROOTS=/var/log
+JD_FILE_ROOTS=/
+JD_BACKUP_DIR=/var/backups/just-dashboard
+JD_LOG_LEVEL=info
 EOF
 chmod 600 .env
 ok ".env written (mode 600)"
@@ -324,7 +357,7 @@ $COMPOSE up -d --build
 
 step "Waiting for the dashboard to answer"
 
-SITE_ADDR="$(grep -E '^VPSD_SITE=' .env | cut -d= -f2-)"
+SITE_ADDR="$(grep -E '^JD_SITE=' .env | cut -d= -f2-)"
 HEALTHY=0
 for _ in $(seq 1 60); do
 	if curl -fsS --max-time 3 "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; then

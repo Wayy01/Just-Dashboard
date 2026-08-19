@@ -4,7 +4,7 @@ import "testing"
 
 func TestIsSecretEnvKey(t *testing.T) {
 	secret := []string{
-		"VPSD_MASTER_KEY", "VPSD_BOOTSTRAP_PASSWORD", "AWS_SECRET_ACCESS_KEY",
+		"JD_MASTER_KEY", "JD_BOOTSTRAP_PASSWORD", "AWS_SECRET_ACCESS_KEY",
 		"API_TOKEN", "DB_PASSWD", "KEY", "GITHUB_TOKEN", "DATABASE_DSN",
 	}
 	for _, k := range secret {
@@ -12,7 +12,7 @@ func TestIsSecretEnvKey(t *testing.T) {
 			t.Errorf("IsSecretEnvKey(%q) = false, want true", k)
 		}
 	}
-	plain := []string{"PATH", "HOME", "VPSD_ADDR", "LANG", "VPSD_LOG_LEVEL", "HOSTNAME"}
+	plain := []string{"PATH", "HOME", "JD_ADDR", "LANG", "JD_LOG_LEVEL", "HOSTNAME"}
 	for _, k := range plain {
 		if IsSecretEnvKey(k) {
 			t.Errorf("IsSecretEnvKey(%q) = true, want false", k)
@@ -22,12 +22,12 @@ func TestIsSecretEnvKey(t *testing.T) {
 
 func TestRedactEnv(t *testing.T) {
 	in := []string{
-		"VPSD_MASTER_KEY=a33fe23634b81b45354aa28a7c61acd1",
-		"VPSD_ADDR=127.0.0.1:8080",
+		"JD_MASTER_KEY=a33fe23634b81b45354aa28a7c61acd1",
+		"JD_ADDR=127.0.0.1:8080",
 		"NOEQUALSHERE",
 	}
 	out := RedactEnv(in)
-	if out[0] != "VPSD_MASTER_KEY="+RedactedEnvValue {
+	if out[0] != "JD_MASTER_KEY="+RedactedEnvValue {
 		t.Errorf("secret not redacted: %q", out[0])
 	}
 	if out[1] != in[1] {

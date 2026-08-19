@@ -3,8 +3,8 @@ package httpx
 import (
 	"net/http"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/agent"
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/agent"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 )
 
 // KindHub marks a request that arrived from the enrolled hub rather than from

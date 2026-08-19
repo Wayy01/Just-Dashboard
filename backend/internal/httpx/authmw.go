@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 )
 
 const SessionCookie = "vpsd_session"

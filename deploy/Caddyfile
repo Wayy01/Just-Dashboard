@@ -13,7 +13,7 @@
 	auto_https disable_redirects
 }
 
-# VPSD_SITE is the address you actually type into the browser — your Tailscale
+# JD_SITE is the address you actually type into the browser — your Tailscale
 # address, a WireGuard address such as 10.8.0.1, or localhost. It is both an
 # address Caddy binds and a name its certificate is issued for, so those two
 # can never drift apart.
@@ -23,16 +23,16 @@
 # way in: reaching loopback requires an SSH session on this machine, and
 # anyone with one already has root. What it buys is that Tailscale being down,
 # or a key expiring, costs you a tunnel command rather than your dashboard.
-# When VPSD_SITE is already localhost, Caddy collapses the two into one.
-{$VPSD_SITE:localhost}:8443, localhost:8443 {
+# When JD_SITE is already localhost, Caddy collapses the two into one.
+{$JD_SITE:localhost}:8443, localhost:8443 {
 	# The site addresses above decide which Host/SNI this block answers for --
 	# they do NOT decide which interfaces the socket binds. Without an explicit
-	# bind, Caddy listens on every interface, so VPSD_SITE=localhost would
+	# bind, Caddy listens on every interface, so JD_SITE=localhost would
 	# still leave a root-equivalent dashboard on a public port, defended only
 	# by whatever the host firewall happens to be doing. Binding the same
 	# values keeps the two in step: the site address binds only its own
 	# interface, and loopback stays loopback.
-	bind {$VPSD_SITE:localhost} localhost
+	bind {$JD_SITE:localhost} localhost
 
 	# Caddy's own CA signs this. It is enough because the listener is only ever
 	# reached over a VPN tunnel or an SSH forward, both already encrypted and
@@ -47,7 +47,7 @@
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8080 {
 			# The backend only trusts a forwarded address from a proxy listed
-			# in VPSD_TRUSTED_PROXIES; without that pairing its allowlist
+			# in JD_TRUSTED_PROXIES; without that pairing its allowlist
 			# would judge every request by this proxy's address instead of the
 			# real client's.
 			header_up X-Forwarded-For {remote_host}

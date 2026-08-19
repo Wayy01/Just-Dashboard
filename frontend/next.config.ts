@@ -10,10 +10,10 @@ import type { NextConfig } from "next"
  *  - production: the compose stack puts a reverse proxy in front of both, and
  *    that proxy routes /api to the backend. Next never sees those requests.
  *
- * Rewrites are evaluated at build time, so VPSD_API_URL is read then — which
+ * Rewrites are evaluated at build time, so JD_API_URL is read then — which
  * is exactly why production does not depend on it.
  */
-const apiTarget = process.env.VPSD_API_URL ?? "http://127.0.0.1:8080"
+const apiTarget = process.env.JD_API_URL ?? "http://127.0.0.1:8080"
 
 const nextConfig: NextConfig = {
   output: "standalone",

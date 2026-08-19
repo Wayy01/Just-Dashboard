@@ -1,4 +1,4 @@
-# VPS Dashboard
+# Just Dashboard
 
 One authenticated UI for a single Linux server — metrics, Docker, processes,
 logs, a real shell, files, git, databases, the reverse proxy, the firewall,
@@ -11,8 +11,8 @@ backups and deploys. Go backend, Next.js frontend, one `docker compose` stack.
 ## Install
 
 ```bash
-git clone https://github.com/Wayy01/vps-dashboard.git
-cd vps-dashboard && sudo ./install.sh
+git clone https://github.com/Wayy01/Just-Dashboard.git
+cd Just-Dashboard && sudo ./install.sh
 ```
 
 It asks four or five questions, and the one that matters is how you intend to
@@ -39,7 +39,7 @@ It is built to sit behind a VPN or an SSH tunnel, and that is enforced rather
 than suggested:
 
 - The backend **refuses to start** on a non-loopback address without an
-  explicit `VPSD_ALLOWED_CIDRS` allowlist.
+  explicit `JD_ALLOWED_CIDRS` allowlist.
 - The allowlist is checked **before authentication** — off-network, you cannot
   even reach the login handler to guess at it.
 - Two-factor is **mandatory**. A correct password alone yields a session that
@@ -109,49 +109,75 @@ installer writes the ones that matter; these are for tuning afterwards.
 
 | Variable | Description |
 | --- | --- |
-| `VPSD_MASTER_KEY` | 64 hex characters. Encrypts every stored secret. `openssl rand -hex 32`. |
+| `JD_MASTER_KEY` | 64 hex characters. Encrypts every stored secret. `openssl rand -hex 32`. |
 
 **Network perimeter**
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VPSD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
-| `VPSD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale — keep loopback or you lose the tunnel. |
-| `VPSD_TRUSTED_PROXIES` | — | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof past the allowlist. |
-| `VPSD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave on loopback; the proxy is the entry point. |
-| `VPSD_ALLOWED_ORIGINS` | — | Extra browser origins allowed to open WebSockets. Only if the UI is served from a different origin. |
+| `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
+| `JD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale — keep loopback or you lose the tunnel. |
+| `JD_TRUSTED_PROXIES` | — | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof past the allowlist. |
+| `JD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave on loopback; the proxy is the entry point. |
+| `JD_ALLOWED_ORIGINS` | — | Extra browser origins allowed to open WebSockets. Only if the UI is served from a different origin. |
 
 **Behaviour**
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VPSD_REQUIRE_2FA` | `true` | Mandatory two-factor. Refused for accounts that already enrolled. |
-| `VPSD_TERMINAL_ENABLED` | `true` | The web terminal. |
-| `VPSD_TERMINAL_SHELL` | `/bin/bash` | Shell spawned for terminal sessions. |
-| `VPSD_SESSION_TTL` | `12h` | Absolute session lifetime. |
-| `VPSD_SESSION_IDLE_TTL` | `60m` | Idle timeout. |
-| `VPSD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
-| `VPSD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
+| `JD_REQUIRE_2FA` | `true` | Mandatory two-factor. Refused for accounts that already enrolled. |
+| `JD_TERMINAL_ENABLED` | `true` | The web terminal. |
+| `JD_TERMINAL_SHELL` | `/bin/bash` | Shell spawned for terminal sessions. |
+| `JD_SESSION_TTL` | `12h` | Absolute session lifetime. |
+| `JD_SESSION_IDLE_TTL` | `60m` | Idle timeout. |
+| `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
+| `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
 
 **Where it looks**
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VPSD_FILE_ROOTS` | `/` | Directories the file manager may reach. |
-| `VPSD_LOG_ROOTS` | `/var/log` | Directories the log viewer may read. |
-| `VPSD_COMPOSE_ROOTS` | `/opt,/srv,/home` | Where compose stacks are discovered. |
-| `VPSD_GIT_ROOTS` | `/opt,/srv,/home,/root` | Where the Git page looks for repositories. |
-| `VPSD_NGINX_DIR` | `/etc/nginx` | nginx configuration root. |
-| `VPSD_CADDYFILE` | `/etc/caddy/Caddyfile` | Caddy configuration file. |
-| `VPSD_BACKUP_DIR` | `/var/backups/vps-dashboard` | Local backup destination and staging. |
-| `VPSD_DATA_DIR` | `/var/lib/vps-dashboard` | The dashboard's own database. **Back this up.** |
+| `JD_FILE_ROOTS` | `/` | Directories the file manager may reach. |
+| `JD_LOG_ROOTS` | `/var/log` | Directories the log viewer may read. |
+| `JD_COMPOSE_ROOTS` | `/opt,/srv,/home` | Where compose stacks are discovered. |
+| `JD_GIT_ROOTS` | `/opt,/srv,/home,/root` | Where the Git page looks for repositories. |
+| `JD_NGINX_DIR` | `/etc/nginx` | nginx configuration root. |
+| `JD_CADDYFILE` | `/etc/caddy/Caddyfile` | Caddy configuration file. |
+| `JD_BACKUP_DIR` | `/var/backups/just-dashboard` | Local backup destination and staging. |
+| `JD_DATA_DIR` | `/var/lib/just-dashboard` | The dashboard's own database. **Back this up.** |
 
 **First run only**
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VPSD_BOOTSTRAP_USER` | `admin` | Account created on an empty database. |
-| `VPSD_BOOTSTRAP_PASSWORD` | — | Leave empty for a generated one, logged once. |
+| `JD_BOOTSTRAP_USER` | `admin` | Account created on an empty database. |
+| `JD_BOOTSTRAP_PASSWORD` | — | Leave empty for a generated one, logged once. |
+
+**Upgrading from VPS Dashboard**
+
+This project used to be called VPS Dashboard. Its settings were prefixed
+`VPSD_`, it kept its state in `/var/lib/vps-dashboard`, and its compose project
+was named `vps-dashboard`. **`sudo ./install.sh` migrates all three for you** —
+it rewrites `.env` (keeping a backup), moves the two directories and stops the
+old stack, then rebuilds. That is the recommended path after a `git pull`.
+
+By hand it is:
+
+```bash
+sudo sed -i -e 's/^VPSD_/JD_/' \
+  -e 's|/var/lib/vps-dashboard|/var/lib/just-dashboard|g' \
+  -e 's|/var/backups/vps-dashboard|/var/backups/just-dashboard|g' .env
+sudo docker compose -p vps-dashboard down
+sudo mv /var/lib/vps-dashboard /var/lib/just-dashboard
+sudo mv /var/backups/vps-dashboard /var/backups/just-dashboard
+sudo docker compose up -d --build
+```
+
+`/var/lib/vps-dashboard` is your database — accounts, TOTP enrolments, the
+audit log — so move it rather than let a fresh one be created beside it. If you
+run the binary directly instead of under compose, you can skip all of this: the
+backend reads a `VPSD_` name when the `JD_` one is unset, and adopts the old
+data directory when the new one has no database in it.
 
 </details>
 
@@ -228,8 +254,8 @@ runs in. Two mechanisms keep that true:
 same names, because the dashboard addresses files by the path you would type
 over SSH. Remove a mount and the file manager, git discovery and compose
 scanning quietly browse the container's own empty filesystem instead. Narrow
-them if you like — but narrow `VPSD_FILE_ROOTS`, `VPSD_GIT_ROOTS` and
-`VPSD_COMPOSE_ROOTS` to match.
+them if you like — but narrow `JD_FILE_ROOTS`, `JD_GIT_ROOTS` and
+`JD_COMPOSE_ROOTS` to match.
 
 *Host tools run on the host.* nginx's config is readable here but its binary is
 not, and shipping a second copy would validate your config against different
@@ -280,12 +306,12 @@ Edit it. Two settings matter more than the rest:
 ```bash
 # Encrypts TOTP seeds, database strings, deploy env and backup credentials.
 # Generate once — losing it loses every stored secret.
-VPSD_MASTER_KEY=$(openssl rand -hex 32)
+JD_MASTER_KEY=$(openssl rand -hex 32)
 
 # The address the dashboard answers on. Your Tailscale address is recommended;
 # localhost means reachable only through an SSH tunnel. Either way loopback is
 # bound too, so a tunnel is always available as a fallback.
-VPSD_SITE=localhost
+JD_SITE=localhost
 ```
 
 Then:
@@ -303,11 +329,11 @@ That last line prints the generated admin password **once**.
 
 ## Backing it up
 
-The dashboard's own state is a SQLite database in `VPSD_DATA_DIR`
-(`/var/lib/vps-dashboard`). It holds accounts, TOTP enrolments, API tokens, the
+The dashboard's own state is a SQLite database in `JD_DATA_DIR`
+(`/var/lib/just-dashboard`). It holds accounts, TOTP enrolments, API tokens, the
 audit log and every encrypted secret.
 
-Back up that directory **and** keep `VPSD_MASTER_KEY` somewhere separate.
+Back up that directory **and** keep `JD_MASTER_KEY` somewhere separate.
 Either alone will not restore.
 
 ---

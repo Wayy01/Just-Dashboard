@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
-	"github.com/Wayy01/vps-dashboard/backend/internal/dbx"
-	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/dbx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
 )
 

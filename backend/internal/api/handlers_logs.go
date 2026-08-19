@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
-	"github.com/Wayy01/vps-dashboard/backend/internal/logsx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/logsx"
 	"github.com/go-chi/chi/v5"
 )
 

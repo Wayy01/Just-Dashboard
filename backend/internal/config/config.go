@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
 // Config is resolved once at boot from the environment. Every field that
@@ -39,56 +42,62 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		Addr:           env("VPSD_ADDR", "127.0.0.1:8080"),
-		DataDir:        env("VPSD_DATA_DIR", "/var/lib/vps-dashboard"),
-		MasterKeyHex:   os.Getenv("VPSD_MASTER_KEY"),
-		Require2FA:     envBool("VPSD_REQUIRE_2FA", true),
-		SessionTTL:     envDur("VPSD_SESSION_TTL", 12*time.Hour),
-		IdleTTL:        envDur("VPSD_SESSION_IDLE_TTL", 60*time.Minute),
-		DockerHost:     env("VPSD_DOCKER_HOST", "unix:///var/run/docker.sock"),
-		TerminalEnable: envBool("VPSD_TERMINAL_ENABLED", true),
-		AgentMode:      envBool("VPSD_AGENT_MODE", false),
-		TerminalShell:  env("VPSD_TERMINAL_SHELL", "/bin/bash"),
-		FileRoots:      envList("VPSD_FILE_ROOTS", "/"),
-		LogRoots:       envList("VPSD_LOG_ROOTS", "/var/log"),
-		NginxDir:       env("VPSD_NGINX_DIR", "/etc/nginx"),
-		CaddyFile:      env("VPSD_CADDYFILE", "/etc/caddy/Caddyfile"),
-		ComposeRoots:   envList("VPSD_COMPOSE_ROOTS", "/opt,/srv,/home"),
-		GitRoots:       envList("VPSD_GIT_ROOTS", "/opt,/srv,/home,/root"),
-		DeployRoot:     env("VPSD_DEPLOY_ROOT", "/srv"),
-		BackupLocalDir: env("VPSD_BACKUP_DIR", "/var/backups/vps-dashboard"),
-		Dev:            envBool("VPSD_DEV", false),
+		Addr:           env("JD_ADDR", "127.0.0.1:8080"),
+		DataDir:        env("JD_DATA_DIR", "/var/lib/just-dashboard"),
+		MasterKeyHex:   Env("JD_MASTER_KEY"),
+		Require2FA:     envBool("JD_REQUIRE_2FA", true),
+		SessionTTL:     envDur("JD_SESSION_TTL", 12*time.Hour),
+		IdleTTL:        envDur("JD_SESSION_IDLE_TTL", 60*time.Minute),
+		DockerHost:     env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
+		TerminalEnable: envBool("JD_TERMINAL_ENABLED", true),
+		AgentMode:      envBool("JD_AGENT_MODE", false),
+		TerminalShell:  env("JD_TERMINAL_SHELL", "/bin/bash"),
+		FileRoots:      envList("JD_FILE_ROOTS", "/"),
+		LogRoots:       envList("JD_LOG_ROOTS", "/var/log"),
+		NginxDir:       env("JD_NGINX_DIR", "/etc/nginx"),
+		CaddyFile:      env("JD_CADDYFILE", "/etc/caddy/Caddyfile"),
+		ComposeRoots:   envList("JD_COMPOSE_ROOTS", "/opt,/srv,/home"),
+		GitRoots:       envList("JD_GIT_ROOTS", "/opt,/srv,/home,/root"),
+		DeployRoot:     env("JD_DEPLOY_ROOT", "/srv"),
+		BackupLocalDir: env("JD_BACKUP_DIR", "/var/backups/just-dashboard"),
+		Dev:            envBool("JD_DEV", false),
 	}
 
 	// The dashboard is root-equivalent. It must never be reachable from the
 	// open internet, so an explicit network allowlist is mandatory. Binding
 	// to loopback only is the one configuration that implies its own
 	// perimeter (reverse proxy / WireGuard terminates in front of us).
-	raw := strings.TrimSpace(os.Getenv("VPSD_ALLOWED_CIDRS"))
+	raw := Env("JD_ALLOWED_CIDRS")
 	if raw == "" {
 		if !isLoopbackBind(c.Addr) {
-			return nil, fmt.Errorf("VPSD_ALLOWED_CIDRS is required when VPSD_ADDR (%s) is not bound to loopback: "+
+			return nil, fmt.Errorf("JD_ALLOWED_CIDRS is required when JD_ADDR (%s) is not bound to loopback: "+
 				"expose this dashboard only through a WireGuard/VPN interface or a reverse proxy with an IP allowlist", c.Addr)
 		}
 		raw = "127.0.0.1/32,::1/128"
 	}
 	nets, err := parseCIDRs(raw)
 	if err != nil {
-		return nil, fmt.Errorf("VPSD_ALLOWED_CIDRS: %w", err)
+		return nil, fmt.Errorf("JD_ALLOWED_CIDRS: %w", err)
 	}
 	c.AllowedCIDRs = nets
 
-	if tp := strings.TrimSpace(os.Getenv("VPSD_TRUSTED_PROXIES")); tp != "" {
+	if tp := Env("JD_TRUSTED_PROXIES"); tp != "" {
 		nets, err := parseCIDRs(tp)
 		if err != nil {
-			return nil, fmt.Errorf("VPSD_TRUSTED_PROXIES: %w", err)
+			return nil, fmt.Errorf("JD_TRUSTED_PROXIES: %w", err)
 		}
 		c.TrustedProxies = nets
 	}
 
-	c.AllowedOrigins = envList("VPSD_ALLOWED_ORIGINS", "")
+	// An install that predates the "Just Dashboard" rename keeps its database
+	// where it left it. Adopting that path is the difference between an
+	// upgrade and a dashboard that boots with an empty account table and
+	// bootstraps a new admin over the top of a real one.
+	c.DataDir = adoptLegacyData(c.DataDir, "/var/lib/vps-dashboard")
+
+	c.AllowedOrigins = envList("JD_ALLOWED_ORIGINS", "")
 	if len(c.MasterKeyHex) != 64 {
-		return nil, fmt.Errorf("VPSD_MASTER_KEY must be 64 hex characters (32 bytes); generate one with: openssl rand -hex 32")
+		return nil, fmt.Errorf("JD_MASTER_KEY must be 64 hex characters (32 bytes); generate one with: openssl rand -hex 32")
 	}
 	return c, nil
 }
@@ -132,15 +141,47 @@ func isLoopbackBind(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func env(k, def string) string {
+// adoptLegacyData returns the pre-rename data directory when it holds the
+// database and the configured one does not.
+//
+// It looks for the database file rather than for the directory, because the
+// compose stack bind-mounts the configured path and Docker creates it empty if
+// it is missing — so "the new directory exists" says nothing about whether
+// anything has ever been written to it.
+func adoptLegacyData(current, legacy string) string {
+	if current == legacy || hasDatabase(current) || !hasDatabase(legacy) {
+		return current
+	}
+	return legacy
+}
+
+func hasDatabase(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, store.DatabaseFile))
+	return err == nil && !info.IsDir()
+}
+
+// Env reads a JD_* setting, falling back to the VPSD_* name the dashboard
+// used when it was called "VPS Dashboard". An install that predates the rename
+// keeps its .env working; a new one never sees the old prefix.
+func Env(k string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		return v
+	}
+	if legacy, ok := strings.CutPrefix(k, "JD_"); ok {
+		return strings.TrimSpace(os.Getenv("VPSD_" + legacy))
+	}
+	return ""
+}
+
+func env(k, def string) string {
+	if v := Env(k); v != "" {
 		return v
 	}
 	return def
 }
 
 func envBool(k string, def bool) bool {
-	v := strings.TrimSpace(os.Getenv(k))
+	v := Env(k)
 	if v == "" {
 		return def
 	}
@@ -152,7 +193,7 @@ func envBool(k string, def bool) bool {
 }
 
 func envDur(k string, def time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(k))
+	v := Env(k)
 	if v == "" {
 		return def
 	}
@@ -164,7 +205,7 @@ func envDur(k string, def time.Duration) time.Duration {
 }
 
 func envList(k, def string) []string {
-	v := strings.TrimSpace(os.Getenv(k))
+	v := Env(k)
 	if v == "" {
 		v = def
 	}

@@ -8,7 +8,7 @@ build/
 .env.local
 .env.*.local
 .DS_Store
-backend/vps-dashboard-server
+backend/just-dashboard-server
 data/
 *.db
 *.db-wal

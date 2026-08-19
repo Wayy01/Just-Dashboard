@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 )
 
 var ErrAlreadyDeploying = fmt.Errorf("a deployment for this project is already running")
@@ -282,7 +282,7 @@ func sortedKeys(m map[string]string) []string {
 // spaces survive, at mode 0600 because it holds the project's secrets.
 func writeEnvFile(path string, vars map[string]string) error {
 	var b strings.Builder
-	b.WriteString("# Managed by vps-dashboard — changes here are overwritten on deploy.\n")
+	b.WriteString("# Managed by just-dashboard — changes here are overwritten on deploy.\n")
 	for _, k := range sortedKeys(vars) {
 		v := vars[k]
 		v = strings.ReplaceAll(v, `\`, `\\`)

@@ -120,7 +120,7 @@ export function AppSidebar() {
                   <Server className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">VPS Dashboard</span>
+                  <span className="truncate font-semibold">Just Dashboard</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {status?.user?.username ?? "not signed in"}
                   </span>

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
 // Entry is one immutable record of who did what, when, from where.

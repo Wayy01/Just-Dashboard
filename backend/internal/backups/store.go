@@ -7,8 +7,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
-	"github.com/Wayy01/vps-dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
 var ErrNotFound = errors.New("backup job not found")

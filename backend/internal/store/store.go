@@ -14,6 +14,13 @@ type Store struct {
 	DB *sql.DB
 }
 
+// DatabaseFile is the SQLite file inside the data directory. It keeps its
+// original name through the "Just Dashboard" rename: moving it would buy
+// nothing and would strand every existing install's accounts, audit log and
+// encrypted secrets. config.Load looks for it by this name when deciding
+// whether a pre-rename data directory should be adopted.
+const DatabaseFile = "vpsd.db"
+
 const schema = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -174,7 +181,7 @@ func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
-	path := filepath.Join(dataDir, "vpsd.db")
+	path := filepath.Join(dataDir, DatabaseFile)
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err

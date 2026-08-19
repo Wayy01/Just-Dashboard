@@ -11,7 +11,7 @@ COPY . .
 # the SQLite driver is pure Go precisely so this works.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/vps-dashboard ./cmd/server
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/just-dashboard ./cmd/server
 
 FROM debian:bookworm-slim
 
@@ -52,15 +52,15 @@ https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.lis
     && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/vps-dashboard /usr/local/bin/vps-dashboard
+COPY --from=build /out/just-dashboard /usr/local/bin/just-dashboard
 
 # Runs as root deliberately: managing systemd units, the firewall, host
 # accounts and a PTY all require it. The security boundary is the network
 # allowlist plus mandatory 2FA in front of the API, not the process UID.
-WORKDIR /var/lib/vps-dashboard
+WORKDIR /var/lib/just-dashboard
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/usr/local/bin/vps-dashboard", "-healthcheck"]
+  CMD ["/usr/local/bin/just-dashboard", "-healthcheck"]
 
-ENTRYPOINT ["/usr/local/bin/vps-dashboard"]
+ENTRYPOINT ["/usr/local/bin/just-dashboard"]

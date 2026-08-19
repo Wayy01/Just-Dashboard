@@ -4,7 +4,7 @@ import { AuthProvider } from "@/hooks/use-auth"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "VPS Dashboard",
+  title: "Just Dashboard",
   description: "Self-hosted server management",
   robots: { index: false, follow: false },
 }

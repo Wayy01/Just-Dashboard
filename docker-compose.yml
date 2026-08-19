@@ -1,4 +1,4 @@
-# VPS Dashboard — self-hosted, single server.
+# Just Dashboard — self-hosted, single server.
 #
 # The topology exists to satisfy one rule: the dashboard is root-equivalent and
 # must never be reachable from the open internet.
@@ -12,13 +12,13 @@
 # origin is also what lets the SameSite=Strict session cookie and the
 # same-origin WebSocket checks work as designed.
 
-name: vps-dashboard
+name: just-dashboard
 
 services:
   backend:
     build:
       context: ./backend
-    image: vps-dashboard-backend:latest
+    image: just-dashboard-backend:latest
     restart: unless-stopped
     # The dashboard manages the host, so it shares the host's namespaces.
     # This is the trade the product makes: without it, "restart nginx" and
@@ -28,26 +28,26 @@ services:
     privileged: true
     environment:
       # Loopback only. The proxy in front of it is the single entry point.
-      VPSD_ADDR: 127.0.0.1:8080
-      VPSD_DATA_DIR: /var/lib/vps-dashboard
+      JD_ADDR: 127.0.0.1:8080
+      JD_DATA_DIR: /var/lib/just-dashboard
       # Required. Generate once with: openssl rand -hex 32
-      VPSD_MASTER_KEY: ${VPSD_MASTER_KEY:?set VPSD_MASTER_KEY in .env}
+      JD_MASTER_KEY: ${JD_MASTER_KEY:?set JD_MASTER_KEY in .env}
       # Who may reach the API at all, checked before authentication.
-      VPSD_ALLOWED_CIDRS: ${VPSD_ALLOWED_CIDRS:-127.0.0.1/32,::1/128}
-      VPSD_TRUSTED_PROXIES: ${VPSD_TRUSTED_PROXIES:-127.0.0.1/32}
-      VPSD_ALLOWED_ORIGINS: ${VPSD_ALLOWED_ORIGINS:-}
-      VPSD_REQUIRE_2FA: ${VPSD_REQUIRE_2FA:-true}
-      VPSD_TERMINAL_ENABLED: ${VPSD_TERMINAL_ENABLED:-true}
+      JD_ALLOWED_CIDRS: ${JD_ALLOWED_CIDRS:-127.0.0.1/32,::1/128}
+      JD_TRUSTED_PROXIES: ${JD_TRUSTED_PROXIES:-127.0.0.1/32}
+      JD_ALLOWED_ORIGINS: ${JD_ALLOWED_ORIGINS:-}
+      JD_REQUIRE_2FA: ${JD_REQUIRE_2FA:-true}
+      JD_TERMINAL_ENABLED: ${JD_TERMINAL_ENABLED:-true}
       # First run only: creates the bootstrap admin with this username/password.
-      VPSD_BOOTSTRAP_USER: ${VPSD_BOOTSTRAP_USER:-admin}
-      VPSD_BOOTSTRAP_PASSWORD: ${VPSD_BOOTSTRAP_PASSWORD:-}
-      VPSD_DOCKER_HOST: unix:///var/run/docker.sock
-      VPSD_COMPOSE_ROOTS: ${VPSD_COMPOSE_ROOTS:-/opt,/srv,/home}
-      VPSD_GIT_ROOTS: ${VPSD_GIT_ROOTS:-/opt,/srv,/home,/root}
-      VPSD_LOG_ROOTS: ${VPSD_LOG_ROOTS:-/var/log}
-      VPSD_FILE_ROOTS: ${VPSD_FILE_ROOTS:-/}
-      VPSD_BACKUP_DIR: ${VPSD_BACKUP_DIR:-/var/backups/vps-dashboard}
-      VPSD_LOG_LEVEL: ${VPSD_LOG_LEVEL:-info}
+      JD_BOOTSTRAP_USER: ${JD_BOOTSTRAP_USER:-admin}
+      JD_BOOTSTRAP_PASSWORD: ${JD_BOOTSTRAP_PASSWORD:-}
+      JD_DOCKER_HOST: unix:///var/run/docker.sock
+      JD_COMPOSE_ROOTS: ${JD_COMPOSE_ROOTS:-/opt,/srv,/home}
+      JD_GIT_ROOTS: ${JD_GIT_ROOTS:-/opt,/srv,/home,/root}
+      JD_LOG_ROOTS: ${JD_LOG_ROOTS:-/var/log}
+      JD_FILE_ROOTS: ${JD_FILE_ROOTS:-/}
+      JD_BACKUP_DIR: ${JD_BACKUP_DIR:-/var/backups/just-dashboard}
+      JD_LOG_LEVEL: ${JD_LOG_LEVEL:-info}
     volumes:
       # Root-equivalent access. Everything that reaches it is authenticated,
       # capability-checked and written to the audit trail.
@@ -58,22 +58,22 @@ services:
       # Without this the file manager, git discovery and compose-stack
       # scanning quietly operate on this container's own empty filesystem
       # while appearing to browse the server. Narrow this list if you have
-      # narrowed VPSD_FILE_ROOTS and friends to match.
+      # narrowed JD_FILE_ROOTS and friends to match.
       - /home:/home
       - /opt:/opt
       - /srv:/srv
       - /root:/root
       - /etc:/etc
       - /var/log:/var/log
-      - /var/lib/vps-dashboard:/var/lib/vps-dashboard
-      - /var/backups/vps-dashboard:/var/backups/vps-dashboard
+      - /var/lib/just-dashboard:/var/lib/just-dashboard
+      - /var/backups/just-dashboard:/var/backups/just-dashboard
       - /run/systemd:/run/systemd
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
 
   frontend:
     build:
       context: ./frontend
-    image: vps-dashboard-frontend:latest
+    image: just-dashboard-frontend:latest
     restart: unless-stopped
     # Shares the host namespace so the proxy can reach it on loopback, but
     # binds to loopback only — it is never reachable from outside the machine.
@@ -102,13 +102,13 @@ services:
       - frontend
       - backend
     # Also on the host namespace, so it reaches both services on loopback.
-    # VPSD_SITE is the address the stack answers on, and a name its certificate
+    # JD_SITE is the address the stack answers on, and a name its certificate
     # is issued for: leave it at localhost and tunnel in, or set it to your
     # Tailscale or WireGuard address. Loopback is bound alongside it either
     # way, so an SSH tunnel is always available. Never set it to 0.0.0.0.
     network_mode: host
     environment:
-      VPSD_SITE: ${VPSD_SITE:-localhost}
+      JD_SITE: ${JD_SITE:-localhost}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -132,11 +132,11 @@ func (i *Identity) generate() error {
 	}
 	host, _ := os.Hostname()
 	if host == "" {
-		host = "vps-dashboard-agent"
+		host = "just-dashboard-agent"
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: host, Organization: []string{"vps-dashboard agent"}},
+		Subject:               pkix.Name{CommonName: host, Organization: []string{"just-dashboard agent"}},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(certValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,

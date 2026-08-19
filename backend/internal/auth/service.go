@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
@@ -25,7 +25,7 @@ var (
 const (
 	maxFailedLogins = 5
 	lockoutWindow   = 15 * time.Minute
-	totpIssuer      = "VPS Dashboard"
+	totpIssuer      = "Just Dashboard"
 )
 
 type Service struct {

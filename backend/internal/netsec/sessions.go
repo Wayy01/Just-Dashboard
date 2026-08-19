@@ -10,7 +10,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/process"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 )
 
 // LoginSession is one interactive login currently on the machine. Both `who`

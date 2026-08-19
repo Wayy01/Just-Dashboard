@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
-	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 )
 
 // contextWithCancel detaches from the request context's cancellation only in

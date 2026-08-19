@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 )
 
 type ctxKey int

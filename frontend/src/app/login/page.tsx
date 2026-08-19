@@ -138,7 +138,7 @@ export default function LoginPage() {
             {step === "enroll" && "Set up two-factor"}
           </CardTitle>
           <CardDescription>
-            {step === "credentials" && "VPS Dashboard administrator access."}
+            {step === "credentials" && "Just Dashboard administrator access."}
             {step === "totp" && "Enter the 6-digit code from your authenticator app."}
             {step === "enroll" &&
               "Two-factor authentication is mandatory. Enroll an authenticator to continue."}

@@ -94,7 +94,7 @@ func DescribeExposure(allowed []*net.IPNet) Exposure {
 	case 4:
 		e.Grade = "open"
 		e.Summary = "The allowlist admits every address on the internet."
-		e.Recommendation = "Narrow VPSD_ALLOWED_CIDRS immediately, or move to Tailscale. Anyone who finds this host can reach the login page."
+		e.Recommendation = "Narrow JD_ALLOWED_CIDRS immediately, or move to Tailscale. Anyone who finds this host can reach the login page."
 	}
 	return e
 }

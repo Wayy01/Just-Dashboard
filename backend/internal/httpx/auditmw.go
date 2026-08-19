@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/audit"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 )
 
 const auditCtxKey ctxKey = 200

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/httpx"
-	"github.com/Wayy01/vps-dashboard/backend/internal/proxysvc"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
 	"github.com/go-chi/chi/v5"
 )
 

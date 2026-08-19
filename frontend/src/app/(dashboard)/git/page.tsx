@@ -109,7 +109,7 @@ export default function GitPage() {
               description={
                 filter
                   ? undefined
-                  : "Nothing under the configured git roots. Set VPSD_GIT_ROOTS to point at where your projects live."
+                  : "Nothing under the configured git roots. Set JD_GIT_ROOTS to point at where your projects live."
               }
             />
           ) : (

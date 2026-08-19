@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wayy01/vps-dashboard/backend/internal/hostexec"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 )
 
 var (

@@ -97,7 +97,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
-		"VPSD_SESSION="+id,
+		"JD_SESSION="+id,
 	)
 	if opts.CWD != "" {
 		if st, err := os.Stat(opts.CWD); err == nil && st.IsDir() {
