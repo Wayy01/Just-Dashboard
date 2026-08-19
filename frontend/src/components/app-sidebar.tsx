@@ -14,6 +14,7 @@ import {
   ListChecks,
   PackageCheck,
   LogOut,
+  Palette,
   Rocket,
   ScrollText,
   Server,
@@ -97,9 +98,10 @@ export function navLocation(pathname: string): { group?: string; title: string }
     const item = group.items.find((i) => navMatches(i.href, pathname))
     if (item) return { group: group.label, title: item.title }
   }
-  // Account lives in the sidebar footer rather than a group, so it has no
+  // These live in the sidebar footer rather than a group, so they have no
   // parent to name.
   if (pathname.startsWith("/account")) return { title: "Account" }
+  if (pathname.startsWith("/appearance")) return { title: "Appearance" }
   return null
 }
 
@@ -164,7 +166,15 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild tooltip="Account">
+            <SidebarMenuButton asChild isActive={isActive("/appearance")} tooltip="Appearance">
+              <Link href="/appearance">
+                <Palette className="size-4" />
+                <span>Appearance</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={isActive("/account")} tooltip="Account">
               <Link href="/account">
                 <ShieldCheck className="size-4" />
                 <span className="flex-1">Account</span>

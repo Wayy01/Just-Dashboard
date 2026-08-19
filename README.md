@@ -74,8 +74,11 @@ quietly became internet-facing announces itself instead of waiting to be found.
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
 | **System users** | Host accounts, SSH keys, lock and unlock. |
 | **Audit log** | Every state-changing request, filterable. |
+| **Appearance** | Twelve palettes, nine dark and three light. Picked per browser, applied before the page paints. |
 
 ![The files page](docs/files.png)
+
+![The appearance page](docs/appearance.png)
 
 ---
 

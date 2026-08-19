@@ -1,12 +1,20 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./themes.css";
 
 @custom-variant dark (&:is(.dark *));
 
-/* The dashboard runs dark-only — an operator stares at this during incidents,
-   often at night — so the dark palette is applied at the root rather than
-   behind a toggle. */
-:root {
+/* The default palette, Midnight, spelled out here rather than only in
+   themes.css so a document renders correctly before the theme script has set
+   an attribute on it — including with JavaScript off entirely.
+
+   Wrapped in :where() to give it zero specificity. A theme block is a bare
+   `[data-theme="x"]` selector, which scores the same as `:root`, so without
+   this the winner would be decided by which file @import happened to place
+   last — and @import has to come first in a stylesheet, which is the wrong
+   order. Zero specificity makes the intent explicit instead: this is the
+   fallback, anything that names a theme beats it. */
+:where(:root) {
   --radius: 0.625rem;
 
   /* Every neutral carries a little of the primary's hue (258) rather than
@@ -146,8 +154,9 @@
 }
 
 /* The sign-in screen is the only full-bleed surface in the app, and a flat
- * rectangle of near-black is a poor first impression of a product whose colour
- * is blue. One soft wash of the primary from the top edge, nothing more. */
+ * rectangle of one colour is a poor first impression. One soft wash of
+ * whatever the theme's primary happens to be, from the top edge, nothing
+ * more. */
 .auth-backdrop {
   background-image: radial-gradient(
     62% 46% at 50% 0%,
@@ -185,8 +194,8 @@
   background-image:
     linear-gradient(to right, var(--card) 20%, transparent),
     linear-gradient(to left, var(--card) 20%, transparent),
-    linear-gradient(to right, rgb(0 0 0 / 0.28), transparent),
-    linear-gradient(to left, rgb(0 0 0 / 0.28), transparent);
+    linear-gradient(to right, color-mix(in oklab, var(--foreground) 22%, transparent), transparent),
+    linear-gradient(to left, color-mix(in oklab, var(--foreground) 22%, transparent), transparent);
   background-position:
     left center,
     right center,

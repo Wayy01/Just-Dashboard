@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/hooks/use-auth"
+import { DEFAULT_THEME, themeBootstrapScript } from "@/lib/themes"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -10,10 +11,15 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Dark-only: an operator reads this during incidents, often at night, and a
-  // theme toggle is not worth the flash-of-wrong-theme it costs.
+  // The server has no way to know which theme this browser chose, so it always
+  // renders the default and the inline script below corrects the attributes
+  // before the first paint. suppressHydrationWarning covers exactly that
+  // divergence, which is confined to <html>.
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" className="dark" data-theme={DEFAULT_THEME} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript() }} />
+      </head>
       <body className="antialiased">
         <AuthProvider>
           {children}
