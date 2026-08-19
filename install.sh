@@ -210,7 +210,13 @@ case "$CHOICE" in
 	warn "The address allowlist is the only thing in front of it, and it is"
 	warn "checked before authentication — so get it right."
 	say ""
-	yes_no "Continue anyway?" n || die "sensible. Re-run and pick option 1 (Tailscale) or 2 (SSH tunnel)."
+	# The dashboard makes irreversible actions typed rather than clicked, on the
+	# grounds that a yes/no prompt is answered reflexively. Putting a
+	# root-equivalent panel on the internet deserves at least the same friction.
+	say "  To continue, type: ${BOLD}expose to the internet${RESET}"
+	PHRASE="$(ask "Confirm" "")"
+	[ "$PHRASE" = "expose to the internet" ] \
+		|| die "not confirmed. Re-run and pick option 1 (Tailscale) or 2 (SSH tunnel)."
 	PUB_IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
 	SITE="$(ask "This machine's public address" "${PUB_IP:-}")"
 	[ -n "$SITE" ] || die "an address is required."
