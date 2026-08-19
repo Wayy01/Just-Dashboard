@@ -33,7 +33,22 @@ internet.** Several things enforce that rather than merely suggest it:
 
 ```bash
 git clone https://github.com/Wayy01/vps-dashboard.git
-cd vps-dashboard
+cd vps-dashboard && sudo ./install.sh
+```
+
+The installer asks how you intend to reach the dashboard — an SSH tunnel,
+Tailscale, WireGuard, or a public address with an allowlist — generates the
+master key and a first password, writes `.env`, builds the stack, waits for it
+to answer, and prints the exact command to get in.
+
+It will offer to install Docker if it is missing, and Tailscale if you choose
+that route. Running it again on an existing install keeps your `.env` and just
+rebuilds, so it is safe to re-run after `git pull`.
+
+<details>
+<summary>Or set it up by hand</summary>
+
+```bash
 cp .env.example .env
 ```
 
@@ -62,6 +77,8 @@ That last line prints the generated admin password **once**:
 "msg":"bootstrap admin created — change this password immediately",
 "username":"admin","password":"xK3p…"
 ```
+
+</details>
 
 ### Reaching it
 
