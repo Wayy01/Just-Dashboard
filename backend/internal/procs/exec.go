@@ -27,7 +27,13 @@ var (
 
 // Unit and application names are restricted to what systemd and PM2 actually
 // permit. Anything outside this set is rejected rather than escaped.
-var safeName = regexp.MustCompile(`^[A-Za-z0-9._@:\-]{1,128}$`)
+//
+// The first character may not be a hyphen: nothing here goes through a shell,
+// but a name that starts with one is still a name systemctl or pm2 would read
+// as an option rather than an argument. No exploit was constructible — "=" is
+// excluded and the single argument is consumed as a value — so this is
+// hardening a shape, not closing a hole.
+var safeName = regexp.MustCompile(`^[A-Za-z0-9._@:][A-Za-z0-9._@:\-]{0,127}$`)
 
 func ValidateName(name string) error {
 	if !safeName.MatchString(name) {

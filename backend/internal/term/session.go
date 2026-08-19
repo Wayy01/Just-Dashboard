@@ -57,6 +57,16 @@ func (s *Session) Attached() int {
 	return len(s.subscribers)
 }
 
+// Size reads the window under the lock Resize writes it under. The listing
+// handler runs on a different goroutine from the socket that resizes, so
+// reading the fields directly was a race the detector flags — benign on amd64,
+// but there is no reason to keep it.
+func (s *Session) Size() (rows, cols uint16) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Rows, s.Cols
+}
+
 func (s *Session) LastActive() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()

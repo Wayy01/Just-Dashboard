@@ -16,12 +16,20 @@ func (s *Server) mountProxyRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/status", s.handle(s.handleProxyStatus))
 		r.Method(http.MethodGet, "/vhosts", s.handle(s.handleVHostList))
 		r.Method(http.MethodGet, "/config", s.handle(s.handleProxyConfigRead))
-		r.Method(http.MethodPost, "/validate", s.handle(s.handleProxyValidate))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			// Validation is not a read: nginx cannot test a config it cannot
+			// see at its own path, so validating puts the candidate on disk
+			// for the length of one `nginx -t`. That is the same trust as
+			// writing it, so it is gated the same way.
+			r.Method(http.MethodPost, "/validate", s.handle(s.handleProxyValidate))
 			r.Method(http.MethodPut, "/config", s.handle(s.handleProxyConfigWrite))
-			r.Method(http.MethodPost, "/vhosts/{name}/enabled", s.handle(s.handleVHostToggle))
 			r.Method(http.MethodPost, "/reload", s.handle(s.handleProxyReload))
+			s.destructive(r, func(r chi.Router) {
+				// Disabling a vhost takes a site offline, and the handler
+				// asks for the site's own name before it will.
+				r.Method(http.MethodPost, "/vhosts/{name}/enabled", s.handle(s.handleVHostToggle))
+			})
 		})
 	})
 
@@ -74,8 +82,9 @@ type proxyConfigRequest struct {
 	Reload  bool          `json:"reload"`
 }
 
-// handleProxyValidate is a dry run: it tells the operator whether a config
-// would be accepted without changing what is currently serving traffic.
+// handleProxyValidate tells the operator whether a config would be accepted,
+// and leaves what is currently serving traffic as it was. It is audited rather
+// than skipped because the nginx path touches the real file to do it.
 func (s *Server) handleProxyValidate(w http.ResponseWriter, r *http.Request) error {
 	var req proxyConfigRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -85,7 +94,8 @@ func (s *Server) handleProxyValidate(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return mapProxyError(err)
 	}
-	httpx.SkipAudit(r)
+	httpx.SetAudit(r, "proxy.config.validate", req.Path,
+		map[string]any{"kind": req.Kind, "valid": res.Valid, "bytes": len(req.Content)})
 	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }

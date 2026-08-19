@@ -114,8 +114,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-type ipKey struct{}
-
 // RealIP resolves the peer address, consulting X-Forwarded-For only when the
 // immediate peer is a configured trusted proxy. Without that check any client
 // could spoof its way past the allowlist by setting the header itself.

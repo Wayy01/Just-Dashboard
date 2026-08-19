@@ -23,7 +23,10 @@ func (s *Server) mountTerminalRoutes(r chi.Router) {
 		r.Method(http.MethodPost, "/reattach", s.handle(s.handleTerminalReattach))
 		r.Method(http.MethodGet, "/{id}/attach", s.handle(s.handleTerminalAttach))
 		r.Method(http.MethodPost, "/{id}/detach", s.handle(s.handleTerminalDetach))
-		r.Method(http.MethodDelete, "/{id}", s.handle(s.handleTerminalKill))
+		s.destructive(r, func(r chi.Router) {
+			// Killing a session takes whatever is running in it with it.
+			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleTerminalKill))
+		})
 		r.Method(http.MethodGet, "/{id}/cwd", s.handle(s.handleTerminalCWD))
 	})
 }
@@ -45,11 +48,12 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 	sessions := s.modules.term.List()
 	view := make([]map[string]any, 0, len(sessions))
 	for _, sess := range sessions {
+		rows, cols := sess.Size()
 		view = append(view, map[string]any{
 			"id": sess.ID, "title": sess.Title, "shell": sess.Shell,
 			"persisted": sess.Persisted, "tmuxName": sess.TmuxName,
 			"createdAt": sess.CreatedAt, "owner": sess.Owner,
-			"rows": sess.Rows, "cols": sess.Cols, "pid": sess.PID,
+			"rows": rows, "cols": cols, "pid": sess.PID,
 			"attached": sess.Attached(), "lastActive": sess.LastActive().UTC(),
 		})
 	}

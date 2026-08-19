@@ -22,8 +22,12 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/rules", s.handle(s.handleFirewallAddRule))
-			r.Method(http.MethodPost, "/enabled", s.handle(s.handleFirewallToggle))
-			r.Method(http.MethodDelete, "/rules/{number}", s.handle(s.handleFirewallDeleteRule))
+			s.destructive(r, func(r chi.Router) {
+				// Turning the firewall off, or deleting the rule that admits
+				// you, is how an operator locks themselves out of the box.
+				r.Method(http.MethodPost, "/enabled", s.handle(s.handleFirewallToggle))
+				r.Method(http.MethodDelete, "/rules/{number}", s.handle(s.handleFirewallDeleteRule))
+			})
 		})
 	})
 

@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
@@ -39,6 +40,12 @@ const (
 type Service struct {
 	nginxDir  string
 	caddyFile string
+
+	// nginx has no way to test a config fragment in isolation, so validation
+	// has to put the candidate where nginx expects it and take it away again.
+	// Serialising every validate and write keeps two operators from having
+	// their candidates interleaved on the same file.
+	mu sync.Mutex
 }
 
 func New(nginxDir, caddyFile string) *Service {
@@ -246,24 +253,43 @@ type ValidationResult struct {
 	Command string `json:"command"`
 }
 
-// Validate runs the server's own config test. For nginx the candidate content
-// is written to a temporary copy of the real file, tested, and the original
-// restored on failure — nginx has no way to test a config it cannot see at the
-// path it expects.
+// Validate runs the server's own config test and leaves the host exactly as it
+// found it. Caddy can be pointed at a temporary file; nginx cannot, so the
+// candidate is written where nginx expects it, tested, and the original put
+// back **whatever the outcome**. An earlier version restored only on failure,
+// which turned a "dry run" into a permanent write for every file nginx does not
+// currently include — `nginx -t` says nothing about a config it never reads, so
+// the result was Valid and the rollback never ran.
 func (s *Service) Validate(ctx context.Context, kind Kind, path, content string) (*ValidationResult, error) {
-	switch kind {
-	case KindCaddy:
+	if kind == KindCaddy {
 		return s.validateCaddy(ctx, content)
-	default:
-		return s.validateNginx(ctx, path, content)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validateNginx(ctx, path, content)
 }
 
+// validateNginx must be called with s.mu held.
 func (s *Service) validateNginx(ctx context.Context, path, content string) (*ValidationResult, error) {
 	full, err := s.allowedPath(path)
 	if err != nil {
 		return nil, err
 	}
+	restore, err := s.stageNginx(full, content)
+	if err != nil {
+		return nil, err
+	}
+	res := runValidator(ctx, "nginx", "-t")
+	// Unconditional: the caller asked whether this content would be accepted,
+	// not for it to be installed.
+	restore()
+	return res, nil
+}
+
+// stageNginx puts content at full and returns the undo. The transient window is
+// unavoidable for nginx and is why validation requires system.admin — the same
+// capability as writing the file outright.
+func (s *Service) stageNginx(full, content string) (func(), error) {
 	original, readErr := os.ReadFile(full)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return nil, readErr
@@ -272,20 +298,18 @@ func (s *Service) validateNginx(ctx context.Context, path, content string) (*Val
 	if st, err := os.Stat(full); err == nil {
 		mode = st.Mode().Perm()
 	}
-	if err := os.WriteFile(full, []byte(content), mode); err != nil {
+	if err := writeAtomic(full, content); err != nil {
 		return nil, err
 	}
-	res := runValidator(ctx, "nginx", "-t")
-	if !res.Valid {
-		// Put the working config back before returning: leaving a broken file
-		// on disk means the next unrelated reload takes the sites down.
+	return func() {
+		// Leaving a broken or absent file behind means the next unrelated
+		// reload takes the sites down, so the undo ignores nothing.
 		if readErr == nil {
 			os.WriteFile(full, original, mode)
 		} else {
 			os.Remove(full)
 		}
-	}
-	return res, nil
+	}, nil
 }
 
 func (s *Service) validateCaddy(ctx context.Context, content string) (*ValidationResult, error) {
@@ -320,6 +344,8 @@ func runValidator(ctx context.Context, name string, args ...string) *ValidationR
 // WriteConfig saves a configuration only after it validates. The order here is
 // the whole point of the endpoint: validate, then write, then reload.
 func (s *Service) WriteConfig(ctx context.Context, kind Kind, path, content string) (*ValidationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.allowedPath(path)
 	if err != nil {
 		return nil, err
@@ -337,14 +363,25 @@ func (s *Service) WriteConfig(ctx context.Context, kind Kind, path, content stri
 		}
 		return res, nil
 	}
-	// validateNginx already writes the candidate and rolls back on failure,
-	// so a successful result means the new content is on disk.
+	// Validation now restores the original unconditionally, so the write has
+	// to be made explicitly afterwards. Testing again with the content in
+	// place is not redundant: the first test only proves nginx tolerates the
+	// candidate at the moment it ran, and the file may not be in nginx's
+	// include tree at all.
 	res, err := s.validateNginx(ctx, path, content)
 	if err != nil {
 		return nil, err
 	}
 	if !res.Valid {
 		return res, ErrInvalidConf
+	}
+	restore, err := s.stageNginx(full, content)
+	if err != nil {
+		return nil, err
+	}
+	if after := runValidator(ctx, "nginx", "-t"); !after.Valid {
+		restore()
+		return after, ErrInvalidConf
 	}
 	return res, nil
 }

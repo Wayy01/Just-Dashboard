@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -154,6 +155,15 @@ func (s *Server) handleContainerInspect(w http.ResponseWriter, r *http.Request) 
 	// environment routinely holds the master key, database passwords and
 	// deploy credentials. Anyone below system.admin gets them redacted here,
 	// on the server, so a readonly API token cannot lift them either.
+	//
+	// This raises the cost of reading a secret; it does not make it
+	// impossible, and it was never meant to be read as though it did. Below
+	// system.admin the same values are still reachable through the compose
+	// file at /docker/stacks/{name}/config, through /files/read within
+	// JD_FILE_ROOTS, and through a deploy run's log. Every role sees
+	// everything on this box by design — see the roles table in the README —
+	// and narrowing that is a decision about the product, not about this
+	// handler.
 	if !httpx.MustPrincipal(r).Can(auth.CapSystemAdmin) {
 		detail.Env = dockerx.RedactEnv(detail.Env)
 	}
@@ -521,7 +531,11 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
-	if err := httpx.RequireTypedConfirmation(w, r, "delete image"); err != nil {
+	// Keyed on the image's own tag, for the reason containerLifecycle gives:
+	// a fixed phrase like "delete image" carries no information about which
+	// image, so deleting several in a row is exactly the muscle-memory case
+	// the typed confirmation exists to prevent.
+	if err := httpx.RequireTypedConfirmation(w, r, s.imageName(r.Context(), id)); err != nil {
 		return err
 	}
 	res, err := s.modules.docker.RemoveImage(r.Context(), id,
@@ -616,7 +630,11 @@ func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) er
 
 func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
-	if err := httpx.RequireTypedConfirmation(w, r, "delete network"); err != nil {
+	n, err := s.modules.docker.InspectNetwork(r.Context(), id)
+	if err != nil {
+		return s.dockerErr(err)
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, n.Name); err != nil {
 		return err
 	}
 	if err := s.modules.docker.RemoveNetwork(r.Context(), id); err != nil {
@@ -625,6 +643,34 @@ func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) err
 	httpx.SetAudit(r, "docker.network.remove", id, nil)
 	httpx.NoContent(w)
 	return nil
+}
+
+// imageName is the phrase an operator types to confirm removing an image: its
+// first tag, or a short id for one that was never tagged. It falls back to the
+// id it was given rather than failing, so a confirmation is always possible.
+func (s *Server) imageName(ctx context.Context, id string) string {
+	images, err := s.modules.docker.ListImages(ctx, true)
+	if err != nil {
+		return shortID(id)
+	}
+	for _, img := range images {
+		if img.ID != id && !strings.HasPrefix(img.ID, id) {
+			continue
+		}
+		if len(img.RepoTags) > 0 && img.RepoTags[0] != "<none>:<none>" {
+			return img.RepoTags[0]
+		}
+		return shortID(img.ID)
+	}
+	return shortID(id)
+}
+
+func shortID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func (s *Server) handleStackList(w http.ResponseWriter, r *http.Request) error {
@@ -709,11 +755,4 @@ func (s *Server) handlePruneAll(w http.ResponseWriter, r *http.Request) error {
 		map[string]any{"volumes": includeVolumes, "allImages": allImages, "reports": reports})
 	httpx.JSON(w, http.StatusOK, reports)
 	return nil
-}
-
-func defaultStr(v, def string) string {
-	if strings.TrimSpace(v) == "" {
-		return def
-	}
-	return v
 }

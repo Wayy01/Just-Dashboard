@@ -127,13 +127,69 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Entry, int, error) {
 	return out, total, rows.Err()
 }
 
-// Detail renders structured context as compact JSON for the detail column.
+// Detail renders structured context as compact JSON for the detail column,
+// with anything that looks like a secret replaced.
+//
+// Callers are expected to build a purpose-made map and never hand over a
+// request struct — but one of them did, and a password reset spent its life
+// written in clear into the one table here that is not sealed. The redaction
+// pass is the backstop, not the rule: it is cheap because audit writes are
+// rare, and it means the next handler that forgets cannot leak anything worse
+// than a field name.
 func Detail(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}
-	return string(b)
+	var decoded any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		return string(b)
+	}
+	redacted, err := json.Marshal(redact(decoded))
+	if err != nil {
+		return string(b)
+	}
+	return string(redacted)
+}
+
+// secretish are substrings of a field name that mean "never write the value".
+// Bare "key" is absent on purpose: deploy.env.set logs the *name* of the
+// variable it set, and that is the useful half of the record.
+var secretish = []string{
+	"password", "passwd", "secret", "token", "credential",
+	"passphrase", "dsn", "apikey", "api_key", "privatekey", "private_key",
+}
+
+func redact(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if isSecretField(k) {
+				out[k] = "[redacted]"
+				continue
+			}
+			out[k] = redact(val)
+		}
+		return out
+	case []any:
+		for i, val := range t {
+			t[i] = redact(val)
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+func isSecretField(name string) bool {
+	lower := strings.ToLower(name)
+	for _, needle := range secretish {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncate(s string, n int) string {

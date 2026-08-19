@@ -21,6 +21,7 @@ func RequireTypedConfirmation(w http.ResponseWriter, r *http.Request, phrase str
 			Status:  http.StatusPreconditionRequired,
 			Code:    "confirmation_required",
 			Message: "type \"" + phrase + "\" to confirm this irreversible action",
+			Phrase:  phrase,
 		}
 	}
 	if got != phrase {
@@ -28,6 +29,7 @@ func RequireTypedConfirmation(w http.ResponseWriter, r *http.Request, phrase str
 			Status:  http.StatusPreconditionFailed,
 			Code:    "confirmation_mismatch",
 			Message: "confirmation text does not match \"" + phrase + "\"",
+			Phrase:  phrase,
 		}
 	}
 	return nil

@@ -52,9 +52,8 @@ func (s *Server) handleLogSources(w http.ResponseWriter, r *http.Request) error 
 				// is routinely outside /var/log. Trusting the path because
 				// PM2 reported it keeps those readable without widening the
 				// roots for everything else.
-				if p.OutLogPath != "" {
-					s.modules.logs.AllowExtra(filepath.Dir(p.OutLogPath))
-				}
+				s.modules.logs.AllowSource(p.OutLogPath)
+				s.modules.logs.AllowSource(p.ErrLogPath)
 			}
 		}
 	}

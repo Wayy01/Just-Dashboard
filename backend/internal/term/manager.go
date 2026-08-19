@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -16,9 +17,34 @@ import (
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
-	enabled  bool
-	shell    string
-	useTmux  bool
+	// pending counts sessions whose PTY is being spawned. Without it the cap
+	// check and the insert sat in two different critical sections, so
+	// concurrent creates all passed a check that had room for one of them.
+	pending int
+	enabled bool
+	shell   string
+	useTmux bool
+}
+
+// reserve takes one of the session slots, or reports that none are free. The
+// returned function gives the slot back and must be called however the caller
+// returns.
+func (m *Manager) reserve() (release func(), err error) {
+	m.mu.Lock()
+	if len(m.sessions)+m.pending >= maxSessions {
+		m.mu.Unlock()
+		return nil, ErrTooMany
+	}
+	m.pending++
+	m.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.pending--
+			m.mu.Unlock()
+		})
+	}, nil
 }
 
 func NewManager(enabled bool, shell string) *Manager {
@@ -54,12 +80,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	if !m.enabled {
 		return nil, ErrDisabled
 	}
-	m.mu.Lock()
-	if len(m.sessions) >= maxSessions {
-		m.mu.Unlock()
-		return nil, ErrTooMany
+	release, err := m.reserve()
+	if err != nil {
+		return nil, err
 	}
-	m.mu.Unlock()
+	defer release()
 
 	id := randomID()
 	if opts.Rows == 0 {
@@ -228,6 +253,20 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	if !m.useTmux {
 		return nil, ErrNotFound
 	}
+	// Only the sessions this dashboard created, and only ones that actually
+	// exist. Passing the name straight to `tmux attach-session` let an
+	// operator attach to anybody's personal tmux session on the host — the
+	// listing endpoint already restricts itself to the vpsd- ones, and this is
+	// the same rule applied where it is enforced rather than displayed.
+	if !slices.Contains(m.TmuxSessions(ctx), tmuxName) {
+		return nil, ErrNotFound
+	}
+	// A reattached session is a session; it counts against the same cap.
+	release, err := m.reserve()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if rows == 0 {
 		rows = 24
 	}

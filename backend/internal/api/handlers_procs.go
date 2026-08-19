@@ -66,7 +66,11 @@ func (s *Server) mountProcessRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/user/{user}", s.handle(s.handleCronUserGet))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
-			r.Method(http.MethodPut, "/user/{user}", s.handle(s.handleCronUserPut))
+			s.destructive(r, func(r chi.Router) {
+				// A crontab is replaced wholesale, so a write loses whatever
+				// was there before.
+				r.Method(http.MethodPut, "/user/{user}", s.handle(s.handleCronUserPut))
+			})
 		})
 	})
 }
@@ -122,6 +126,12 @@ func (s *Server) handlePM2LogStream(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return mapProcsError(err)
 	}
+	// PM2 puts its logs where the ecosystem file says, routinely outside
+	// JD_LOG_ROOTS. Registering the two files PM2 itself just named is what
+	// makes them tailable; doing it here rather than relying on someone having
+	// loaded /logs/sources first is why opening this page directly works.
+	s.modules.logs.AllowSource(outPath)
+	s.modules.logs.AllowSource(errPath)
 	conn, err := s.WS.Upgrade(w, r)
 	if err != nil {
 		return nil

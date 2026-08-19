@@ -41,6 +41,11 @@ func (s *Server) Routes() http.Handler {
 		// by CI. They still sit behind the network allowlist.
 		r.Route("/hooks", func(r chi.Router) {
 			r.Use(s.apiLim.Middleware)
+			// Audited like every other mutating group. Without this the only
+			// trail was whatever the handler chose to write, and it wrote
+			// nothing for an unknown hook id — so enumerating ids was silent,
+			// on the one route reachable without a dashboard session.
+			r.Use(httpx.AuditMutations(s.Audit))
 			r.Method(http.MethodPost, "/deploy/{hookID}", s.handle(s.handleDeployWebhook))
 		})
 
@@ -125,8 +130,7 @@ func (s *Server) mountAccountRoutes(r chi.Router) {
 		r.Method(http.MethodPost, "/", s.handle(s.handleCreateUser))
 		r.Method(http.MethodPatch, "/{id}", s.handle(s.handleUpdateUser))
 		r.Method(http.MethodPost, "/{id}/reset-totp", s.handle(s.handleResetUserTOTP))
-		r.Group(func(r chi.Router) {
-			r.Use(s.destrLim.ByPrincipal)
+		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDeleteUser))
 		})
 	})
@@ -137,9 +141,20 @@ func (s *Server) mountAccountRoutes(r chi.Router) {
 	})
 }
 
-// destructive wraps routes whose effects cannot be undone. They get a tighter
-// rate budget on top of the capability check; the typed-confirmation phrase is
-// enforced inside each handler, where the expected phrase is known.
+// destructive marks routes whose effects cannot be undone.
+//
+// It is the one marker for that, and it is applied to every such route even
+// where the surrounding group already demands a stricter capability — nesting
+// it inside a system.admin group costs nothing (admin holds every capability)
+// and buys the tighter rate budget plus one honest answer to "which routes are
+// irreversible?". The typed-confirmation phrase is still enforced inside each
+// handler, where the expected phrase is known; adding a destructive route
+// means doing both.
+//
+// The one route that cannot use it is POST /databases/{id}/query, where
+// whether the request is destructive depends on the SQL rather than on the
+// route. That handler applies the same capability check and the same budget by
+// hand, after classifying the statement.
 func (s *Server) destructive(r chi.Router, fn func(chi.Router)) {
 	r.Group(func(r chi.Router) {
 		r.Use(httpx.RequireCapability(auth.CapDestructive))

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -33,7 +34,9 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/", s.handle(s.handleDBConnCreate))
-			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDBConnDelete))
+			s.destructive(r, func(r chi.Router) {
+				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDBConnDelete))
+			})
 		})
 		r.Method(http.MethodGet, "/{id}/ping", s.handle(s.handleDBPing))
 		r.Method(http.MethodGet, "/{id}/stats", s.handle(s.handleDBStats))
@@ -123,6 +126,10 @@ func (s *Server) handleDBConnList(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
+// connNameRe deliberately excludes "/" and ".." so a connection name cannot
+// walk out of the backup directory it names.
+var connNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
+
 type createDBConnRequest struct {
 	Name   string     `json:"name"`
 	Driver dbx.Driver `json:"driver"`
@@ -139,6 +146,12 @@ func (s *Server) handleDBConnCreate(w http.ResponseWriter, r *http.Request) erro
 	}
 	if req.Name == "" || req.DSN == "" {
 		return httpx.BadRequest("name and dsn are required")
+	}
+	// The name becomes a directory under JD_BACKUP_DIR when this connection
+	// is dumped, so it is bounded like any other path segment rather than
+	// taken verbatim.
+	if !connNameRe.MatchString(req.Name) {
+		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
 	}
 	sealed, err := s.Sealer.Seal(req.DSN)
 	if err != nil {
@@ -505,9 +518,17 @@ func (s *Server) handleDBRestore(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.RequireTypedConfirmation(w, r, target); err != nil {
 		return err
 	}
+	// Invariant 6: a client-supplied path goes through files.Resolve, which is
+	// the only thing in the codebase that checks both the literal path and its
+	// symlink-resolved form against JD_FILE_ROOTS. "It stats" was the whole of
+	// the previous check.
+	dumpPath, err := s.modules.files.Resolve(req.DumpPath)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
 	ctx, cancel := timeoutCtx(r, 60*time.Minute)
 	defer cancel()
-	out, err := dbx.Restore(ctx, conn.Driver, dsn, req.Database, req.DumpPath)
+	out, err := dbx.Restore(ctx, conn.Driver, dsn, req.Database, dumpPath)
 	if err != nil {
 		httpx.SetAudit(r, "database.restore", conn.Name,
 			map[string]any{"database": target, "dumpPath": req.DumpPath, "error": err.Error()})

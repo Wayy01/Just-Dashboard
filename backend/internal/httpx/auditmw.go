@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
+	"github.com/go-chi/chi/v5"
 )
 
 const auditCtxKey ctxKey = 200
@@ -18,6 +19,7 @@ type auditInfo struct {
 	Action string
 	Target string
 	Detail string
+	Actor  string
 	Skip   bool
 }
 
@@ -29,6 +31,14 @@ func SetAudit(r *http.Request, action, target string, detail any) {
 		if detail != nil {
 			info.Detail = audit.Detail(detail)
 		}
+	}
+}
+
+// SetAuditActor names who acted when it is not the authenticated principal —
+// the deploy webhook, which authenticates by HMAC and has no session.
+func SetAuditActor(r *http.Request, actor string) {
+	if info, ok := r.Context().Value(auditCtxKey).(*auditInfo); ok {
+		info.Actor = actor
 	}
 }
 
@@ -61,6 +71,15 @@ func AuditMutations(log *audit.Logger) func(http.Handler) http.Handler {
 				return
 			}
 			p := MustPrincipal(r)
+			actor := info.Actor
+			if actor != "" {
+				// An explicit actor means this route does not authenticate a
+				// principal at all, so MustPrincipal's readonly stand-in must
+				// not be recorded as the caller's role.
+				p = &Principal{}
+			} else {
+				actor = principalKind(p)
+			}
 			detail := info.Detail
 			if sw.Status() >= 400 && p.FailureReason != "" {
 				detail = strings.TrimSpace(detail + " " + p.FailureReason)
@@ -70,7 +89,7 @@ func AuditMutations(log *audit.Logger) func(http.Handler) http.Handler {
 				Username: p.Username(),
 				Role:     string(p.Role),
 				IP:       ClientIP(r),
-				Actor:    principalKind(p),
+				Actor:    actor,
 				Action:   info.Action,
 				Target:   info.Target,
 				Method:   r.Method,
@@ -93,37 +112,40 @@ func principalKind(p *Principal) string {
 // apiVersionSegment matches the leading "v1/" of a trimmed API path.
 var apiVersionSegment = regexp.MustCompile(`^v[0-9]+/`)
 
-// defaultAction derives a stable label from the path so an un-annotated route
+// chiParam matches a chi route parameter, "{id}" or "{name}".
+var chiParam = regexp.MustCompile(`^\{[^}]*\}$`)
+
+// defaultAction derives a stable label from the route so an un-annotated route
 // still produces a meaningful audit entry.
+//
+// It reads chi's route *pattern* rather than the request path, because chi
+// already knows which segments are parameters and which are the route's name.
+// Guessing from the path did not: any segment of twelve characters or more was
+// dropped as an "id", which quietly deleted the route names too —
+// POST /dashboard-users was recorded as "post:" with no action at all, and a
+// rejected POST /docker/containers/abc/stop as "post:docker.containers.abc",
+// losing the verb that distinguishes it from kill or restart. This label is
+// what a denied or failed request is recorded under, so those were exactly the
+// entries that lost their meaning.
 //
 // The version segment is stripped along with the prefix: an audit trail should
 // read "docker.container.restart" for the life of the action, not gain a "v1."
 // today and a "v2." the day the API is revised.
 func defaultAction(r *http.Request) string {
-	path := strings.TrimPrefix(r.URL.Path, "/api/")
+	path := r.URL.Path
+	if rc := chi.RouteContext(r.Context()); rc != nil {
+		if pattern := rc.RoutePattern(); pattern != "" {
+			path = pattern
+		}
+	}
+	path = strings.TrimPrefix(path, "/api/")
 	path = apiVersionSegment.ReplaceAllString(path, "")
-	parts := strings.Split(path, "/")
-	keep := make([]string, 0, 3)
-	for _, p := range parts {
-		if p == "" || looksLikeID(p) {
+	keep := make([]string, 0, 4)
+	for _, p := range strings.Split(path, "/") {
+		if p == "" || p == "*" || chiParam.MatchString(p) {
 			continue
 		}
 		keep = append(keep, p)
-		if len(keep) == 3 {
-			break
-		}
 	}
 	return strings.ToLower(r.Method) + ":" + strings.Join(keep, ".")
-}
-
-func looksLikeID(s string) bool {
-	if len(s) >= 12 {
-		return true
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
 }

@@ -13,7 +13,14 @@ type APIError struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
-	err     error
+	// Phrase is the exact text a client must echo in X-Confirm. It is sent as
+	// its own field because the client used to recover it by matching the
+	// first quoted run in Message, which broke on any phrase containing a
+	// double quote — a file named `my"file` could not be deleted from the UI
+	// at all, because the dialog asked for `my` and the server wanted the
+	// whole name.
+	Phrase string `json:"phrase,omitempty"`
+	err    error
 }
 
 func (e *APIError) Error() string {

@@ -387,10 +387,14 @@ const maxHookBody = 1 << 20
 // allowlist that fronts the whole API.
 func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) error {
 	hookID := chi.URLParam(r, "hookID")
+	httpx.SetAuditActor(r, "webhook")
 	project, err := s.modules.deployStore.ByHookID(r.Context(), hookID)
 	if err != nil {
 		// A wrong hook id and a wrong signature are both reported as
-		// unauthorized so the endpoint does not confirm which ids exist.
+		// unauthorized so the endpoint does not confirm which ids exist. The
+		// attempted id goes into the audit trail, though: a run of these is
+		// what an enumeration scan looks like from the inside.
+		httpx.SetAudit(r, "deploy.webhook", hookID, map[string]any{"reason": "unknown hook id"})
 		return httpx.Err(http.StatusUnauthorized, "unauthorized", "unknown or unauthorised deploy hook")
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHookBody))
@@ -402,27 +406,19 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) err
 		signature = r.Header.Get("X-Signature-256")
 	}
 	if err := s.modules.deployStore.VerifySignature(r.Context(), project.ID, body, signature); err != nil {
-		s.Audit.Record(r.Context(), audit.Entry{
-			IP: httpx.ClientIP(r), Actor: "webhook",
-			Action: "deploy.webhook", Target: project.Name,
-			Method: r.Method, Path: r.URL.Path,
-			Status: http.StatusUnauthorized, Success: false,
-			Detail: audit.Detail(map[string]any{"reason": "signature mismatch"}),
-		})
+		httpx.SetAudit(r, "deploy.webhook", project.Name, map[string]any{"reason": "signature mismatch"})
 		return httpx.Err(http.StatusUnauthorized, "unauthorized", "unknown or unauthorised deploy hook")
 	}
 	if !project.Enabled {
+		httpx.SetAudit(r, "deploy.webhook", project.Name, map[string]any{"reason": "hook disabled"})
 		return httpx.Err(http.StatusForbidden, "hook_disabled", deploy.ErrDisabled.Error())
 	}
 	if s.modules.deployer.IsRunning(project.ID) {
+		httpx.SetAudit(r, "deploy.webhook", project.Name, map[string]any{"reason": "already deploying"})
 		return httpx.Err(http.StatusConflict, "already_running", deploy.ErrAlreadyDeploying.Error())
 	}
-	s.Audit.Record(r.Context(), audit.Entry{
-		IP: httpx.ClientIP(r), Actor: "webhook",
-		Action: "deploy.webhook", Target: project.Name,
-		Method: r.Method, Path: r.URL.Path, Status: http.StatusAccepted, Success: true,
-		Detail: audit.Detail(map[string]any{"branch": project.Branch, "bytes": len(body)}),
-	})
+	httpx.SetAudit(r, "deploy.webhook", project.Name,
+		map[string]any{"branch": project.Branch, "bytes": len(body)})
 	go func() {
 		ctx, cancel := detachedContext(60 * 60)
 		defer cancel()

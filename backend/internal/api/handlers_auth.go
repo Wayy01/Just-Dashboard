@@ -149,7 +149,11 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) error 
 		return httpx.Internal(err)
 	}
 	if err := s.Auth.VerifySecondFactor(r.Context(), p.SessionID, p.UserID(), req.Code); err != nil {
-		// The code was just consumed for enrollment; elevate directly.
+		// The code was just consumed confirming the enrollment, so TOTP's
+		// replay window refuses it a second time. That leaves this partial
+		// session unable to pass its second factor, so it is revoked and the
+		// user signs in again — rather than elevated on the strength of a
+		// check that did not pass.
 		if err := s.Auth.RevokeSession(r.Context(), p.SessionID); err != nil {
 			return httpx.Internal(err)
 		}
@@ -329,7 +333,17 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return httpx.Internal(err)
 	}
-	httpx.SetAudit(r, "dashboard.user.update", target.Username, req)
+	// Deliberately not the request struct: it carries the new password, and
+	// audit_log is the one table in JD_DATA_DIR that auth.Sealer does not
+	// encrypt. Every system.admin can read it back through GET /audit.
+	detail := map[string]any{"passwordChanged": req.Password != nil}
+	if req.Role != nil {
+		detail["role"] = *req.Role
+	}
+	if req.Disabled != nil {
+		detail["disabled"] = *req.Disabled
+	}
+	httpx.SetAudit(r, "dashboard.user.update", target.Username, detail)
 	httpx.JSON(w, http.StatusOK, updated)
 	return nil
 }
@@ -475,15 +489,4 @@ func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"entries": entries, "total": total})
 	return nil
-}
-
-func atoiDefault(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
 }

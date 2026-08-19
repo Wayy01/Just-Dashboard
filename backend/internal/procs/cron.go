@@ -102,6 +102,18 @@ func ValidateCrontab(content string) error {
 			}
 		}
 		if strings.HasPrefix(trimmed, "@") {
+			// cronNicknames exists precisely to say which of these are real;
+			// accepting any @word meant "@bogus /bin/sh" passed the
+			// dashboard's validation and was rejected by crontab itself with
+			// a generic error, which is the opposite of what validating here
+			// is for.
+			fields := strings.Fields(trimmed)
+			if !cronNicknames[strings.ToLower(fields[0])] {
+				return fmt.Errorf("line %d does not start with a valid schedule: %q", i+1, trimmed)
+			}
+			if len(fields) < 2 {
+				return fmt.Errorf("line %d has a schedule but no command: %q", i+1, trimmed)
+			}
 			continue
 		}
 		fields := strings.Fields(trimmed)
