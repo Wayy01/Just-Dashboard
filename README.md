@@ -76,6 +76,10 @@ quietly became internet-facing announces itself instead of waiting to be found.
 | **Audit log** | Every state-changing request, filterable. |
 | **Appearance** | Twelve palettes, nine dark and three light. Picked per browser, applied before the page paints. |
 
+None of it is more than one keystroke away: **⌘K** opens a command palette from
+any page, which jumps to any of the above and switches theme without making you
+leave what you were reading.
+
 ![The files page](docs/files.png)
 
 ![The appearance page](docs/appearance.png)
