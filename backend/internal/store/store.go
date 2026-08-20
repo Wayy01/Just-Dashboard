@@ -175,6 +175,34 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Host utilisation, sampled by the server on its own timer.
+--
+-- The charts used to exist only inside the browser tab that drew them, so the
+-- history began when the page was opened and died with it: a spike at 03:00
+-- was unobservable unless somebody happened to be watching at 03:00. That is
+-- the opposite of what a monitoring page is for. Sampling here, driven by the
+-- backend rather than by a client, is what makes "what happened while I was
+-- asleep" answerable at all.
+--
+-- ts is the rowid, so range scans over a window are a b-tree walk and a
+-- restarted sampler landing on the same second replaces rather than
+-- duplicates. Rows are pruned past JD_METRICS_RETENTION.
+CREATE TABLE IF NOT EXISTS metric_samples (
+  ts             INTEGER PRIMARY KEY,
+  cpu_percent    REAL NOT NULL DEFAULT 0,
+  load1          REAL NOT NULL DEFAULT 0,
+  mem_percent    REAL NOT NULL DEFAULT 0,
+  mem_used       INTEGER NOT NULL DEFAULT 0,
+  mem_total      INTEGER NOT NULL DEFAULT 0,
+  swap_percent   REAL NOT NULL DEFAULT 0,
+  net_rx         REAL NOT NULL DEFAULT 0,
+  net_tx         REAL NOT NULL DEFAULT 0,
+  disk_read      REAL NOT NULL DEFAULT 0,
+  disk_write     REAL NOT NULL DEFAULT 0,
+  disk_percent   REAL NOT NULL DEFAULT 0,
+  uptime_seconds INTEGER NOT NULL DEFAULT 0
+);
 `
 
 func Open(dataDir string) (*Store, error) {

@@ -105,7 +105,7 @@ check and budget by hand.
 
 `api.Server` holds the dependency graph; `api/modules.go` (`moduleSet`) holds the feature
 backends (docker, procs, logsx, term, files, gitx, updates, proxysvc, dbx, linuxusers,
-netsec, backups, deploy). Each is optional by design: a host with no Docker socket, no
+netsec, backups, deploy, metrics). Each is optional by design: a host with no Docker socket, no
 systemd or no fail2ban still serves everything else, and the affected routes return a
 precise "unavailable on this host" code that the frontend renders as information rather than
 an error (see `ErrorState` in `frontend/src/components/state.tsx`).
@@ -152,6 +152,19 @@ database connection strings, deploy env, backup credentials. State is SQLite in
 `JD_DATA_DIR`; the schema is a single `CREATE TABLE IF NOT EXISTS` block in
 `internal/store/store.go` with no migration tool, so schema changes must be additive and
 tolerate an existing database.
+
+### Metrics history
+
+`internal/metrics` samples the host on the server's own timer and stores the result in
+SQLite, because the live socket can only ever describe the time since a browser tab was
+opened — a dashboard whose charts start empty on every visit cannot show the spike that
+happened overnight, which is most of the reason to have charts. `GET
+/system/metrics/history` aggregates a window into at most N buckets **in SQL**, and every
+series carries its bucket's peak next to its mean: a 100% second inside a ten-minute
+bucket averages away to nothing, so a chart drawn only from means reports a quiet night
+that was not quiet. The recorder keeps its own `sysinfo.Collector`, since rates are deltas
+against the previous call and sharing one with the request handlers would let a one-shot
+`GET /system/metrics` shorten the interval the next recorded rate is divided by.
 
 ### Streaming
 

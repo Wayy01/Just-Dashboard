@@ -1,11 +1,13 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/metrics"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/sysinfo"
 	"github.com/go-chi/chi/v5"
 )
@@ -14,6 +16,7 @@ func (s *Server) mountSystemRoutes(r chi.Router) {
 	r.Route("/system", func(r chi.Router) {
 		r.Method(http.MethodGet, "/host", s.handle(s.handleSystemHost))
 		r.Method(http.MethodGet, "/metrics", s.handle(s.handleSystemMetrics))
+		r.Method(http.MethodGet, "/metrics/history", s.handle(s.handleMetricsHistory))
 		r.Method(http.MethodGet, "/disk-usage", s.handle(s.handleDiskBreakdown))
 		r.Method(http.MethodGet, "/stream", s.handle(s.handleSystemStream))
 	})
@@ -35,6 +38,79 @@ func (s *Server) handleSystemMetrics(w http.ResponseWriter, r *http.Request) err
 	}
 	httpx.JSON(w, http.StatusOK, snap)
 	return nil
+}
+
+// handleMetricsHistory serves the recorded past, which is the only part of
+// the metrics story that survives the browser tab being closed.
+//
+// The window is expressed either as a range back from now — the normal case,
+// "show me the last 24 hours" — or as an explicit from/to for a client that
+// wants to hold a window still while time moves. Either way the server picks
+// the bucket width from the number of points asked for, so a week and a minute
+// cost the same to render.
+func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) error {
+	q := r.URL.Query()
+	if !s.modules.metrics.Enabled() {
+		return httpx.Err(http.StatusServiceUnavailable, "metrics_history_disabled",
+			"metrics history is not being recorded on this host (JD_METRICS_RETENTION=0)")
+	}
+
+	points := atoiDefault(q.Get("points"), 240)
+	if points < 2 {
+		points = 2
+	}
+	// The ceiling is about the chart, not the database: a series with more
+	// points than the canvas has pixels costs bandwidth to say nothing.
+	if points > 2000 {
+		points = 2000
+	}
+
+	to := time.Now()
+	if v := q.Get("to"); v != "" {
+		parsed, err := parseInstant(v)
+		if err != nil {
+			return httpx.BadRequest("to: %v", err)
+		}
+		to = parsed
+	}
+	from := to.Add(-time.Hour)
+	if v := q.Get("from"); v != "" {
+		parsed, err := parseInstant(v)
+		if err != nil {
+			return httpx.BadRequest("from: %v", err)
+		}
+		from = parsed
+	} else if v := q.Get("range"); v != "" {
+		window, err := metrics.ParseWindow(v)
+		if err != nil {
+			return httpx.BadRequest("range: %v", err)
+		}
+		from = to.Add(-window)
+	}
+	if !from.Before(to) {
+		return httpx.BadRequest("the requested window ends before it starts")
+	}
+
+	series, err := s.modules.metrics.Range(r.Context(), from, to, points)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
+
+// parseInstant accepts either RFC3339 or unix seconds, because the first is
+// what a human writes into a URL and the second is what Date.now()/1000 gives
+// the frontend without a formatting round trip.
+func parseInstant(v string) (time.Time, error) {
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(n, 0), nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("expected unix seconds or an RFC3339 timestamp, got %q", v)
+	}
+	return t, nil
 }
 
 // handleDiskBreakdown answers "what is filling this mount". It is a recursive

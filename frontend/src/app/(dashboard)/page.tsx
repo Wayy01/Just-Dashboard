@@ -8,8 +8,25 @@ import { cn } from "@/lib/utils"
 import { bytes, duration, percent, rate } from "@/lib/format"
 import type { DirEntry, Snapshot } from "@/lib/types"
 import { useMetrics } from "@/hooks/use-metrics"
-import { Page, PageHeader, Metric, MetricStrip } from "@/components/page"
+import {
+  useMetricsHistory,
+  useRangePreference,
+  type HistoryState,
+} from "@/hooks/use-metrics-history"
+import {
+  coverageNote,
+  historyRows,
+  liveRows,
+  RANGES,
+  rangeSpec,
+  retentionNote,
+  type ChartRow,
+  type RangeKey,
+  type RangeSpec,
+} from "@/lib/metrics-range"
+import { Page, PageHeader, Metric, MetricStrip, Section } from "@/components/page"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StatTile, utilisationBar, utilisationTone } from "@/components/stat-tile"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
@@ -33,25 +50,44 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
+// Peaks share their series' colour: they are the same measurement seen at a
+// finer resolution, not a different quantity, and giving them a colour of
+// their own would read as four unrelated lines instead of two pairs.
 const cpuConfig = {
   cpu: { label: "CPU", color: "var(--chart-1)" },
+  cpuPeak: { label: "CPU peak", color: "var(--chart-1)" },
 } satisfies ChartConfig
 
 const memConfig = {
   mem: { label: "Memory", color: "var(--chart-2)" },
+  memPeak: { label: "Memory peak", color: "var(--chart-2)" },
   swap: { label: "Swap", color: "var(--chart-4)" },
 } satisfies ChartConfig
 
 const netConfig = {
   rx: { label: "In", color: "var(--chart-2)" },
+  rxPeak: { label: "In peak", color: "var(--chart-2)" },
   tx: { label: "Out", color: "var(--chart-5)" },
+  txPeak: { label: "Out peak", color: "var(--chart-5)" },
 } satisfies ChartConfig
 
 export default function OverviewPage() {
-  // The stream itself is owned by the dashboard shell, so this page is a pure
-  // reader: arriving here shows the history collected while you were away
-  // rather than an empty chart and a fresh handshake.
+  // Two sources, deliberately kept apart. The live socket is owned by the
+  // dashboard shell and is only ever a view of "since this tab opened"; the
+  // recorded series comes from the backend, which has been sampling on its own
+  // timer whether or not anyone was watching. The page defaults to the
+  // recorded one, because a server that has been up for ten hours has ten
+  // hours worth looking at and a chart that starts at zero every visit cannot
+  // show a spike that happened overnight.
   const { host, snapshot, history, error } = useMetrics()
+  const [range, setRange] = useRangePreference()
+  const spec = rangeSpec(range)
+  const recorded = useMetricsHistory(range)
+
+  const rows = useMemo<ChartRow[]>(() => {
+    if (range === "live") return liveRows(history)
+    return recorded.history ? historyRows(recorded.history) : []
+  }, [range, history, recorded.history])
 
   if (error && !snapshot) {
     return (
@@ -77,7 +113,15 @@ export default function OverviewPage() {
   }
 
   const memTone = utilisationTone(snapshot.memory.usedPercent)
-  const latest = history.at(-1)
+  // The tiles are "right now", so they read the newest snapshot rather than
+  // the chart series — which, on a recorded range, is a six-minute average.
+  const throughput = {
+    rx: snapshot.net.reduce((sum, n) => sum + n.recvRate, 0),
+    tx: snapshot.net.reduce((sum, n) => sum + n.sendRate, 0),
+  }
+  const showPeaks = range !== "live"
+  const empty = rows.length === 0
+  const placeholder = emptyChartNote(range, recorded)
 
   return (
     <Page>
@@ -149,142 +193,234 @@ export default function OverviewPage() {
         <StatTile
           label="Network"
           icon={Waves}
-          value={rate(latest?.rx ?? 0)}
-          hint={`${rate(latest?.tx ?? 0)} out · ${snapshot.net.length} interfaces`}
+          value={rate(throughput.rx)}
+          hint={`${rate(throughput.tx)} out · ${snapshot.net.length} interfaces`}
           trailing={<span className="text-[11px] text-muted-foreground">in</span>}
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        <Panel>
-          <PanelHeader
-            icon={Cpu}
-            title="Processor"
-            description={host.cpuModel}
-            actions={
-              <span className="numeric text-sm font-medium">
-                {percent(snapshot.cpu.totalPercent)}
-              </span>
-            }
-          />
-          <PanelBody className="space-y-4">
-            <ChartContainer config={cpuConfig} className="h-[190px] w-full">
-              <AreaChart data={history} margin={{ left: -22, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
-                <XAxis
-                  dataKey="t"
-                  tickLine={false}
-                  axisLine={false}
-                  minTickGap={48}
-                  fontSize={10}
-                />
-                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={10} unit="%" />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Area
-                  dataKey="cpu"
-                  type="monotone"
-                  stroke="var(--color-cpu)"
-                  strokeWidth={1.5}
-                  fill="var(--color-cpu)"
-                  fillOpacity={0.14}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ChartContainer>
-            <PerCoreBars cores={snapshot.cpu.perCore} />
-          </PanelBody>
-        </Panel>
+      <Section
+        title="Utilisation"
+        description={<SeriesCaption range={range} spec={spec} recorded={recorded} />}
+        actions={<RangePicker value={range} onChange={setRange} />}
+      >
+        {recorded.error && <ErrorState error={recorded.error} />}
+
+        <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+          <Panel>
+            <PanelHeader
+              icon={Cpu}
+              title="Processor"
+              description={host.cpuModel}
+              actions={
+                <span className="numeric text-sm font-medium">
+                  {percent(snapshot.cpu.totalPercent)}
+                </span>
+              }
+            />
+            <PanelBody className="space-y-4">
+              {empty ? (
+                <ChartPlaceholder note={placeholder} />
+              ) : (
+                <ChartContainer config={cpuConfig} className="h-[190px] w-full">
+                  <AreaChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+                    <XAxis
+                      dataKey="t"
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={48}
+                      fontSize={10}
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={10}
+                      unit="%"
+                    />
+                    <ChartTooltip content={<ChartTooltipContent labelFormatter={rowLabel} />} />
+                    {showPeaks && <ChartLegend content={<ChartLegendContent />} />}
+                    {/* Drawn first so it sits behind the average: the peak is the
+                        envelope the average lives inside, not a second reading. */}
+                    {showPeaks && (
+                      <Area
+                        dataKey="cpuPeak"
+                        type="monotone"
+                        stroke="var(--color-cpuPeak)"
+                        strokeWidth={1}
+                        strokeOpacity={0.45}
+                        fill="var(--color-cpuPeak)"
+                        fillOpacity={0.07}
+                        isAnimationActive={false}
+                      />
+                    )}
+                    <Area
+                      dataKey="cpu"
+                      type="monotone"
+                      stroke="var(--color-cpu)"
+                      strokeWidth={1.5}
+                      fill="var(--color-cpu)"
+                      fillOpacity={0.14}
+                      isAnimationActive={false}
+                    />
+                  </AreaChart>
+                </ChartContainer>
+              )}
+              <PerCoreBars cores={snapshot.cpu.perCore} />
+            </PanelBody>
+          </Panel>
+
+          <Panel>
+            <PanelHeader icon={MemoryStick} title="Memory and swap" description="Share of total" />
+            <PanelBody className="space-y-4">
+              {empty ? (
+                <ChartPlaceholder note={placeholder} />
+              ) : (
+                <ChartContainer config={memConfig} className="h-[190px] w-full">
+                  <LineChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+                    <XAxis
+                      dataKey="t"
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={48}
+                      fontSize={10}
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={10}
+                      unit="%"
+                    />
+                    <ChartTooltip content={<ChartTooltipContent labelFormatter={rowLabel} />} />
+                    <ChartLegend content={<ChartLegendContent />} />
+                    <Line
+                      dataKey="mem"
+                      type="monotone"
+                      stroke="var(--color-mem)"
+                      strokeWidth={1.5}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    {showPeaks && (
+                      <Line
+                        dataKey="memPeak"
+                        type="monotone"
+                        stroke="var(--color-memPeak)"
+                        strokeWidth={1}
+                        strokeOpacity={0.5}
+                        strokeDasharray="3 3"
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    )}
+                    <Line
+                      dataKey="swap"
+                      type="monotone"
+                      stroke="var(--color-swap)"
+                      strokeWidth={1.5}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                </ChartContainer>
+              )}
+              <MetricStrip>
+                <Metric label="Used" value={bytes(snapshot.memory.used)} />
+                <Metric label="Cached" value={bytes(snapshot.memory.cached)} />
+                <Metric label="Buffers" value={bytes(snapshot.memory.buffers)} />
+                <Metric label="Available" value={bytes(snapshot.memory.available)} />
+              </MetricStrip>
+            </PanelBody>
+          </Panel>
+        </div>
 
         <Panel>
-          <PanelHeader
-            icon={MemoryStick}
-            title="Memory and swap"
-            description="Share of total, sampled every 2 seconds"
-          />
-          <PanelBody className="space-y-4">
-            <ChartContainer config={memConfig} className="h-[190px] w-full">
-              <LineChart data={history} margin={{ left: -22, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
-                <XAxis
-                  dataKey="t"
-                  tickLine={false}
-                  axisLine={false}
-                  minTickGap={48}
-                  fontSize={10}
-                />
-                <YAxis domain={[0, 100]} tickLine={false} axisLine={false} fontSize={10} unit="%" />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Line
-                  dataKey="mem"
-                  type="monotone"
-                  stroke="var(--color-mem)"
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-                <Line
-                  dataKey="swap"
-                  type="monotone"
-                  stroke="var(--color-swap)"
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ChartContainer>
-            <MetricStrip>
-              <Metric label="Used" value={bytes(snapshot.memory.used)} />
-              <Metric label="Cached" value={bytes(snapshot.memory.cached)} />
-              <Metric label="Buffers" value={bytes(snapshot.memory.buffers)} />
-              <Metric label="Available" value={bytes(snapshot.memory.available)} />
-            </MetricStrip>
+          <PanelHeader icon={Activity} title="Network throughput" description="All interfaces">
+            <span className="flex-1" />
+          </PanelHeader>
+          <PanelBody>
+            {empty ? (
+              <ChartPlaceholder note={placeholder} />
+            ) : (
+              <ChartContainer config={netConfig} className="h-[180px] w-full">
+                <AreaChart data={rows} margin={{ left: 4, right: 4, top: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+                  <XAxis
+                    dataKey="t"
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={48}
+                    fontSize={10}
+                  />
+                  <YAxis
+                    width={56}
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={10}
+                    tickFormatter={(v) => bytes(v)}
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={rowLabel}
+                        formatter={(value) => rate(Number(value))}
+                      />
+                    }
+                  />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  <Area
+                    dataKey="rx"
+                    type="monotone"
+                    stroke="var(--color-rx)"
+                    strokeWidth={1.5}
+                    fill="var(--color-rx)"
+                    fillOpacity={0.14}
+                    isAnimationActive={false}
+                  />
+                  <Area
+                    dataKey="tx"
+                    type="monotone"
+                    stroke="var(--color-tx)"
+                    strokeWidth={1.5}
+                    fill="var(--color-tx)"
+                    fillOpacity={0.14}
+                    isAnimationActive={false}
+                  />
+                  {/* Peaks are lines rather than filled areas: stacked
+                      translucent fills stop being readable at four series. */}
+                  {showPeaks && (
+                    <Line
+                      dataKey="rxPeak"
+                      type="monotone"
+                      stroke="var(--color-rxPeak)"
+                      strokeWidth={1}
+                      strokeOpacity={0.5}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  )}
+                  {showPeaks && (
+                    <Line
+                      dataKey="txPeak"
+                      type="monotone"
+                      stroke="var(--color-txPeak)"
+                      strokeWidth={1}
+                      strokeOpacity={0.5}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  )}
+                </AreaChart>
+              </ChartContainer>
+            )}
           </PanelBody>
         </Panel>
-      </div>
-
-      <Panel>
-        <PanelHeader icon={Activity} title="Network throughput" description="All interfaces">
-          <span className="flex-1" />
-        </PanelHeader>
-        <PanelBody>
-          <ChartContainer config={netConfig} className="h-[180px] w-full">
-            <AreaChart data={history} margin={{ left: 4, right: 4, top: 4 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
-              <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={10} />
-              <YAxis
-                width={56}
-                tickLine={false}
-                axisLine={false}
-                fontSize={10}
-                tickFormatter={(v) => bytes(v)}
-              />
-              <ChartTooltip
-                content={<ChartTooltipContent formatter={(value) => rate(Number(value))} />}
-              />
-              <ChartLegend content={<ChartLegendContent />} />
-              <Area
-                dataKey="rx"
-                type="monotone"
-                stroke="var(--color-rx)"
-                strokeWidth={1.5}
-                fill="var(--color-rx)"
-                fillOpacity={0.14}
-                isAnimationActive={false}
-              />
-              <Area
-                dataKey="tx"
-                type="monotone"
-                stroke="var(--color-tx)"
-                strokeWidth={1.5}
-                fill="var(--color-tx)"
-                fillOpacity={0.14}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ChartContainer>
-        </PanelBody>
-      </Panel>
+      </Section>
 
       <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <MountsPanel snapshot={snapshot} />
@@ -296,6 +432,115 @@ export default function OverviewPage() {
 
 function Dot() {
   return <span className="text-muted-foreground/40">·</span>
+}
+
+/**
+ * Chooses the window the charts cover.
+ *
+ * "Live" is kept as an option rather than made the only one: at two seconds a
+ * sample it shows detail no stored series can, and it is the right view when
+ * you are watching something happen right now. It is simply the wrong default
+ * for a page you open to find out what happened while you were not here.
+ */
+function RangePicker({ value, onChange }: { value: RangeKey; onChange: (next: RangeKey) => void }) {
+  return (
+    <ToggleGroup
+      type="single"
+      value={value}
+      // Radix reports "" when the active item is pressed again. Falling back to
+      // the current value makes that a no-op instead of clearing the chart.
+      onValueChange={(next) => onChange((next as RangeKey) || value)}
+      variant="outline"
+      size="sm"
+      aria-label="Chart time range"
+    >
+      {RANGES.map((option) => (
+        <ToggleGroupItem key={option.key} value={option.key} className="px-2.5 text-[11px]">
+          {option.label}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  )
+}
+
+/**
+ * Says which series is on screen and how coarse it is.
+ *
+ * A downsampled chart that does not admit to being downsampled invites the
+ * wrong reading: 6-minute averages look like a calm hour unless the reader
+ * knows the peak line is what a spike would show up in.
+ */
+function SeriesCaption({
+  range,
+  spec,
+  recorded,
+}: {
+  range: RangeKey
+  spec: RangeSpec
+  recorded: HistoryState
+}) {
+  if (range === "live") {
+    return <>Live feed, every 2 seconds · begins when this tab opened</>
+  }
+  if (recorded.disabled) {
+    return <>History recording is turned off on this server (JD_METRICS_RETENTION=0)</>
+  }
+  const parts = [
+    recorded.history
+      ? `Recorded on the server · ${bucketLabel(recorded.history.stepSeconds)} averages and peaks`
+      : `Recorded on the server · last ${spec.label}`,
+  ]
+  const coverage = coverageNote(recorded.history)
+  if (coverage) parts.push(coverage)
+  const retention = retentionNote(recorded.history, spec)
+  if (retention) parts.push(retention)
+  return <>{parts.join(" · ")}</>
+}
+
+function bucketLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} minute`
+  return `${Math.round(seconds / 3600)} hour`
+}
+
+/**
+ * What a chart shows when it has nothing to draw.
+ *
+ * Deliberately not an error: a dashboard installed ten minutes ago genuinely
+ * has no week of history, and rendering that as a failure would send an
+ * operator looking for a fault that is not there.
+ */
+function emptyChartNote(range: RangeKey, recorded: HistoryState): string {
+  if (range === "live") return "Waiting for the first frame…"
+  if (recorded.disabled) {
+    return "History is not being recorded on this server. Set JD_METRICS_RETENTION to keep it."
+  }
+  if (recorded.loading) return "Loading history…"
+  if (recorded.error) return "History could not be read."
+  const every = recorded.history?.sampleIntervalSeconds
+  return every
+    ? `Nothing recorded in this window yet — the server samples every ${every}s.`
+    : "Nothing recorded in this window yet."
+}
+
+function ChartPlaceholder({ note }: { note: string }) {
+  return (
+    <div className="flex h-[190px] w-full items-center justify-center rounded-lg border border-dashed border-hairline bg-surface-sunken px-4 text-center text-xs text-muted-foreground">
+      {note}
+    </div>
+  )
+}
+
+/**
+ * The tooltip heading.
+ *
+ * The axis label is deliberately terse — a bare clock, or a day and an hour —
+ * so it fits at a glance; the tooltip is where the full timestamp belongs,
+ * because "14:06" in a week-wide chart is not an answer to "when".
+ */
+function rowLabel(_: unknown, payload: readonly { payload?: unknown }[] | undefined) {
+  const row = payload?.[0]?.payload as ChartRow | undefined
+  return row?.at ?? ""
 }
 
 function PerCoreBars({ cores }: { cores: number[] }) {

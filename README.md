@@ -59,7 +59,7 @@ quietly became internet-facing announces itself instead of waiting to be found.
 
 | | |
 | --- | --- |
-| **Overview** | Live CPU per core, memory, swap, per-mount disk with an on-demand directory size scan, per-interface network rates. Pushed over WebSocket. |
+| **Overview** | CPU per core, memory, swap, per-mount disk with an on-demand directory size scan, per-interface network rates. The live view is pushed over WebSocket; the 1h/6h/24h/7d views are read back from history the backend records itself, so the charts cover the time nobody had the page open — including the peaks a downsampled average would hide. |
 | **Docker** | Containers with live stats, streaming logs, a shell in the browser, inspect — plus images, volumes, networks, compose stacks and prune. |
 | **Processes** | PM2 apps with merged output tailing, systemd units with journal streaming, an htop-style table with guarded kill, and a crontab editor. |
 | **Logs** | One viewer over files, container output, PM2 and the journal. Grep and level filters apply **server-side**, before lines are sent. |
@@ -148,6 +148,8 @@ installer writes the ones that matter; these are for tuning afterwards.
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
 | `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
 | `JD_DEV` | `false` | Development only. Drops `Secure` from the session cookie so the UI works over plain HTTP. Never set it on a real host. |
+| `JD_METRICS_INTERVAL` | `15s` | How often the backend samples the host into its own history. Clamped to 5s–5m. |
+| `JD_METRICS_RETENTION` | `7d` | How long that history is kept. Accepts days (`7d`). `0` records nothing and leaves only the live feed. |
 | `JD_LOG_LEVEL` | `info` | `debug` for verbose logs. |
 
 **Where it looks**
@@ -164,7 +166,8 @@ installer writes the ones that matter; these are for tuning afterwards.
 | `JD_BACKUP_DIR` | `/var/backups/just-dashboard` | Local backup destination and staging. |
 | `JD_DATA_DIR` | `/var/lib/just-dashboard` | The dashboard's own database. **Back this up.** |
 
-Durations take a unit (`12h`, `60m`) and booleans take `true`/`false`. A value
+Durations take a unit (`12h`, `60m`; the metrics settings also accept `7d`)
+and booleans take `true`/`false`. A value
 that cannot be parsed stops the dashboard at startup rather than being replaced
 by the default, so a typo is visible instead of silently in effect.
 

@@ -11,6 +11,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/gitx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/linuxusers"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/logsx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/metrics"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/netsec"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/procs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
@@ -24,6 +25,7 @@ import (
 // routes report a precise "unavailable on this host" error instead.
 type moduleSet struct {
 	sys          *sysinfo.Collector
+	metrics      *metrics.Recorder
 	docker       *dockerx.Client
 	pm2          *procs.PM2
 	systemd      *procs.Systemd
@@ -47,6 +49,7 @@ type moduleSet struct {
 
 func (s *Server) initModules() {
 	s.modules.sys = sysinfo.NewCollector()
+	s.modules.metrics = metrics.New(s.Store, s.Log, s.Cfg.MetricsInterval, s.Cfg.MetricsRetention)
 	s.modules.docker = dockerx.New(s.Cfg.DockerHost)
 	// Docker's disk accounting walks every layer and volume, which takes
 	// seconds on a busy host. Priming it here means the first operator to open
