@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Link2, Plus, TerminalSquare, X } from "lucide-react"
+import { Link2, Plus, ShieldAlert, TerminalSquare, X } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -17,6 +17,8 @@ import { Button } from "@/components/ui/button"
 type TerminalList = {
   enabled: boolean
   tmux: boolean
+  /** Who a new session logs in as, and where it lands. */
+  login: { user: string; home: string; shell: string; error?: string }
   sessions: TerminalSession[]
   detached: string[]
 }
@@ -97,6 +99,7 @@ export default function TerminalPage() {
   const active = data.sessions.some((s) => s.id === picked)
     ? picked
     : (data.sessions[0]?.id ?? null)
+  const activeSession = data.sessions.find((s) => s.id === active)
 
   // Sessions the dashboard is not currently holding a PTY for — typically
   // left behind by a restart, and worth offering back rather than orphaning.
@@ -121,10 +124,21 @@ export default function TerminalPage() {
         }
       />
 
-      <Notice icon={TerminalSquare} title="This is a real shell on the host">
-        Everything typed here runs with the dashboard process&apos;s privileges. Opening and closing
-        a session is recorded in the audit log.
-      </Notice>
+      {data.login.error ? (
+        <Notice icon={ShieldAlert} tone="danger" title="No account to log in as">
+          {data.login.error} Set <code className="font-mono">JD_TERMINAL_USER</code> to an account
+          that exists on this server.
+        </Notice>
+      ) : (
+        <Notice icon={TerminalSquare} title="A login shell on the host, not in the container">
+          Sessions log in as{" "}
+          <code className="font-mono font-medium text-foreground">{data.login.user}</code> and start
+          in <code className="font-mono">{data.login.home}</code>, running{" "}
+          <code className="font-mono">{data.login.shell}</code> — the same as an SSH session, so
+          your dotfiles, PATH and installed tools are all here. Opening and closing a session is
+          recorded in the audit log.
+        </Notice>
+      )}
 
       {orphans.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -206,6 +220,12 @@ export default function TerminalPage() {
             <XtermPane
               key={active}
               path={`/terminal/${active}/attach`}
+              // The prompt inside already says where you are; the header says
+              // who, which is the fact a root-equivalent shell should never
+              // make you go and check.
+              subtitle={`${activeSession?.user ?? data.login.user} · ${
+                activeSession?.shell ?? data.login.shell
+              }`}
               // No minimum height: the pane is whatever is left after the
               // header and the session strip, and a floor taller than that
               // would push the page past the window again — which is the one

@@ -138,6 +138,9 @@ function ContainerDetailPanel({
                   path={`/docker/containers/${detail.id}/exec`}
                   query={{ rows: 30, cols: 100 }}
                   className="h-full"
+                  // This one really is a shell inside the container, unlike
+                  // the terminal page's — saying so avoids confusing the two.
+                  subtitle={`${detail.name} · container shell`}
                 />
               )}
             </TabsContent>

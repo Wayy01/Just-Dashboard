@@ -1,10 +1,5 @@
 export type Capability =
-  | "read"
-  | "service.control"
-  | "file.write"
-  | "terminal"
-  | "destructive"
-  | "system.admin"
+  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -449,6 +444,8 @@ export type TerminalSession = {
   id: string
   title: string
   shell: string
+  /** The host account the shell logged in as. */
+  user: string
   persisted: boolean
   tmuxName: string
   createdAt: string
