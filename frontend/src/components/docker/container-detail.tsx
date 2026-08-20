@@ -17,6 +17,7 @@ import { Detail, DetailList } from "@/components/page"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /** How many log lines the panel keeps before dropping the oldest. */
 const LOG_LIMIT = 5000
@@ -133,21 +134,66 @@ function ContainerDetailPanel({
 
           {shell && (
             <TabsContent value="shell" className="min-h-0 flex-1">
-              {tab === "shell" && (
-                <XtermPane
-                  path={`/docker/containers/${detail.id}/exec`}
-                  query={{ rows: 30, cols: 100 }}
-                  className="h-full"
-                  // This one really is a shell inside the container, unlike
-                  // the terminal page's — saying so avoids confusing the two.
-                  subtitle={`${detail.name} · container shell`}
-                />
-              )}
+              {tab === "shell" && <ContainerShell detail={detail} />}
             </TabsContent>
           )}
         </Tabs>
       )}
     </SidePanel>
+  )
+}
+
+/**
+ * A shell *inside* the container — which is the whole point of it, and the
+ * thing most easily mistaken for the Terminal page.
+ *
+ * The two answer different questions. This one lands wherever the image says:
+ * as the image's USER, in its WORKDIR. For most images that is root in `/` or
+ * `/app`, and that is not a bug to be fixed — a container shell that quietly
+ * became a host login would leave no way to look inside a container at all.
+ * The Terminal page is the host; this is the box running on it.
+ *
+ * Docker already honours the image's user by default, so "default" sends no
+ * user at all rather than guessing one. Root is offered because the common
+ * reason to open this at all is that something needs installing or reading in
+ * an image that deliberately runs unprivileged.
+ */
+function ContainerShell({ detail }: { detail: ContainerDetail }) {
+  const [asRoot, setAsRoot] = useState(false)
+  const imageUser = detail.user || "root"
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1">
+          Inside <span className="font-mono text-foreground">{detail.name}</span>, not on the host —
+          the Terminal page is the server itself.
+        </span>
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
+          value={asRoot ? "root" : "default"}
+          onValueChange={(v) => v && setAsRoot(v === "root")}
+        >
+          <ToggleGroupItem value="default" className="px-2 text-[11px]">
+            {imageUser}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="root" className="px-2 text-[11px]">
+            root
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <XtermPane
+        // Keyed on the account, so switching it opens a new exec rather than
+        // leaving you in the previous one with a stale label above it.
+        key={asRoot ? "root" : "default"}
+        path={`/docker/containers/${detail.id}/exec`}
+        query={{ rows: 30, cols: 100, user: asRoot ? "root" : undefined }}
+        className="min-h-0 flex-1"
+        subtitle={`${asRoot ? "root" : imageUser}@${detail.name} · container shell`}
+      />
+    </div>
   )
 }
 
