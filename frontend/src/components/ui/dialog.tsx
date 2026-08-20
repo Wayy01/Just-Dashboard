@@ -39,6 +39,15 @@ function DialogOverlay({
   )
 }
 
+/**
+ * The dialog is `fixed` and centred, so content taller than the window hangs
+ * off both ends with no way to reach it — the page behind cannot scroll a
+ * fixed box into view. That is not cosmetic here: the typed-confirmation
+ * dialog is how every irreversible action is performed, and on a short window
+ * a long description pushed its Confirm and Cancel buttons past the bottom
+ * edge. Capping at the viewport and scrolling inside keeps the controls
+ * reachable at any window height.
+ */
 function DialogContent({
   className,
   children,
@@ -53,7 +62,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-50 grid w-full max-h-[calc(100svh-2rem)] overflow-y-auto max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
           className,
         )}
         {...props}
