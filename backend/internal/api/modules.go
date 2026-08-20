@@ -27,6 +27,7 @@ type moduleSet struct {
 	sys          *sysinfo.Collector
 	metrics      *metrics.Recorder
 	docker       *dockerx.Client
+	dockerStats  *dockerx.StatsSampler
 	pm2          *procs.PM2
 	systemd      *procs.Systemd
 	table        *procs.Table
@@ -49,8 +50,14 @@ type moduleSet struct {
 
 func (s *Server) initModules() {
 	s.modules.sys = sysinfo.NewCollector()
-	s.modules.metrics = metrics.New(s.Store, s.Log, s.Cfg.MetricsInterval, s.Cfg.MetricsRetention)
 	s.modules.docker = dockerx.New(s.Cfg.DockerHost)
+	s.modules.dockerStats = s.modules.docker.NewStatsSampler()
+	// The recorder gets a sampler of its own rather than the shared one: a
+	// series kept for a week is worth measuring over even intervals, and an
+	// operator refreshing the container table would otherwise keep shortening
+	// the window the next stored sample is differenced over.
+	s.modules.metrics = metrics.New(s.Store, s.Log, s.Cfg.MetricsInterval, s.Cfg.MetricsRetention).
+		WithContainers(s.modules.docker.NewStatsSampler())
 	// Docker's disk accounting walks every layer and volume, which takes
 	// seconds on a busy host. Priming it here means the first operator to open
 	// the Volumes tab reads a warm cache instead of waiting for the walk.

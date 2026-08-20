@@ -49,13 +49,28 @@ func (s *Server) handleSystemMetrics(w http.ResponseWriter, r *http.Request) err
 // the bucket width from the number of points asked for, so a week and a minute
 // cost the same to render.
 func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) error {
-	q := r.URL.Query()
 	if !s.modules.metrics.Enabled() {
 		return httpx.Err(http.StatusServiceUnavailable, "metrics_history_disabled",
 			"metrics history is not being recorded on this host (JD_METRICS_RETENTION=0)")
 	}
+	from, to, points, err := historyWindow(r)
+	if err != nil {
+		return err
+	}
+	series, err := s.modules.metrics.Range(r.Context(), from, to, points)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
 
-	points := atoiDefault(q.Get("points"), 240)
+// historyWindow reads the window every history endpoint accepts, so the host
+// series and a container's series are asked for the same way.
+func historyWindow(r *http.Request) (from, to time.Time, points int, err error) {
+	q := r.URL.Query()
+
+	points = atoiDefault(q.Get("points"), 240)
 	if points < 2 {
 		points = 2
 	}
@@ -65,38 +80,32 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) er
 		points = 2000
 	}
 
-	to := time.Now()
+	to = time.Now()
 	if v := q.Get("to"); v != "" {
-		parsed, err := parseInstant(v)
-		if err != nil {
-			return httpx.BadRequest("to: %v", err)
+		parsed, perr := parseInstant(v)
+		if perr != nil {
+			return from, to, points, httpx.BadRequest("to: %v", perr)
 		}
 		to = parsed
 	}
-	from := to.Add(-time.Hour)
+	from = to.Add(-time.Hour)
 	if v := q.Get("from"); v != "" {
-		parsed, err := parseInstant(v)
-		if err != nil {
-			return httpx.BadRequest("from: %v", err)
+		parsed, perr := parseInstant(v)
+		if perr != nil {
+			return from, to, points, httpx.BadRequest("from: %v", perr)
 		}
 		from = parsed
 	} else if v := q.Get("range"); v != "" {
-		window, err := metrics.ParseWindow(v)
-		if err != nil {
-			return httpx.BadRequest("range: %v", err)
+		window, werr := metrics.ParseWindow(v)
+		if werr != nil {
+			return from, to, points, httpx.BadRequest("range: %v", werr)
 		}
 		from = to.Add(-window)
 	}
 	if !from.Before(to) {
-		return httpx.BadRequest("the requested window ends before it starts")
+		return from, to, points, httpx.BadRequest("the requested window ends before it starts")
 	}
-
-	series, err := s.modules.metrics.Range(r.Context(), from, to, points)
-	if err != nil {
-		return httpx.Internal(err)
-	}
-	httpx.JSON(w, http.StatusOK, series)
-	return nil
+	return from, to, points, nil
 }
 
 // parseInstant accepts either RFC3339 or unix seconds, because the first is

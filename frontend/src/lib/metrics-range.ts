@@ -1,5 +1,10 @@
 import { clock, timestamp } from "@/lib/format"
-import type { MetricsHistory, MetricsHistoryPoint } from "@/lib/types"
+import type {
+  ContainerHistory,
+  ContainerHistoryPoint,
+  MetricsHistory,
+  MetricsHistoryPoint,
+} from "@/lib/types"
 import type { MetricsPoint } from "@/lib/metrics-store"
 
 /**
@@ -34,6 +39,15 @@ export const RANGES: RangeSpec[] = [
   { key: "24h", label: "24h", query: "24h", points: 288, refreshMs: 120_000, seconds: 86_400 },
   { key: "7d", label: "7d", query: "7d", points: 336, refreshMs: 300_000, seconds: 604_800 },
 ]
+
+/**
+ * The windows that come from the server.
+ *
+ * A container has no in-browser live buffer to fall back on — nothing
+ * accumulates its stats across a page load — so its charts offer only the
+ * recorded ranges rather than a "Live" option that would draw nothing.
+ */
+export const HISTORY_RANGES = RANGES.filter((r) => r.query)
 
 export function rangeSpec(key: RangeKey): RangeSpec {
   return RANGES.find((r) => r.key === key) ?? RANGES[1]
@@ -118,6 +132,12 @@ export type ChartRow = {
   rxPeak: number | null
   tx: number | null
   txPeak: number | null
+  /** Fullest filesystem, as a percentage. */
+  disk: number | null
+  diskRead: number | null
+  diskReadPeak: number | null
+  diskWrite: number | null
+  diskWritePeak: number | null
 }
 
 /** Turns the live socket buffer into chart rows. No peaks, no gaps to bridge. */
@@ -135,6 +155,11 @@ export function liveRows(history: MetricsPoint[]): ChartRow[] {
     rxPeak: null,
     tx: p.tx,
     txPeak: null,
+    disk: p.disk,
+    diskRead: p.dread,
+    diskReadPeak: null,
+    diskWrite: p.dwrite,
+    diskWritePeak: null,
   }))
 }
 
@@ -177,6 +202,11 @@ function toRow(point: MetricsHistoryPoint, ts: number, step: number): ChartRow {
     rxPeak: point.rxPeak,
     tx: point.tx,
     txPeak: point.txPeak,
+    disk: point.diskPercent,
+    diskRead: point.diskRead,
+    diskReadPeak: point.diskReadPeak,
+    diskWrite: point.diskWrite,
+    diskWritePeak: point.diskWritePeak,
   }
 }
 
@@ -194,6 +224,11 @@ function gapRow(ts: number): ChartRow {
     rxPeak: null,
     tx: null,
     txPeak: null,
+    disk: null,
+    diskRead: null,
+    diskReadPeak: null,
+    diskWrite: null,
+    diskWritePeak: null,
   }
 }
 
@@ -208,13 +243,25 @@ function shortDateTime(ts: number): string {
 }
 
 /**
+ * The frame shared by every recorded series — the host's and a container's
+ * alike. Both endpoints return the same envelope, so the notes below read it
+ * structurally rather than caring which series they were handed.
+ */
+export type HistoryWindow = {
+  from: string
+  earliest: string | null
+  stepSeconds: number
+  retentionSeconds: number
+}
+
+/**
  * How much of the requested window the record actually covers.
  *
  * A dashboard installed this morning cannot answer a question about last
  * Tuesday, and the honest response is to say so — an empty left-hand half of a
  * 7d chart otherwise reads as a week of zero load.
  */
-export function coverageNote(history: MetricsHistory | undefined): string | null {
+export function coverageNote(history: HistoryWindow | undefined): string | null {
   if (!history || !history.earliest) return null
   const earliest = new Date(history.earliest).getTime()
   if (Number.isNaN(earliest)) return null
@@ -226,8 +273,63 @@ export function coverageNote(history: MetricsHistory | undefined): string | null
 }
 
 /** The retention ceiling, phrased for the range that ran into it. */
-export function retentionNote(history: MetricsHistory | undefined, spec: RangeSpec): string | null {
+export function retentionNote(history: HistoryWindow | undefined, spec: RangeSpec): string | null {
   if (!history) return null
   if (history.retentionSeconds >= spec.seconds) return null
   return `history is kept for ${Math.round(history.retentionSeconds / 3600)}h`
+}
+
+/** One row of a container's chart data, with the same gap semantics as the host rows. */
+export type ContainerRow = {
+  t: string
+  ts: number
+  at: string
+  cpu: number | null
+  cpuPeak: number | null
+  mem: number | null
+  memPeak: number | null
+}
+
+export function containerRows(history: ContainerHistory): ContainerRow[] {
+  const step = Math.max(history.stepSeconds, 1) * 1000
+  const rows: ContainerRow[] = []
+  let previous = 0
+
+  for (const point of history.points) {
+    const ts = new Date(point.ts).getTime()
+    if (Number.isNaN(ts)) continue
+    // A container that was stopped and started again leaves a real hole here,
+    // and it is worth seeing as a hole: the flat line a chart would otherwise
+    // draw across it says the container was idle when it was not running.
+    if (previous !== 0 && ts - previous > step * 1.5) rows.push(containerGapRow(previous + step))
+    rows.push(toContainerRow(point, ts, step))
+    previous = ts
+  }
+  return rows
+}
+
+function toContainerRow(point: ContainerHistoryPoint, ts: number, step: number): ContainerRow {
+  return {
+    t: step >= 3_600_000 ? shortDateTime(ts) : clock(point.ts),
+    ts,
+    at: timestamp(point.ts),
+    cpu: point.cpu,
+    cpuPeak: point.cpuPeak,
+    mem: point.memBytes,
+    memPeak: point.memBytesPeak,
+  }
+}
+
+function containerGapRow(ts: number): ContainerRow {
+  return { t: "", ts, at: "", cpu: null, cpuPeak: null, mem: null, memPeak: null }
+}
+
+/** The memory ceiling to draw the limit line at, or 0 when the container has none. */
+export function memoryLimit(history: ContainerHistory | undefined): number {
+  if (!history) return 0
+  let limit = 0
+  for (const p of history.points) {
+    if (p.memLimit > limit) limit = p.memLimit
+  }
+  return limit
 }

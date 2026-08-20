@@ -41,6 +41,59 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 	})
 
 	r.Method(http.MethodGet, "/ssh-sessions", s.handle(s.handleSSHSessions))
+
+	r.Route("/logins", func(r chi.Router) {
+		r.Method(http.MethodGet, "/", s.handle(s.handleLoginHistory))
+		// btmp records whatever was typed at a login prompt, and what people
+		// type at a login prompt is sometimes their password in the username
+		// field. Successful logins are ordinary operational history; the
+		// failed ones are closer to reading somebody's keystrokes, so they
+		// need the capability that already implies full access.
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodGet, "/failed", s.handle(s.handleFailedLogins))
+		})
+	})
+}
+
+// handleLoginHistory answers "who got in while I was not watching".
+//
+// The SSH sessions table only ever showed the logins in progress at the
+// instant it was loaded, which is the one moment nobody is worried about. This
+// reads the host's own wtmp — the record was always there, the dashboard just
+// never showed it.
+func (s *Server) handleLoginHistory(w http.ResponseWriter, r *http.Request) error {
+	records, err := s.modules.netsec.LoginHistory(r.Context(), loginLimit(r))
+	if err != nil {
+		return httpx.Err(http.StatusServiceUnavailable, "login_history_unavailable",
+			"the host's login record could not be read on this system")
+	}
+	httpx.JSON(w, http.StatusOK, records)
+	return nil
+}
+
+func (s *Server) handleFailedLogins(w http.ResponseWriter, r *http.Request) error {
+	records, err := s.modules.netsec.FailedLogins(r.Context(), loginLimit(r))
+	if err != nil {
+		return httpx.Err(http.StatusServiceUnavailable, "login_history_unavailable",
+			"the host keeps no failed-login record, or it could not be read")
+	}
+	httpx.JSON(w, http.StatusOK, records)
+	return nil
+}
+
+// loginLimit caps the read. btmp on an internet-facing host runs to hundreds
+// of thousands of lines, and a table nobody can scroll is not more honest than
+// a capped one.
+func loginLimit(r *http.Request) int {
+	limit := atoiDefault(r.URL.Query().Get("limit"), 100)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return limit
 }
 
 func (s *Server) handleFirewallStatus(w http.ResponseWriter, r *http.Request) error {

@@ -162,7 +162,13 @@ happened overnight, which is most of the reason to have charts. `GET
 /system/metrics/history` aggregates a window into at most N buckets **in SQL**, and every
 series carries its bucket's peak next to its mean: a 100% second inside a ten-minute
 bucket averages away to nothing, so a chart drawn only from means reports a quiet night
-that was not quiet. The recorder keeps its own `sysinfo.Collector`, since rates are deltas
+that was not quiet.
+
+The same recorder samples every running container (`GET
+/docker/containers/{id}/stats/history`). That series is keyed by container **name**, not
+id: a compose redeploy replaces the container with a new id, and seeing across the
+restart is most of the point. Docker being unavailable is not an error there — the
+recorder logs it once and carries on with the host metrics. The recorder keeps its own `sysinfo.Collector`, since rates are deltas
 against the previous call and sharing one with the request handlers would let a one-shot
 `GET /system/metrics` shorten the interval the next recorded rate is divided by.
 

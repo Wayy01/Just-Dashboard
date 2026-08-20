@@ -11,6 +11,7 @@ import { LogViewer } from "@/components/log-viewer"
 import { XtermPane } from "@/components/xterm-pane"
 import { ErrorState, LoadingRows } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
+import { ContainerUsage } from "@/components/docker/container-usage"
 import { SidePanel } from "@/components/side-panel"
 import { Detail, DetailList } from "@/components/page"
 import { Badge } from "@/components/ui/badge"
@@ -82,6 +83,7 @@ function ContainerDetailPanel({
         <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-3">
           <TabsList className="w-fit shrink-0">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="usage">Usage</TabsTrigger>
             <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="env">Environment</TabsTrigger>
             <TabsTrigger value="mounts">Mounts</TabsTrigger>
@@ -90,6 +92,12 @@ function ContainerDetailPanel({
 
           <TabsContent value="overview" className="min-h-0 flex-1 overflow-y-auto">
             <OverviewFields detail={detail} />
+          </TabsContent>
+
+          {/* Recorded history rather than a live feed: the point is the spike
+              that happened while nobody had this panel open. */}
+          <TabsContent value="usage" className="min-h-0 flex-1 overflow-y-auto">
+            <ContainerUsage containerId={detail.id} name={detail.name} />
           </TabsContent>
 
           <TabsContent value="logs" className="min-h-0 flex-1">

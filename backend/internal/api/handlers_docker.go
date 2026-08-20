@@ -29,6 +29,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 			r.Method(http.MethodGet, "/{id}/logs", s.handle(s.handleContainerLogs))
 			r.Method(http.MethodGet, "/{id}/logs/stream", s.handle(s.handleContainerLogStream))
 			r.Method(http.MethodGet, "/{id}/stats/stream", s.handle(s.handleContainerStatStream))
+			r.Method(http.MethodGet, "/{id}/stats/history", s.handle(s.handleContainerStatsHistory))
 
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireCapability(auth.CapServiceControl))
@@ -182,12 +183,61 @@ func (s *Server) handleContainerStatsAll(w http.ResponseWriter, r *http.Request)
 			ids = append(ids, c.ID)
 		}
 	}
-	stats, err := s.modules.docker.StatsOnce(r.Context(), ids)
+	// The shared sampler, not a fresh one: a single request has no previous
+	// sample of its own to difference against, and would answer 0% for every
+	// container. The recorder keeps this one warm.
+	stats, err := s.modules.dockerStats.Sample(r.Context(), ids)
 	if err != nil {
 		return s.dockerErr(err)
 	}
 	httpx.JSON(w, http.StatusOK, stats)
 	return nil
+}
+
+// handleContainerStatsHistory answers what a container was doing before you
+// looked at it.
+//
+// The live stats socket, like the host one, only ever describes the time since
+// the panel was opened — so a container that was OOM-killed at 03:00, or that
+// pinned a core for twenty minutes overnight, left nothing behind anywhere in
+// the dashboard. This reads the series the metrics recorder has been keeping.
+//
+// The path parameter may be a container id or a name. History is keyed by
+// name, because a compose redeploy replaces the container with a new id and
+// the series has to continue across that; an id is resolved to its name first.
+func (s *Server) handleContainerStatsHistory(w http.ResponseWriter, r *http.Request) error {
+	if !s.modules.metrics.Enabled() {
+		return httpx.Err(http.StatusServiceUnavailable, "metrics_history_disabled",
+			"metrics history is not being recorded on this host (JD_METRICS_RETENTION=0)")
+	}
+	name := s.containerName(r.Context(), chi.URLParam(r, "id"))
+	if name == "" {
+		return httpx.BadRequest("a container id or name is required")
+	}
+	from, to, points, err := historyWindow(r)
+	if err != nil {
+		return err
+	}
+	series, err := s.modules.metrics.ContainerRange(r.Context(), name, from, to, points)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
+
+// containerName resolves an id to the name the history is keyed by, and passes
+// anything it cannot resolve through unchanged — a container that no longer
+// exists cannot be inspected, and its history is exactly what someone asking
+// about it wants.
+func (s *Server) containerName(ctx context.Context, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if detail, err := s.modules.docker.Inspect(ctx, ref); err == nil && detail.Name != "" {
+		return detail.Name
+	}
+	return ref
 }
 
 // handleContainerStream is the `docker stats`-equivalent feed backing the
@@ -202,6 +252,10 @@ func (s *Server) handleContainerStream(w http.ResponseWriter, r *http.Request) e
 	defer cancel()
 	go conn.Keepalive(ctx)
 	go conn.DrainControl(cancel)
+
+	// A sampler per socket, so each client's CPU deltas span its own even
+	// intervals rather than whatever the last caller happened to leave behind.
+	sampler := s.modules.docker.NewStatsSampler()
 
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
@@ -220,7 +274,7 @@ func (s *Server) handleContainerStream(w http.ResponseWriter, r *http.Request) e
 				ids = append(ids, c.ID)
 			}
 		}
-		if stats, err := s.modules.docker.StatsOnce(ctx, ids); err == nil {
+		if stats, err := sampler.Sample(ctx, ids); err == nil {
 			if err := conn.Send("stats", stats); err != nil {
 				return nil
 			}

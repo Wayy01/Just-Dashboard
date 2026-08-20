@@ -32,6 +32,10 @@ export type MetricsPoint = {
   swap: number
   rx: number
   tx: number
+  /** Fullest filesystem, as a percentage. The question is "is a disk about to fill up". */
+  disk: number
+  dread: number
+  dwrite: number
 }
 
 export type ConnectionState = "connecting" | "open" | "closed" | "error"
@@ -51,7 +55,10 @@ export const HISTORY = 150
 /** Restored history older than this is discarded rather than drawn. */
 const STALE_MS = 10 * 60 * 1000
 
-const STORAGE_KEY = "just-dashboard.metrics.v1"
+// v2: points gained the disk series. A v1 point restored into a v2 chart
+// would draw a hole in it rather than a shorter line, so the old key is
+// simply abandoned.
+const STORAGE_KEY = "just-dashboard.metrics.v2"
 
 /** Persisting on every frame would be a synchronous JSON round trip at 2Hz. */
 const PERSIST_EVERY = 5
@@ -145,6 +152,17 @@ function toPoint(snapshot: Snapshot): MetricsPoint {
     rx += n.recvRate
     tx += n.sendRate
   }
+  let dread = 0
+  let dwrite = 0
+  let disk = 0
+  for (const m of snapshot.mounts) {
+    dread += m.readRate
+    dwrite += m.writeRate
+    // The fullest mount, not the mean: averaging a full /boot with an empty
+    // /srv answers "is a disk about to fill up" wrongly, in the reassuring
+    // direction. This matches what the backend records.
+    if (m.usedPercent > disk) disk = m.usedPercent
+  }
   const ts = new Date(snapshot.ts).getTime()
   return {
     t: clock(snapshot.ts),
@@ -154,6 +172,9 @@ function toPoint(snapshot: Snapshot): MetricsPoint {
     swap: snapshot.swap.usedPercent,
     rx,
     tx,
+    disk,
+    dread,
+    dwrite,
   }
 }
 

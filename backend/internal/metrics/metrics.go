@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/sysinfo"
 )
@@ -107,18 +108,59 @@ type Point struct {
 	MemUsed     uint64  `json:"memUsed"`
 }
 
-// Series is a window of history plus the facts a client needs to draw it
-// honestly: how wide each bucket is (so a gap in the data can be told from a
-// flat line), and how far back the record actually goes (so "no data before
-// here" can be labelled as such rather than looking like an idle server).
-type Series struct {
+// Window is the frame around any recorded series: the facts a client needs to
+// draw it honestly. How wide each bucket is, so a gap in the data can be told
+// from a flat line; and how far back the record actually goes, so "nothing
+// before here" can be labelled as such rather than looking like an idle
+// server.
+type Window struct {
 	From             time.Time  `json:"from"`
 	To               time.Time  `json:"to"`
 	StepSeconds      int        `json:"stepSeconds"`
 	IntervalSeconds  int        `json:"sampleIntervalSeconds"`
 	RetentionSeconds int        `json:"retentionSeconds"`
 	Earliest         *time.Time `json:"earliest"`
-	Points           []Point    `json:"points"`
+}
+
+// Series is a window of host history.
+type Series struct {
+	Window
+	Points []Point `json:"points"`
+}
+
+// ContainerPoint is one bucket of a single container's history. It carries
+// peaks for the same reason the host series does: a container that briefly
+// pinned a core, or climbed to its memory limit and was killed, leaves nothing
+// behind in a mean.
+type ContainerPoint struct {
+	TS      time.Time `json:"ts"`
+	Samples int       `json:"samples"`
+
+	CPU     float64 `json:"cpu"`
+	CPUPeak float64 `json:"cpuPeak"`
+
+	Mem     float64 `json:"mem"`
+	MemPeak float64 `json:"memPeak"`
+
+	MemBytes     uint64 `json:"memBytes"`
+	MemBytesPeak uint64 `json:"memBytesPeak"`
+	MemLimit     uint64 `json:"memLimit"`
+
+	PIDs float64 `json:"pids"`
+}
+
+// ContainerSeries is a window of one container's history.
+type ContainerSeries struct {
+	Window
+	Name   string           `json:"name"`
+	Points []ContainerPoint `json:"points"`
+}
+
+// ContainerSampler is the part of the Docker client the recorder needs. It is
+// an interface so a host without a Docker socket is simply a nil sampler
+// rather than a special case threaded through the recorder.
+type ContainerSampler interface {
+	SampleAll(ctx context.Context) ([]dockerx.ContainerStats, error)
 }
 
 // Recorder samples the host and answers questions about the past.
@@ -134,9 +176,16 @@ type Recorder struct {
 	// shorten the interval the next recorded rate is divided by.
 	col *sysinfo.Collector
 
+	// containers is nil on a host with no Docker socket, which is the whole
+	// of the handling that case needs.
+	containers ContainerSampler
+
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+	// Whether the last container sample failed, so a host without Docker says
+	// so once instead of every interval for as long as it runs.
+	dockerQuiet bool
 }
 
 // New builds a recorder. An interval or retention outside the supported band
@@ -158,6 +207,13 @@ func New(st *store.Store, log *slog.Logger, interval, retention time.Duration) *
 		retention: retention,
 		col:       sysinfo.NewCollector(),
 	}
+}
+
+// WithContainers attaches per-container recording. Called after New because
+// the Docker client is built alongside the recorder rather than before it.
+func (r *Recorder) WithContainers(sampler ContainerSampler) *Recorder {
+	r.containers = sampler
+	return r
 }
 
 // Enabled reports whether history is being recorded at all.
@@ -242,7 +298,86 @@ func (r *Recorder) sample(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.record(ctx, Reduce(snap))
+	if err := r.record(ctx, Reduce(snap)); err != nil {
+		return err
+	}
+	// Containers are recorded against the host sample's timestamp rather than
+	// each container's own read time, so a row of them lines up in a query
+	// instead of scattering across a few hundred milliseconds.
+	r.recordContainers(ctx, snap.TS)
+	return nil
+}
+
+// recordContainers stores one sample per running container.
+//
+// Failures here are reported but never returned: a host with no Docker socket,
+// or one where the daemon is restarting, must not stop the host metrics from
+// being recorded. It is also deliberately quiet after the first complaint —
+// at one sample every fifteen seconds, a permanent condition logged every time
+// is 5,760 identical lines a day.
+func (r *Recorder) recordContainers(ctx context.Context, at time.Time) {
+	if r.containers == nil {
+		return
+	}
+	stats, err := r.containers.SampleAll(ctx)
+	if err != nil {
+		if !r.dockerQuiet && ctx.Err() == nil {
+			r.dockerQuiet = true
+			r.log.Info("not recording container metrics", "error", err)
+		}
+		return
+	}
+	r.dockerQuiet = false
+	r.recordContainersAt(ctx, at, stats)
+}
+
+// recordContainersAt writes one batch at a chosen instant, logging rather than
+// returning a failure for the same reason recordContainers does.
+func (r *Recorder) recordContainersAt(ctx context.Context, at time.Time, stats []dockerx.ContainerStats) {
+	if len(stats) == 0 {
+		return
+	}
+	if err := r.writeContainers(ctx, at, stats); err != nil && ctx.Err() == nil {
+		r.log.Warn("container metrics write failed", "error", err)
+	}
+}
+
+func (r *Recorder) writeContainers(ctx context.Context, at time.Time, stats []dockerx.ContainerStats) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO metric_container_samples
+		  (ts, name, cpu_percent, mem_bytes, mem_limit, mem_percent, net_rx, net_tx, pids)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(name, ts) DO UPDATE SET
+		  cpu_percent = excluded.cpu_percent,
+		  mem_bytes   = excluded.mem_bytes,
+		  mem_limit   = excluded.mem_limit,
+		  mem_percent = excluded.mem_percent,
+		  net_rx      = excluded.net_rx,
+		  net_tx      = excluded.net_tx,
+		  pids        = excluded.pids`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	ts := at.Unix()
+	for _, st := range stats {
+		if st.Name == "" {
+			continue // nothing to key the series on, and nothing to look it up by
+		}
+		if _, err := stmt.ExecContext(ctx, ts, st.Name, st.CPUPercent,
+			int64(st.MemUsage), int64(st.MemLimit), st.MemPercent,
+			int64(st.NetRx), int64(st.NetTx), int64(st.PIDs)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Reduce flattens a full snapshot into the handful of series worth keeping for
@@ -313,7 +448,10 @@ func (r *Recorder) prune(ctx context.Context) error {
 		return nil
 	}
 	cutoff := time.Now().Add(-r.retention).Unix()
-	_, err := r.db.ExecContext(ctx, `DELETE FROM metric_samples WHERE ts < ?`, cutoff)
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM metric_samples WHERE ts < ?`, cutoff); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM metric_container_samples WHERE ts < ?`, cutoff)
 	return err
 }
 
@@ -330,23 +468,14 @@ func (r *Recorder) Range(ctx context.Context, from, to time.Time, maxPoints int)
 	if maxPoints < 1 {
 		maxPoints = 1
 	}
-	step := bucketFor(to.Sub(from), maxPoints, r.interval)
-
-	series := &Series{
-		From:             from.UTC(),
-		To:               to.UTC(),
-		StepSeconds:      int(step / time.Second),
-		IntervalSeconds:  int(r.interval / time.Second),
-		RetentionSeconds: int(r.retention / time.Second),
-		Points:           []Point{},
-	}
-	if earliest, ok, err := r.earliest(ctx); err != nil {
+	window, err := r.window(ctx, from, to, maxPoints,
+		`SELECT MIN(ts) FROM metric_samples`)
+	if err != nil {
 		return nil, err
-	} else if ok {
-		series.Earliest = &earliest
 	}
+	series := &Series{Window: window, Points: []Point{}}
 
-	secs := int64(step / time.Second)
+	secs := int64(window.StepSeconds)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT (ts / ?) * ?                          AS bucket,
 		       COUNT(*),
@@ -396,15 +525,110 @@ func (r *Recorder) Range(ctx context.Context, from, to time.Time, maxPoints int)
 	return series, nil
 }
 
-func (r *Recorder) earliest(ctx context.Context) (time.Time, bool, error) {
+// window fills in everything about a series except its points. earliestQuery
+// answers "how far back does this particular record go", which differs per
+// series: a container started an hour ago has an hour of history on a host
+// that has a week of its own.
+func (r *Recorder) window(ctx context.Context, from, to time.Time, maxPoints int, earliestQuery string, args ...any) (Window, error) {
+	step := bucketFor(to.Sub(from), maxPoints, r.interval)
+	w := Window{
+		From:             from.UTC(),
+		To:               to.UTC(),
+		StepSeconds:      int(step / time.Second),
+		IntervalSeconds:  int(r.interval / time.Second),
+		RetentionSeconds: int(r.retention / time.Second),
+	}
 	var ts sql.NullInt64
-	if err := r.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM metric_samples`).Scan(&ts); err != nil {
-		return time.Time{}, false, err
+	if err := r.db.QueryRowContext(ctx, earliestQuery, args...).Scan(&ts); err != nil {
+		return Window{}, err
 	}
-	if !ts.Valid {
-		return time.Time{}, false, nil
+	if ts.Valid {
+		earliest := time.Unix(ts.Int64, 0).UTC()
+		w.Earliest = &earliest
 	}
-	return time.Unix(ts.Int64, 0).UTC(), true, nil
+	return w, nil
+}
+
+// ContainerRange is Range for one container, keyed by name so the series
+// survives the container being recreated under a new id.
+func (r *Recorder) ContainerRange(ctx context.Context, name string, from, to time.Time, maxPoints int) (*ContainerSeries, error) {
+	if to.Before(from) {
+		from, to = to, from
+	}
+	if maxPoints < 1 {
+		maxPoints = 1
+	}
+	window, err := r.window(ctx, from, to, maxPoints,
+		`SELECT MIN(ts) FROM metric_container_samples WHERE name = ?`, name)
+	if err != nil {
+		return nil, err
+	}
+	series := &ContainerSeries{Window: window, Name: name, Points: []ContainerPoint{}}
+
+	secs := int64(window.StepSeconds)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT (ts / ?) * ?                          AS bucket,
+		       COUNT(*),
+		       AVG(cpu_percent), MAX(cpu_percent),
+		       AVG(mem_percent), MAX(mem_percent),
+		       AVG(mem_bytes),   MAX(mem_bytes),
+		       MAX(mem_limit),
+		       AVG(pids)
+		  FROM metric_container_samples
+		 WHERE name = ? AND ts >= ? AND ts <= ?
+		 GROUP BY bucket
+		 ORDER BY bucket`,
+		secs, secs, name, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var bucket int64
+		var p ContainerPoint
+		var memBytes, memBytesPeak, memLimit float64
+		if err := rows.Scan(&bucket, &p.Samples,
+			&p.CPU, &p.CPUPeak,
+			&p.Mem, &p.MemPeak,
+			&memBytes, &memBytesPeak, &memLimit,
+			&p.PIDs); err != nil {
+			return nil, err
+		}
+		p.TS = time.Unix(bucket, 0).UTC()
+		p.MemBytes, p.MemBytesPeak, p.MemLimit = uint64(memBytes), uint64(memBytesPeak), uint64(memLimit)
+		p.CPU, p.CPUPeak = round2(p.CPU), round2(p.CPUPeak)
+		p.Mem, p.MemPeak = round1(p.Mem), round1(p.MemPeak)
+		p.PIDs = round1(p.PIDs)
+		series.Points = append(series.Points, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+// RecordedContainers lists the containers with history in the window, so the
+// UI can offer a series for one that is no longer running — which is exactly
+// the container an operator is usually looking for.
+func (r *Recorder) RecordedContainers(ctx context.Context, from, to time.Time) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT name FROM metric_container_samples
+		 WHERE ts >= ? AND ts <= ?
+		 GROUP BY name ORDER BY name`, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 // bucketFor picks a bucket width that fits the window into maxPoints without

@@ -2,11 +2,13 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/sysinfo"
 )
@@ -229,5 +231,144 @@ func TestNewClampsAbsurdIntervals(t *testing.T) {
 	}
 	if got := testRecorder(t, 15*time.Second, time.Minute).Retention(); got != MinRetention {
 		t.Fatalf("retention = %v, want it clamped to %v", got, MinRetention)
+	}
+}
+
+// fakeContainers stands in for the Docker client so the recorder's container
+// path can be exercised on a machine with no Docker socket.
+type fakeContainers struct {
+	batches [][]dockerx.ContainerStats
+	err     error
+	calls   int
+}
+
+func (f *fakeContainers) SampleAll(context.Context) ([]dockerx.ContainerStats, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.calls >= len(f.batches) {
+		return nil, nil
+	}
+	batch := f.batches[f.calls]
+	f.calls++
+	return batch, nil
+}
+
+// The series is keyed by name rather than id precisely so a compose redeploy
+// does not start a fresh empty chart: the container comes back with a new id
+// under the same name and the history has to continue through it.
+func TestContainerHistorySurvivesARecreate(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, 24*time.Hour)
+	ctx := context.Background()
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+	for i := range 40 {
+		id := "old-id"
+		if i >= 20 {
+			id = "new-id-after-redeploy"
+		}
+		cpu := 3.0
+		if i == 25 {
+			cpu = 180.0 // pinned nearly two cores for one sample
+		}
+		r.recordContainersAt(ctx, base.Add(time.Duration(i)*15*time.Second), []dockerx.ContainerStats{
+			{ID: id, Name: "api", CPUPercent: cpu, MemUsage: 100 << 20, MemLimit: 512 << 20, MemPercent: 19.5, PIDs: 12},
+		})
+	}
+
+	series, err := r.ContainerRange(ctx, "api", base.Add(-time.Minute), time.Now(), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples int
+	var peak float64
+	for _, p := range series.Points {
+		samples += p.Samples
+		if p.CPUPeak > peak {
+			peak = p.CPUPeak
+		}
+	}
+	if samples != 40 {
+		t.Fatalf("aggregated %d samples across the redeploy, want 40", samples)
+	}
+	if peak != 180 {
+		t.Fatalf("peak CPU = %v, want the 180%% burst to survive the bucket", peak)
+	}
+	if series.Name != "api" {
+		t.Fatalf("series name = %q", series.Name)
+	}
+	if series.Earliest == nil || !series.Earliest.Equal(base.UTC()) {
+		t.Fatalf("earliest = %v, want this container's first sample at %v", series.Earliest, base.UTC())
+	}
+}
+
+func TestContainerHistoryIsPerContainer(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, 24*time.Hour)
+	ctx := context.Background()
+	at := time.Now().Add(-time.Minute).Truncate(time.Second)
+	r.recordContainersAt(ctx, at, []dockerx.ContainerStats{
+		{Name: "api", CPUPercent: 10},
+		{Name: "db", CPUPercent: 90},
+		{Name: "", CPUPercent: 50}, // nothing to key a series on
+	})
+
+	names, err := r.RecordedContainers(ctx, at.Add(-time.Hour), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0] != "api" || names[1] != "db" {
+		t.Fatalf("recorded containers = %v, want [api db] and no nameless row", names)
+	}
+
+	db, err := r.ContainerRange(ctx, "db", at.Add(-time.Hour), time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.Points) != 1 || db.Points[0].CPU != 90 {
+		t.Fatalf("db series = %+v, want only db's own samples", db.Points)
+	}
+}
+
+func TestPruneDropsExpiredContainerSamples(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, time.Hour)
+	ctx := context.Background()
+	now := time.Now()
+	for _, age := range []time.Duration{3 * time.Hour, 30 * time.Minute} {
+		r.recordContainersAt(ctx, now.Add(-age), []dockerx.ContainerStats{{Name: "api", CPUPercent: 1}})
+	}
+	if err := r.prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	series, err := r.ContainerRange(ctx, "api", now.Add(-24*time.Hour), now, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series.Points) != 1 {
+		t.Fatalf("kept %d container points, want the 1 inside retention", len(series.Points))
+	}
+}
+
+// A host with no Docker socket must keep recording its own metrics, and must
+// not fill the log with one identical line every sampling interval.
+func TestContainerFailuresDoNotStopHostRecording(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, time.Hour)
+	r.WithContainers(&fakeContainers{err: errors.New("cannot reach the docker daemon")})
+	ctx := context.Background()
+
+	for range 3 {
+		if err := r.sample(ctx); err != nil {
+			t.Fatalf("a Docker failure stopped the host sample: %v", err)
+		}
+	}
+	if !r.dockerQuiet {
+		t.Error("the recorder is still ready to log the same Docker failure again")
+	}
+
+	series, err := r.Range(ctx, time.Now().Add(-time.Hour), time.Now(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series.Points) == 0 {
+		t.Fatal("no host samples recorded while Docker was unreachable")
 	}
 }

@@ -188,6 +188,29 @@ CREATE TABLE IF NOT EXISTS settings (
 -- ts is the rowid, so range scans over a window are a b-tree walk and a
 -- restarted sampler landing on the same second replaces rather than
 -- duplicates. Rows are pruned past JD_METRICS_RETENTION.
+-- Per-container utilisation, recorded by the same sampler.
+--
+-- Keyed by container name rather than id on purpose: a compose redeploy
+-- replaces a container with a new id under the same name, and seeing across
+-- that restart is most of the reason to keep the history. An id would start a
+-- fresh, empty series every deploy — exactly the amnesia this table exists to
+-- cure.
+CREATE TABLE IF NOT EXISTS metric_container_samples (
+  ts          INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  cpu_percent REAL NOT NULL DEFAULT 0,
+  mem_bytes   INTEGER NOT NULL DEFAULT 0,
+  mem_limit   INTEGER NOT NULL DEFAULT 0,
+  mem_percent REAL NOT NULL DEFAULT 0,
+  net_rx      INTEGER NOT NULL DEFAULT 0,
+  net_tx      INTEGER NOT NULL DEFAULT 0,
+  pids        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (name, ts)
+);
+-- Pruning walks by time across every container, which the primary key (name
+-- first) cannot serve.
+CREATE INDEX IF NOT EXISTS idx_container_samples_ts ON metric_container_samples(ts);
+
 CREATE TABLE IF NOT EXISTS metric_samples (
   ts             INTEGER PRIMARY KEY,
   cpu_percent    REAL NOT NULL DEFAULT 0,

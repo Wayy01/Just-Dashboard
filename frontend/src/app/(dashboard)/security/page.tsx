@@ -1,11 +1,26 @@
 "use client"
 
 import { useState } from "react"
-import { Ban, Plus, Shield, ShieldAlert, ShieldCheck, Trash2, Users } from "lucide-react"
+import {
+  Ban,
+  History,
+  Plus,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react"
 import { toast } from "sonner"
-import { del, get, post } from "@/lib/api"
+import { del, get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
-import type { Exposure, Fail2banJail, FirewallStatus, LoginSession } from "@/lib/types"
+import type {
+  Exposure,
+  Fail2banJail,
+  FirewallStatus,
+  LoginRecord,
+  LoginSession,
+} from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -18,6 +33,7 @@ import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -435,6 +451,19 @@ function Fail2banTab() {
 }
 
 function SessionsTab() {
+  return (
+    <div className="space-y-4">
+      <CurrentSessions />
+      {/* The record, under the snapshot. "Who is signed in right now" is the
+          one moment nobody worries about; the question that matters on an
+          exposed host is who got in overnight, and the host has been keeping
+          that answer in wtmp all along. */}
+      <LoginHistoryPanel />
+    </div>
+  )
+}
+
+function CurrentSessions() {
   const { data, error, loading } = usePoll(
     (signal) => get<LoginSession[]>("/ssh-sessions", undefined, signal),
     10000,
@@ -483,6 +512,121 @@ function SessionsTab() {
             ))}
           </TableBody>
         </Table>
+      </PanelBody>
+    </Panel>
+  )
+}
+
+/**
+ * Recent logins, read from the host rather than remembered by the dashboard.
+ *
+ * Failed attempts are a separate request behind system.admin: btmp records
+ * whatever was typed at a login prompt, and what people type at a login prompt
+ * is sometimes their password in the username field.
+ */
+function LoginHistoryPanel() {
+  const { can } = useAuth()
+  const [failed, setFailed] = useState(false)
+  const admin = can("system.admin")
+  const showFailed = failed && admin
+
+  const { data, error, loading } = usePoll(
+    (signal) =>
+      get<LoginRecord[]>(showFailed ? "/logins/failed" : "/logins", { limit: 100 }, signal),
+    60000,
+    [showFailed],
+  )
+
+  const unavailable = error instanceof ApiError && error.code === "login_history_unavailable"
+
+  return (
+    <Panel>
+      <PanelHeader
+        icon={History}
+        title={showFailed ? "Failed login attempts" : "Recent logins"}
+        description={
+          showFailed
+            ? "From the host's btmp record — every attempt that did not get in"
+            : "From the host's wtmp record, including restarts"
+        }
+        actions={
+          admin && (
+            <ToggleGroup
+              type="single"
+              value={showFailed ? "failed" : "ok"}
+              onValueChange={(next) => setFailed(next === "failed")}
+              variant="outline"
+              size="sm"
+              aria-label="Which logins to show"
+            >
+              <ToggleGroupItem value="ok" className="px-2.5 text-[11px]">
+                Successful
+              </ToggleGroupItem>
+              <ToggleGroupItem value="failed" className="px-2.5 text-[11px]">
+                Failed
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )
+        }
+      />
+      <PanelBody flush>
+        {unavailable ? (
+          <Notice tone="default" title="No login record on this host">
+            wtmp is not being written here, so there is nothing to read back. That is normal on a
+            minimal image, and it means logins leave no trace on this machine at all.
+          </Notice>
+        ) : error ? (
+          <ErrorState error={error} />
+        ) : loading ? (
+          <LoadingPanel />
+        ) : !data?.length ? (
+          <EmptyState
+            icon={History}
+            title={showFailed ? "No failed attempts recorded" : "No logins recorded"}
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>User</TableHead>
+                <TableHead>Terminal</TableHead>
+                <TableHead className="w-full">From</TableHead>
+                <TableHead>When</TableHead>
+                <TableHead>Lasted</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.map((record, i) => (
+                <TableRow key={`${record.user}-${record.loginTime ?? i}-${i}`}>
+                  <TableCell className="text-[13px] font-medium">
+                    <span className="flex items-center gap-2">
+                      {record.user}
+                      {record.kind !== "login" && (
+                        <Badge variant="secondary" className="font-normal">
+                          {record.kind === "boot" ? "boot" : "shutdown"}
+                        </Badge>
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{record.tty || "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{record.from || "local"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {record.loginTime ? timestamp(record.loginTime) : "—"}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {record.active ? (
+                      <Badge variant="success" className="font-normal">
+                        still open
+                      </Badge>
+                    ) : (
+                      (record.duration ?? record.ended ?? "—")
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </PanelBody>
     </Panel>
   )

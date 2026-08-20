@@ -60,7 +60,7 @@ quietly became internet-facing announces itself instead of waiting to be found.
 | | |
 | --- | --- |
 | **Overview** | CPU per core, memory, swap, per-mount disk with an on-demand directory size scan, per-interface network rates. The live view is pushed over WebSocket; the 1h/6h/24h/7d views are read back from history the backend records itself, so the charts cover the time nobody had the page open — including the peaks a downsampled average would hide. |
-| **Docker** | Containers with live stats, streaming logs, a shell in the browser, inspect — plus images, volumes, networks, compose stacks and prune. |
+| **Docker** | Containers with live stats, recorded per-container CPU and memory history that survives a redeploy, streaming logs, a shell in the browser, inspect — plus images, volumes, networks, compose stacks and prune. |
 | **Processes** | PM2 apps with merged output tailing, systemd units with journal streaming, an htop-style table with guarded kill, and a crontab editor. |
 | **Logs** | One viewer over files, container output, PM2 and the journal. Grep and level filters apply **server-side**, before lines are sent. |
 | **Terminal** | A real PTY over WebSocket, tmux-backed — sessions survive a closed tab or a dashboard restart. |
@@ -68,7 +68,7 @@ quietly became internet-facing announces itself instead of waiting to be found.
 | **Git** | Every repository under the configured roots: branch, working tree, ahead/behind, history with diffs, fetch/pull/push/stash. Runs as the account that owns each repo, so nothing changes ownership. |
 | **Proxy & TLS** | nginx/Caddy editor that validates with the server's own test before writing or reloading, vhost toggles, certificate inventory, listening ports joined to owning processes. |
 | **Databases** | Postgres, MySQL and MongoDB — schema browsing, paged table browser, a query runner that classifies destructive statements before running them, dumps and restores. |
-| **Security** | How the dashboard is exposed, firewall rules, fail2ban jails, active SSH sessions. |
+| **Security** | How the dashboard is exposed, firewall rules, fail2ban jails, active SSH sessions, and the host's own login record — who got in, who tried and failed, and when the machine restarted. |
 | **Updates** | What is behind, which of it is security, and whether a reboot is due. Upgrades only — never installs or removes. |
 | **Deployments** | Git pull plus `compose up -d --build`, by hand or signed webhook, with history and rollback. |
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
@@ -148,7 +148,7 @@ installer writes the ones that matter; these are for tuning afterwards.
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
 | `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
 | `JD_DEV` | `false` | Development only. Drops `Secure` from the session cookie so the UI works over plain HTTP. Never set it on a real host. |
-| `JD_METRICS_INTERVAL` | `15s` | How often the backend samples the host into its own history. Clamped to 5s–5m. |
+| `JD_METRICS_INTERVAL` | `15s` | How often the backend samples the host, and every running container, into its own history. Clamped to 5s–5m. |
 | `JD_METRICS_RETENTION` | `7d` | How long that history is kept. Accepts days (`7d`). `0` records nothing and leaves only the live feed. |
 | `JD_LOG_LEVEL` | `info` | `debug` for verbose logs. |
 

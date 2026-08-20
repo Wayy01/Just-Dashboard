@@ -64,6 +64,17 @@ const memConfig = {
   swap: { label: "Swap", color: "var(--chart-4)" },
 } satisfies ChartConfig
 
+const diskConfig = {
+  disk: { label: "Fullest filesystem", color: "var(--chart-3)" },
+} satisfies ChartConfig
+
+const ioConfig = {
+  diskRead: { label: "Read", color: "var(--chart-2)" },
+  diskReadPeak: { label: "Read peak", color: "var(--chart-2)" },
+  diskWrite: { label: "Write", color: "var(--chart-5)" },
+  diskWritePeak: { label: "Write peak", color: "var(--chart-5)" },
+} satisfies ChartConfig
+
 const netConfig = {
   rx: { label: "In", color: "var(--chart-2)" },
   rxPeak: { label: "In peak", color: "var(--chart-2)" },
@@ -226,7 +237,10 @@ export default function OverviewPage() {
               {empty ? (
                 <ChartPlaceholder note={placeholder} className="min-h-[190px] flex-1" />
               ) : (
-                <ChartContainer config={cpuConfig} className="aspect-auto min-h-[190px] w-full flex-1">
+                <ChartContainer
+                  config={cpuConfig}
+                  className="aspect-auto min-h-[190px] w-full flex-1"
+                >
                   <AreaChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                     <XAxis
@@ -280,7 +294,10 @@ export default function OverviewPage() {
               {empty ? (
                 <ChartPlaceholder note={placeholder} className="min-h-[190px] flex-1" />
               ) : (
-                <ChartContainer config={memConfig} className="aspect-auto min-h-[190px] w-full flex-1">
+                <ChartContainer
+                  config={memConfig}
+                  className="aspect-auto min-h-[190px] w-full flex-1"
+                >
                   <LineChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                     <XAxis
@@ -423,6 +440,138 @@ export default function OverviewPage() {
                   )}
                 </AreaChart>
               </ChartContainer>
+            )}
+          </PanelBody>
+        </Panel>
+        <Panel>
+          <PanelHeader
+            icon={HardDrive}
+            title="Storage"
+            description="Capacity of the fullest filesystem, and what the disks are doing"
+          />
+          <PanelBody>
+            {empty ? (
+              <ChartPlaceholder note={placeholder} className="h-[170px]" />
+            ) : (
+              // Two charts rather than one with two axes. A capacity
+              // percentage and a byte rate share no scale, and overlaying them
+              // on twin axes lets the reader infer a relationship between two
+              // lines that have nothing to do with each other.
+              <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">Used capacity</p>
+                  <ChartContainer config={diskConfig} className="h-[150px] w-full">
+                    <AreaChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+                      <XAxis
+                        dataKey="t"
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={48}
+                        fontSize={10}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickLine={false}
+                        axisLine={false}
+                        fontSize={10}
+                        unit="%"
+                      />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            labelFormatter={rowLabel}
+                            formatter={(value) => percent(Number(value))}
+                          />
+                        }
+                      />
+                      <Area
+                        dataKey="disk"
+                        type="monotone"
+                        stroke="var(--color-disk)"
+                        strokeWidth={1.5}
+                        fill="var(--color-disk)"
+                        fillOpacity={0.14}
+                        isAnimationActive={false}
+                      />
+                    </AreaChart>
+                  </ChartContainer>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground">Throughput</p>
+                  <ChartContainer config={ioConfig} className="h-[150px] w-full">
+                    <AreaChart data={rows} margin={{ left: 4, right: 4, top: 4 }}>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
+                      <XAxis
+                        dataKey="t"
+                        tickLine={false}
+                        axisLine={false}
+                        minTickGap={48}
+                        fontSize={10}
+                      />
+                      <YAxis
+                        width={56}
+                        tickLine={false}
+                        axisLine={false}
+                        fontSize={10}
+                        tickFormatter={(v) => bytes(v)}
+                      />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            labelFormatter={rowLabel}
+                            formatter={(value) => rate(Number(value))}
+                          />
+                        }
+                      />
+                      <ChartLegend content={<ChartLegendContent />} />
+                      <Area
+                        dataKey="diskRead"
+                        type="monotone"
+                        stroke="var(--color-diskRead)"
+                        strokeWidth={1.5}
+                        fill="var(--color-diskRead)"
+                        fillOpacity={0.12}
+                        isAnimationActive={false}
+                      />
+                      <Area
+                        dataKey="diskWrite"
+                        type="monotone"
+                        stroke="var(--color-diskWrite)"
+                        strokeWidth={1.5}
+                        fill="var(--color-diskWrite)"
+                        fillOpacity={0.12}
+                        isAnimationActive={false}
+                      />
+                      {showPeaks && (
+                        <Line
+                          dataKey="diskReadPeak"
+                          type="monotone"
+                          stroke="var(--color-diskReadPeak)"
+                          strokeWidth={1}
+                          strokeOpacity={0.5}
+                          strokeDasharray="3 3"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      )}
+                      {showPeaks && (
+                        <Line
+                          dataKey="diskWritePeak"
+                          type="monotone"
+                          stroke="var(--color-diskWritePeak)"
+                          strokeWidth={1}
+                          strokeOpacity={0.5}
+                          strokeDasharray="3 3"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      )}
+                    </AreaChart>
+                  </ChartContainer>
+                </div>
+              </div>
             )}
           </PanelBody>
         </Panel>

@@ -100,6 +100,31 @@ export type MetricsHistoryPoint = {
   memUsed: number
 }
 
+/** One bucket of a single container's recorded history. */
+export type ContainerHistoryPoint = {
+  ts: string
+  samples: number
+  cpu: number
+  cpuPeak: number
+  mem: number
+  memPeak: number
+  memBytes: number
+  memBytesPeak: number
+  memLimit: number
+  pids: number
+}
+
+export type ContainerHistory = {
+  name: string
+  from: string
+  to: string
+  stepSeconds: number
+  sampleIntervalSeconds: number
+  retentionSeconds: number
+  earliest: string | null
+  points: ContainerHistoryPoint[]
+}
+
 export type MetricsHistory = {
   from: string
   to: string
@@ -219,6 +244,9 @@ export type ContainerStats = {
   blockWrite: number
   pids: number
   onlineCpus: number
+  /** Cumulative nanosecond totals. Only meaningful as a difference between two samples. */
+  cpuTotal: number
+  systemCpu: number
 }
 
 export type DockerImage = {
@@ -805,6 +833,24 @@ export type UpdateReport = {
 }
 
 /** How the dashboard itself can be reached, graded weakest-entry-first. */
+/**
+ * One entry from the host's own login accounting (wtmp, or btmp for failures).
+ * Nothing here is recorded by the dashboard — it is the host's record, which
+ * the Security page previously never showed.
+ */
+export type LoginRecord = {
+  kind: "login" | "boot" | "shutdown"
+  user: string
+  tty: string
+  from: string
+  loginTime?: string
+  endTime?: string
+  /** How it ended when there is no end time: "down" or "crash". */
+  ended?: string
+  duration?: string
+  active: boolean
+}
+
 export type Exposure = {
   grade: "tailscale" | "tunnel" | "private" | "public" | "open"
   summary: string
