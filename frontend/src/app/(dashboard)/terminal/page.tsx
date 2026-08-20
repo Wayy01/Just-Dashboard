@@ -206,7 +206,12 @@ export default function TerminalPage() {
             <XtermPane
               key={active}
               path={`/terminal/${active}/attach`}
-              className="min-h-[24rem] flex-1"
+              // No minimum height: the pane is whatever is left after the
+              // header and the session strip, and a floor taller than that
+              // would push the page past the window again — which is the one
+              // thing a terminal must never do, because xterm sizes itself
+              // from the box and would latch at the larger size for good.
+              className="min-h-0 flex-1"
               onExit={refresh}
             />
           ) : (

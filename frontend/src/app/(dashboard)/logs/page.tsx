@@ -223,7 +223,10 @@ function SourceList({
   }, [sources.data, filter])
 
   return (
-    <Panel className="min-h-0 lg:max-h-full">
+    // Below lg the grid stacks, and an uncapped source list would take half
+    // the window from the lines you came to read. Capped here rather than made
+    // scrollable-by-the-page, because the page is now exactly the viewport.
+    <Panel className="max-h-56 min-h-0 lg:max-h-full">
       <PanelHeader
         icon={ScrollText}
         title="Sources"

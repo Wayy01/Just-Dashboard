@@ -14,6 +14,18 @@ import { Search } from "lucide-react"
  * `fill` is for the pages whose content *is* the viewport — the terminal and
  * the log stream — where the pane has to take the remaining height rather than
  * the page growing past the bottom of the window.
+ *
+ * It has to be a *definite* height, not `min-h-full`, and that distinction is
+ * the whole bug it exists to prevent. A minimum is a floor the box may exceed,
+ * so the page stayed content-sized: every `min-h-0 flex-1` beneath it then
+ * measured against a parent that grows to fit, which is the opposite of what
+ * those classes are asking for. A log pane sized itself to eight thousand
+ * lines, and a terminal ratcheted — xterm's fit addon reads the box, the box
+ * came from xterm's own rows, so the pane could grow but never shrink back.
+ * `h-full` resolves against the shell's scroll container, which does have a
+ * definite height, and `overflow-hidden` keeps that promise: a fill page is
+ * exactly the space it was handed, and the scrolling happens inside the pane
+ * that owns the content.
  */
 export function Page({
   className,
@@ -25,7 +37,7 @@ export function Page({
       data-slot="page"
       className={cn(
         "mx-auto flex w-full min-w-0 max-w-[1600px] flex-col gap-4 px-4 py-4 md:gap-5 md:px-6 md:py-5",
-        fill && "min-h-full flex-1",
+        fill && "h-full min-h-0 overflow-hidden",
         className,
       )}
       {...props}
