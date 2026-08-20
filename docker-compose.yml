@@ -42,7 +42,8 @@ services:
       JD_ALLOWED_ORIGINS: ${JD_ALLOWED_ORIGINS:-}
       JD_REQUIRE_2FA: ${JD_REQUIRE_2FA:-true}
       JD_TERMINAL_ENABLED: ${JD_TERMINAL_ENABLED:-true}
-      JD_TERMINAL_SHELL: ${JD_TERMINAL_SHELL:-/bin/bash}
+      JD_TERMINAL_SHELL: ${JD_TERMINAL_SHELL:-}
+      JD_TERMINAL_USER: ${JD_TERMINAL_USER:-}
       JD_SESSION_TTL: ${JD_SESSION_TTL:-12h}
       JD_SESSION_IDLE_TTL: ${JD_SESSION_IDLE_TTL:-60m}
       # No login page, no session: the hub's certificate is the only caller.

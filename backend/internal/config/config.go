@@ -30,6 +30,7 @@ type Config struct {
 	TerminalEnable bool
 	AgentMode      bool
 	TerminalShell  string
+	TerminalUser   string
 	FileRoots      []string
 	LogRoots       []string
 	NginxDir       string
@@ -51,16 +52,22 @@ type Config struct {
 func Load() (*Config, error) {
 	l := &loader{}
 	c := &Config{
-		Addr:             env("JD_ADDR", "127.0.0.1:8080"),
-		DataDir:          env("JD_DATA_DIR", "/var/lib/just-dashboard"),
-		MasterKeyHex:     Env("JD_MASTER_KEY"),
-		Require2FA:       l.boolean("JD_REQUIRE_2FA", true),
-		SessionTTL:       l.duration("JD_SESSION_TTL", 12*time.Hour),
-		IdleTTL:          l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
-		DockerHost:       env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
-		TerminalEnable:   l.boolean("JD_TERMINAL_ENABLED", true),
-		AgentMode:        l.boolean("JD_AGENT_MODE", false),
-		TerminalShell:    env("JD_TERMINAL_SHELL", "/bin/bash"),
+		Addr:           env("JD_ADDR", "127.0.0.1:8080"),
+		DataDir:        env("JD_DATA_DIR", "/var/lib/just-dashboard"),
+		MasterKeyHex:   Env("JD_MASTER_KEY"),
+		Require2FA:     l.boolean("JD_REQUIRE_2FA", true),
+		SessionTTL:     l.duration("JD_SESSION_TTL", 12*time.Hour),
+		IdleTTL:        l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
+		DockerHost:     env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
+		TerminalEnable: l.boolean("JD_TERMINAL_ENABLED", true),
+		AgentMode:      l.boolean("JD_AGENT_MODE", false),
+		// Empty means "the account's own login shell", read from the host's
+		// passwd file. Naming a shell here would override what the operator
+		// chose with chsh, which is the opposite of behaving like ssh.
+		TerminalShell: env("JD_TERMINAL_SHELL", ""),
+		// Empty means "the lowest regular account on the host" — the login a
+		// VPS provider creates, and the one an operator would reach for.
+		TerminalUser:     env("JD_TERMINAL_USER", ""),
 		FileRoots:        envList("JD_FILE_ROOTS", "/"),
 		LogRoots:         envList("JD_LOG_ROOTS", "/var/log"),
 		NginxDir:         env("JD_NGINX_DIR", "/etc/nginx"),

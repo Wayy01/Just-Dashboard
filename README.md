@@ -142,7 +142,8 @@ installer writes the ones that matter; these are for tuning afterwards.
 | --- | --- | --- |
 | `JD_REQUIRE_2FA` | `true` | Mandatory two-factor. Refused for accounts that already enrolled. |
 | `JD_TERMINAL_ENABLED` | `true` | The web terminal. |
-| `JD_TERMINAL_SHELL` | `/bin/bash` | Shell spawned for terminal sessions. |
+| `JD_TERMINAL_SHELL` | account's shell | Overrides the login shell. Empty honours `chsh`. |
+| `JD_TERMINAL_USER` | lowest regular account | Host account a terminal session logs in as. |
 | `JD_SESSION_TTL` | `12h` | Absolute session lifetime. |
 | `JD_SESSION_IDLE_TTL` | `60m` | Idle timeout. |
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |

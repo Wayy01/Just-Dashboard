@@ -67,7 +67,7 @@ func (s *Server) initModules() {
 	s.modules.table = procs.NewTable()
 	s.modules.cron = procs.NewCron()
 	s.modules.logs = logsx.New(s.Cfg.LogRoots)
-	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell)
+	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell, s.Cfg.TerminalUser)
 	s.modules.files = files.New(s.Cfg.FileRoots)
 	s.modules.git = gitx.New(s.Cfg.GitRoots)
 	s.modules.updates = updates.New()

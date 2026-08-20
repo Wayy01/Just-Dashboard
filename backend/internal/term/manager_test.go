@@ -9,7 +9,7 @@ import (
 // A list endpoint that answers JSON null instead of [] crashes any client that
 // iterates the result, so the contract is worth pinning down.
 func TestTmuxSessionsMarshalsAsArray(t *testing.T) {
-	m := NewManager(true, "/bin/sh")
+	m := NewManager(true, "/bin/sh", "")
 	got := m.TmuxSessions(context.Background())
 	if got == nil {
 		t.Fatal("TmuxSessions returned a nil slice")

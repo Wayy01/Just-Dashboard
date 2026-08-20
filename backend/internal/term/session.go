@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,9 +32,12 @@ var (
 // kept in a bounded scrollback buffer, so reopening a tab restores what was on
 // screen instead of an empty terminal.
 type Session struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Shell     string    `json:"shell"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Shell string `json:"shell"`
+	// User is the host account the shell runs as, which is the answer to
+	// "whoami" without having to open the session and ask.
+	User      string    `json:"user"`
 	Persisted bool      `json:"persisted"`
 	TmuxName  string    `json:"tmuxName,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -40,6 +45,9 @@ type Session struct {
 	Rows      uint16    `json:"rows"`
 	Cols      uint16    `json:"cols"`
 	PID       int       `json:"pid"`
+	// CWDHint is the directory the session was asked to start in, kept for the
+	// case where /proc cannot answer.
+	CWDHint string `json:"-"`
 
 	mu          sync.Mutex
 	pty         *os.File
@@ -187,12 +195,63 @@ func (s *Session) CWD() string {
 	if pid == 0 {
 		return ""
 	}
-	// The shell forks for each command; the leader's cwd is the one that
-	// tracks `cd`, so resolve through /proc rather than caching at spawn.
-	if link, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
+	// The process we spawned is no longer the shell: a session is nsenter,
+	// then su, then the login shell, and each of those only forwards to the
+	// next. Their cwd never changes, so reading the leader's would pin this to
+	// wherever the session started and quietly stop tracking `cd` — the one
+	// thing this function exists to follow.
+	//
+	// Walking down to the innermost descendant finds the shell again, and
+	// keeps finding it when the shell itself forks (tmux adds another layer,
+	// and a running command adds one more).
+	if link, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", leafDescendant(pid))); err == nil {
 		return link
 	}
-	return ""
+	return s.CWDHint
+}
+
+// leafDescendant follows the single-child chain from pid to its innermost
+// process. It stops where the chain branches, because two children mean there
+// is no longer one obvious "the shell" to follow, and the last unambiguous
+// process is a better answer than an arbitrary one of them.
+//
+// The container shares the host's PID namespace, so these are host PIDs and
+// /proc is the host's process table — the same reason the process list page
+// can see the server's services.
+func leafDescendant(pid int) int {
+	// Bounded so that a pathological chain, or a /proc that starts pointing at
+	// itself, cannot spin here.
+	for depth := 0; depth < 16; depth++ {
+		kids := childrenOf(pid)
+		if len(kids) != 1 {
+			return pid
+		}
+		pid = kids[0]
+	}
+	return pid
+}
+
+func childrenOf(pid int) []int {
+	// The kernel exposes children per-thread; a shell is single-threaded in
+	// practice, but reading the whole task directory is what makes this
+	// correct for anything that is not.
+	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, t := range tasks {
+		raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/children", pid, t.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range strings.Fields(string(raw)) {
+			if n, err := strconv.Atoi(f); err == nil {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 // ringBuffer keeps the most recent output for reattachment, bounded so a

@@ -5,12 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 	"github.com/creack/pty"
 )
 
@@ -24,6 +24,12 @@ type Manager struct {
 	enabled bool
 	shell   string
 	useTmux bool
+	// The account every session runs as, resolved once at boot. accountErr
+	// is kept rather than returned from NewManager so that a bad
+	// JD_TERMINAL_USER disables the terminal with a precise message instead
+	// of refusing to start a dashboard whose other fourteen pages are fine.
+	account    Account
+	accountErr error
 }
 
 // reserve takes one of the session slots, or reports that none are free. The
@@ -47,21 +53,29 @@ func (m *Manager) reserve() (release func(), err error) {
 	}, nil
 }
 
-func NewManager(enabled bool, shell string) *Manager {
+func NewManager(enabled bool, shell, username string) *Manager {
 	m := &Manager{
 		sessions: map[string]*Session{},
 		enabled:  enabled,
 		shell:    shell,
 	}
-	if _, err := exec.LookPath("tmux"); err == nil {
-		m.useTmux = true
-	}
+	m.account, m.accountErr = resolveAccount(username)
+	// The host's tmux, not this image's. Sessions are created out there now,
+	// so asking the image whether tmux exists would answer a question about
+	// the wrong machine — and offer persistence backed by a tmux server that
+	// can never see them.
+	m.useTmux = hostexec.AvailableOnHost("tmux")
 	go m.reap()
 	return m
 }
 
 func (m *Manager) Enabled() bool       { return m.enabled }
 func (m *Manager) TmuxAvailable() bool { return m.useTmux }
+
+// Account is who sessions run as, for the listing endpoint to show. An
+// operator who cannot see which account they are about to land in has to open
+// a shell and run `whoami` to find out.
+func (m *Manager) Account() (Account, error) { return m.account, m.accountErr }
 
 type CreateOptions struct {
 	Title   string
@@ -93,15 +107,25 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	if opts.Cols == 0 {
 		opts.Cols = 80
 	}
+	if m.accountErr != nil {
+		return nil, m.accountErr
+	}
+	// The shell is the account's own unless the operator pinned one. Resolving
+	// it here rather than in loginArgv keeps the answer on the Session, where
+	// the listing endpoint can show which shell a tab is actually running.
 	shell := m.shell
-	if _, err := os.Stat(shell); err != nil {
-		shell = "/bin/sh"
+	if shell == "" {
+		shell = m.account.Shell
+	}
+	if shell == "" {
+		shell = "/bin/bash"
 	}
 
 	sess := &Session{
 		ID:          id,
 		Title:       defaultTitle(opts.Title),
 		Shell:       shell,
+		User:        m.account.Name,
 		CreatedAt:   time.Now().UTC(),
 		Owner:       opts.Owner,
 		Rows:        opts.Rows,
@@ -111,24 +135,37 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		lastActive:  time.Now(),
 	}
 
-	var cmd *exec.Cmd
+	// What ssh would have run: become the account and exec its login shell.
+	argv := m.account.loginArgv(m.shell)
 	if m.useTmux && opts.Persist {
 		sess.TmuxName = "vpsd-" + id
 		sess.Persisted = true
-		cmd = exec.Command("tmux", "new-session", "-A", "-s", sess.TmuxName, shell)
-	} else {
-		cmd = exec.Command(shell, "-l")
+		// tmux wraps the login rather than replacing it, so a persistent
+		// session is the same session as a plain one with a multiplexer in
+		// front. `-c` is what makes a requested working directory survive the
+		// wrapper; without tmux, su's own cd to the home directory wins, which
+		// is the ssh behaviour and the right default.
+		wrap := []string{"tmux", "new-session", "-A", "-s", sess.TmuxName}
+		if dir := hostDir(opts.CWD); dir != "" {
+			wrap = append(wrap, "-c", dir)
+			sess.CWDHint = dir
+		}
+		argv = append(wrap, argv...)
 	}
+	// CommandOnHost always crosses into the host's namespaces, even though
+	// this image happens to ship bash and tmux of its own. That is the whole
+	// point: the operator's tools, dotfiles and processes live out there, and
+	// a shell in here would be a convincing imitation of their server rather
+	// than their server.
+	cmd := hostexec.CommandOnHost(context.Background(), argv[0], argv[1:]...)
+	// A login resets the environment anyway; these are the two variables that
+	// survive it and that the terminal on the other end depends on to render
+	// colour and cursor keys correctly.
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"JD_SESSION="+id,
 	)
-	if opts.CWD != "" {
-		if st, err := os.Stat(opts.CWD); err == nil && st.IsDir() {
-			cmd.Dir = opts.CWD
-		}
-	}
 
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: opts.Rows, Cols: opts.Cols})
 	if err != nil {
@@ -146,6 +183,19 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	go sess.readLoop(func() { m.remove(id) })
 	return sess, nil
+}
+
+// hostDir accepts a requested working directory only if it is one. The host's
+// real /home, /opt, /srv and /etc are bind-mounted here under their own names,
+// so this stat asks about the same directory the session will land in.
+func hostDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir
+	}
+	return ""
 }
 
 func defaultTitle(t string) string {
@@ -200,7 +250,7 @@ func (m *Manager) Kill(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	if sess.TmuxName != "" {
-		exec.CommandContext(ctx, "tmux", "kill-session", "-t", sess.TmuxName).Run()
+		hostexec.CommandOnHost(ctx, "tmux", "kill-session", "-t", sess.TmuxName).Run()
 	}
 	return sess.Close()
 }
@@ -232,7 +282,7 @@ func (m *Manager) TmuxSessions(ctx context.Context) []string {
 	if !m.useTmux {
 		return names
 	}
-	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := hostexec.CommandOnHost(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		return names
 	}
@@ -278,6 +328,7 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 		ID:          id,
 		Title:       tmuxName,
 		Shell:       m.shell,
+		User:        m.account.Name,
 		TmuxName:    tmuxName,
 		Persisted:   true,
 		CreatedAt:   time.Now().UTC(),
@@ -288,7 +339,7 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 		scrollback:  newRingBuffer(scrollbackKB * 1024),
 		lastActive:  time.Now(),
 	}
-	cmd := exec.Command("tmux", "attach-session", "-t", tmuxName)
+	cmd := hostexec.CommandOnHost(context.Background(), "tmux", "attach-session", "-t", tmuxName)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {

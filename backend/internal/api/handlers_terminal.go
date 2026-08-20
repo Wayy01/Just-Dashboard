@@ -51,15 +51,25 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 		rows, cols := sess.Size()
 		view = append(view, map[string]any{
 			"id": sess.ID, "title": sess.Title, "shell": sess.Shell,
+			"user":      sess.User,
 			"persisted": sess.Persisted, "tmuxName": sess.TmuxName,
 			"createdAt": sess.CreatedAt, "owner": sess.Owner,
 			"rows": rows, "cols": cols, "pid": sess.PID,
 			"attached": sess.Attached(), "lastActive": sess.LastActive().UTC(),
 		})
 	}
+	// Who a new session will belong to, and where it will start. The page
+	// says so before you open one: a root-equivalent shell is not somewhere to
+	// discover your identity by running whoami.
+	account, accountErr := s.modules.term.Account()
+	login := map[string]any{"user": account.Name, "home": account.Home, "shell": account.Shell}
+	if accountErr != nil {
+		login["error"] = accountErr.Error()
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"enabled":  s.modules.term.Enabled(),
 		"tmux":     s.modules.term.TmuxAvailable(),
+		"login":    login,
 		"sessions": view,
 		"detached": s.modules.term.TmuxSessions(r.Context()),
 	})
@@ -91,10 +101,13 @@ func (s *Server) handleTerminalCreate(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapTermError(err)
 	}
+	// The account is the part of this record that matters later: "a shell was
+	// opened" and "a shell was opened as root" are different events.
 	httpx.SetAudit(r, "terminal.create", sess.ID,
-		map[string]any{"shell": sess.Shell, "persisted": sess.Persisted, "cwd": req.CWD})
+		map[string]any{"shell": sess.Shell, "user": sess.User,
+			"persisted": sess.Persisted, "cwd": req.CWD})
 	httpx.JSON(w, http.StatusCreated, map[string]any{
-		"id": sess.ID, "title": sess.Title, "shell": sess.Shell,
+		"id": sess.ID, "title": sess.Title, "shell": sess.Shell, "user": sess.User,
 		"persisted": sess.Persisted, "tmuxName": sess.TmuxName, "pid": sess.PID,
 	})
 	return nil
@@ -141,7 +154,7 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 		return mapTermError(err)
 	}
 	s.recordAudit(r, "terminal.attach", id,
-		map[string]any{"shell": sess.Shell, "tmux": sess.TmuxName})
+		map[string]any{"shell": sess.Shell, "user": sess.User, "tmux": sess.TmuxName})
 
 	conn, err := s.WS.Upgrade(w, r)
 	if err != nil {
