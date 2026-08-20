@@ -457,10 +457,13 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 
 const sidebarMenuButtonVariants = cva(
   // The active item is the only place in the nav that carries the primary
-  // colour: a tinted ground, a blue rail against the sidebar edge and a blue
-  // icon. Where you are should be readable in peripheral vision, without
-  // having to read the labels.
-  "peer/menu-button relative flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-primary/12 data-[active=true]:font-medium data-[active=true]:text-foreground data-[active=true]:before:absolute data-[active=true]:before:inset-y-1 data-[active=true]:before:left-0 data-[active=true]:before:w-[3px] data-[active=true]:before:rounded-r-full data-[active=true]:before:bg-primary data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&[data-active=true]>svg]:text-primary [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+  // colour, and it carries it solid: a filled pill in the primary with its
+  // paired foreground for the label and icon. Where you are should be readable
+  // in peripheral vision, without having to read the labels — a 12% tint asked
+  // to be looked at. The sidebar-scoped tokens rather than the plain ones
+  // because every theme defines that pair against the sidebar's own ground,
+  // which is what keeps the label legible on the fill.
+  "peer/menu-button relative flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-primary data-[active=true]:font-medium data-[active=true]:text-sidebar-primary-foreground data-[active=true]:hover:bg-sidebar-primary data-[active=true]:hover:text-sidebar-primary-foreground data-[active=true]:active:bg-sidebar-primary data-[active=true]:active:text-sidebar-primary-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&[data-active=true]>svg]:text-sidebar-primary-foreground [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
     variants: {
       variant: {

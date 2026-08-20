@@ -206,6 +206,10 @@ export default function OverviewPage() {
       >
         {recorded.error && <ErrorState error={recorded.error} />}
 
+        {/* Two charts of the same shape side by side. Both bodies are flex
+            columns whose chart takes the slack, because the grid stretches the
+            shorter panel to the taller one's height and a fixed-height chart
+            would leave that difference as dead space inside the card. */}
         <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
           <Panel>
             <PanelHeader
@@ -218,11 +222,11 @@ export default function OverviewPage() {
                 </span>
               }
             />
-            <PanelBody className="space-y-4">
+            <PanelBody className="flex flex-1 flex-col gap-4">
               {empty ? (
-                <ChartPlaceholder note={placeholder} />
+                <ChartPlaceholder note={placeholder} className="min-h-[190px] flex-1" />
               ) : (
-                <ChartContainer config={cpuConfig} className="h-[190px] w-full">
+                <ChartContainer config={cpuConfig} className="aspect-auto min-h-[190px] w-full flex-1">
                   <AreaChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                     <XAxis
@@ -267,17 +271,16 @@ export default function OverviewPage() {
                   </AreaChart>
                 </ChartContainer>
               )}
-              <PerCoreBars cores={snapshot.cpu.perCore} />
             </PanelBody>
           </Panel>
 
           <Panel>
             <PanelHeader icon={MemoryStick} title="Memory and swap" description="Share of total" />
-            <PanelBody className="space-y-4">
+            <PanelBody className="flex flex-1 flex-col gap-4">
               {empty ? (
-                <ChartPlaceholder note={placeholder} />
+                <ChartPlaceholder note={placeholder} className="min-h-[190px] flex-1" />
               ) : (
-                <ChartContainer config={memConfig} className="h-[190px] w-full">
+                <ChartContainer config={memConfig} className="aspect-auto min-h-[190px] w-full flex-1">
                   <LineChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                     <XAxis
@@ -327,7 +330,10 @@ export default function OverviewPage() {
                   </LineChart>
                 </ChartContainer>
               )}
-              <MetricStrip>
+              {/* Equal columns rather than the header strip's left-packed run:
+                    four figures across a half-page panel otherwise leave the
+                    right third of the row empty. */}
+              <MetricStrip className="[&>*]:flex-1">
                 <Metric label="Used" value={bytes(snapshot.memory.used)} />
                 <Metric label="Cached" value={bytes(snapshot.memory.cached)} />
                 <Metric label="Buffers" value={bytes(snapshot.memory.buffers)} />
@@ -343,7 +349,7 @@ export default function OverviewPage() {
           </PanelHeader>
           <PanelBody>
             {empty ? (
-              <ChartPlaceholder note={placeholder} />
+              <ChartPlaceholder note={placeholder} className="h-[180px]" />
             ) : (
               <ChartContainer config={netConfig} className="h-[180px] w-full">
                 <AreaChart data={rows} margin={{ left: 4, right: 4, top: 4 }}>
@@ -421,6 +427,19 @@ export default function OverviewPage() {
           </PanelBody>
         </Panel>
       </Section>
+
+      {snapshot.cpu.perCore.length > 0 && (
+        <Panel>
+          <PanelHeader
+            icon={Cpu}
+            title="Per-core utilisation"
+            description={`${snapshot.cpu.cores} logical processors · right now`}
+          />
+          <PanelBody>
+            <PerCoreBars cores={snapshot.cpu.perCore} />
+          </PanelBody>
+        </Panel>
+      )}
 
       <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <MountsPanel snapshot={snapshot} />
@@ -523,9 +542,14 @@ function emptyChartNote(range: RangeKey, recorded: HistoryState): string {
     : "Nothing recorded in this window yet."
 }
 
-function ChartPlaceholder({ note }: { note: string }) {
+function ChartPlaceholder({ note, className }: { note: string; className?: string }) {
   return (
-    <div className="flex h-[190px] w-full items-center justify-center rounded-lg border border-dashed border-hairline bg-surface-sunken px-4 text-center text-xs text-muted-foreground">
+    <div
+      className={cn(
+        "flex w-full items-center justify-center rounded-lg border border-dashed border-hairline bg-surface-sunken px-4 text-center text-xs text-muted-foreground",
+        className,
+      )}
+    >
       {note}
     </div>
   )
@@ -546,7 +570,11 @@ function rowLabel(_: unknown, payload: readonly { payload?: unknown }[] | undefi
 function PerCoreBars({ cores }: { cores: number[] }) {
   if (cores.length === 0) return null
   return (
-    <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+    // As many columns as fit the panel, not a fixed two: the track count follows
+    // the panel's own width rather than the viewport's, which is what keeps a
+    // 48-thread host from becoming a 24-row column that sets the height of the
+    // whole row — and lets a 2-core host spread across it instead.
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-x-4 gap-y-1.5">
       {cores.map((value, i) => (
         <div key={i} className="flex min-w-0 items-center gap-2">
           <span className="w-9 shrink-0 font-mono text-[10px] text-muted-foreground">cpu{i}</span>
