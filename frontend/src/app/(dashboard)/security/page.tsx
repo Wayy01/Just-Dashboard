@@ -15,6 +15,7 @@ import { toast } from "sonner"
 import { del, get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type {
+  BanEvent,
   Exposure,
   Fail2banJail,
   FirewallStatus,
@@ -414,39 +415,131 @@ function Fail2banTab() {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-      {data.jails.map((jail) => (
-        <Panel key={jail.name}>
-          <PanelHeader
-            icon={Ban}
-            title={jail.name}
-            description={`${jail.currentlyBanned} banned now · ${jail.totalBanned} total · ${jail.currentlyFailed} failing`}
-          />
-          <PanelBody>
-            {jail.bannedIps.length === 0 ? (
-              <p className="text-[13px] text-muted-foreground">Nothing currently banned.</p>
-            ) : (
-              <div className="space-y-0.5">
-                {jail.bannedIps.map((ip) => (
-                  <div
-                    key={ip}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-[var(--row-hover)]"
-                  >
-                    <span className="font-mono text-xs">{ip}</span>
-                    {can("system.admin") && (
-                      <Button size="xs" variant="ghost" onClick={() => unban(jail.name, ip)}>
-                        Unban
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </PanelBody>
-        </Panel>
-      ))}
-      {data.jails.length === 0 && <EmptyState icon={Ban} title="No jails configured" />}
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+        {data.jails.map((jail) => (
+          <JailPanel key={jail.name} jail={jail} onUnban={unban} canUnban={can("system.admin")} />
+        ))}
+        {data.jails.length === 0 && <EmptyState icon={Ban} title="No jails configured" />}
+      </div>
+      {/* Under the current bans, what fail2ban has actually been doing. A ban
+          expires, so a jail's list is empty again by morning however busy the
+          night was — and "nothing currently banned" reads as "nothing
+          happened". */}
+      <BanHistoryPanel />
     </div>
+  )
+}
+
+function JailPanel({
+  jail,
+  onUnban,
+  canUnban,
+}: {
+  jail: Fail2banJail
+  onUnban: (jail: string, ip: string) => void
+  canUnban: boolean
+}) {
+  return (
+    <Panel>
+      <PanelHeader
+        icon={Ban}
+        title={jail.name}
+        description={`${jail.currentlyBanned} banned now · ${jail.totalBanned} total · ${jail.currentlyFailed} failing`}
+      />
+      <PanelBody>
+        {jail.bannedIps.length === 0 ? (
+          <p className="text-[13px] text-muted-foreground">Nothing currently banned.</p>
+        ) : (
+          <div className="space-y-0.5">
+            {jail.bannedIps.map((ip) => (
+              <div
+                key={ip}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-[var(--row-hover)]"
+              >
+                <span className="font-mono text-xs">{ip}</span>
+                {canUnban && (
+                  <Button size="xs" variant="ghost" onClick={() => onUnban(jail.name, ip)}>
+                    Unban
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </PanelBody>
+    </Panel>
+  )
+}
+
+/**
+ * What fail2ban has done recently, read from its own log.
+ *
+ * Not remembered by the dashboard and not inferred by polling the jail: a ban
+ * shorter than the polling interval would never be seen that way, and the
+ * events either side of a restart would be invented. fail2ban writes this
+ * itself, and the page simply reads it.
+ */
+function BanHistoryPanel() {
+  const { data, error, loading } = usePoll(
+    (signal) => get<BanEvent[]>("/fail2ban/history", { limit: 100 }, signal),
+    60000,
+  )
+
+  const unavailable = error instanceof ApiError && error.code === "fail2ban_unavailable"
+
+  return (
+    <Panel>
+      <PanelHeader
+        icon={History}
+        title="Ban activity"
+        description="From fail2ban's own log — including bans that have since expired"
+      />
+      <PanelBody flush>
+        {unavailable ? (
+          <Notice tone="default" title="No fail2ban log on this host">
+            fail2ban is not installed, or it logs only to the journal. There is no file to read
+            back.
+          </Notice>
+        ) : error ? (
+          <ErrorState error={error} />
+        ) : loading ? (
+          <LoadingPanel />
+        ) : !data?.length ? (
+          <EmptyState icon={History} title="No ban activity recorded" />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>When</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Jail</TableHead>
+                <TableHead className="w-full">Address</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.map((event, i) => (
+                <TableRow key={`${event.at}-${event.ip}-${i}`}>
+                  <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                    {timestamp(event.at)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={event.action === "ban" ? "destructive" : "secondary"}
+                      className="font-normal"
+                    >
+                      {event.action}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-[13px]">{event.jail}</TableCell>
+                  <TableCell className="font-mono text-xs">{event.ip}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </PanelBody>
+    </Panel>
   )
 }
 

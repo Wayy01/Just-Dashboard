@@ -11,7 +11,7 @@ import {
   subscribeRange,
   type RangeKey,
 } from "@/lib/metrics-range"
-import type { MetricsHistory } from "@/lib/types"
+import type { MetricsHistory, StorageHistory } from "@/lib/types"
 
 export type HistoryState = {
   history: MetricsHistory | undefined
@@ -55,6 +55,54 @@ export function useMetricsHistory(range: RangeKey): HistoryState {
   const disabled = error instanceof ApiError && error.code === "metrics_history_disabled"
   return {
     history: data,
+    error: disabled ? undefined : error,
+    loading: Boolean(query) && loading,
+    disabled,
+  }
+}
+
+export type StorageState = {
+  storage: StorageHistory | undefined
+  error: Error | undefined
+  loading: boolean
+  disabled: boolean
+}
+
+/**
+ * Reads per-filesystem capacity over the same window as the host series.
+ *
+ * Its own request rather than a field on the host response: the host charts
+ * refresh every fifteen seconds and capacity moves in hours, so folding this
+ * into that response would ship a breakdown of every mount forty times an hour
+ * to draw a line that barely changes.
+ */
+export function useStorageHistory(range: RangeKey): StorageState {
+  const spec = rangeSpec(range)
+  const query = spec.query
+
+  const fetcher = useCallback(
+    (signal: AbortSignal) => {
+      if (!query) return Promise.resolve(undefined)
+      return get<StorageHistory>(
+        "/system/metrics/storage",
+        { range: query, points: Math.min(spec.points, 200) },
+        signal,
+      )
+    },
+    [query, spec.points],
+  )
+
+  const { data, error, loading } = usePoll<StorageHistory | undefined>(
+    fetcher,
+    // Capacity is not a live figure. Refreshing it on the charts' cadence
+    // would be four requests a minute for a line that moves in hours.
+    query ? Math.max(spec.refreshMs, 60_000) : 0,
+    [query],
+  )
+
+  const disabled = error instanceof ApiError && error.code === "metrics_history_disabled"
+  return {
+    storage: data,
     error: disabled ? undefined : error,
     loading: Boolean(query) && loading,
     disabled,

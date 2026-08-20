@@ -4,7 +4,9 @@ import type {
   ContainerHistoryPoint,
   MetricsHistory,
   MetricsHistoryPoint,
+  StorageHistory,
 } from "@/lib/types"
+import type { MountStats } from "@/lib/types"
 import type { MetricsPoint } from "@/lib/metrics-store"
 
 /**
@@ -332,4 +334,97 @@ export function memoryLimit(history: ContainerHistory | undefined): number {
     if (p.memLimit > limit) limit = p.memLimit
   }
   return limit
+}
+
+/**
+ * Chart rows for the per-filesystem capacity chart.
+ *
+ * The series are dynamic — one per mount, discovered from the data — so the
+ * rows are keyed by a synthetic `m0`, `m1`… rather than by the mountpoint
+ * itself. Recharts resolves a dataKey through a lodash-style path lookup, so a
+ * real mountpoint containing a dot ("/mnt/data.disk") would be read as a
+ * nested field and silently plot nothing.
+ */
+export type StorageRow = Record<string, number | string | null>
+
+export type StorageSeriesMeta = {
+  key: string
+  mountpoint: string
+  color: string
+}
+
+/** The palette the rest of the dashboard's charts draw from, cycled per mount. */
+const MOUNT_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+]
+
+function mountMeta(mountpoints: string[]): StorageSeriesMeta[] {
+  return mountpoints.map((mountpoint, i) => ({
+    key: `m${i}`,
+    mountpoint,
+    color: MOUNT_COLORS[i % MOUNT_COLORS.length],
+  }))
+}
+
+export function storageRows(history: StorageHistory): {
+  rows: StorageRow[]
+  series: StorageSeriesMeta[]
+} {
+  const series = mountMeta(history.mounts.map((m) => m.mountpoint))
+  const step = Math.max(history.stepSeconds, 1) * 1000
+
+  // Buckets are shared across mounts because every mount is sampled at the
+  // same instant, so the rows are assembled by timestamp rather than zipped by
+  // index — a mount that appeared halfway through the window (a disk attached
+  // on Tuesday) has fewer points than its neighbours.
+  const byTs = new Map<number, StorageRow>()
+  for (const [i, mount] of history.mounts.entries()) {
+    const key = series[i].key
+    for (const point of mount.points) {
+      const ts = new Date(point.ts).getTime()
+      if (Number.isNaN(ts)) continue
+      let row = byTs.get(ts)
+      if (!row) {
+        row = { t: step >= 3_600_000 ? shortDateTime(ts) : clock(point.ts), ts, at: timestamp(point.ts) }
+        byTs.set(ts, row)
+      }
+      row[key] = point.usedPercent
+    }
+  }
+
+  const ordered = [...byTs.values()].sort((a, b) => (a.ts as number) - (b.ts as number))
+  const rows: StorageRow[] = []
+  let previous = 0
+  for (const row of ordered) {
+    const ts = row.ts as number
+    if (previous !== 0 && ts - previous > step * 1.5) {
+      rows.push({ t: "", ts: previous + step, at: "" })
+    }
+    rows.push(row)
+    previous = ts
+  }
+  return { rows, series }
+}
+
+/** The same rows from the live feed, which carries every mount on each frame. */
+export function liveStorageRows(
+  history: MetricsPoint[],
+  mounts: MountStats[],
+): { rows: StorageRow[]; series: StorageSeriesMeta[] } {
+  // The live buffer keeps only the fullest figure per frame, not a breakdown,
+  // so there is one series here and it is labelled for what it is.
+  const series: StorageSeriesMeta[] = [
+    { key: "m0", mountpoint: mounts.length === 1 ? mounts[0].mountpoint : "fullest", color: MOUNT_COLORS[0] },
+  ]
+  const rows = history.map<StorageRow>((p) => ({
+    t: p.t,
+    ts: p.ts,
+    at: new Date(p.ts).toLocaleString(),
+    m0: p.disk,
+  }))
+  return { rows, series }
 }

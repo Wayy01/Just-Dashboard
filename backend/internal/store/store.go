@@ -188,6 +188,28 @@ CREATE TABLE IF NOT EXISTS settings (
 -- ts is the rowid, so range scans over a window are a b-tree walk and a
 -- restarted sampler landing on the same second replaces rather than
 -- duplicates. Rows are pruned past JD_METRICS_RETENTION.
+-- Per-filesystem capacity, recorded by the same sampler.
+--
+-- The host table keeps only the fullest mount, which is a summary and not an
+-- answer: when the fullest filesystem stops being the fullest, that single
+-- line drops by whatever separates it from the runner-up, and reads as
+-- somebody having freed a great deal of space on a disk that did not change.
+-- Which filesystem grew is the actual question, so each one gets its own row.
+--
+-- Cardinality is small on purpose: pseudo filesystems are filtered out before
+-- this is written, so a machine records a handful of rows per sample, not one
+-- per cgroup mount.
+CREATE TABLE IF NOT EXISTS metric_mount_samples (
+  ts           INTEGER NOT NULL,
+  mountpoint   TEXT NOT NULL,
+  used_percent REAL NOT NULL DEFAULT 0,
+  used_bytes   INTEGER NOT NULL DEFAULT 0,
+  total_bytes  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (mountpoint, ts)
+);
+-- Pruning walks by time across every mount, which the primary key cannot serve.
+CREATE INDEX IF NOT EXISTS idx_mount_samples_ts ON metric_mount_samples(ts);
+
 -- Per-container utilisation, recorded by the same sampler.
 --
 -- Keyed by container name rather than id on purpose: a compose redeploy

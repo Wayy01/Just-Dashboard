@@ -164,6 +164,10 @@ series carries its bucket's peak next to its mean: a 100% second inside a ten-mi
 bucket averages away to nothing, so a chart drawn only from means reports a quiet night
 that was not quiet.
 
+Capacity is recorded per filesystem (`GET /system/metrics/storage`), not as one
+worst-of line: when the fullest mount stops being the fullest, a single line drops to
+whatever the runner-up was and reads as space freed on a disk that never changed.
+
 The same recorder samples every running container (`GET
 /docker/containers/{id}/stats/history`). That series is keyed by container **name**, not
 id: a compose redeploy replaces the container with a new id, and seeing across the
@@ -171,6 +175,15 @@ restart is most of the point. Docker being unavailable is not an error there —
 recorder logs it once and carries on with the host metrics. The recorder keeps its own `sysinfo.Collector`, since rates are deltas
 against the previous call and sharing one with the request handlers would let a one-shot
 `GET /system/metrics` shorten the interval the next recorded rate is divided by.
+
+### History the host already keeps
+
+Not everything worth showing needs recording. `netsec` reads three records the machine
+writes on its own — wtmp (`GET /logins`), btmp (`GET /logins/failed`) and fail2ban's log
+(`GET /fail2ban/history`) — rather than polling and remembering. Polling a jail for its
+banned set would invent the events between samples and miss every ban shorter than the
+interval; the log is the record. btmp sits behind `system.admin` because it holds whatever
+was typed at a login prompt, which is sometimes a password in the username field.
 
 ### Streaming
 

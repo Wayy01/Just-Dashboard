@@ -104,6 +104,10 @@ type Point struct {
 	Load1     float64 `json:"load1"`
 	Load1Peak float64 `json:"load1Peak"`
 
+	// DiskPercent is the fullest filesystem at that moment — a summary, kept
+	// because it is one cheap number for "how close is this host to full".
+	// Which filesystem it was, and what the others were doing, is
+	// StorageRange's answer rather than this one's.
 	DiskPercent float64 `json:"diskPercent"`
 	MemUsed     uint64  `json:"memUsed"`
 }
@@ -154,6 +158,35 @@ type ContainerSeries struct {
 	Window
 	Name   string           `json:"name"`
 	Points []ContainerPoint `json:"points"`
+}
+
+// MountPoint is one bucket of one filesystem's capacity.
+type MountPoint struct {
+	TS      time.Time `json:"ts"`
+	Samples int       `json:"samples"`
+
+	UsedPercent     float64 `json:"usedPercent"`
+	UsedPercentPeak float64 `json:"usedPercentPeak"`
+
+	Used  uint64 `json:"used"`
+	Total uint64 `json:"total"`
+}
+
+// MountSeries is one filesystem's history.
+type MountSeries struct {
+	Mountpoint string       `json:"mountpoint"`
+	Points     []MountPoint `json:"points"`
+}
+
+// StorageSeries is every filesystem's history over one window.
+//
+// Per mount rather than one line for "the disk": which filesystem grew is the
+// question an operator is actually asking, and a single worst-of line cannot
+// answer it — nor even keep its own meaning, since it silently changes which
+// filesystem it is describing.
+type StorageSeries struct {
+	Window
+	Mounts []MountSeries `json:"mounts"`
 }
 
 // ContainerSampler is the part of the Docker client the recorder needs. It is
@@ -301,11 +334,110 @@ func (r *Recorder) sample(ctx context.Context) error {
 	if err := r.record(ctx, Reduce(snap)); err != nil {
 		return err
 	}
+	if err := r.recordMounts(ctx, snap.TS, snap.Mounts); err != nil && ctx.Err() == nil {
+		r.log.Warn("filesystem metrics write failed", "error", err)
+	}
 	// Containers are recorded against the host sample's timestamp rather than
 	// each container's own read time, so a row of them lines up in a query
 	// instead of scattering across a few hundred milliseconds.
 	r.recordContainers(ctx, snap.TS)
 	return nil
+}
+
+// recordMounts stores one row per real filesystem. The snapshot has already
+// dropped the pseudo filesystems, which is what keeps this to a handful of
+// rows a sample rather than one per cgroup mount.
+func (r *Recorder) recordMounts(ctx context.Context, at time.Time, mounts []sysinfo.MountStats) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO metric_mount_samples (ts, mountpoint, used_percent, used_bytes, total_bytes)
+		VALUES (?,?,?,?,?)
+		ON CONFLICT(mountpoint, ts) DO UPDATE SET
+		  used_percent = excluded.used_percent,
+		  used_bytes   = excluded.used_bytes,
+		  total_bytes  = excluded.total_bytes`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	ts := at.Unix()
+	for _, m := range mounts {
+		if m.Mountpoint == "" {
+			continue
+		}
+		if _, err := stmt.ExecContext(ctx, ts, m.Mountpoint, m.UsedPercent,
+			int64(m.Used), int64(m.Total)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// StorageRange returns every filesystem's capacity over a window, bucketed the
+// same way the host series is.
+//
+// One query for all of them rather than one per mount: the number of mounts is
+// small but the number of round trips is what costs, and the rows come back
+// already grouped by mountpoint.
+func (r *Recorder) StorageRange(ctx context.Context, from, to time.Time, maxPoints int) (*StorageSeries, error) {
+	if to.Before(from) {
+		from, to = to, from
+	}
+	if maxPoints < 1 {
+		maxPoints = 1
+	}
+	window, err := r.window(ctx, from, to, maxPoints, `SELECT MIN(ts) FROM metric_mount_samples`)
+	if err != nil {
+		return nil, err
+	}
+	series := &StorageSeries{Window: window, Mounts: []MountSeries{}}
+
+	secs := int64(window.StepSeconds)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT mountpoint,
+		       (ts / ?) * ? AS bucket,
+		       COUNT(*),
+		       AVG(used_percent), MAX(used_percent),
+		       AVG(used_bytes),   MAX(total_bytes)
+		  FROM metric_mount_samples
+		 WHERE ts >= ? AND ts <= ?
+		 GROUP BY mountpoint, bucket
+		 ORDER BY mountpoint, bucket`,
+		secs, secs, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var mountpoint string
+		var bucket int64
+		var p MountPoint
+		var used, total float64
+		if err := rows.Scan(&mountpoint, &bucket, &p.Samples,
+			&p.UsedPercent, &p.UsedPercentPeak, &used, &total); err != nil {
+			return nil, err
+		}
+		p.TS = time.Unix(bucket, 0).UTC()
+		p.UsedPercent, p.UsedPercentPeak = round1(p.UsedPercent), round1(p.UsedPercentPeak)
+		p.Used, p.Total = uint64(used), uint64(total)
+
+		if n := len(series.Mounts); n > 0 && series.Mounts[n-1].Mountpoint == mountpoint {
+			series.Mounts[n-1].Points = append(series.Mounts[n-1].Points, p)
+			continue
+		}
+		series.Mounts = append(series.Mounts, MountSeries{Mountpoint: mountpoint, Points: []MountPoint{p}})
+	}
+	return series, rows.Err()
 }
 
 // recordContainers stores one sample per running container.
@@ -451,7 +583,10 @@ func (r *Recorder) prune(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `DELETE FROM metric_samples WHERE ts < ?`, cutoff); err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM metric_container_samples WHERE ts < ?`, cutoff)
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM metric_container_samples WHERE ts < ?`, cutoff); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM metric_mount_samples WHERE ts < ?`, cutoff)
 	return err
 }
 

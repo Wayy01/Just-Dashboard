@@ -372,3 +372,90 @@ func TestContainerFailuresDoNotStopHostRecording(t *testing.T) {
 		t.Fatal("no host samples recorded while Docker was unreachable")
 	}
 }
+
+// Capacity is recorded per filesystem because a single worst-of line cannot
+// keep its own meaning: when the fullest mount stops being the fullest, it
+// drops to whatever the runner-up was and reads as space freed on a disk that
+// never changed.
+func TestStorageRangeIsPerFilesystem(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, 24*time.Hour)
+	ctx := context.Background()
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+
+	for i := range 20 {
+		// /boot starts nearly full and is cleared halfway through; / creeps up.
+		boot := 92.0
+		if i >= 10 {
+			boot = 20.0
+		}
+		if err := r.recordMounts(ctx, base.Add(time.Duration(i)*15*time.Second), []sysinfo.MountStats{
+			{Mountpoint: "/", UsedPercent: 60 + float64(i)/10, Used: 600, Total: 1000},
+			{Mountpoint: "/boot", UsedPercent: boot, Used: 92, Total: 100},
+			{Mountpoint: "", UsedPercent: 50}, // nothing to key a series on
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Asked for more points than there are samples, so the buckets cannot be
+	// coarser than the sampling interval and each sample stands alone. What is
+	// under test here is that the two filesystems stay separate series, not
+	// the downsampling — that has its own test.
+	series, err := r.StorageRange(ctx, base.Add(-time.Second), base.Add(5*time.Minute), 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series.Mounts) != 2 {
+		t.Fatalf("got %d filesystems, want / and /boot and no nameless row: %+v", len(series.Mounts), series.Mounts)
+	}
+
+	byMount := map[string][]MountPoint{}
+	for _, m := range series.Mounts {
+		byMount[m.Mountpoint] = m.Points
+		if len(m.Points) != 20 {
+			t.Fatalf("%s has %d points, want one per sample", m.Mountpoint, len(m.Points))
+		}
+	}
+
+	// The clear-out has to show as /boot's own line falling, and must leave
+	// the root filesystem's line untouched.
+	boot := byMount["/boot"]
+	if boot[0].UsedPercentPeak != 92 {
+		t.Errorf("/boot opened at %v%%, want 92", boot[0].UsedPercentPeak)
+	}
+	if last := boot[len(boot)-1]; last.UsedPercent != 20 {
+		t.Errorf("/boot ended at %v%%, want 20 after being cleared", last.UsedPercent)
+	}
+
+	// The root filesystem's own line must be unaffected by /boot's swing.
+	root := byMount["/"]
+	if root[0].UsedPercent < 59 || root[len(root)-1].UsedPercent < root[0].UsedPercent {
+		t.Errorf("/ series = %+v, want a slow climb of its own", root)
+	}
+	if root[0].Total != 1000 {
+		t.Errorf("/ total = %d, want the recorded capacity", root[0].Total)
+	}
+}
+
+func TestPruneDropsExpiredMountSamples(t *testing.T) {
+	r := testRecorder(t, 15*time.Second, time.Hour)
+	ctx := context.Background()
+	now := time.Now()
+	for _, age := range []time.Duration{3 * time.Hour, 30 * time.Minute} {
+		if err := r.recordMounts(ctx, now.Add(-age), []sysinfo.MountStats{
+			{Mountpoint: "/", UsedPercent: 50},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	series, err := r.StorageRange(ctx, now.Add(-24*time.Hour), now, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series.Mounts) != 1 || len(series.Mounts[0].Points) != 1 {
+		t.Fatalf("kept %+v, want the single point inside retention", series.Mounts)
+	}
+}

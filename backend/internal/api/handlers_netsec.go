@@ -33,6 +33,7 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 
 	r.Route("/fail2ban", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFail2banStatus))
+		r.Method(http.MethodGet, "/history", s.handle(s.handleBanHistory))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/{jail}/unban", s.handle(s.handleFail2banUnban))
@@ -54,6 +55,25 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 			r.Method(http.MethodGet, "/failed", s.handle(s.handleFailedLogins))
 		})
 	})
+}
+
+// handleBanHistory answers what fail2ban has actually been doing.
+//
+// A jail's status lists only the bans in force at this instant, and bans
+// expire — so the burst that was banned and released overnight has already
+// vanished from the page by morning. This reads fail2ban's own log, which has
+// held the answer all along.
+func (s *Server) handleBanHistory(w http.ResponseWriter, r *http.Request) error {
+	events, err := s.modules.netsec.BanHistory(r.Context(), loginLimit(r))
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	if len(events) == 0 && !s.modules.netsec.Fail2banAvailable() {
+		return httpx.Err(http.StatusServiceUnavailable, "fail2ban_unavailable",
+			"fail2ban is not installed on this host")
+	}
+	httpx.JSON(w, http.StatusOK, events)
+	return nil
 }
 
 // handleLoginHistory answers "who got in while I was not watching".

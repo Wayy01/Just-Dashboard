@@ -17,6 +17,7 @@ func (s *Server) mountSystemRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/host", s.handle(s.handleSystemHost))
 		r.Method(http.MethodGet, "/metrics", s.handle(s.handleSystemMetrics))
 		r.Method(http.MethodGet, "/metrics/history", s.handle(s.handleMetricsHistory))
+		r.Method(http.MethodGet, "/metrics/storage", s.handle(s.handleStorageHistory))
 		r.Method(http.MethodGet, "/disk-usage", s.handle(s.handleDiskBreakdown))
 		r.Method(http.MethodGet, "/stream", s.handle(s.handleSystemStream))
 	})
@@ -58,6 +59,25 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	series, err := s.modules.metrics.Range(r.Context(), from, to, points)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
+
+// handleStorageHistory answers "which filesystem is filling up", which the
+// single fullest-mount figure in the host series can summarise but not answer.
+func (s *Server) handleStorageHistory(w http.ResponseWriter, r *http.Request) error {
+	if !s.modules.metrics.Enabled() {
+		return httpx.Err(http.StatusServiceUnavailable, "metrics_history_disabled",
+			"metrics history is not being recorded on this host (JD_METRICS_RETENTION=0)")
+	}
+	from, to, points, err := historyWindow(r)
+	if err != nil {
+		return err
+	}
+	series, err := s.modules.metrics.StorageRange(r.Context(), from, to, points)
 	if err != nil {
 		return httpx.Internal(err)
 	}

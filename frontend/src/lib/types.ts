@@ -125,6 +125,39 @@ export type ContainerHistory = {
   points: ContainerHistoryPoint[]
 }
 
+/** One bucket of one filesystem's recorded capacity. */
+export type MountHistoryPoint = {
+  ts: string
+  samples: number
+  usedPercent: number
+  usedPercentPeak: number
+  used: number
+  total: number
+}
+
+export type MountHistory = {
+  mountpoint: string
+  points: MountHistoryPoint[]
+}
+
+export type StorageHistory = {
+  from: string
+  to: string
+  stepSeconds: number
+  sampleIntervalSeconds: number
+  retentionSeconds: number
+  earliest: string | null
+  mounts: MountHistory[]
+}
+
+/** One ban or unban, read from fail2ban's own log rather than remembered here. */
+export type BanEvent = {
+  action: "ban" | "unban"
+  jail: string
+  ip: string
+  at: string
+}
+
 export type MetricsHistory = {
   from: string
   to: string

@@ -11,12 +11,15 @@ import { useMetrics } from "@/hooks/use-metrics"
 import {
   useMetricsHistory,
   useRangePreference,
+  useStorageHistory,
   type HistoryState,
 } from "@/hooks/use-metrics-history"
 import {
   coverageNote,
   historyRows,
   liveRows,
+  liveStorageRows,
+  storageRows,
   RANGES,
   rangeSpec,
   retentionNote,
@@ -64,10 +67,6 @@ const memConfig = {
   swap: { label: "Swap", color: "var(--chart-4)" },
 } satisfies ChartConfig
 
-const diskConfig = {
-  disk: { label: "Fullest filesystem", color: "var(--chart-3)" },
-} satisfies ChartConfig
-
 const ioConfig = {
   diskRead: { label: "Read", color: "var(--chart-2)" },
   diskReadPeak: { label: "Read peak", color: "var(--chart-2)" },
@@ -95,10 +94,29 @@ export default function OverviewPage() {
   const spec = rangeSpec(range)
   const recorded = useMetricsHistory(range)
 
+  const recordedStorage = useStorageHistory(range)
+
   const rows = useMemo<ChartRow[]>(() => {
     if (range === "live") return liveRows(history)
     return recorded.history ? historyRows(recorded.history) : []
   }, [range, history, recorded.history])
+
+  // The live feed carries only the fullest figure per frame, so the live view
+  // is one honestly-labelled line and the recorded views are one per mount.
+  const storage = useMemo(() => {
+    if (range === "live") return liveStorageRows(history, snapshot?.mounts ?? [])
+    return recordedStorage.storage
+      ? storageRows(recordedStorage.storage)
+      : { rows: [], series: [] }
+  }, [range, history, snapshot?.mounts, recordedStorage.storage])
+
+  const storageConfig = useMemo<ChartConfig>(
+    () =>
+      Object.fromEntries(
+        storage.series.map((mount) => [mount.key, { label: mount.mountpoint, color: mount.color }]),
+      ),
+    [storage.series],
+  )
 
   if (error && !snapshot) {
     return (
@@ -450,7 +468,7 @@ export default function OverviewPage() {
             description="Capacity of the fullest filesystem, and what the disks are doing"
           />
           <PanelBody>
-            {empty ? (
+            {storage.rows.length === 0 ? (
               <ChartPlaceholder note={placeholder} className="h-[170px]" />
             ) : (
               // Two charts rather than one with two axes. A capacity
@@ -460,8 +478,13 @@ export default function OverviewPage() {
               <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
                 <div className="space-y-1.5">
                   <p className="text-[11px] text-muted-foreground">Used capacity</p>
-                  <ChartContainer config={diskConfig} className="h-[150px] w-full">
-                    <AreaChart data={rows} margin={{ left: -22, right: 4, top: 4 }}>
+                  {/* One line per filesystem, not one for "the disk". A single
+                      worst-of line changes which filesystem it is describing
+                      without saying so: clear space on the fullest mount and it
+                      drops to whatever the runner-up was, which reads as space
+                      freed on a disk that did not change. */}
+                  <ChartContainer config={storageConfig} className="h-[150px] w-full">
+                    <LineChart data={storage.rows} margin={{ left: -22, right: 4, top: 4 }}>
                       <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
                       <XAxis
                         dataKey="t"
@@ -485,16 +508,19 @@ export default function OverviewPage() {
                           />
                         }
                       />
-                      <Area
-                        dataKey="disk"
-                        type="monotone"
-                        stroke="var(--color-disk)"
-                        strokeWidth={1.5}
-                        fill="var(--color-disk)"
-                        fillOpacity={0.14}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
+                      <ChartLegend content={<ChartLegendContent />} />
+                      {storage.series.map((mount) => (
+                        <Line
+                          key={mount.key}
+                          dataKey={mount.key}
+                          type="monotone"
+                          stroke={mount.color}
+                          strokeWidth={1.5}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </LineChart>
                   </ChartContainer>
                 </div>
 
