@@ -101,7 +101,7 @@ function ConfirmBody({
             onChange={(e) => setTyped(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && run()}
             className="font-mono"
-            placeholder={request.phrase}
+            placeholder="Type the phrase above"
           />
         </div>
 

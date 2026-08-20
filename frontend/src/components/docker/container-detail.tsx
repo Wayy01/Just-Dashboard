@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Eye, EyeOff, ShieldAlert } from "lucide-react"
+import { Box, Eye, EyeOff, ShieldAlert } from "lucide-react"
 import { get } from "@/lib/api"
 import { duration, timestamp } from "@/lib/format"
 import type { ContainerDetail, LogLine } from "@/lib/types"
@@ -11,17 +11,11 @@ import { LogViewer } from "@/components/log-viewer"
 import { XtermPane } from "@/components/xterm-pane"
 import { ErrorState, LoadingRows } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
+import { SidePanel } from "@/components/side-panel"
+import { Detail, DetailList } from "@/components/page"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 
 /** How many log lines the panel keeps before dropping the oldest. */
 const LOG_LIMIT = 5000
@@ -34,23 +28,30 @@ export function ContainerDetailSheet({
   onOpenChange: (open: boolean) => void
 }) {
   return (
-    <Sheet open={containerId !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
-        {/* Keyed on the container so selecting another one starts fresh
-            rather than briefly showing the previous container's detail. */}
-        {containerId && <ContainerDetailBody key={containerId} containerId={containerId} />}
-      </SheetContent>
-    </Sheet>
+    <ContainerDetailPanel
+      // Keyed on the container so selecting another one starts fresh rather
+      // than briefly showing the previous container's detail.
+      key={containerId ?? "none"}
+      containerId={containerId}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
-function ContainerDetailBody({ containerId }: { containerId: string }) {
+function ContainerDetailPanel({
+  containerId,
+  onOpenChange,
+}: {
+  containerId: string | null
+  onOpenChange: (open: boolean) => void
+}) {
   const { can } = useAuth()
   const [detail, setDetail] = useState<ContainerDetail>()
   const [error, setError] = useState<Error>()
   const [tab, setTab] = useState("overview")
 
   useEffect(() => {
+    if (!containerId) return
     const controller = new AbortController()
     get<ContainerDetail>(`/docker/containers/${containerId}`, undefined, controller.signal)
       .then(setDetail)
@@ -58,77 +59,75 @@ function ContainerDetailBody({ containerId }: { containerId: string }) {
     return () => controller.abort()
   }, [containerId])
 
+  const shell = can("terminal") && detail?.state === "running"
+
   return (
-    <>
-      <SheetHeader className="border-b p-4">
-        <SheetTitle className="flex items-center gap-2">
+    <SidePanel
+      open={containerId !== null}
+      onOpenChange={onOpenChange}
+      icon={Box}
+      title={
+        <>
           {detail?.name ?? "Container"}
           {detail && <StatusBadge state={detail.state} />}
-        </SheetTitle>
-        <SheetDescription className="font-mono text-xs">
-          {detail?.image ?? containerId}
-        </SheetDescription>
-      </SheetHeader>
-
-      {error && <ErrorState error={error} className="m-4" />}
-      {!detail && !error && <LoadingRows className="p-4" />}
+        </>
+      }
+      description={detail?.image ?? containerId ?? undefined}
+      bodyClassName="flex min-h-0 flex-1 flex-col p-4"
+    >
+      {error && <ErrorState error={error} />}
+      {!detail && !error && <LoadingRows />}
 
       {detail && (
-        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 w-fit">
+        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-3">
+          <TabsList className="w-fit shrink-0">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="env">Environment</TabsTrigger>
             <TabsTrigger value="mounts">Mounts</TabsTrigger>
-            {can("terminal") && detail.state === "running" && (
-              <TabsTrigger value="shell">Shell</TabsTrigger>
-            )}
+            {shell && <TabsTrigger value="shell">Shell</TabsTrigger>}
           </TabsList>
 
-          <TabsContent value="overview" className="min-h-0 flex-1 p-4">
-            <ScrollArea className="h-full pr-3">
-              <OverviewFields detail={detail} />
-            </ScrollArea>
+          <TabsContent value="overview" className="min-h-0 flex-1 overflow-y-auto">
+            <OverviewFields detail={detail} />
           </TabsContent>
 
-          <TabsContent value="logs" className="min-h-0 flex-1 p-4">
-            <ContainerLogs containerId={containerId} active={tab === "logs"} />
+          <TabsContent value="logs" className="min-h-0 flex-1">
+            <ContainerLogs containerId={detail.id} active={tab === "logs"} />
           </TabsContent>
 
-          <TabsContent value="env" className="min-h-0 flex-1 p-4">
+          <TabsContent value="env" className="min-h-0 flex-1">
             <EnvironmentList env={detail.env} />
           </TabsContent>
 
-          <TabsContent value="mounts" className="min-h-0 flex-1 p-4">
-            <ScrollArea className="h-full pr-3">
-              <div className="space-y-3">
-                {detail.mounts.map((mount, i) => (
-                  <div key={i} className="rounded-md border p-3 text-xs">
-                    <div className="mb-1 flex items-center gap-2">
-                      <Badge variant="outline">{mount.type}</Badge>
-                      <Badge variant={mount.rw ? "default" : "secondary"}>
-                        {mount.rw ? "read-write" : "read-only"}
-                      </Badge>
-                    </div>
-                    <p className="font-mono break-all">
-                      <span className="text-muted-foreground">{mount.source}</span>
-                      {" → "}
-                      {mount.destination}
-                    </p>
-                  </div>
-                ))}
-                {detail.mounts.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No mounts.</p>
-                )}
+          <TabsContent value="mounts" className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+            {detail.mounts.map((mount, i) => (
+              <div key={i} className="rounded-lg border border-hairline p-3 text-xs">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <Badge variant="outline" className="font-normal">
+                    {mount.type}
+                  </Badge>
+                  <Badge variant={mount.rw ? "default" : "secondary"} className="font-normal">
+                    {mount.rw ? "read-write" : "read-only"}
+                  </Badge>
+                </div>
+                <p className="font-mono break-all">
+                  <span className="text-muted-foreground">{mount.source}</span>
+                  {" → "}
+                  {mount.destination}
+                </p>
               </div>
-            </ScrollArea>
+            ))}
+            {detail.mounts.length === 0 && (
+              <p className="text-xs text-muted-foreground">No mounts.</p>
+            )}
           </TabsContent>
 
-          {can("terminal") && detail.state === "running" && (
-            <TabsContent value="shell" className="min-h-0 flex-1 p-4">
+          {shell && (
+            <TabsContent value="shell" className="min-h-0 flex-1">
               {tab === "shell" && (
                 <XtermPane
-                  path={`/docker/containers/${containerId}/exec`}
+                  path={`/docker/containers/${detail.id}/exec`}
                   query={{ rows: 30, cols: 100 }}
                   className="h-full"
                 />
@@ -137,7 +136,7 @@ function ContainerDetailBody({ containerId }: { containerId: string }) {
           )}
         </Tabs>
       )}
-    </>
+    </SidePanel>
   )
 }
 
@@ -201,124 +200,96 @@ function EnvironmentList({ env }: { env: string[] }) {
           </span>
         </p>
       )}
-      <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className="space-y-1 font-mono text-xs">
-          {rows.map((row) => {
-            const show = !row.secret || revealed[row.name]
-            return (
-              <div
-                key={row.line}
-                className="flex items-start gap-2 rounded px-2 py-1 hover:bg-muted"
-              >
-                <span className="shrink-0 text-muted-foreground">{row.name}=</span>
-                {show ? (
-                  <span className="break-all">{row.value}</span>
-                ) : (
-                  <span className="text-muted-foreground select-none">••••••••••••</span>
-                )}
-                {row.secret && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="ml-auto h-5 shrink-0 px-1.5 text-[11px] font-normal"
-                    aria-label={`${revealed[row.name] ? "Hide" : "Reveal"} ${row.name}`}
-                    onClick={() =>
-                      setRevealed((prev) => ({ ...prev, [row.name]: !prev[row.name] }))
-                    }
-                  >
-                    {revealed[row.name] ? (
-                      <EyeOff className="size-3" />
-                    ) : (
-                      <Eye className="size-3" />
-                    )}
-                    {revealed[row.name] ? "Hide" : "Reveal"}
-                  </Button>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </ScrollArea>
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto font-mono text-xs">
+        {rows.map((row) => {
+          const show = !row.secret || revealed[row.name]
+          return (
+            <div
+              key={row.line}
+              className="flex items-start gap-2 rounded-md px-2 py-1 hover:bg-[var(--row-hover)]"
+            >
+              <span className="shrink-0 text-muted-foreground">{row.name}=</span>
+              {show ? (
+                <span className="break-all">{row.value}</span>
+              ) : (
+                <span className="text-muted-foreground select-none">••••••••••••</span>
+              )}
+              {row.secret && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="ml-auto shrink-0 font-normal"
+                  aria-label={`${revealed[row.name] ? "Hide" : "Reveal"} ${row.name}`}
+                  onClick={() => setRevealed((prev) => ({ ...prev, [row.name]: !prev[row.name] }))}
+                >
+                  {revealed[row.name] ? <EyeOff /> : <Eye />}
+                  {revealed[row.name] ? "Hide" : "Reveal"}
+                </Button>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
 function OverviewFields({ detail }: { detail: ContainerDetail }) {
-  const fields: [string, React.ReactNode][] = [
-    [
-      "Container ID",
-      <span key="id" className="font-mono text-xs">
-        {detail.id.slice(0, 20)}
-      </span>,
-    ],
-    [
-      "Image",
-      <span key="img" className="font-mono text-xs">
-        {detail.image}
-      </span>,
-    ],
-    [
-      "Command",
-      <span key="cmd" className="font-mono text-xs">
-        {detail.command || "—"}
-      </span>,
-    ],
-    ["Created", timestamp(detail.createdAt)],
-    [
-      "Started",
-      detail.startedAt ? `${timestamp(detail.startedAt)} (${duration(detail.uptimeSeconds)})` : "—",
-    ],
-    ["Restart policy", detail.restartPolicy || "none"],
-    ["Restarts", detail.restartCount],
-    ["Exit code", detail.state === "running" ? "—" : detail.exitCode],
-    ["Network mode", detail.networkMode],
-    ["Working dir", detail.workingDir || "—"],
-    ["User", detail.user || "default"],
-    [
-      "Privileged",
-      detail.privileged ? (
-        <Badge key="priv" variant="destructive">
-          yes — full host access
-        </Badge>
-      ) : (
-        "no"
-      ),
-    ],
-  ]
-
   return (
-    <div className="space-y-4">
-      <dl className="grid grid-cols-[9rem_1fr] gap-x-4 gap-y-2 text-sm">
-        {fields.map(([label, value]) => (
-          <div key={label} className="contents">
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="break-all">{value}</dd>
-          </div>
-        ))}
-      </dl>
+    <div className="space-y-5">
+      <DetailList>
+        <Detail label="Container ID">
+          <span className="font-mono break-all">{detail.id.slice(0, 20)}</span>
+        </Detail>
+        <Detail label="Image">
+          <span className="font-mono break-all">{detail.image}</span>
+        </Detail>
+        <Detail label="Command">
+          <span className="font-mono break-all">{detail.command || "—"}</span>
+        </Detail>
+        <Detail label="Created">{timestamp(detail.createdAt)}</Detail>
+        <Detail label="Started">
+          {detail.startedAt
+            ? `${timestamp(detail.startedAt)} (${duration(detail.uptimeSeconds)})`
+            : "—"}
+        </Detail>
+        <Detail label="Restart policy">{detail.restartPolicy || "none"}</Detail>
+        <Detail label="Restarts">{detail.restartCount}</Detail>
+        <Detail label="Exit code">{detail.state === "running" ? "—" : detail.exitCode}</Detail>
+        <Detail label="Network mode">{detail.networkMode}</Detail>
+        <Detail label="Working dir">{detail.workingDir || "—"}</Detail>
+        <Detail label="User">{detail.user || "default"}</Detail>
+        <Detail label="Privileged">
+          {detail.privileged ? (
+            <Badge variant="destructive" className="font-normal">
+              yes — full host access
+            </Badge>
+          ) : (
+            "no"
+          )}
+        </Detail>
+      </DetailList>
 
       {detail.networkDetails.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-sm font-medium">Networks</h3>
-          <div className="space-y-2">
-            {detail.networkDetails.map((net) => (
-              <div key={net.networkId} className="rounded-md border p-3 text-xs">
-                <div className="font-medium">{net.name}</div>
-                <p className="font-mono text-muted-foreground">
-                  {net.ipAddress || "no address"} · gateway {net.gateway || "—"}
-                </p>
-              </div>
-            ))}
-          </div>
+        <div className="space-y-2">
+          <p className="eyebrow">Networks</p>
+          {detail.networkDetails.map((net) => (
+            <div key={net.networkId} className="rounded-lg border border-hairline p-3 text-xs">
+              <div className="font-medium">{net.name}</div>
+              <p className="font-mono text-muted-foreground">
+                {net.ipAddress || "no address"} · gateway {net.gateway || "—"}
+              </p>
+            </div>
+          ))}
         </div>
       )}
 
       {detail.ports.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-sm font-medium">Ports</h3>
+        <div className="space-y-2">
+          <p className="eyebrow">Ports</p>
           <div className="flex flex-wrap gap-1.5">
             {detail.ports.map((p, i) => (
-              <Badge key={i} variant="outline" className="font-mono text-xs">
+              <Badge key={i} variant="outline" className="font-mono text-[11px] font-normal">
                 {p.publicPort ? `${p.ip || "0.0.0.0"}:${p.publicPort} → ` : ""}
                 {p.privatePort}/{p.type}
               </Badge>
@@ -368,9 +339,8 @@ function ContainerLogs({ containerId, active }: { containerId: string; active: b
       emptyMessage={state === "open" ? "No output yet." : "Connecting…"}
       toolbar={
         <Button
-          size="sm"
+          size="xs"
           variant="ghost"
-          className="h-7 px-2 text-xs"
           onClick={() => {
             setLines([])
             setTimestamps((t) => !t)

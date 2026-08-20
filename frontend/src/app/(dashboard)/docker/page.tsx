@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react"
 import {
   Box,
   Boxes,
+  CircleSlash,
   Layers,
   Pause,
   Play,
@@ -20,22 +21,23 @@ import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { StatTile } from "@/components/stat-tile"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
+import { IconAction } from "@/components/icon-action"
 import { ContainerDetailSheet } from "@/components/docker/container-detail"
-import { IconActionButton } from "@/components/docker/shared"
 import { ImagesTab } from "@/components/docker/images-tab"
 import { NetworksTab } from "@/components/docker/networks-tab"
 import { StacksTab } from "@/components/docker/stacks-tab"
 import { VolumesTab } from "@/components/docker/volumes-tab"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -101,12 +103,23 @@ export default function DockerPage() {
     )
   }, [containers, filter])
 
-  if (ping.loading) return <LoadingRows rows={6} />
+  if (ping.loading) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Server" title="Docker" />
+        <LoadingPanel />
+      </Page>
+    )
+  }
 
   if (!available) {
     return (
-      <>
-        <PageHeader title="Docker" description="Containers, images, volumes and networks" />
+      <Page>
+        <PageHeader
+          eyebrow="Server"
+          title="Docker"
+          description="Containers, images, volumes and networks"
+        />
         <EmptyState
           icon={Box}
           title="Docker is not reachable"
@@ -115,17 +128,22 @@ export default function DockerPage() {
             "The dashboard could not connect to the Docker socket. Check that the daemon is running and that this process can read /var/run/docker.sock."
           }
         />
-      </>
+      </Page>
     )
   }
 
   const running = containers.filter((c) => c.state === "running").length
+  const stopped = containers.length - running
+  const stacks = new Set(containers.map((c) => c.composeStack).filter(Boolean)).size
+  const cpuTotal = Object.values(stats).reduce((s, r) => s + r.cpuPercent, 0)
+  const memTotal = Object.values(stats).reduce((s, r) => s + r.memUsage, 0)
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Server"
         title="Docker"
-        description={`${running} running of ${containers.length} containers · engine ${ping.data?.serverVersion ?? "unknown"}`}
+        description={`Engine ${ping.data?.serverVersion ?? "unknown"}`}
         actions={
           can("destructive") && (
             <Button
@@ -161,9 +179,32 @@ export default function DockerPage() {
         }
       />
 
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+        <StatTile
+          label="Running"
+          icon={Play}
+          value={running}
+          tone={running > 0 ? "success" : "default"}
+          hint={`${containers.length} containers in total`}
+        />
+        <StatTile
+          label="Stopped"
+          icon={CircleSlash}
+          value={stopped}
+          hint={stopped ? "not currently serving" : "everything is up"}
+        />
+        <StatTile label="Compose stacks" icon={Layers} value={stacks} hint="labelled projects" />
+        <StatTile
+          label="Container load"
+          icon={Boxes}
+          value={percent(cpuTotal)}
+          hint={`${bytes(memTotal)} resident`}
+        />
+      </div>
+
       {socketError && <ErrorState error={new Error(socketError)} />}
 
-      <Tabs defaultValue="containers">
+      <Tabs defaultValue="containers" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="containers">Containers</TabsTrigger>
           <TabsTrigger value="stacks">Stacks</TabsTrigger>
@@ -172,19 +213,25 @@ export default function DockerPage() {
           <TabsTrigger value="networks">Networks</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="containers" className="space-y-4">
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by name, image or stack"
-            className="max-w-sm"
-          />
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
+        <TabsContent value="containers" className="min-w-0">
+          <Panel>
+            <PanelHeader
+              icon={Box}
+              title="Containers"
+              description={`${running} running of ${containers.length}`}
+            />
+            <PanelToolbar>
+              <SearchInput
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter by name, image or stack"
+              />
+            </PanelToolbar>
+            <PanelBody flush>
+              <Table containerClassName="max-h-[calc(100svh-27rem)]">
+                <TableHeader className={stickyTableHeader}>
                   <TableRow>
-                    <TableHead>Container</TableHead>
+                    <TableHead className="w-full">Container</TableHead>
                     <TableHead>Image</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">CPU</TableHead>
@@ -203,26 +250,30 @@ export default function DockerPage() {
                         onActivate={() => setSelected(container.id)}
                       >
                         <TableCell>
-                          <button
-                            className="text-left font-medium hover:underline"
-                            onClick={() => setSelected(container.id)}
-                          >
-                            {container.name}
-                          </button>
-                          {container.composeStack && (
-                            <p className="text-xs text-muted-foreground">
-                              <Layers className="mr-1 inline size-3" />
-                              {container.composeStack}/{container.composeService}
-                            </p>
-                          )}
+                          <div className="max-w-[18rem] min-w-0">
+                            <button
+                              className="truncate text-left text-[13px] font-medium hover:underline"
+                              onClick={() => setSelected(container.id)}
+                            >
+                              {container.name}
+                            </button>
+                            {container.composeStack && (
+                              <p className="truncate text-[11px] text-muted-foreground">
+                                <Layers className="mr-1 inline size-3" />
+                                {container.composeStack}/{container.composeService}
+                              </p>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {truncateMiddle(container.image, 36)}
+                        <TableCell className="font-mono text-[11px] text-muted-foreground">
+                          {truncateMiddle(container.image, 34)}
                         </TableCell>
                         <TableCell>
                           <StatusBadge state={container.state} label={container.status} />
                           {container.health && (
-                            <p className="mt-1 text-xs text-muted-foreground">{container.health}</p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              {container.health}
+                            </p>
                           )}
                         </TableCell>
                         <TableCell className="text-right">
@@ -230,17 +281,17 @@ export default function DockerPage() {
                             <div className="flex items-center justify-end gap-2">
                               <Progress
                                 value={Math.min(stat.cpuPercent, 100)}
-                                className="h-1 w-12"
+                                className="h-1 w-10"
                               />
-                              <span className="w-12 font-mono text-xs tabular-nums">
+                              <span className="numeric w-10 font-mono text-[11px]">
                                 {percent(stat.cpuPercent)}
                               </span>
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
+                            <span className="text-[11px] text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">
+                        <TableCell className="numeric text-right font-mono text-[11px]">
                           {stat ? (
                             <>
                               {bytes(stat.memUsage)}
@@ -253,32 +304,38 @@ export default function DockerPage() {
                             "—"
                           )}
                         </TableCell>
-                        <TableCell className="space-x-1">
-                          {container.ports
-                            .filter((p) => p.publicPort)
-                            .slice(0, 3)
-                            .map((p, i) => (
-                              <Badge key={i} variant="outline" className="font-mono text-[10px]">
-                                {p.publicPort}:{p.privatePort}
-                              </Badge>
-                            ))}
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {container.ports
+                              .filter((p) => p.publicPort)
+                              .slice(0, 3)
+                              .map((p, i) => (
+                                <Badge
+                                  key={i}
+                                  variant="outline"
+                                  className="font-mono text-[10px] font-normal"
+                                >
+                                  {p.publicPort}:{p.privatePort}
+                                </Badge>
+                              ))}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                             {container.state === "running" ? (
                               <>
                                 {can("service.control") && (
-                                  <IconActionButton
-                                    title="Pause"
-                                    icon={Pause}
-                                    onClick={() => act(container, "pause")}
-                                  />
+                                  <IconAction
+                                    label="Pause"
+                                    onClick={() => act(container, "pause").catch(() => undefined)}
+                                  >
+                                    <Pause />
+                                  </IconAction>
                                 )}
                                 {can("destructive") && (
                                   <>
-                                    <IconActionButton
-                                      title="Restart"
-                                      icon={RotateCw}
+                                    <IconAction
+                                      label="Restart"
                                       onClick={() =>
                                         confirm({
                                           title: "Restart container",
@@ -293,10 +350,11 @@ export default function DockerPage() {
                                           action: (c) => act(container, "restart", c),
                                         })
                                       }
-                                    />
-                                    <IconActionButton
-                                      title="Stop"
-                                      icon={Square}
+                                    >
+                                      <RotateCw />
+                                    </IconAction>
+                                    <IconAction
+                                      label="Stop"
                                       onClick={() =>
                                         confirm({
                                           title: "Stop container",
@@ -310,31 +368,31 @@ export default function DockerPage() {
                                           action: (c) => act(container, "stop", c),
                                         })
                                       }
-                                    />
+                                    >
+                                      <Square />
+                                    </IconAction>
                                   </>
                                 )}
                               </>
                             ) : (
                               can("service.control") && (
-                                <IconActionButton
-                                  title="Start"
-                                  icon={Play}
-                                  onClick={() => act(container, "start")}
-                                />
+                                <IconAction
+                                  label="Start"
+                                  onClick={() => act(container, "start").catch(() => undefined)}
+                                >
+                                  <Play />
+                                </IconAction>
                               )
                             )}
                             {can("terminal") && container.state === "running" && (
-                              <IconActionButton
-                                title="Shell"
-                                icon={TerminalIcon}
-                                onClick={() => setSelected(container.id)}
-                              />
+                              <IconAction label="Shell" onClick={() => setSelected(container.id)}>
+                                <TerminalIcon />
+                              </IconAction>
                             )}
                             {can("destructive") && (
-                              <IconActionButton
-                                title="Remove"
-                                icon={Trash2}
-                                destructive
+                              <IconAction
+                                label="Remove"
+                                className="text-destructive"
                                 onClick={() =>
                                   confirm({
                                     title: "Remove container",
@@ -354,7 +412,9 @@ export default function DockerPage() {
                                     },
                                   })
                                 }
-                              />
+                              >
+                                <Trash2 />
+                              </IconAction>
                             )}
                           </div>
                         </TableCell>
@@ -373,20 +433,20 @@ export default function DockerPage() {
                   )}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </PanelBody>
+          </Panel>
         </TabsContent>
 
-        <TabsContent value="stacks">
+        <TabsContent value="stacks" className="min-w-0">
           <StacksTab confirm={confirm} />
         </TabsContent>
-        <TabsContent value="images">
+        <TabsContent value="images" className="min-w-0">
           <ImagesTab confirm={confirm} />
         </TabsContent>
-        <TabsContent value="volumes">
+        <TabsContent value="volumes" className="min-w-0">
           <VolumesTab confirm={confirm} />
         </TabsContent>
-        <TabsContent value="networks">
+        <TabsContent value="networks" className="min-w-0">
           <NetworksTab confirm={confirm} />
         </TabsContent>
       </Tabs>
@@ -396,6 +456,6 @@ export default function DockerPage() {
         onOpenChange={(open) => !open && setSelected(null)}
       />
       {dialog}
-    </>
+    </Page>
   )
 }

@@ -4,16 +4,15 @@ import { useState } from "react"
 import { Link2, Plus, TerminalSquare, X } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import type { TerminalSession } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
+import { Page, PageHeader } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { cn } from "@/lib/utils"
 
 type TerminalList = {
   enabled: boolean
@@ -24,24 +23,42 @@ type TerminalList = {
 
 export default function TerminalPage() {
   const { confirm, dialog } = useConfirm()
-  const [active, setActive] = useState<string | null>(null)
+  const [picked, setPicked] = useState<string | null>(null)
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<TerminalList>("/terminal/", undefined, signal),
     10000,
   )
 
-  if (loading) return <LoadingRows rows={4} />
-  if (error) return <ErrorState error={error} />
+  if (loading) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Access" title="Terminal" />
+        <LoadingPanel rows={4} />
+      </Page>
+    )
+  }
+  if (error) {
+    return (
+      <Page>
+        <PageHeader eyebrow="Access" title="Terminal" />
+        <ErrorState error={error} />
+      </Page>
+    )
+  }
   if (!data?.enabled) {
     return (
-      <>
-        <PageHeader title="Terminal" description="A shell on the host, in the browser" />
+      <Page>
+        <PageHeader
+          eyebrow="Access"
+          title="Terminal"
+          description="A shell on the host, in the browser"
+        />
         <EmptyState
           icon={TerminalSquare}
           title="The web terminal is disabled"
           description="Set JD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
         />
-      </>
+      </Page>
     )
   }
 
@@ -53,7 +70,7 @@ export default function TerminalPage() {
         persist: data.tmux,
       })
       await refresh()
-      setActive(session.id)
+      setPicked(session.id)
     } catch (err) {
       toast.error("Could not open a terminal", { description: String(err) })
     }
@@ -67,11 +84,19 @@ export default function TerminalPage() {
         cols: 110,
       })
       await refresh()
-      setActive(session.id)
+      setPicked(session.id)
     } catch (err) {
       toast.error("Could not reattach", { description: String(err) })
     }
   }
+
+  // Opening the page with sessions already running and showing none of them is
+  // a wasted click; the first is as good a default as any and the strip above
+  // makes switching obvious. Derived, so a closed session falls back on its
+  // own rather than leaving a dead pane.
+  const active = data.sessions.some((s) => s.id === picked)
+    ? picked
+    : (data.sessions[0]?.id ?? null)
 
   // Sessions the dashboard is not currently holding a PTY for — typically
   // left behind by a restart, and worth offering back rather than orphaning.
@@ -79,8 +104,9 @@ export default function TerminalPage() {
   const orphans = data.detached.filter((name) => !attachedTmux.has(name))
 
   return (
-    <>
+    <Page fill>
       <PageHeader
+        eyebrow="Access"
         title="Terminal"
         description={
           data.tmux
@@ -95,18 +121,14 @@ export default function TerminalPage() {
         }
       />
 
-      <Alert>
-        <TerminalSquare className="size-4" />
-        <AlertTitle>This is a real shell on the host</AlertTitle>
-        <AlertDescription>
-          Everything typed here runs with the dashboard process&apos;s privileges. Opening and
-          closing a session is recorded in the audit log.
-        </AlertDescription>
-      </Alert>
+      <Notice icon={TerminalSquare} title="This is a real shell on the host">
+        Everything typed here runs with the dashboard process&apos;s privileges. Opening and closing
+        a session is recorded in the audit log.
+      </Notice>
 
       {orphans.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">Detached sessions:</span>
+          <span className="eyebrow">Detached</span>
           {orphans.map((name) => (
             <Button key={name} size="sm" variant="outline" onClick={() => reattach(name)}>
               <Link2 className="size-3.5" />
@@ -129,26 +151,31 @@ export default function TerminalPage() {
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {/* Session chips read as a tab strip: the active one is filled, the
+              rest are outlines, and the close control sits inside each chip
+              rather than in a menu two clicks away. */}
           <div className="flex flex-wrap gap-1.5">
             {data.sessions.map((session) => (
               <div
                 key={session.id}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm",
-                  active === session.id ? "border-primary bg-accent" : "hover:bg-accent/50",
+                  "flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[13px] transition-colors",
+                  active === session.id
+                    ? "border-primary/40 bg-primary/10 text-foreground"
+                    : "border-border hover:bg-accent",
                 )}
               >
-                <button onClick={() => setActive(session.id)} className="flex items-center gap-1.5">
+                <button onClick={() => setPicked(session.id)} className="flex items-center gap-1.5">
                   <TerminalSquare className="size-3.5" />
                   {session.title}
                   {session.persisted && (
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-[10px] font-normal">
                       tmux
                     </Badge>
                   )}
                 </button>
                 <button
-                  className="text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground transition-colors hover:text-destructive"
                   aria-label="Close session"
                   onClick={() =>
                     confirm({
@@ -163,7 +190,7 @@ export default function TerminalPage() {
                       ),
                       action: async (c) => {
                         await del(`/terminal/${session.id}`, { confirm: c })
-                        if (active === session.id) setActive(null)
+                        if (active === session.id) setPicked(null)
                         refresh()
                       },
                     })
@@ -179,15 +206,20 @@ export default function TerminalPage() {
             <XtermPane
               key={active}
               path={`/terminal/${active}/attach`}
-              className="min-h-[32rem] flex-1"
+              className="min-h-[24rem] flex-1"
               onExit={refresh}
             />
           ) : (
-            <EmptyState icon={TerminalSquare} title="Select a session above" />
+            <EmptyState
+              className="flex-1"
+              icon={TerminalSquare}
+              title="Select a session above"
+              description="Or open a new one — each is an independent shell."
+            />
           )}
         </div>
       )}
       {dialog}
-    </>
+    </Page>
   )
 }

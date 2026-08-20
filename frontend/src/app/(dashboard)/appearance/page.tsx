@@ -4,9 +4,9 @@ import { Check, Monitor, Moon, Sun } from "lucide-react"
 import { useTheme } from "@/hooks/use-theme"
 import { THEMES, type Theme } from "@/lib/themes"
 import { cn } from "@/lib/utils"
-import { PageHeader } from "@/components/page-header"
+import { Page, PageHeader, Section } from "@/components/page"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function AppearancePage() {
   const { themeId, theme, setTheme } = useTheme()
@@ -15,89 +15,80 @@ export default function AppearancePage() {
   const light = THEMES.filter((t) => t.mode === "light")
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="You"
         title="Appearance"
         description="Pick a palette for Just Dashboard. It applies immediately and is remembered in this browser."
         actions={
-          <Badge variant="outline" className="gap-1.5">
+          <Badge variant="outline" className="gap-1.5 font-normal">
             {theme.mode === "dark" ? <Moon className="size-3" /> : <Sun className="size-3" />}
             {theme.name}
           </Badge>
         }
       />
 
-      <ThemeGroup
-        label="Dark"
-        icon={Moon}
-        hint="For a room with the lights off, and for reading a graph at 3am."
-        themes={dark}
-        active={themeId}
-        onPick={setTheme}
-      />
+      <Section
+        title={
+          <span className="flex items-center gap-2">
+            <Moon className="size-3.5 text-muted-foreground" />
+            Dark
+          </span>
+        }
+        description="For a room with the lights off, and for reading a graph at 3am."
+      >
+        <ThemeGrid themes={dark} active={themeId} onPick={setTheme} />
+      </Section>
 
-      <ThemeGroup
-        label="Light"
-        icon={Sun}
-        hint="For daylight and for screenshots that end up in a ticket."
-        themes={light}
-        active={themeId}
-        onPick={setTheme}
-      />
+      <Section
+        title={
+          <span className="flex items-center gap-2">
+            <Sun className="size-3.5 text-muted-foreground" />
+            Light
+          </span>
+        }
+        description="For daylight and for screenshots that end up in a ticket."
+      >
+        <ThemeGrid themes={light} active={themeId} onPick={setTheme} />
+      </Section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Monitor className="size-4" />
-            Where this is stored
-          </CardTitle>
-          <CardDescription>
+      <Panel>
+        <PanelHeader icon={Monitor} title="Where this is stored" />
+        <PanelBody>
+          <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">
             The choice lives in this browser&apos;s local storage, not on your account — the same
             server can look one way on your laptop and another on your phone. It survives reloads,
             sign-outs and dashboard restarts, and it is applied before the page paints, so there is
-            no flash of the previous palette.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    </>
+            no flash of the previous palette. The palette is also reachable from the top bar and
+            from the command palette (⌘K), so you can try one without leaving the page you are
+            reading.
+          </p>
+        </PanelBody>
+      </Panel>
+    </Page>
   )
 }
 
-function ThemeGroup({
-  label,
-  icon: Icon,
-  hint,
+function ThemeGrid({
   themes,
   active,
   onPick,
 }: {
-  label: string
-  icon: React.ComponentType<{ className?: string }>
-  hint: string
   themes: Theme[]
   active: string
   onPick: (id: string) => void
 }) {
   return (
-    <section className="space-y-3">
-      <div className="flex items-baseline gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-medium">
-          <Icon className="size-4 text-muted-foreground" />
-          {label}
-        </h2>
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
-        {themes.map((theme) => (
-          <ThemeOption
-            key={theme.id}
-            theme={theme}
-            active={theme.id === active}
-            onPick={() => onPick(theme.id)}
-          />
-        ))}
-      </div>
-    </section>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+      {themes.map((theme) => (
+        <ThemeOption
+          key={theme.id}
+          theme={theme}
+          active={theme.id === active}
+          onPick={() => onPick(theme.id)}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -116,7 +107,7 @@ function ThemeOption({
       onClick={onPick}
       aria-pressed={active}
       className={cn(
-        "group rounded-xl border bg-card p-2 text-left transition-all",
+        "group min-w-0 rounded-xl border bg-card p-2 text-left transition-all",
         "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
         active
           ? "border-primary ring-[3px] ring-primary/25"
@@ -124,14 +115,12 @@ function ThemeOption({
       )}
     >
       <ThemePreview theme={theme} />
-      <div className="flex items-start justify-between gap-2 px-1.5 pt-2.5 pb-1">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">{theme.name}</span>
-            {active && <Check className="size-3.5 shrink-0 text-primary" />}
-          </div>
-          <p className="text-xs text-muted-foreground">{theme.description}</p>
+      <div className="min-w-0 px-1.5 pt-2.5 pb-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-[13px] font-medium">{theme.name}</span>
+          {active && <Check className="size-3.5 shrink-0 text-primary" />}
         </div>
+        <p className="text-xs text-muted-foreground">{theme.description}</p>
       </div>
     </button>
   )

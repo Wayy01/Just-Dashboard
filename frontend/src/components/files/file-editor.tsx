@@ -1,37 +1,19 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import dynamic from "next/dynamic"
-import { Loader2, Save, ShieldAlert } from "lucide-react"
+import { FileCode, Loader2, Save, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 import { get, post, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import type { FileContent } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
-import { ErrorState, LoadingRows } from "@/components/state"
+import { CodeEditor } from "@/components/code-editor"
+import { SidePanel } from "@/components/side-panel"
+import { ErrorState, LoadingRows, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
-
-// Monaco pulls in a large worker bundle and touches `window`, so it is loaded
-// only when an editor is actually opened.
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center">
-      <Loader2 className="size-5 animate-spin text-muted-foreground" />
-    </div>
-  ),
-})
 
 export function FileEditorSheet({
   path,
@@ -43,17 +25,26 @@ export function FileEditorSheet({
   onSaved?: () => void
 }) {
   return (
-    <Sheet open={path !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-4xl">
-        {/* Keyed on the path: opening another file must not inherit the
-            previous file's unsaved draft. */}
-        {path && <FileEditorBody key={path} path={path} onSaved={onSaved} />}
-      </SheetContent>
-    </Sheet>
+    <FileEditorPanel
+      // Keyed on the path: opening another file must not inherit the previous
+      // file's unsaved draft.
+      key={path ?? "none"}
+      path={path}
+      onOpenChange={onOpenChange}
+      onSaved={onSaved}
+    />
   )
 }
 
-function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void }) {
+function FileEditorPanel({
+  path,
+  onOpenChange,
+  onSaved,
+}: {
+  path: string | null
+  onOpenChange: (open: boolean) => void
+  onSaved?: () => void
+}) {
   const { can } = useAuth()
   const [file, setFile] = useState<FileContent>()
   const [draft, setDraft] = useState("")
@@ -62,6 +53,7 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
   const [mode, setMode] = useState("")
 
   useEffect(() => {
+    if (!path) return
     const controller = new AbortController()
     get<FileContent>("/files/read", { path }, controller.signal)
       .then((f) => {
@@ -76,6 +68,7 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
   const dirty = file !== undefined && draft !== file.content
 
   const save = async () => {
+    if (!path) return
     setSaving(true)
     try {
       await put("/files/write", { path, content: draft })
@@ -90,6 +83,7 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
   }
 
   const applyMode = async () => {
+    if (!path) return
     try {
       await post("/files/chmod", { path, mode })
       toast.success(`Mode set to ${mode}`)
@@ -100,49 +94,26 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
   }
 
   return (
-    <>
-      <SheetHeader className="border-b p-4">
-        <SheetTitle className="flex items-center gap-2 truncate">
-          {path.split("/").pop()}
-          {dirty && <Badge variant="destructive">unsaved</Badge>}
-        </SheetTitle>
-        <SheetDescription className="truncate font-mono text-xs">{path}</SheetDescription>
-      </SheetHeader>
-
-      {error && <ErrorState error={error} className="m-4" />}
-      {!file && !error && <LoadingRows className="p-4" />}
-
-      {file?.binary && (
-        <div className="m-4 flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
-          <ShieldAlert className="size-4 text-warning" />
-          This looks like a binary file ({bytes(file.size)}); it is not shown in the editor.
-        </div>
-      )}
-
-      {file && !file.binary && (
-        <div className="min-h-0 flex-1">
-          <MonacoEditor
-            height="100%"
-            theme="vs-dark"
-            language={file.language}
-            value={draft}
-            onChange={(value) => setDraft(value ?? "")}
-            options={{
-              readOnly: !can("file.write"),
-              minimap: { enabled: false },
-              fontSize: 13,
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              tabSize: 2,
-              renderWhitespace: "selection",
-            }}
-          />
-        </div>
-      )}
-
-      {file && can("file.write") && (
-        <SheetFooter className="flex-row items-center gap-2 border-t p-4">
-          <div className="flex items-center gap-2">
+    <SidePanel
+      open={path !== null}
+      onOpenChange={onOpenChange}
+      width="xl"
+      icon={FileCode}
+      title={
+        <>
+          {path?.split("/").pop() ?? "File"}
+          {dirty && (
+            <Badge variant="warning" className="font-normal">
+              unsaved
+            </Badge>
+          )}
+        </>
+      }
+      description={path ?? undefined}
+      bodyClassName="flex min-h-0 flex-1 flex-col"
+      footer={
+        file && can("file.write") ? (
+          <>
             <Label htmlFor="file-mode" className="text-xs text-muted-foreground">
               Mode
             </Label>
@@ -150,7 +121,7 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
               id="file-mode"
               value={mode}
               onChange={(e) => setMode(e.target.value)}
-              className="w-20 font-mono"
+              className="h-8 w-20 font-mono text-xs"
             />
             <Button
               size="sm"
@@ -160,15 +131,34 @@ function FileEditorBody({ path, onSaved }: { path: string; onSaved?: () => void 
             >
               Apply
             </Button>
-          </div>
-          <span className="flex-1" />
-          <span className="text-xs text-muted-foreground">{bytes(draft.length)}</span>
-          <Button onClick={save} disabled={!dirty || saving || file.binary}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            Save
-          </Button>
-        </SheetFooter>
+            <span className="flex-1" />
+            <span className="numeric text-xs text-muted-foreground">{bytes(draft.length)}</span>
+            <Button size="sm" onClick={save} disabled={!dirty || saving || file.binary}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              Save
+            </Button>
+          </>
+        ) : undefined
+      }
+    >
+      {error && <ErrorState error={error} className="m-4" />}
+      {!file && !error && <LoadingRows className="p-4" />}
+
+      {file?.binary && (
+        <Notice className="m-4" tone="warning" title="Binary file" icon={ShieldAlert}>
+          This looks like a binary file ({bytes(file.size)}); it is not shown in the editor.
+        </Notice>
       )}
-    </>
+
+      {file && !file.binary && (
+        <CodeEditor
+          className="flex-1"
+          value={draft}
+          onChange={setDraft}
+          language={file.language}
+          readOnly={!can("file.write")}
+        />
+      )}
+    </SidePanel>
   )
 }

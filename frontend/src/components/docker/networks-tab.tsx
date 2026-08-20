@@ -5,11 +5,13 @@ import { del, get } from "@/lib/api"
 import type { DockerNetwork } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
-import { IconActionButton, type ConfirmFn } from "@/components/docker/shared"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
+import { IconAction } from "@/components/icon-action"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import type { ConfirmFn } from "@/components/docker/shared"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -24,46 +26,48 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
     (signal) => get<DockerNetwork[]>("/docker/networks/", undefined, signal),
     30000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
   return (
-    <Card>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
+    <Panel>
+      <PanelHeader
+        icon={NetworkIcon}
+        title="Networks"
+        description={`${data?.length ?? 0} defined on this daemon`}
+      />
+      <PanelBody flush>
+        <Table containerClassName="max-h-[calc(100svh-24rem)]">
+          <TableHeader className={stickyTableHeader}>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Driver</TableHead>
-              <TableHead>Subnets</TableHead>
+              <TableHead className="w-full">Subnets</TableHead>
               <TableHead className="text-right">Containers</TableHead>
               <TableHead className="w-px" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {data?.map((network) => (
-              <TableRow key={network.id}>
-                <TableCell className="font-medium">
+              <TableRow key={network.id} className="group">
+                <TableCell className="text-[13px] font-medium">
                   {network.name}
                   {network.internal && (
-                    <Badge variant="outline" className="ml-2 text-[10px]">
+                    <Badge variant="outline" className="ml-2 text-[10px] font-normal">
                       internal
                     </Badge>
                   )}
                 </TableCell>
                 <TableCell className="text-xs">{network.driver}</TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">
+                <TableCell className="font-mono text-[11px] text-muted-foreground">
                   {network.subnets.join(", ") || "—"}
                 </TableCell>
-                <TableCell className="text-right text-xs tabular-nums">
-                  {network.containers}
-                </TableCell>
+                <TableCell className="numeric text-right text-xs">{network.containers}</TableCell>
                 <TableCell>
                   {can("destructive") && !["bridge", "host", "none"].includes(network.name) && (
-                    <IconActionButton
-                      title="Remove"
-                      icon={Trash2}
-                      destructive
+                    <IconAction
+                      label="Remove"
+                      className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                       onClick={() =>
                         confirm({
                           title: "Delete network",
@@ -80,7 +84,9 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                           },
                         })
                       }
-                    />
+                    >
+                      <Trash2 />
+                    </IconAction>
                   )}
                 </TableCell>
               </TableRow>
@@ -94,7 +100,7 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </PanelBody>
+    </Panel>
   )
 }

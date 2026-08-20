@@ -8,8 +8,10 @@ import { relativeTime } from "@/lib/format"
 import type { SSHKey, SystemUser } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { SidePanel } from "@/components/side-panel"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
@@ -17,8 +19,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Card, CardContent } from "@/components/ui/card"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -34,13 +36,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 
 export default function SystemUsersPage() {
   const { confirm, dialog } = useConfirm()
@@ -63,30 +58,33 @@ export default function SystemUsersPage() {
   }
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Operations"
         title="System users"
         description="Operating system accounts on this host, separate from dashboard logins"
         actions={<CreateUserDialog onDone={refresh} />}
       />
 
-      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Checkbox checked={showSystem} onCheckedChange={(v) => setShowSystem(v === true)} />
-        Include system accounts
-      </label>
-
-      {loading && <LoadingRows />}
+      {loading && <LoadingPanel />}
       {error && <ErrorState error={error} />}
 
       {data && (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
+        <Panel>
+          <PanelHeader icon={Users} title="Accounts" description={`${data.length} shown`} />
+          <PanelToolbar>
+            <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+              <Checkbox checked={showSystem} onCheckedChange={(v) => setShowSystem(v === true)} />
+              Include system accounts
+            </label>
+          </PanelToolbar>
+          <PanelBody flush>
+            <Table containerClassName="max-h-[calc(100svh-20rem)]">
+              <TableHeader className={stickyTableHeader}>
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="w-20">UID</TableHead>
-                  <TableHead>Groups</TableHead>
+                  <TableHead className="w-full">Groups</TableHead>
                   <TableHead>Shell</TableHead>
                   <TableHead>Last login</TableHead>
                   <TableHead>State</TableHead>
@@ -97,12 +95,16 @@ export default function SystemUsersPage() {
                 {data.map((user) => (
                   <TableRow key={user.username} className="group">
                     <TableCell>
-                      <div className="font-medium">{user.username}</div>
-                      {user.comment && (
-                        <p className="text-xs text-muted-foreground">{user.comment}</p>
-                      )}
+                      <div className="max-w-[14rem] min-w-0">
+                        <div className="truncate text-[13px] font-medium">{user.username}</div>
+                        {user.comment && (
+                          <p className="truncate text-[11px] text-muted-foreground">
+                            {user.comment}
+                          </p>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs tabular-nums">{user.uid}</TableCell>
+                    <TableCell className="numeric font-mono text-xs">{user.uid}</TableCell>
                     <TableCell className="max-w-48 truncate text-xs text-muted-foreground">
                       {user.groups.join(", ")}
                     </TableCell>
@@ -112,35 +114,37 @@ export default function SystemUsersPage() {
                     <TableCell className="text-xs text-muted-foreground">
                       {user.lastLogin ? relativeTime(user.lastLogin) : "never"}
                     </TableCell>
-                    <TableCell className="space-x-1">
-                      {user.locked && <Badge variant="secondary">locked</Badge>}
-                      {user.noPassword && <Badge variant="destructive">no password</Badge>}
-                      {!user.canLogin && <Badge variant="outline">no shell</Badge>}
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {user.locked && (
+                          <Badge variant="secondary" className="font-normal">
+                            locked
+                          </Badge>
+                        )}
+                        {user.noPassword && (
+                          <Badge variant="warning" className="font-normal">
+                            no password
+                          </Badge>
+                        )}
+                        {!user.canLogin && (
+                          <Badge variant="outline" className="font-normal">
+                            no shell
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 gap-1 px-2 text-xs"
-                          onClick={() => setKeysFor(user.username)}
-                        >
-                          <KeyRound className="size-3.5" />
+                        <Button size="xs" variant="ghost" onClick={() => setKeysFor(user.username)}>
+                          <KeyRound className="size-3" />
                           {user.sshKeyCount}
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-7"
-                          title={user.locked ? "Unlock" : "Lock"}
+                        <IconAction
+                          label={user.locked ? "Unlock" : "Lock"}
                           onClick={() => setLocked(user, !user.locked)}
                         >
-                          {user.locked ? (
-                            <Unlock className="size-3.5" />
-                          ) : (
-                            <Lock className="size-3.5" />
-                          )}
-                        </Button>
+                          {user.locked ? <Unlock /> : <Lock />}
+                        </IconAction>
                         <IconAction
                           label="Delete"
                           className="text-destructive"
@@ -164,7 +168,7 @@ export default function SystemUsersPage() {
                             })
                           }
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 />
                         </IconAction>
                       </div>
                     </TableCell>
@@ -179,8 +183,8 @@ export default function SystemUsersPage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
       )}
 
       <SSHKeysSheet
@@ -189,7 +193,7 @@ export default function SystemUsersPage() {
         onChanged={refresh}
       />
       {dialog}
-    </>
+    </Page>
   )
 }
 
@@ -275,7 +279,7 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
               rows={3}
               placeholder="ssh-ed25519 AAAA…"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               The account is created with no password, so a key is the only way in. It is validated
               before the account exists.
             </p>
@@ -330,80 +334,85 @@ function SSHKeysSheet({
 
   return (
     <>
-      <Sheet open={username !== null} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-full sm:max-w-2xl">
-          <SheetHeader>
-            <SheetTitle>SSH keys for {username}</SheetTitle>
-            <SheetDescription className="font-mono text-xs">{data?.path}</SheetDescription>
-          </SheetHeader>
+      <SidePanel
+        open={username !== null}
+        onOpenChange={onOpenChange}
+        width="md"
+        icon={KeyRound}
+        title={`SSH keys for ${username ?? ""}`}
+        description={data?.path}
+      >
+        <div className="space-y-4">
+          {loading && <LoadingRows />}
+          {error && <ErrorState error={error} />}
 
-          <div className="space-y-4 px-4">
-            {loading && <LoadingRows />}
-            {error && <ErrorState error={error} />}
-
-            {data?.keys.map((key) => (
-              <div key={key.fingerprint} className="rounded-md border p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{key.type}</Badge>
-                      <span className="truncate text-sm">{key.comment || "no comment"}</span>
-                    </div>
-                    <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                      {key.fingerprint}
-                    </p>
+          {data?.keys.map((key) => (
+            <div key={key.fingerprint} className="rounded-lg border border-hairline p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-normal">
+                      {key.type}
+                    </Badge>
+                    <span className="truncate text-[13px]">{key.comment || "no comment"}</span>
                   </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-7 shrink-0 text-destructive"
-                    onClick={() =>
-                      confirm({
-                        title: "Revoke SSH key",
-                        phrase: username ?? "",
-                        confirmLabel: "Revoke",
-                        description: (
-                          <p>
-                            Whoever holds this key loses SSH access as <b>{username}</b>.
-                          </p>
-                        ),
-                        action: async (c) => {
-                          await del(`/system-users/${encodeURIComponent(username!)}/keys`, {
-                            confirm: c,
-                            query: { fingerprint: key.fingerprint },
-                          })
-                          refresh()
-                          onChanged()
-                        },
-                      })
-                    }
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                    {key.fingerprint}
+                  </p>
                 </div>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Revoke key"
+                  className="shrink-0 text-destructive"
+                  onClick={() =>
+                    confirm({
+                      title: "Revoke SSH key",
+                      phrase: username ?? "",
+                      confirmLabel: "Revoke",
+                      description: (
+                        <p>
+                          Whoever holds this key loses SSH access as <b>{username}</b>.
+                        </p>
+                      ),
+                      action: async (c) => {
+                        await del(`/system-users/${encodeURIComponent(username!)}/keys`, {
+                          confirm: c,
+                          query: { fingerprint: key.fingerprint },
+                        })
+                        refresh()
+                        onChanged()
+                      },
+                    })
+                  }
+                >
+                  <Trash2 />
+                </Button>
               </div>
-            ))}
-
-            {data?.keys.length === 0 && <EmptyState icon={KeyRound} title="No authorised keys" />}
-
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="add-key">Authorise another key</Label>
-              <Textarea
-                id="add-key"
-                value={newKey}
-                onChange={(e) => setNewKey(e.target.value)}
-                className="font-mono text-xs"
-                rows={3}
-                placeholder="ssh-ed25519 AAAA…"
-              />
-              <Button size="sm" onClick={add} disabled={!newKey.trim()}>
-                <Plus className="size-4" />
-                Add key
-              </Button>
             </div>
+          ))}
+
+          {data?.keys.length === 0 && !loading && (
+            <EmptyState icon={KeyRound} title="No authorised keys" />
+          )}
+
+          <div className="space-y-2 border-t border-hairline pt-4">
+            <Label htmlFor="add-key">Authorise another key</Label>
+            <Textarea
+              id="add-key"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              className="font-mono text-xs"
+              rows={3}
+              placeholder="ssh-ed25519 AAAA…"
+            />
+            <Button size="sm" onClick={add} disabled={!newKey.trim()}>
+              <Plus className="size-4" />
+              Add key
+            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+        </div>
+      </SidePanel>
       {dialog}
     </>
   )

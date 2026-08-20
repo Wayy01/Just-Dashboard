@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wayy01/Just-Dashboard/backend/internal/metrics"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
@@ -38,30 +39,39 @@ type Config struct {
 	DeployRoots    []string
 	BackupLocalDir string
 	Dev            bool
+
+	// MetricsInterval is how often the backend samples the host into its
+	// own history, independently of any browser. MetricsRetention of 0
+	// turns that recording off; the live charts still work, they just have
+	// nothing to show for the time nobody was watching.
+	MetricsInterval  time.Duration
+	MetricsRetention time.Duration
 }
 
 func Load() (*Config, error) {
 	l := &loader{}
 	c := &Config{
-		Addr:           env("JD_ADDR", "127.0.0.1:8080"),
-		DataDir:        env("JD_DATA_DIR", "/var/lib/just-dashboard"),
-		MasterKeyHex:   Env("JD_MASTER_KEY"),
-		Require2FA:     l.boolean("JD_REQUIRE_2FA", true),
-		SessionTTL:     l.duration("JD_SESSION_TTL", 12*time.Hour),
-		IdleTTL:        l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
-		DockerHost:     env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
-		TerminalEnable: l.boolean("JD_TERMINAL_ENABLED", true),
-		AgentMode:      l.boolean("JD_AGENT_MODE", false),
-		TerminalShell:  env("JD_TERMINAL_SHELL", "/bin/bash"),
-		FileRoots:      envList("JD_FILE_ROOTS", "/"),
-		LogRoots:       envList("JD_LOG_ROOTS", "/var/log"),
-		NginxDir:       env("JD_NGINX_DIR", "/etc/nginx"),
-		CaddyFile:      env("JD_CADDYFILE", "/etc/caddy/Caddyfile"),
-		ComposeRoots:   envList("JD_COMPOSE_ROOTS", "/opt,/srv,/home"),
-		GitRoots:       envList("JD_GIT_ROOTS", "/opt,/srv,/home,/root"),
-		DeployRoots:    envList("JD_DEPLOY_ROOTS", "/opt,/srv,/home,/root"),
-		BackupLocalDir: env("JD_BACKUP_DIR", "/var/backups/just-dashboard"),
-		Dev:            l.boolean("JD_DEV", false),
+		Addr:             env("JD_ADDR", "127.0.0.1:8080"),
+		DataDir:          env("JD_DATA_DIR", "/var/lib/just-dashboard"),
+		MasterKeyHex:     Env("JD_MASTER_KEY"),
+		Require2FA:       l.boolean("JD_REQUIRE_2FA", true),
+		SessionTTL:       l.duration("JD_SESSION_TTL", 12*time.Hour),
+		IdleTTL:          l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
+		DockerHost:       env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
+		TerminalEnable:   l.boolean("JD_TERMINAL_ENABLED", true),
+		AgentMode:        l.boolean("JD_AGENT_MODE", false),
+		TerminalShell:    env("JD_TERMINAL_SHELL", "/bin/bash"),
+		FileRoots:        envList("JD_FILE_ROOTS", "/"),
+		LogRoots:         envList("JD_LOG_ROOTS", "/var/log"),
+		NginxDir:         env("JD_NGINX_DIR", "/etc/nginx"),
+		CaddyFile:        env("JD_CADDYFILE", "/etc/caddy/Caddyfile"),
+		ComposeRoots:     envList("JD_COMPOSE_ROOTS", "/opt,/srv,/home"),
+		GitRoots:         envList("JD_GIT_ROOTS", "/opt,/srv,/home,/root"),
+		DeployRoots:      envList("JD_DEPLOY_ROOTS", "/opt,/srv,/home,/root"),
+		BackupLocalDir:   env("JD_BACKUP_DIR", "/var/backups/just-dashboard"),
+		Dev:              l.boolean("JD_DEV", false),
+		MetricsInterval:  l.window("JD_METRICS_INTERVAL", metrics.DefaultInterval),
+		MetricsRetention: l.optionalWindow("JD_METRICS_RETENTION", metrics.DefaultRetention),
 	}
 
 	// The dashboard is root-equivalent. It must never be reachable from the
@@ -144,6 +154,40 @@ func (l *loader) duration(k string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// window is duration, extended with the day and week suffixes time.ParseDuration
+// refuses. Retention on a monitoring page is naturally expressed in days, and
+// making an operator write "168h" for a week is the kind of paper cut that
+// ends with the setting left at its default.
+func (l *loader) window(k string, def time.Duration) time.Duration {
+	v := Env(k)
+	if v == "" {
+		return def
+	}
+	d, err := metrics.ParseWindow(v)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q is not a duration; use a unit, for example 30s, 12h or 7d", k, v))
+		return def
+	}
+	if d <= 0 {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q must be positive", k, v))
+		return def
+	}
+	return d
+}
+
+// optionalWindow is window, plus the one value that means "do not do this at
+// all". Retention is the setting an operator on a tiny disk needs to be able
+// to switch off, and making them do it by setting an absurdly small number
+// would leave the sampler running for nothing.
+func (l *loader) optionalWindow(k string, def time.Duration) time.Duration {
+	v := Env(k)
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "off", "false", "none", "never":
+		return 0
+	}
+	return l.window(k, def)
 }
 
 func (l *loader) err() error {

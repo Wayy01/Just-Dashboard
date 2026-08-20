@@ -73,6 +73,35 @@
   --sidebar-ring: oklch(0.606 0.192 259);
 }
 
+/* ---------------------------------------------------------------------------
+   Derived surfaces.
+
+   Twelve palettes define twelve sets of the tokens above and nothing else, so
+   anything the layout needs beyond them has to be *computed* from them rather
+   than declared per theme — otherwise every new surface means twelve more
+   lines to keep in step, and the first one anybody forgets is the one that
+   breaks a light theme.
+
+   These are all color-mix over existing tokens, so they follow whichever
+   palette is in force, in either mode, with no per-theme entry.
+   --------------------------------------------------------------------------- */
+:root {
+  /* The strip at the top of a panel, and any toolbar that sits inside one.
+     A shade off the card so a header reads as chrome, not as a first row. */
+  --surface-header: color-mix(in oklab, var(--muted) 42%, var(--card));
+
+  /* A recessed well inside a panel: code blocks, log output, previews. */
+  --surface-sunken: color-mix(in oklab, var(--background) 55%, var(--card));
+
+  /* The rule between a panel header and its body. Softer than --border, which
+     has to hold its own as an outline against the page. */
+  --hairline: color-mix(in oklab, var(--border) 70%, transparent);
+
+  /* Row banding and hover, expressed against the card rather than as a
+     translucent grey, so it lands the same way on a light and a dark card. */
+  --row-hover: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+
 @theme inline {
   /* System font stacks rather than a webfont: this dashboard is built and run
      on locked-down networks, and next/font/google would make every image build
@@ -119,6 +148,11 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-surface-header: var(--surface-header);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-hairline: var(--hairline);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -131,6 +165,10 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Tabular figures everywhere by default would be wrong for prose, but the
+       optical alignment of the sidebar and topbar labels benefits from the
+       tighter default tracking a dashboard wants. */
+    letter-spacing: -0.006em;
   }
 
   /* Tailwind v4 dropped the browser's pointer cursor on buttons, which leaves
@@ -151,30 +189,110 @@
   label:has(button[role="checkbox"], button[role="switch"], button[role="radio"]) {
     cursor: pointer;
   }
+
+  /* Headings in this product are UI labels, not prose. They sit tight and
+     never carry the browser's default weight jump. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+  }
+
+  /* A dashboard is mostly scrolling regions — log panes, tables, source lists,
+     side sheets. The platform scrollbar is a light-grey slab that ignores the
+     palette entirely, which on a near-black theme is the brightest thing on
+     screen. Themed once here so every overflow container matches. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--foreground) 18%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* The small caps label that opens a section, a panel header or a stat tile.
+   *
+   * It appears often enough — and has to stay identical in all of them for the
+   * page to read as one system — that it is a class rather than six copies of
+   * the same four utilities. */
+  .eyebrow {
+    @apply text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase;
+  }
+
+  /* Any figure meant to be compared with the one above or below it. Tabular
+   * digits stop a table of numbers from shimmering as it polls. */
+  .numeric {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
 }
 
 /* The sign-in screen is the only full-bleed surface in the app, and a flat
- * rectangle of one colour is a poor first impression. One soft wash of
- * whatever the theme's primary happens to be, from the top edge, nothing
- * more. */
+ * rectangle of one colour is a poor first impression. Two washes of whatever
+ * the theme's primary happens to be — one from the top edge, one drifting in
+ * from the lower left — plus a faint grid so the plane has a scale to it. */
 .auth-backdrop {
-  background-image: radial-gradient(
-    62% 46% at 50% 0%,
-    color-mix(in oklab, var(--primary) 15%, transparent),
-    transparent 72%
-  );
+  background-image:
+    radial-gradient(
+      52% 40% at 50% -4%,
+      color-mix(in oklab, var(--primary) 20%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      44% 44% at 8% 104%,
+      color-mix(in oklab, var(--chart-3) 12%, transparent),
+      transparent 72%
+    );
+}
+
+/* The grid itself, as its own layer so it can sit under the washes above and
+ * fade out towards the edges rather than stopping at a hard line. */
+.auth-grid {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--foreground) 6%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--foreground) 6%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 44px 44px;
+  mask-image: radial-gradient(72% 60% at 50% 40%, black, transparent 100%);
 }
 
 /* A table header is chrome, not data. The tint separates it from the rows
  * without a heavier rule, and being opaque rather than a translucent utility
  * it also holds up as a sticky header with rows scrolling under it. */
+[data-slot="panel"] [data-slot="table-container"] thead,
 [data-slot="card"] [data-slot="table-container"] thead {
-  background-color: color-mix(in oklab, var(--muted) 50%, var(--card));
+  background-color: var(--surface-header);
 }
 
-/* An empty state nested in a card would draw a second frame just inside the
- * first. The card is already the container — the dashed border is for when the
- * empty state stands on its own. */
+/* An empty state nested in a panel would draw a second frame just inside the
+ * first. The panel is already the container — the dashed border is for when
+ * the empty state stands on its own. */
+[data-slot="panel"] [data-slot="empty-state"],
 [data-slot="card"] [data-slot="empty-state"] {
   border: 0;
 }
@@ -210,16 +328,39 @@
   background-attachment: local, local, scroll, scroll;
 }
 
-/* A table that runs to the card's edge still lines its outer columns up with
- * the card's own padding, so the first column reads as a continuation of the
+/* A table that runs to the panel's edge still lines its outer columns up with
+ * the panel's own padding, so the first column reads as a continuation of the
  * title above it rather than a grid that merely shares the frame.
  *
- * Deliberately unlayered: every cell already carries Tailwind's p-2, and a
+ * Deliberately unlayered: every cell already carries Tailwind's padding, and a
  * layered rule would lose to it on every row. The selector is narrow enough
  * that this only reaches the outer columns of a full-bleed table. */
+[data-slot="panel"]
+  > [data-slot="panel-body"][data-flush]
+  > [data-slot="table-container"]
+  tr
+  > *:first-child,
 [data-slot="card"] > [data-slot="card-content"] > [data-slot="table-container"] tr > *:first-child {
-  padding-left: 1.5rem;
+  padding-left: 1rem;
 }
+[data-slot="panel"]
+  > [data-slot="panel-body"][data-flush]
+  > [data-slot="table-container"]
+  tr
+  > *:last-child,
 [data-slot="card"] > [data-slot="card-content"] > [data-slot="table-container"] tr > *:last-child {
-  padding-right: 1.5rem;
+  padding-right: 1rem;
+}
+
+/* Monaco ships its own palette and knows nothing about the theme in force.
+ * Letting the editor's own background show through would put a hard-edged
+ * slate rectangle inside a card that is any other colour, in all twelve
+ * palettes. The container below owns the ground instead, and the editor is
+ * told to be transparent over it. */
+.monaco-host,
+.monaco-host .monaco-editor,
+.monaco-host .monaco-editor .overflow-guard,
+.monaco-host .monaco-editor-background,
+.monaco-host .monaco-editor .margin {
+  background-color: transparent !important;
 }

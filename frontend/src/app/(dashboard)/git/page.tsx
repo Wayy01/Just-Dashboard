@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useState } from "react"
+import { useMemo } from "react"
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -10,7 +11,6 @@ import {
   History,
   RefreshCw,
   RotateCcw,
-  Search,
   Undo2,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -20,21 +20,15 @@ import type { GitBranch, GitCommit, GitRepo, GitResult, GitStatus } from "@/lib/
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { SidePanel } from "@/components/side-panel"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import {
   stickyTableHeader,
   Table,
@@ -66,9 +60,12 @@ export default function GitPage() {
     )
   }, [repos.data, filter])
 
+  const dirty = repos.data?.repos.filter((r) => r.dirty).length ?? 0
+
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Access"
         title="Git"
         description="Repositories on this server — branch, working tree, history and remotes"
         actions={
@@ -80,7 +77,7 @@ export default function GitPage() {
       />
 
       {repos.error && <ErrorState error={repos.error} />}
-      {repos.loading && !repos.data && <LoadingRows />}
+      {repos.loading && !repos.data && <LoadingPanel />}
 
       {repos.data && !repos.data.available && (
         <EmptyState
@@ -90,111 +87,119 @@ export default function GitPage() {
         />
       )}
 
-      {repos.data?.available && (
-        <>
-          <div className="relative max-w-sm">
-            <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter by name, path or branch"
-              className="pl-8"
-            />
-          </div>
-
-          {visible.length === 0 ? (
-            <EmptyState
+      {repos.data?.available &&
+        (repos.data.repos.length === 0 ? (
+          <EmptyState
+            icon={GitBranchIcon}
+            title="No repositories found"
+            description="Nothing under the configured git roots. Set JD_GIT_ROOTS to point at where your projects live."
+          />
+        ) : (
+          <Panel>
+            <PanelHeader
               icon={GitBranchIcon}
-              title={filter ? "No repository matches that filter" : "No repositories found"}
-              description={
-                filter
-                  ? undefined
-                  : "Nothing under the configured git roots. Set JD_GIT_ROOTS to point at where your projects live."
-              }
+              title="Repositories"
+              description={`${repos.data.repos.length} found${dirty ? ` · ${dirty} with uncommitted changes` : ""}`}
             />
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <Table containerClassName="max-h-[calc(100svh-22rem)]">
-                  <TableHeader className={stickyTableHeader}>
-                    <TableRow>
-                      <TableHead>Repository</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead>Working tree</TableHead>
-                      <TableHead>Upstream</TableHead>
-                      <TableHead>Last commit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visible.map((repo) => (
-                      <TableRow
-                        key={repo.path}
-                        className="group"
-                        onActivate={() => setSelected(repo)}
-                      >
-                        <TableCell>
-                          <div className="max-w-[22rem] min-w-0">
-                            <button
-                              className="truncate text-left font-medium hover:underline"
-                              onClick={() => setSelected(repo)}
-                            >
-                              {repo.name}
-                            </button>
-                            <p
-                              className="truncate font-mono text-[11px] text-muted-foreground"
-                              title={repo.path}
-                            >
-                              {repo.path}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={repo.detached ? "destructive" : "secondary"}>
-                            <GitBranchIcon className="size-3" />
-                            {repo.branch || "—"}
+            <PanelToolbar>
+              <SearchInput
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter by name, path or branch"
+              />
+            </PanelToolbar>
+            <PanelBody flush>
+              <Table containerClassName="max-h-[calc(100svh-20rem)]">
+                <TableHeader className={stickyTableHeader}>
+                  <TableRow>
+                    <TableHead className="w-full">Repository</TableHead>
+                    <TableHead>Branch</TableHead>
+                    <TableHead>Working tree</TableHead>
+                    <TableHead>Upstream</TableHead>
+                    <TableHead>Last commit</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visible.map((repo) => (
+                    <TableRow
+                      key={repo.path}
+                      className="group"
+                      onActivate={() => setSelected(repo)}
+                    >
+                      <TableCell>
+                        <div className="max-w-[22rem] min-w-0">
+                          <button
+                            className="truncate text-left text-[13px] font-medium hover:underline"
+                            onClick={() => setSelected(repo)}
+                          >
+                            {repo.name}
+                          </button>
+                          <p
+                            className="truncate font-mono text-[11px] text-muted-foreground"
+                            title={repo.path}
+                          >
+                            {repo.path}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={repo.detached ? "destructive" : "secondary"}
+                          className="font-normal"
+                        >
+                          <GitBranchIcon className="size-3" />
+                          {repo.branch || "—"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {repo.dirty ? (
+                          <Badge variant="warning" className="font-normal">
+                            {repo.changes} change{repo.changes === 1 ? "" : "s"}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {repo.dirty ? (
-                            <Badge variant="default">
-                              {repo.changes} change{repo.changes === 1 ? "" : "s"}
-                            </Badge>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                              <Check className="size-3" /> clean
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <AheadBehind ahead={repo.ahead} behind={repo.behind} />
-                        </TableCell>
-                        <TableCell>
-                          <div className="max-w-[20rem] min-w-0">
-                            <p className="truncate text-xs" title={repo.subject}>
-                              {repo.subject || "—"}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {repo.author}
-                              {repo.commitAt ? ` · ${relativeTime(repo.commitAt)}` : ""}
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          )}
-        </>
-      )}
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Check className="size-3" /> clean
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <AheadBehind ahead={repo.ahead} behind={repo.behind} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="max-w-[20rem] min-w-0">
+                          <p className="truncate text-xs" title={repo.subject}>
+                            {repo.subject || "—"}
+                          </p>
+                          <p className="truncate text-[11px] text-muted-foreground">
+                            {repo.author}
+                            {repo.commitAt ? ` · ${relativeTime(repo.commitAt)}` : ""}
+                          </p>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {visible.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="p-0">
+                        <EmptyState
+                          icon={GitBranchIcon}
+                          title="No repository matches that filter"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </PanelBody>
+          </Panel>
+        ))}
 
       <RepoSheet
         repo={selected}
         onOpenChange={(open) => !open && setSelected(null)}
         onChanged={() => repos.refresh()}
       />
-    </>
+    </Page>
   )
 }
 
@@ -203,7 +208,7 @@ function AheadBehind({ ahead, behind }: { ahead: number; behind: number }) {
     return <span className="text-xs text-muted-foreground">in sync</span>
   }
   return (
-    <div className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+    <div className="numeric flex items-center gap-1.5 font-mono text-xs">
       {ahead > 0 && (
         <span className="inline-flex items-center gap-0.5 text-success" title="commits to push">
           <ArrowUpFromLine className="size-3" />
@@ -229,27 +234,39 @@ function RepoSheet({
   onOpenChange: (open: boolean) => void
   onChanged: () => void
 }) {
+  // Keyed on the path so switching repositories starts clean rather than
+  // briefly showing the previous one's history.
   return (
-    <Sheet open={repo !== null} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
-        {/* Keyed on the path so switching repositories starts clean rather
-            than briefly showing the previous one's history. */}
-        {repo && <RepoBody key={repo.path} repo={repo} onChanged={onChanged} />}
-      </SheetContent>
-    </Sheet>
+    <RepoBody
+      key={repo?.path ?? "none"}
+      repo={repo}
+      onOpenChange={onOpenChange}
+      onChanged={onChanged}
+    />
   )
 }
 
-function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void }) {
+function RepoBody({
+  repo,
+  onOpenChange,
+  onChanged,
+}: {
+  repo: GitRepo | null
+  onOpenChange: (open: boolean) => void
+  onChanged: () => void
+}) {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [tab, setTab] = useState("status")
   const [busy, setBusy] = useState<string>()
 
   const status = usePoll(
-    (signal) => get<GitStatus>("/git/status", { path: repo.path }, signal),
+    (signal) =>
+      repo
+        ? get<GitStatus>("/git/status", { path: repo.path }, signal)
+        : Promise.resolve(null as unknown as GitStatus),
     15000,
-    [repo.path],
+    [repo?.path],
   )
 
   const run = useCallback(
@@ -274,138 +291,152 @@ function RepoBody({ repo, onChanged }: { repo: GitRepo; onChanged: () => void })
   return (
     <>
       {dialog}
-      <SheetHeader className="border-b p-4">
-        <SheetTitle className="flex flex-wrap items-center gap-2">
-          {repo.name}
-          <Badge variant={head.detached ? "destructive" : "secondary"}>
-            <GitBranchIcon className="size-3" />
-            {head.branch}
-          </Badge>
-          <AheadBehind ahead={head.ahead} behind={head.behind} />
-        </SheetTitle>
-        <SheetDescription className="font-mono text-xs break-all">
-          {repo.path}
-          {head.remote ? ` · ${head.remote}` : ""}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="flex flex-wrap gap-2 border-b p-3">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!!busy}
-          onClick={() =>
-            run("Fetched", () =>
-              post<GitResult>("/git/fetch", undefined, { query: { path: repo.path, prune: true } }),
-            )
-          }
-        >
-          <RefreshCw className="size-4" />
-          Fetch
-        </Button>
-        {can("service.control") && (
+      <SidePanel
+        open={repo !== null}
+        onOpenChange={onOpenChange}
+        icon={GitBranchIcon}
+        title={
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!!busy}
-              onClick={() =>
-                run("Pulled", () =>
-                  post<GitResult>("/git/pull", undefined, { query: { path: repo.path } }),
-                )
-              }
-            >
-              <ArrowDownToLine className="size-4" />
-              Pull
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!!busy}
-              onClick={() =>
-                run("Pushed", () =>
-                  post<GitResult>("/git/push", undefined, { query: { path: repo.path } }),
-                )
-              }
-            >
-              <ArrowUpFromLine className="size-4" />
-              Push
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!!busy || status.data?.clean}
-              onClick={() =>
-                run("Stashed", () =>
-                  post<GitResult>("/git/stash", {}, { query: { path: repo.path } }),
-                )
-              }
-            >
-              <Undo2 className="size-4" />
-              Stash
-            </Button>
-            {(status.data?.stashes ?? 0) > 0 && (
+            {repo?.name ?? "Repository"}
+            {head && (
+              <Badge variant={head.detached ? "destructive" : "secondary"} className="font-normal">
+                <GitBranchIcon className="size-3" />
+                {head.branch}
+              </Badge>
+            )}
+            {head && <AheadBehind ahead={head.ahead} behind={head.behind} />}
+          </>
+        }
+        description={`${repo?.path ?? ""}${head?.remote ? ` · ${head.remote}` : ""}`}
+        bodyClassName="flex min-h-0 flex-1 flex-col p-4"
+        actions={
+          repo && (
+            <>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={!!busy}
                 onClick={() =>
-                  run("Stash popped", () =>
-                    post<GitResult>("/git/stash/pop", undefined, { query: { path: repo.path } }),
+                  run("Fetched", () =>
+                    post<GitResult>("/git/fetch", undefined, {
+                      query: { path: repo.path, prune: true },
+                    }),
                   )
                 }
               >
-                <RotateCcw className="size-4" />
-                Pop stash ({status.data?.stashes})
+                <RefreshCw className="size-3.5" />
+                Fetch
               </Button>
-            )}
-          </>
+              {can("service.control") && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!!busy}
+                    onClick={() =>
+                      run("Pulled", () =>
+                        post<GitResult>("/git/pull", undefined, { query: { path: repo.path } }),
+                      )
+                    }
+                  >
+                    <ArrowDownToLine className="size-3.5" />
+                    Pull
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!!busy}
+                    onClick={() =>
+                      run("Pushed", () =>
+                        post<GitResult>("/git/push", undefined, { query: { path: repo.path } }),
+                      )
+                    }
+                  >
+                    <ArrowUpFromLine className="size-3.5" />
+                    Push
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!!busy || status.data?.clean}
+                    onClick={() =>
+                      run("Stashed", () =>
+                        post<GitResult>("/git/stash", {}, { query: { path: repo.path } }),
+                      )
+                    }
+                  >
+                    <Undo2 className="size-3.5" />
+                    Stash
+                  </Button>
+                  {(status.data?.stashes ?? 0) > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!!busy}
+                      onClick={() =>
+                        run("Stash popped", () =>
+                          post<GitResult>("/git/stash/pop", undefined, {
+                            query: { path: repo.path },
+                          }),
+                        )
+                      }
+                    >
+                      <RotateCcw className="size-3.5" />
+                      Pop stash ({status.data?.stashes})
+                    </Button>
+                  )}
+                </>
+              )}
+            </>
+          )
+        }
+      >
+        {repo && (
+          <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-3">
+            <TabsList className="w-fit shrink-0">
+              <TabsTrigger value="status">Working tree</TabsTrigger>
+              <TabsTrigger value="log">History</TabsTrigger>
+              <TabsTrigger value="branches">Branches</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="status" className="min-h-0 flex-1">
+              <WorkingTree
+                repo={repo}
+                status={status}
+                busy={busy}
+                confirm={confirm}
+                onDone={() => {
+                  status.refresh()
+                  onChanged()
+                }}
+              />
+            </TabsContent>
+
+            <TabsContent value="log" className="min-h-0 flex-1">
+              {tab === "log" && <HistoryTab path={repo.path} />}
+            </TabsContent>
+
+            <TabsContent value="branches" className="min-h-0 flex-1">
+              {tab === "branches" && (
+                <BranchesTab
+                  path={repo.path}
+                  busy={busy}
+                  onCheckout={(ref) =>
+                    run(`Switched to ${ref}`, () =>
+                      post<GitResult>("/git/checkout", { ref }, { query: { path: repo.path } }),
+                    )
+                  }
+                  onCreate={(ref) =>
+                    run(`Created ${ref}`, () =>
+                      post<GitResult>("/git/branch", { ref }, { query: { path: repo.path } }),
+                    )
+                  }
+                />
+              )}
+            </TabsContent>
+          </Tabs>
         )}
-      </div>
-
-      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-4 mt-3 w-fit">
-          <TabsTrigger value="status">Working tree</TabsTrigger>
-          <TabsTrigger value="log">History</TabsTrigger>
-          <TabsTrigger value="branches">Branches</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="status" className="min-h-0 flex-1 p-4">
-          <WorkingTree
-            repo={repo}
-            status={status}
-            busy={busy}
-            confirm={confirm}
-            onDone={() => {
-              status.refresh()
-              onChanged()
-            }}
-          />
-        </TabsContent>
-
-        <TabsContent value="log" className="min-h-0 flex-1 p-4">
-          {tab === "log" && <HistoryTab path={repo.path} />}
-        </TabsContent>
-
-        <TabsContent value="branches" className="min-h-0 flex-1 p-4">
-          {tab === "branches" && (
-            <BranchesTab
-              path={repo.path}
-              busy={busy}
-              onCheckout={(ref) =>
-                run(`Switched to ${ref}`, () =>
-                  post<GitResult>("/git/checkout", { ref }, { query: { path: repo.path } }),
-                )
-              }
-              onCreate={(ref) =>
-                run(`Created ${ref}`, () =>
-                  post<GitResult>("/git/branch", { ref }, { query: { path: repo.path } }),
-                )
-              }
-            />
-          )}
-        </TabsContent>
-      </Tabs>
+      </SidePanel>
     </>
   )
 }
@@ -442,74 +473,97 @@ function WorkingTree({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className="space-y-1">
-          {status.data?.files.map((f) => (
-            <div
-              key={f.path}
-              className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted"
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        {status.data?.files.map((f) => (
+          <div
+            key={f.path}
+            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--row-hover)]"
+          >
+            <Badge
+              variant={f.label === "untracked" ? "outline" : "secondary"}
+              className="w-24 shrink-0 justify-center font-normal"
             >
-              <Badge
-                variant={f.label === "untracked" ? "outline" : "secondary"}
-                className="w-24 justify-center"
+              {f.label}
+            </Badge>
+            <button
+              className="min-w-0 flex-1 truncate text-left font-mono text-xs hover:underline"
+              title={f.path}
+              onClick={() => showDiff(f.path)}
+            >
+              {f.path}
+            </button>
+            {can("destructive") && f.label !== "untracked" && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!!busy}
+                className="shrink-0 text-destructive"
+                onClick={() =>
+                  confirm({
+                    title: "Discard changes",
+                    phrase: "discard changes",
+                    confirmLabel: "Discard",
+                    description: (
+                      <p className="text-destructive">
+                        Restores <b>{f.path}</b> to its committed state. The current contents are
+                        not recoverable.
+                      </p>
+                    ),
+                    action: async (c) => {
+                      await post(
+                        "/git/discard",
+                        { file: f.path },
+                        { confirm: c, query: { path: repo.path } },
+                      )
+                      onDone()
+                    },
+                  })
+                }
               >
-                {f.label}
-              </Badge>
-              <button
-                className="min-w-0 flex-1 truncate text-left font-mono text-xs hover:underline"
-                title={f.path}
-                onClick={() => showDiff(f.path)}
-              >
-                {f.path}
-              </button>
-              {can("destructive") && f.label !== "untracked" && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={!!busy}
-                  className="h-6 shrink-0 px-2 text-[11px] text-destructive"
-                  onClick={() =>
-                    confirm({
-                      title: "Discard changes",
-                      phrase: "discard changes",
-                      confirmLabel: "Discard",
-                      description: (
-                        <p className="text-destructive">
-                          Restores <b>{f.path}</b> to its committed state. The current contents are
-                          not recoverable.
-                        </p>
-                      ),
-                      action: async (c) => {
-                        await post(
-                          "/git/discard",
-                          { file: f.path },
-                          { confirm: c, query: { path: repo.path } },
-                        )
-                        onDone()
-                      },
-                    })
-                  }
-                >
-                  Discard
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
+                Discard
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
 
-      <Sheet open={diff !== null} onOpenChange={(open) => !open && setDiff(null)}>
-        <SheetContent side="bottom" className="h-[70svh] p-0">
-          <SheetHeader className="border-b p-4">
-            <SheetTitle className="font-mono text-sm break-all">{diff?.file}</SheetTitle>
-          </SheetHeader>
-          <ScrollArea className="h-[calc(70svh-5rem)]">
-            <DiffBody body={diff?.body ?? ""} />
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
+      <DiffSheet
+        title={diff?.file}
+        body={diff?.body ?? ""}
+        open={diff !== null}
+        onOpenChange={(open) => !open && setDiff(null)}
+      />
     </div>
+  )
+}
+
+/** A unified diff on the bottom edge, shared by the working tree and history. */
+function DiffSheet({
+  title,
+  subtitle,
+  body,
+  open,
+  onOpenChange,
+}: {
+  title?: React.ReactNode
+  subtitle?: React.ReactNode
+  body: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" className="flex h-[70svh] flex-col gap-0 p-0">
+        <SheetHeader className="shrink-0 gap-0.5 border-b border-hairline bg-surface-header px-4 py-3 pr-12">
+          <SheetTitle className="truncate font-mono text-[13px]">{title}</SheetTitle>
+          {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <DiffBody body={body} />
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -526,7 +580,7 @@ function DiffBody({ body }: { body: string }) {
           cls = "text-muted-foreground"
         return (
           <div key={i} className={cls}>
-            {line || " "}
+            {line || " "}
           </div>
         )
       })}
@@ -560,46 +614,38 @@ function HistoryTab({ path }: { path: string }) {
 
   return (
     <>
-      <ScrollArea className="h-full pr-3">
-        <div className="space-y-1">
-          {log.data.map((c) => (
-            <button
-              key={c.sha}
-              onClick={() => show(c)}
-              className="flex w-full items-start gap-3 rounded px-2 py-2 text-left hover:bg-muted"
-            >
-              <GitCommitHorizontal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">{c.subject}</p>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  <span className="font-mono">{c.short}</span> · {c.author} · {relativeTime(c.at)}
-                  {c.isMerge ? " · merge" : ""}
-                </p>
-              </div>
-              {(c.insertions > 0 || c.deletions > 0) && (
-                <span className="shrink-0 font-mono text-[11px] tabular-nums">
-                  <span className="text-success">+{c.insertions}</span>{" "}
-                  <span className="text-destructive">−{c.deletions}</span>
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </ScrollArea>
+      <div className="h-full space-y-0.5 overflow-y-auto">
+        {log.data.map((c) => (
+          <button
+            key={c.sha}
+            onClick={() => show(c)}
+            className="flex w-full min-w-0 items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-[var(--row-hover)]"
+          >
+            <GitCommitHorizontal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px]">{c.subject}</p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                <span className="font-mono">{c.short}</span> · {c.author} · {relativeTime(c.at)}
+                {c.isMerge ? " · merge" : ""}
+              </p>
+            </div>
+            {(c.insertions > 0 || c.deletions > 0) && (
+              <span className="numeric shrink-0 font-mono text-[11px]">
+                <span className="text-success">+{c.insertions}</span>{" "}
+                <span className="text-destructive">−{c.deletions}</span>
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      <Sheet open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
-        <SheetContent side="bottom" className="h-[70svh] p-0">
-          <SheetHeader className="border-b p-4">
-            <SheetTitle className="text-sm">{open?.subject}</SheetTitle>
-            <SheetDescription className="font-mono text-xs">
-              {open?.short} · {open?.author} · {open ? timestamp(open.at) : ""}
-            </SheetDescription>
-          </SheetHeader>
-          <ScrollArea className="h-[calc(70svh-6rem)]">
-            <DiffBody body={diff} />
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
+      <DiffSheet
+        open={open !== null}
+        onOpenChange={(o) => !o && setOpen(null)}
+        title={open?.subject}
+        subtitle={open ? `${open.short} · ${open.author} · ${timestamp(open.at)}` : undefined}
+        body={diff}
+      />
     </>
   )
 }
@@ -628,7 +674,7 @@ function BranchesTab({
     <div className="flex h-full min-h-0 flex-col gap-3">
       {can("service.control") && (
         <form
-          className="flex gap-2"
+          className="flex shrink-0 gap-2"
           onSubmit={(e) => {
             e.preventDefault()
             const name = newBranch.trim()
@@ -641,48 +687,46 @@ function BranchesTab({
             value={newBranch}
             onChange={(e) => setNewBranch(e.target.value)}
             placeholder="New branch from HEAD"
-            className="h-8 text-sm"
+            className="h-8 text-[13px]"
           />
           <Button type="submit" size="sm" variant="outline" disabled={!!busy || !newBranch.trim()}>
             Create
           </Button>
         </form>
       )}
-      <ScrollArea className="min-h-0 flex-1 pr-3">
-        <div className="space-y-1">
-          {branches.data?.map((b) => (
-            <div
-              key={b.name}
-              className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted"
-            >
-              <GitBranchIcon
-                className={`size-3.5 shrink-0 ${b.current ? "text-success" : "text-muted-foreground"}`}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-xs">
-                  {b.name}
-                  {b.current && <span className="ml-2 text-[10px] text-success">current</span>}
-                </p>
-                {b.subject && (
-                  <p className="truncate text-[11px] text-muted-foreground">{b.subject}</p>
-                )}
-              </div>
-              <AheadBehind ahead={b.ahead} behind={b.behind} />
-              {can("service.control") && !b.current && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={!!busy}
-                  className="h-6 shrink-0 px-2 text-[11px]"
-                  onClick={() => onCheckout(b.name)}
-                >
-                  Switch
-                </Button>
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+        {branches.data?.map((b) => (
+          <div
+            key={b.name}
+            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--row-hover)]"
+          >
+            <GitBranchIcon
+              className={`size-3.5 shrink-0 ${b.current ? "text-success" : "text-muted-foreground"}`}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-mono text-xs">
+                {b.name}
+                {b.current && <span className="ml-2 text-[10px] text-success">current</span>}
+              </p>
+              {b.subject && (
+                <p className="truncate text-[11px] text-muted-foreground">{b.subject}</p>
               )}
             </div>
-          ))}
-        </div>
-      </ScrollArea>
+            <AheadBehind ahead={b.ahead} behind={b.behind} />
+            {can("service.control") && !b.current && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!!busy}
+                className="shrink-0"
+                onClick={() => onCheckout(b.name)}
+              >
+                Switch
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

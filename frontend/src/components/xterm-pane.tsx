@@ -176,10 +176,15 @@ export function XtermPane({
   }, [mode])
 
   return (
-    <div className={cn("relative flex flex-col overflow-hidden rounded-lg border", className)}>
-      <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
-        <span className="font-mono text-xs text-muted-foreground">{path}</span>
-        <Badge variant={state === "open" ? "success" : "secondary"} className="gap-1.5 text-[10px]">
+    <div
+      className={cn("relative flex min-w-0 flex-col overflow-hidden rounded-xl border", className)}
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-surface-header px-3 py-2">
+        <span className="truncate font-mono text-[11px] text-muted-foreground">{path}</span>
+        <Badge
+          variant={state === "open" ? "success" : "secondary"}
+          className="shrink-0 gap-1.5 text-[10px] font-normal"
+        >
           <span
             className={cn(
               "size-1.5 rounded-full",
@@ -190,7 +195,9 @@ export function XtermPane({
         </Badge>
       </div>
       {error && (
-        <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{error}</p>
+        <p className="border-b border-hairline bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          {error}
+        </p>
       )}
       <div
         ref={hostRef}

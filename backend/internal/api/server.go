@@ -66,12 +66,19 @@ func (s *Server) handle(fn httpx.Handler) http.Handler { return fn }
 // New so that a failure to schedule backups is reported by main rather than
 // swallowed during construction.
 func (s *Server) Start(ctx context.Context) error {
+	// The metrics recorder is started here rather than lazily on the first
+	// request precisely because nothing may ever request it: its whole
+	// purpose is to have been running while nobody was looking.
+	if err := s.modules.metrics.Start(ctx); err != nil {
+		return err
+	}
 	return s.modules.backupSched.Start(ctx)
 }
 
 // Shutdown releases the resources that outlive a request: database pools,
-// live PTY sessions and the backup scheduler.
+// live PTY sessions, the metrics sampler and the backup scheduler.
 func (s *Server) Shutdown() {
+	s.modules.metrics.Stop()
 	s.modules.backupSched.Stop()
 	s.modules.term.Shutdown()
 	s.modules.dbs.Shutdown()

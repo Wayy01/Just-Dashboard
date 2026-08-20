@@ -6,12 +6,12 @@ import { get, post } from "@/lib/api"
 import type { ComposeStack } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
+import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/panel"
 import type { ConfirmFn } from "@/components/docker/shared"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export function StacksTab({ confirm }: { confirm: ConfirmFn }) {
   const { can } = useAuth()
@@ -19,7 +19,7 @@ export function StacksTab({ confirm }: { confirm: ConfirmFn }) {
     (signal) => get<ComposeStack[]>("/docker/stacks/", undefined, signal),
     15000,
   )
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel rows={3} />
   if (error) return <ErrorState error={error} />
   if (!data?.length) return <EmptyState icon={Layers} title="No compose stacks found" />
 
@@ -34,103 +34,101 @@ export function StacksTab({ confirm }: { confirm: ConfirmFn }) {
   }
 
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-      {data.map((stack) => (
-        <Card key={stack.name}>
-          <CardHeader>
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <CardTitle className="truncate text-base">{stack.name}</CardTitle>
-                <CardDescription className="truncate font-mono text-xs">
-                  {stack.workingDir || "location unknown"}
-                </CardDescription>
-              </div>
-              <Badge
-                variant={stack.running === stack.total && stack.total > 0 ? "default" : "secondary"}
-              >
-                {stack.running}/{stack.total}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1">
+    <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      {data.map((stack) => {
+        const healthy = stack.running === stack.total && stack.total > 0
+        return (
+          <Panel key={stack.name}>
+            <PanelHeader
+              icon={Layers}
+              title={stack.name}
+              description={stack.workingDir || "location unknown"}
+              actions={
+                <Badge variant={healthy ? "success" : "secondary"} className="font-normal">
+                  {stack.running}/{stack.total} up
+                </Badge>
+              }
+            />
+            <PanelBody className="space-y-1.5">
               {stack.services.map((svc) => (
                 <div
                   key={svc.container}
-                  className="flex items-center justify-between gap-2 text-sm"
+                  className="flex min-w-0 items-center justify-between gap-2 text-[13px]"
                 >
                   <span className="truncate">{svc.name}</span>
                   <StatusBadge state={svc.state} />
                 </div>
               ))}
-            </div>
-            {!stack.managed ? (
-              <p className="text-xs text-muted-foreground">
-                No compose file reachable from this dashboard, so this stack is read-only here.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {can("service.control") && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => run(stack, "up").catch((e) => toast.error(String(e)))}
-                  >
-                    <Play className="size-3.5" />
-                    Up
-                  </Button>
-                )}
-                {can("destructive") && (
-                  <>
+            </PanelBody>
+            <PanelFooter>
+              {!stack.managed ? (
+                <p className="text-[11px] text-muted-foreground">
+                  No compose file reachable from this dashboard, so this stack is read-only here.
+                </p>
+              ) : (
+                <>
+                  {can("service.control") && (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() =>
-                        confirm({
-                          title: "Restart stack",
-                          phrase: stack.name,
-                          confirmLabel: "Restart",
-                          description: (
-                            <p>
-                              Every service in <b>{stack.name}</b> restarts.
-                            </p>
-                          ),
-                          action: (c) => run(stack, "restart", c),
-                        })
-                      }
+                      onClick={() => run(stack, "up").catch((e) => toast.error(String(e)))}
                     >
-                      <RotateCw className="size-3.5" />
-                      Restart
+                      <Play className="size-3.5" />
+                      Up
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive"
-                      onClick={() =>
-                        confirm({
-                          title: "Take stack down",
-                          phrase: stack.name,
-                          confirmLabel: "Down",
-                          description: (
-                            <p>
-                              Stops and removes every container in <b>{stack.name}</b>. Named
-                              volumes survive.
-                            </p>
-                          ),
-                          action: (c) => run(stack, "down", c),
-                        })
-                      }
-                    >
-                      <Square className="size-3.5" />
-                      Down
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+                  )}
+                  {can("destructive") && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          confirm({
+                            title: "Restart stack",
+                            phrase: stack.name,
+                            confirmLabel: "Restart",
+                            description: (
+                              <p>
+                                Every service in <b>{stack.name}</b> restarts.
+                              </p>
+                            ),
+                            action: (c) => run(stack, "restart", c),
+                          })
+                        }
+                      >
+                        <RotateCw className="size-3.5" />
+                        Restart
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() =>
+                          confirm({
+                            title: "Take stack down",
+                            phrase: stack.name,
+                            confirmLabel: "Down",
+                            description: (
+                              <p>
+                                Stops and removes every container in <b>{stack.name}</b>. Named
+                                volumes survive.
+                              </p>
+                            ),
+                            action: (c) => run(stack, "down", c),
+                          })
+                        }
+                      >
+                        <Square className="size-3.5" />
+                        Down
+                      </Button>
+                    </>
+                  )}
+                </>
+              )}
+            </PanelFooter>
+          </Panel>
+        )
+      })}
     </div>
   )
 }

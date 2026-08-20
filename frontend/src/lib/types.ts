@@ -69,6 +69,49 @@ export type Snapshot = {
   uptimeSeconds: number
 }
 
+/**
+ * One bucket of recorded history.
+ *
+ * Every series carries its peak next to its mean because the mean is what
+ * hides the interesting moment: a 100% second inside a ten-minute bucket
+ * averages away to nothing, and a chart drawn only from means reports a quiet
+ * night that was not quiet.
+ */
+export type MetricsHistoryPoint = {
+  ts: string
+  samples: number
+  cpu: number
+  cpuPeak: number
+  mem: number
+  memPeak: number
+  swap: number
+  swapPeak: number
+  rx: number
+  rxPeak: number
+  tx: number
+  txPeak: number
+  diskRead: number
+  diskReadPeak: number
+  diskWrite: number
+  diskWritePeak: number
+  load1: number
+  load1Peak: number
+  diskPercent: number
+  memUsed: number
+}
+
+export type MetricsHistory = {
+  from: string
+  to: string
+  /** Width of one bucket. A gap wider than this is missing data, not a flat line. */
+  stepSeconds: number
+  sampleIntervalSeconds: number
+  retentionSeconds: number
+  /** Oldest sample still retained, or null when nothing has been recorded yet. */
+  earliest: string | null
+  points: MetricsHistoryPoint[]
+}
+
 export type MountStats = {
   device: string
   mountpoint: string

@@ -1,17 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import {
-  Activity,
-  Clock,
-  Cpu,
-  ListChecks,
-  Play,
-  RotateCw,
-  Search,
-  Square,
-  Trash2,
-} from "lucide-react"
+import { Activity, Clock, Cpu, ListChecks, Play, RotateCw, Square, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, duration, percent, relativeTime } from "@/lib/format"
@@ -20,17 +10,16 @@ import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
 import { UnitJournalSheet } from "@/components/procs/unit-journal"
 import { PM2LogSheet } from "@/components/procs/pm2-logs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -51,34 +40,39 @@ import {
 
 export default function ProcessesPage() {
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Server"
         title="Processes"
         description="PM2 applications, systemd units, the raw process table and cron"
       />
-      <Tabs defaultValue="pm2">
+      <Tabs defaultValue="pm2" className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="pm2">PM2</TabsTrigger>
           <TabsTrigger value="systemd">systemd</TabsTrigger>
           <TabsTrigger value="table">Process table</TabsTrigger>
           <TabsTrigger value="cron">Cron</TabsTrigger>
         </TabsList>
-        <TabsContent value="pm2">
+        <TabsContent value="pm2" className="min-w-0">
           <PM2Tab />
         </TabsContent>
-        <TabsContent value="systemd">
+        <TabsContent value="systemd" className="min-w-0">
           <SystemdTab />
         </TabsContent>
-        <TabsContent value="table">
+        <TabsContent value="table" className="min-w-0">
           <ProcessTableTab />
         </TabsContent>
-        <TabsContent value="cron">
+        <TabsContent value="cron" className="min-w-0">
           <CronTab />
         </TabsContent>
       </Tabs>
-    </>
+    </Page>
   )
 }
+
+/** The hover-revealed action cluster every row in this page uses. */
+const ROW_ACTIONS =
+  "flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"
 
 function PM2Tab() {
   const { can } = useAuth()
@@ -89,7 +83,7 @@ function PM2Tab() {
     5000,
   )
 
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.available) {
     return (
@@ -112,14 +106,21 @@ function PM2Tab() {
     refresh()
   }
 
+  const online = data.processes.filter((p) => p.status === "online").length
+
   return (
     <>
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
+      <Panel>
+        <PanelHeader
+          icon={Activity}
+          title="PM2 applications"
+          description={`${online} online of ${data.processes.length}`}
+        />
+        <PanelBody flush>
+          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+            <TableHeader className={stickyTableHeader}>
               <TableRow>
-                <TableHead>Application</TableHead>
+                <TableHead className="w-full">Application</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">CPU</TableHead>
                 <TableHead className="text-right">Memory</TableHead>
@@ -132,26 +133,28 @@ function PM2Tab() {
               {data.processes.map((proc) => (
                 <TableRow key={proc.id} className="group" onActivate={() => setLogsFor(proc.name)}>
                   <TableCell>
-                    <button
-                      className="font-medium hover:underline"
-                      onClick={() => setLogsFor(proc.name)}
-                    >
-                      {proc.name}
-                    </button>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">
-                      {proc.scriptPath}
-                    </p>
+                    <div className="max-w-[22rem] min-w-0">
+                      <button
+                        className="truncate text-[13px] font-medium hover:underline"
+                        onClick={() => setLogsFor(proc.name)}
+                      >
+                        {proc.name}
+                      </button>
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {proc.scriptPath}
+                      </p>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <StatusBadge state={proc.status} />
                   </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                  <TableCell className="numeric text-right font-mono text-xs">
                     {percent(proc.cpu)}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                  <TableCell className="numeric text-right font-mono text-xs">
                     {bytes(proc.memory)}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                  <TableCell className="numeric text-right font-mono text-xs">
                     {proc.restarts}
                     {proc.unstableRestarts > 0 && (
                       <span className="ml-1 text-destructive">
@@ -163,13 +166,13 @@ function PM2Tab() {
                     {proc.uptimeMs > 0 ? duration(proc.uptimeMs / 1000) : "—"}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                    <div className={ROW_ACTIONS}>
                       {proc.status !== "online" && can("service.control") && (
                         <IconAction
                           label="Start"
                           onClick={() => act(proc, "start").catch((e) => toast.error(String(e)))}
                         >
-                          <Play className="size-3.5" />
+                          <Play />
                         </IconAction>
                       )}
                       {can("destructive") && (
@@ -190,7 +193,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <RotateCw className="size-3.5" />
+                            <RotateCw />
                           </IconAction>
                           <IconAction
                             label="Stop"
@@ -208,7 +211,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <Square className="size-3.5" />
+                            <Square />
                           </IconAction>
                           <IconAction
                             label="Delete"
@@ -231,7 +234,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <Trash2 className="size-3.5" />
+                            <Trash2 />
                           </IconAction>
                         </>
                       )}
@@ -241,8 +244,8 @@ function PM2Tab() {
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       <PM2LogSheet name={logsFor} onOpenChange={(o) => !o && setLogsFor(null)} />
       {dialog}
     </>
@@ -273,7 +276,7 @@ function SystemdTab() {
     return units
   }, [data, filter, stateFilter])
 
-  if (loading) return <LoadingRows />
+  if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.available)
     return <EmptyState icon={ListChecks} title="systemd is not available on this host" />
@@ -290,36 +293,42 @@ function SystemdTab() {
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
+      <Panel>
+        <PanelHeader
+          icon={ListChecks}
+          title="systemd units"
+          description={`${visible.length} shown of ${data.units.length}`}
+          actions={
+            failed > 0 && (
+              <Badge variant="destructive" className="font-normal">
+                {failed} failed
+              </Badge>
+            )
+          }
+        />
+        <PanelToolbar>
+          <SearchInput
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter units"
-            className="pl-8"
           />
-        </div>
-        <Select value={stateFilter} onValueChange={setStateFilter}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All states</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="inactive">Inactive</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-          </SelectContent>
-        </Select>
-        {failed > 0 && <Badge variant="destructive">{failed} failed</Badge>}
-      </div>
-
-      <Card>
-        <CardContent className="p-0">
-          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+          <Select value={stateFilter} onValueChange={setStateFilter}>
+            <SelectTrigger size="sm" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All states</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
+            </SelectContent>
+          </Select>
+        </PanelToolbar>
+        <PanelBody flush>
+          <Table containerClassName="max-h-[calc(100svh-23rem)]">
             <TableHeader className={stickyTableHeader}>
               <TableRow>
-                <TableHead>Unit</TableHead>
+                <TableHead className="w-full">Unit</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Startup</TableHead>
                 <TableHead className="w-px" />
@@ -333,13 +342,17 @@ function SystemdTab() {
                   onActivate={() => setJournalFor(unit.name)}
                 >
                   <TableCell>
-                    <button
-                      className="font-medium hover:underline"
-                      onClick={() => setJournalFor(unit.name)}
-                    >
-                      {unit.name}
-                    </button>
-                    <p className="truncate text-xs text-muted-foreground">{unit.description}</p>
+                    <div className="max-w-[26rem] min-w-0">
+                      <button
+                        className="truncate text-[13px] font-medium hover:underline"
+                        onClick={() => setJournalFor(unit.name)}
+                      >
+                        {unit.name}
+                      </button>
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {unit.description}
+                      </p>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <StatusBadge
@@ -348,18 +361,18 @@ function SystemdTab() {
                     />
                   </TableCell>
                   <TableCell>
-                    <Badge variant={unit.enabled ? "default" : "secondary"}>
+                    <Badge variant={unit.enabled ? "outline" : "secondary"} className="font-normal">
                       {unit.unitFileState || "unknown"}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                    <div className={ROW_ACTIONS}>
                       {unit.activeState !== "active" && can("service.control") && (
                         <IconAction
                           label="Start"
                           onClick={() => act(unit, "start").catch((e) => toast.error(String(e)))}
                         >
-                          <Play className="size-3.5" />
+                          <Play />
                         </IconAction>
                       )}
                       {can("destructive") && (
@@ -380,7 +393,7 @@ function SystemdTab() {
                               })
                             }
                           >
-                            <RotateCw className="size-3.5" />
+                            <RotateCw />
                           </IconAction>
                           {unit.activeState === "active" && (
                             <IconAction
@@ -399,16 +412,16 @@ function SystemdTab() {
                                 })
                               }
                             >
-                              <Square className="size-3.5" />
+                              <Square />
                             </IconAction>
                           )}
                         </>
                       )}
                       {can("system.admin") && (
                         <Button
-                          size="sm"
+                          size="xs"
                           variant="ghost"
-                          className="h-7 px-2 text-xs"
+                          className="text-muted-foreground"
                           onClick={() =>
                             act(unit, unit.enabled ? "disable" : "enable").catch((e) =>
                               toast.error(String(e)),
@@ -431,8 +444,8 @@ function SystemdTab() {
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       <UnitJournalSheet unit={journalFor} onOpenChange={(o) => !o && setJournalFor(null)} />
       {dialog}
     </>
@@ -449,34 +462,36 @@ function ProcessTableTab() {
     [query],
   )
 
-  if (loading && !data) return <LoadingRows />
+  if (loading && !data) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
   return (
     <>
-      <div className="relative mb-4 max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter by name, command or user"
-          className="pl-8"
+      <Panel>
+        <PanelHeader
+          icon={Cpu}
+          title="Process table"
+          description={
+            data && data.length >= 200
+              ? // The server caps the reply at 200 rows. Saying so beats letting
+                // someone conclude a process is not running when it was simply cut.
+                "Showing the 200 heaviest processes — filter to reach the rest"
+              : `${data?.length ?? 0} processes`
+          }
         />
-      </div>
-      {data && data.length >= 200 && (
-        // The server caps the reply at 200 rows. Saying so beats letting
-        // someone conclude a process is not running when it was simply cut.
-        <p className="mb-2 text-xs text-muted-foreground">
-          Showing the 200 heaviest processes. Filter to reach the rest.
-        </p>
-      )}
-      <Card>
-        <CardContent className="p-0">
-          <Table containerClassName="max-h-[calc(100svh-20rem)]">
+        <PanelToolbar>
+          <SearchInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by name, command or user"
+          />
+        </PanelToolbar>
+        <PanelBody flush>
+          <Table containerClassName="max-h-[calc(100svh-23rem)]">
             <TableHeader className={stickyTableHeader}>
               <TableRow>
                 <TableHead className="w-20">PID</TableHead>
-                <TableHead>Process</TableHead>
+                <TableHead className="w-full">Process</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead className="text-right">CPU</TableHead>
                 <TableHead className="text-right">Memory</TableHead>
@@ -487,13 +502,13 @@ function ProcessTableTab() {
             <TableBody>
               {data?.map((proc) => (
                 <TableRow key={proc.pid} className="group">
-                  <TableCell className="font-mono text-xs tabular-nums">{proc.pid}</TableCell>
+                  <TableCell className="numeric font-mono text-xs">{proc.pid}</TableCell>
                   <TableCell>
                     {/* A process name can be a full Chromium argv — hundreds of
                         characters. Bounding it here is what keeps one row from
                         setting the width of the whole table. */}
-                    <div className="max-w-[28rem] min-w-0">
-                      <div className="truncate font-medium" title={proc.name}>
+                    <div className="max-w-[26rem] min-w-0">
+                      <div className="truncate text-[13px] font-medium" title={proc.name}>
                         {proc.name}
                       </div>
                       <p
@@ -505,10 +520,10 @@ function ProcessTableTab() {
                     </div>
                   </TableCell>
                   <TableCell className="text-xs">{proc.username}</TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                  <TableCell className="numeric text-right font-mono text-xs">
                     {percent(proc.cpuPercent)}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                  <TableCell className="numeric text-right font-mono text-xs">
                     {bytes(proc.rss)}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -517,9 +532,9 @@ function ProcessTableTab() {
                   <TableCell>
                     {can("destructive") && (
                       <Button
-                        size="sm"
+                        size="xs"
                         variant="ghost"
-                        className="h-7 px-2 text-xs text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                        className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                         onClick={() =>
                           confirm({
                             title: "Signal process",
@@ -562,8 +577,8 @@ function ProcessTableTab() {
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
       {dialog}
     </>
   )
@@ -585,47 +600,56 @@ function CronTab() {
 
   return (
     <>
-      <div className="space-y-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">User crontab</CardTitle>
-              <CardDescription>{crontab.data?.source}</CardDescription>
-            </div>
-            <Select
-              value={user}
-              onValueChange={(v) => {
-                setUser(v)
-                setDraft(null)
-              }}
-            >
-              <SelectTrigger className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="root">root</SelectItem>
-                {users.data
-                  ?.filter((u) => u !== "root")
-                  .map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {crontab.error && <ErrorState error={crontab.error} />}
-            {crontab.data && draft === null && (
-              <>
-                {crontab.data.jobs.length === 0 ? (
+      <div className="flex min-w-0 flex-col gap-4">
+        <Panel>
+          <PanelHeader
+            icon={Clock}
+            title="User crontab"
+            description={crontab.data?.source}
+            actions={
+              <Select
+                value={user}
+                onValueChange={(v) => {
+                  setUser(v)
+                  setDraft(null)
+                }}
+              >
+                <SelectTrigger size="sm" className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="root">root</SelectItem>
+                  {users.data
+                    ?.filter((u) => u !== "root")
+                    .map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+
+          {crontab.error && (
+            <PanelBody>
+              <ErrorState error={crontab.error} />
+            </PanelBody>
+          )}
+
+          {crontab.data && draft === null && (
+            <>
+              {crontab.data.jobs.length === 0 ? (
+                <PanelBody>
                   <EmptyState icon={Clock} title={`No cron jobs for ${user}`} />
-                ) : (
+                </PanelBody>
+              ) : (
+                <PanelBody flush>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-40">Schedule</TableHead>
-                        <TableHead>Command</TableHead>
+                        <TableHead className="w-44">Schedule</TableHead>
+                        <TableHead className="w-full">Command</TableHead>
                         <TableHead className="w-24">State</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -633,14 +657,17 @@ function CronTab() {
                       {crontab.data.jobs.map((job) => (
                         <TableRow key={job.line}>
                           <TableCell className="font-mono text-xs">{job.schedule}</TableCell>
-                          <TableCell>
+                          <TableCell className="whitespace-normal">
                             <div className="font-mono text-xs break-all">{job.command}</div>
                             {job.comment && (
                               <p className="text-[11px] text-muted-foreground">{job.comment}</p>
                             )}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={job.disabled ? "secondary" : "default"}>
+                            <Badge
+                              variant={job.disabled ? "secondary" : "success"}
+                              className="font-normal"
+                            >
                               {job.disabled ? "disabled" : "active"}
                             </Badge>
                           </TableCell>
@@ -648,80 +675,81 @@ function CronTab() {
                       ))}
                     </TableBody>
                   </Table>
-                )}
-                {can("system.admin") && (
+                </PanelBody>
+              )}
+              {can("system.admin") && (
+                <div className="border-t border-hairline bg-surface-header/60 px-4 py-2.5">
                   <Button variant="outline" size="sm" onClick={() => setDraft(crontab.data!.raw)}>
                     Edit crontab
                   </Button>
-                )}
-              </>
-            )}
-
-            {draft !== null && (
-              <div className="space-y-3">
-                <Textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  className="min-h-64 font-mono text-xs"
-                  spellCheck={false}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      confirm({
-                        title: "Replace crontab",
-                        phrase: user,
-                        confirmLabel: "Save",
-                        description: (
-                          <p>
-                            Replaces the entire crontab for <b>{user}</b>. Scheduled jobs start
-                            running on the new schedule immediately.
-                          </p>
-                        ),
-                        action: async (c) => {
-                          await put(
-                            `/cron/user/${encodeURIComponent(user)}`,
-                            { content: draft },
-                            { confirm: c },
-                          )
-                          setDraft(null)
-                          crontab.refresh()
-                        },
-                      })
-                    }
-                  >
-                    Save
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
-                    Cancel
-                  </Button>
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </>
+          )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">System cron</CardTitle>
-            <CardDescription>
-              Package-managed schedules from /etc/crontab and /etc/cron.d, shown read-only
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          {draft !== null && (
+            <PanelBody className="space-y-3">
+              <Textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                className="min-h-64 font-mono text-xs"
+                spellCheck={false}
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    confirm({
+                      title: "Replace crontab",
+                      phrase: user,
+                      confirmLabel: "Save",
+                      description: (
+                        <p>
+                          Replaces the entire crontab for <b>{user}</b>. Scheduled jobs start
+                          running on the new schedule immediately.
+                        </p>
+                      ),
+                      action: async (c) => {
+                        await put(
+                          `/cron/user/${encodeURIComponent(user)}`,
+                          { content: draft },
+                          { confirm: c },
+                        )
+                        setDraft(null)
+                        crontab.refresh()
+                      },
+                    })
+                  }
+                >
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </PanelBody>
+          )}
+        </Panel>
+
+        <Panel>
+          <PanelHeader
+            icon={Clock}
+            title="System cron"
+            description="Package-managed schedules from /etc/crontab and /etc/cron.d, read-only"
+          />
+          <PanelBody className="space-y-4">
             {system.data?.map((file) => (
-              <div key={file.source} className="space-y-2">
-                <p className="font-mono text-xs text-muted-foreground">{file.source}</p>
+              <div key={file.source} className="min-w-0 space-y-1.5">
+                <p className="font-mono text-[11px] text-muted-foreground">{file.source}</p>
                 {file.jobs.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No jobs.</p>
                 ) : (
-                  <div className="space-y-1 rounded-md border p-2">
+                  <Well className="space-y-1 p-2">
                     {file.jobs.map((job, i) => (
                       <div
                         key={i}
                         className={cn(
-                          "flex gap-3 font-mono text-[11px]",
+                          "flex gap-3 text-[11px]",
                           // A commented-out schedule is real syntax, not a
                           // running job — /etc/crontab ships one as its own
                           // worked example. Dimming it keeps the two apart.
@@ -741,13 +769,13 @@ function CronTab() {
                         <span className="break-all">{job.command}</span>
                       </div>
                     ))}
-                  </div>
+                  </Well>
                 )}
               </div>
             ))}
             {!system.data?.length && <EmptyState icon={Clock} title="No system cron files" />}
-          </CardContent>
-        </Card>
+          </PanelBody>
+        </Panel>
       </div>
       {dialog}
     </>

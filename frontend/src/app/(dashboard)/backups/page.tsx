@@ -9,8 +9,10 @@ import type { BackupJob, BackupRun } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
-import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
+import { Detail, DetailList, Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
+import { SidePanel } from "@/components/side-panel"
+import { EmptyState, ErrorState, LoadingPanel, Spinner } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,7 +20,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Select,
   SelectContent,
@@ -42,13 +43,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 
 export default function BackupsPage() {
   const { can } = useAuth()
@@ -70,14 +64,15 @@ export default function BackupsPage() {
   }
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Operations"
         title="Backups"
         description="Scheduled archives to local disk or S3-compatible storage"
         actions={can("system.admin") && <JobDialog onDone={refresh} />}
       />
 
-      {loading && <LoadingRows />}
+      {loading && <LoadingPanel />}
       {error && <ErrorState error={error} />}
       {data?.length === 0 && (
         <EmptyState
@@ -87,42 +82,40 @@ export default function BackupsPage() {
         />
       )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data?.map((job) => (
-          <Card key={job.id}>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <CardTitle className="truncate text-base">{job.name}</CardTitle>
-                  <CardDescription className="truncate">
-                    {job.sources.length} source(s) →{" "}
-                    {job.targetKind === "local"
-                      ? job.target.path
-                      : `${job.targetKind}://${job.target.bucket}/${job.target.prefix ?? ""}`}
-                  </CardDescription>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <Badge variant={job.enabled ? "default" : "secondary"}>
-                    {job.enabled ? "enabled" : "paused"}
-                  </Badge>
+          <Panel key={job.id}>
+            <PanelHeader
+              icon={Archive}
+              title={job.name}
+              description={`${job.sources.length} source(s) → ${
+                job.targetKind === "local"
+                  ? job.target.path
+                  : `${job.targetKind}://${job.target.bucket}/${job.target.prefix ?? ""}`
+              }`}
+              actions={
+                <>
                   {job.hasCredentials && (
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-[10px] font-normal">
                       keys stored
                     </Badge>
                   )}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                <dt className="text-muted-foreground">Schedule</dt>
-                <dd className="font-mono">{job.schedule || "manual only"}</dd>
-                <dt className="text-muted-foreground">Next run</dt>
-                <dd>{job.nextRun ? relativeTime(job.nextRun) : "—"}</dd>
-                <dt className="text-muted-foreground">Keep</dt>
-                <dd>{job.retention > 0 ? `${job.retention} archives` : "everything"}</dd>
-                <dt className="text-muted-foreground">Last run</dt>
-                <dd>
+                  <Badge variant={job.enabled ? "success" : "secondary"} className="font-normal">
+                    {job.enabled ? "enabled" : "paused"}
+                  </Badge>
+                </>
+              }
+            />
+            <PanelBody>
+              <DetailList>
+                <Detail label="Schedule">
+                  <span className="font-mono">{job.schedule || "manual only"}</span>
+                </Detail>
+                <Detail label="Next run">{job.nextRun ? relativeTime(job.nextRun) : "—"}</Detail>
+                <Detail label="Keep">
+                  {job.retention > 0 ? `${job.retention} archives` : "everything"}
+                </Detail>
+                <Detail label="Last run">
                   {job.lastRun ? (
                     <span className="flex items-center gap-1.5">
                       <StatusBadge state={job.lastRun.status} />
@@ -131,58 +124,58 @@ export default function BackupsPage() {
                   ) : (
                     "never"
                   )}
-                </dd>
-              </dl>
-
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => setHistoryFor(job)}>
-                  History
+                </Detail>
+              </DetailList>
+            </PanelBody>
+            <PanelFooter>
+              <Button size="sm" variant="outline" onClick={() => setHistoryFor(job)}>
+                History
+              </Button>
+              {can("service.control") && (
+                <Button size="sm" onClick={() => runNow(job)}>
+                  <Play className="size-3.5" />
+                  Run now
                 </Button>
-                {can("service.control") && (
-                  <Button size="sm" onClick={() => runNow(job)}>
-                    <Play className="size-3.5" />
-                    Run now
+              )}
+              {can("system.admin") && (
+                <>
+                  <TestTargetButton job={job} />
+                  <JobDialog job={job} onDone={refresh} />
+                  <span className="flex-1" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() =>
+                      confirm({
+                        title: "Delete backup job",
+                        phrase: job.name,
+                        confirmLabel: "Delete",
+                        description: (
+                          <p>
+                            Removes the schedule for <b>{job.name}</b>. Archives already taken are
+                            kept where they are.
+                          </p>
+                        ),
+                        action: async (c) => {
+                          await del(`/backups/${job.id}`, { confirm: c })
+                          refresh()
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 className="size-3.5" />
                   </Button>
-                )}
-                {can("system.admin") && (
-                  <>
-                    <TestTargetButton job={job} />
-                    <JobDialog job={job} onDone={refresh} />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive"
-                      onClick={() =>
-                        confirm({
-                          title: "Delete backup job",
-                          phrase: job.name,
-                          confirmLabel: "Delete",
-                          description: (
-                            <p>
-                              Removes the schedule for <b>{job.name}</b>. Archives already taken are
-                              kept where they are.
-                            </p>
-                          ),
-                          action: async (c) => {
-                            await del(`/backups/${job.id}`, { confirm: c })
-                            refresh()
-                          },
-                        })
-                      }
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                </>
+              )}
+            </PanelFooter>
+          </Panel>
         ))}
       </div>
 
       <HistorySheet job={historyFor} onOpenChange={(o) => !o && setHistoryFor(null)} />
       {dialog}
-    </>
+    </Page>
   )
 }
 
@@ -231,84 +224,84 @@ function HistorySheet({
 
   return (
     <>
-      <Sheet open={job !== null} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="w-full overflow-auto sm:max-w-3xl">
-          <SheetHeader>
-            <SheetTitle>{job?.name}</SheetTitle>
-            <SheetDescription>
-              {data?.running ? "A run is in progress right now." : "Run history, newest first"}
-            </SheetDescription>
-          </SheetHeader>
-
-          <div className="space-y-4 px-4">
-            {loading && <LoadingRows />}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                  <TableHead>Took</TableHead>
-                  <TableHead className="w-px" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data?.runs.map((run) => (
-                  <TableRow key={run.id}>
-                    <TableCell className="text-xs">
-                      <div>{timestamp(run.startedAt)}</div>
-                      <p className="text-[11px] text-muted-foreground">{run.trigger}</p>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge state={run.status} />
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs tabular-nums">
-                      {run.sizeBytes ? bytes(run.sizeBytes) : "—"}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {run.duration ?? "running"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setLogFor(run)}
-                        >
-                          Log
-                        </Button>
-                        {run.status === "success" && can("destructive") && (
-                          <RestoreButton run={run} confirm={confirm} onDone={refresh} />
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {data?.runs.length === 0 && (
+      <SidePanel
+        open={job !== null}
+        onOpenChange={onOpenChange}
+        icon={Archive}
+        title={job?.name ?? "Backup"}
+        description={
+          data?.running ? "A run is in progress right now." : "Run history, newest first"
+        }
+      >
+        <div className="space-y-4">
+          {loading && <LoadingPanel rows={4} />}
+          <Panel>
+            <PanelBody flush>
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5} className="p-0">
-                      <EmptyState icon={Archive} title="No runs yet" />
-                    </TableCell>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Size</TableHead>
+                    <TableHead className="w-full">Took</TableHead>
+                    <TableHead className="w-px" />
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {data?.runs.map((run) => (
+                    <TableRow key={run.id}>
+                      <TableCell className="text-xs">
+                        <div>{timestamp(run.startedAt)}</div>
+                        <p className="text-[11px] text-muted-foreground">{run.trigger}</p>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge state={run.status} />
+                      </TableCell>
+                      <TableCell className="numeric text-right font-mono text-xs">
+                        {run.sizeBytes ? bytes(run.sizeBytes) : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {run.duration ?? "running"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button size="xs" variant="ghost" onClick={() => setLogFor(run)}>
+                            Log
+                          </Button>
+                          {run.status === "success" && can("destructive") && (
+                            <RestoreButton run={run} confirm={confirm} onDone={refresh} />
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {data?.runs.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="p-0">
+                        <EmptyState icon={Archive} title="No runs yet" />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </PanelBody>
+          </Panel>
 
-            {logFor && (
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Log · run {logFor.id}</p>
-                <pre className="max-h-80 overflow-auto rounded-md border bg-black/40 p-3 font-mono text-xs">
-                  {logFor.log || "No output recorded."}
-                </pre>
-                {logFor.artifact && (
-                  <p className="font-mono text-[11px] text-muted-foreground">{logFor.artifact}</p>
-                )}
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+          {logFor && (
+            <div className="space-y-1.5">
+              <p className="eyebrow">Log · run {logFor.id}</p>
+              <Well className="max-h-80 whitespace-pre-wrap">
+                {logFor.log || "No output recorded."}
+              </Well>
+              {logFor.artifact && (
+                <p className="font-mono text-[11px] break-all text-muted-foreground">
+                  {logFor.artifact}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </SidePanel>
       {dialog}
     </>
   )
@@ -329,8 +322,8 @@ function RestoreButton({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs">
-          <HardDriveDownload className="size-3.5" />
+        <Button size="xs" variant="ghost">
+          <HardDriveDownload className="size-3" />
           Restore
         </Button>
       </DialogTrigger>
@@ -338,20 +331,18 @@ function RestoreButton({
         <DialogHeader>
           <DialogTitle>Restore run {run.id}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="restore-dest">Destination directory</Label>
-            <Input
-              id="restore-dest"
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              className="font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">
-              Files are unpacked here, overwriting anything with the same path. Restoring into a
-              scratch directory first is usually the safer move.
-            </p>
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="restore-dest">Destination directory</Label>
+          <Input
+            id="restore-dest"
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            className="font-mono text-[13px]"
+          />
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Files are unpacked here, overwriting anything with the same path. Restoring into a
+            scratch directory first is usually the safer move.
+          </p>
         </div>
         <DialogFooter>
           <Button
@@ -449,7 +440,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90svh] overflow-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{job ? `Edit ${job.name}` : "New backup job"}</DialogTitle>
         </DialogHeader>
@@ -486,7 +477,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
           <div className="space-y-1.5">
             <Label>Destination</Label>
             <Select value={targetKind} onValueChange={(v) => setTargetKind(v as typeof targetKind)}>
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -504,7 +495,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                 id="job-path"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                className="font-mono text-sm"
+                className="font-mono text-[13px]"
               />
             </div>
           ) : (
@@ -580,7 +571,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                 id="job-schedule"
                 value={schedule}
                 onChange={(e) => setSchedule(e.target.value)}
-                className="font-mono text-sm"
+                className="font-mono text-[13px]"
                 placeholder="0 3 * * *"
               />
             </div>
@@ -594,7 +585,7 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
                 onChange={(e) => setRetention(Number(e.target.value))}
               />
             </div>
-            <label className="flex items-center gap-2 pb-2 text-sm">
+            <label className="flex items-center gap-2 pb-2 text-[13px]">
               <Switch checked={enabled} onCheckedChange={setEnabled} />
               Enabled
             </label>

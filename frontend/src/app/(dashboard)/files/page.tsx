@@ -8,6 +8,7 @@ import {
   FileArchive,
   Folder,
   FolderPlus,
+  FolderTree,
   Home,
   Link as LinkIcon,
   Pencil,
@@ -22,16 +23,15 @@ import type { FileEntry, FileListing } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
-import { PageHeader } from "@/components/page-header"
+import { Page, PageHeader } from "@/components/page"
+import { Panel, PanelBody, PanelToolbar } from "@/components/panel"
 import { FileEditorSheet } from "@/components/files/file-editor"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -41,6 +41,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import {
+  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -96,11 +97,7 @@ export default function FilesPage() {
     try {
       const res = await fetch(
         `${API_BASE}/files/upload?path=${encodeURIComponent(path)}&overwrite=true`,
-        {
-          method: "POST",
-          credentials: "include",
-          body: form,
-        },
+        { method: "POST", credentials: "include", body: form },
       )
       if (!res.ok) throw new Error((await res.json()).error?.message ?? res.statusText)
       toast.success(`Uploaded ${files.length} file(s)`)
@@ -113,8 +110,9 @@ export default function FilesPage() {
   }
 
   return (
-    <>
+    <Page>
       <PageHeader
+        eyebrow="Access"
         title="Files"
         description="Browse, edit and transfer files on the host"
         actions={
@@ -124,10 +122,8 @@ export default function FilesPage() {
               <Button variant="outline" size="sm" asChild>
                 <a
                   href={
-                    downloadUrl("/files/archive", {
-                      base: path,
-                      format: "tar.gz",
-                    }) + selected.map((p) => `&path=${encodeURIComponent(p)}`).join("")
+                    downloadUrl("/files/archive", { base: path, format: "tar.gz" }) +
+                    selected.map((p) => `&path=${encodeURIComponent(p)}`).join("")
                   }
                   download
                 >
@@ -139,7 +135,7 @@ export default function FilesPage() {
             {can("file.write") && (
               <>
                 <NewFolderDialog path={path} onDone={listing.refresh} />
-                <Button variant="outline" size="sm" onClick={() => uploadRef.current?.click()}>
+                <Button size="sm" onClick={() => uploadRef.current?.click()}>
                   <Upload className="size-4" />
                   Upload
                 </Button>
@@ -156,68 +152,73 @@ export default function FilesPage() {
         }
       />
 
-      <Card className="gap-0">
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b">
-          <Breadcrumb>
-            <BreadcrumbList className="gap-1 sm:gap-1">
-              <BreadcrumbItem>
-                <BreadcrumbLink asChild>
-                  <button
-                    type="button"
-                    className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => setPath("/")}
-                  >
-                    <Home className="size-4" />
-                    <span className="sr-only">Root</span>
-                  </button>
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              {crumbs.slice(1).map((crumb, i, all) => (
-                <Fragment key={crumb.href}>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    {i === all.length - 1 ? (
-                      <BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink asChild>
-                        <button
-                          type="button"
-                          className="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
-                          onClick={() => setPath(crumb.href)}
-                        >
-                          {crumb.label}
-                        </button>
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                </Fragment>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-          <div className="flex items-center gap-4">
+      <Panel>
+        <PanelToolbar className="justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
+              <FolderTree className="size-3.5" />
+            </span>
+            <Breadcrumb className="min-w-0">
+              <BreadcrumbList className="gap-1 text-[13px] sm:gap-1">
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      type="button"
+                      className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => setPath("/")}
+                    >
+                      <Home className="size-3.5" />
+                      <span className="sr-only">Root</span>
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                {crumbs.slice(1).map((crumb, i, all) => (
+                  <Fragment key={crumb.href}>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      {i === all.length - 1 ? (
+                        <BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink asChild>
+                          <button
+                            type="button"
+                            className="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
+                            onClick={() => setPath(crumb.href)}
+                          >
+                            {crumb.label}
+                          </button>
+                        </BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>
+                  </Fragment>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+          <div className="flex shrink-0 items-center gap-4">
             {listing.data && (
-              <span className="text-xs tabular-nums text-muted-foreground">
+              <span className="numeric text-[11px] text-muted-foreground">
                 {selected.length > 0
                   ? `${selected.length} selected`
                   : `${listing.data.entries.length} item${listing.data.entries.length === 1 ? "" : "s"}`}
               </span>
             )}
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
               Show hidden
             </label>
           </div>
-        </CardHeader>
+        </PanelToolbar>
 
-        <CardContent className="p-0">
+        <PanelBody flush>
           {listing.loading && <LoadingRows className="p-4" />}
           {listing.error && <ErrorState error={listing.error} className="m-4" />}
           {listing.data && (
-            <Table>
-              <TableHeader>
+            <Table containerClassName="max-h-[calc(100svh-17rem)]">
+              <TableHeader className={stickyTableHeader}>
                 <TableRow>
                   <TableHead className="w-8" />
-                  <TableHead>Name</TableHead>
+                  <TableHead className="w-full">Name</TableHead>
                   <TableHead className="text-right">Size</TableHead>
                   <TableHead>Modified</TableHead>
                   <TableHead>Owner</TableHead>
@@ -233,8 +234,8 @@ export default function FilesPage() {
                   >
                     <TableCell />
                     <TableCell colSpan={6}>
-                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <ArrowUp className="size-4" />
+                      <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                        <ArrowUp className="size-3.5" />
                         Parent directory
                       </span>
                     </TableCell>
@@ -286,8 +287,8 @@ export default function FilesPage() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        </PanelBody>
+      </Panel>
 
       <FileEditorSheet
         path={editing}
@@ -295,7 +296,7 @@ export default function FilesPage() {
         onSaved={listing.refresh}
       />
       {dialog}
-    </>
+    </Page>
   )
 }
 
@@ -340,32 +341,34 @@ function FileRow({
         />
       </TableCell>
       <TableCell>
-        <button
-          className="flex max-w-full items-center gap-2 text-left hover:underline"
-          onClick={onOpen}
-          title={entry.name}
-        >
-          {entry.isDir ? (
-            <Folder className="size-4 shrink-0 fill-primary/20 text-primary" />
-          ) : entry.isSymlink ? (
-            <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-          )}
-          <span className="truncate">{entry.name}</span>
-        </button>
-        {entry.isSymlink && (
-          <p className="ml-6 truncate font-mono text-[11px] text-muted-foreground">
-            → {entry.linkTarget}
-            {entry.linkBroken && (
-              <Badge variant="destructive" className="ml-1 text-[10px]">
-                broken
-              </Badge>
+        <div className="max-w-[26rem] min-w-0">
+          <button
+            className="flex max-w-full items-center gap-2 text-left text-[13px] hover:underline"
+            onClick={onOpen}
+            title={entry.name}
+          >
+            {entry.isDir ? (
+              <Folder className="size-4 shrink-0 fill-primary/20 text-primary" />
+            ) : entry.isSymlink ? (
+              <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <FileIcon className="size-4 shrink-0 text-muted-foreground" />
             )}
-          </p>
-        )}
+            <span className="truncate">{entry.name}</span>
+          </button>
+          {entry.isSymlink && (
+            <p className="ml-6 truncate font-mono text-[11px] text-muted-foreground">
+              → {entry.linkTarget}
+              {entry.linkBroken && (
+                <Badge variant="destructive" className="ml-1 text-[10px] font-normal">
+                  broken
+                </Badge>
+              )}
+            </p>
+          )}
+        </div>
       </TableCell>
-      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+      <TableCell className="numeric text-right font-mono text-xs text-muted-foreground">
         {entry.isDir ? "—" : bytes(entry.size)}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
@@ -380,18 +383,18 @@ function FileRow({
           {!entry.isDir && (
             <>
               <IconAction label="Edit" onClick={onOpen}>
-                <Pencil className="size-3.5" />
+                <Pencil />
               </IconAction>
               <IconAction label="Download" asChild>
                 <a href={downloadUrl("/files/download", { path: entry.path })} download>
-                  <Download className="size-3.5" />
+                  <Download />
                 </a>
               </IconAction>
             </>
           )}
           {can("destructive") && (
             <IconAction label="Delete" className="text-destructive" onClick={onDelete}>
-              <Trash2 className="size-3.5" />
+              <Trash2 />
             </IconAction>
           )}
         </div>
@@ -429,15 +432,14 @@ function NewFolderDialog({ path, onDone }: { path: string; onDone: () => void })
           <DialogTitle>New folder</DialogTitle>
         </DialogHeader>
         <div className="space-y-2">
-          <Label htmlFor="folder-name">Name</Label>
           <Input
-            id="folder-name"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="Folder name"
           />
-          <p className="font-mono text-xs text-muted-foreground">
+          <p className="font-mono text-xs break-all text-muted-foreground">
             {path.replace(/\/$/, "")}/{name || "…"}
           </p>
         </div>
@@ -503,11 +505,11 @@ function SearchDialog({
               Search
             </Button>
           </div>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-[13px]">
             <Checkbox checked={content} onCheckedChange={(v) => setContent(v === true)} />
             Search inside file contents
           </label>
-          <div className="max-h-80 space-y-1 overflow-auto">
+          <div className="max-h-80 space-y-0.5 overflow-auto">
             {hits.map((hit) => (
               <button
                 key={`${hit.path}:${hit.line ?? 0}`}
@@ -526,7 +528,7 @@ function SearchDialog({
               </button>
             ))}
             {!busy && hits.length === 0 && query && (
-              <p className="py-4 text-center text-sm text-muted-foreground">No matches.</p>
+              <p className="py-4 text-center text-[13px] text-muted-foreground">No matches.</p>
             )}
           </div>
         </div>

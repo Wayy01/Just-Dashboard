@@ -46,6 +46,10 @@ func testServer(t *testing.T) *Server {
 		IdleTTL:      time.Minute,
 		FileRoots:    []string{t.TempDir()},
 		LogRoots:     []string{t.TempDir()},
+		// History recording on, so the metrics routes behave as they do in a
+		// real install rather than reporting themselves disabled.
+		MetricsInterval:  15 * time.Second,
+		MetricsRetention: 24 * time.Hour,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
