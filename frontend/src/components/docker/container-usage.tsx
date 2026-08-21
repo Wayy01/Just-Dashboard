@@ -1,9 +1,8 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from "recharts"
+import { useMemo } from "react"
 import { get, ApiError } from "@/lib/api"
-import { bytes, percent } from "@/lib/format"
+import { bytes, percent, rate } from "@/lib/format"
 import {
   containerRows,
   coverageNote,
@@ -11,34 +10,39 @@ import {
   memoryLimit,
   rangeSpec,
   retentionNote,
+  windowQuery,
+  windowRefreshMs,
   type ContainerRow,
-  type RangeKey,
 } from "@/lib/metrics-range"
 import type { ContainerHistory } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { useMetricEvents } from "@/hooks/use-metrics-history"
+import { useMetricsWindow } from "@/hooks/use-metrics-window"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Metric, MetricStrip } from "@/components/page"
 import { ErrorState } from "@/components/state"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { Cpu, MemoryStick } from "lucide-react"
-import {
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
+import { ChartPanel, ChartPlaceholder } from "@/components/metrics/chart-panel"
+import { RangePicker } from "@/components/metrics/range-picker"
+import type { Series } from "@/components/metrics/metric-chart"
+import { Activity, Cpu, HardDrive, MemoryStick } from "lucide-react"
 
-const cpuConfig = {
-  cpu: { label: "CPU", color: "var(--chart-1)" },
-  cpuPeak: { label: "CPU peak", color: "var(--chart-1)" },
-} satisfies ChartConfig
+const cpuSeries: Series[] = [
+  { key: "cpu", label: "CPU", color: "var(--chart-1)", kind: "area", peakKey: "cpuPeak" },
+]
 
-const memConfig = {
-  mem: { label: "Memory", color: "var(--chart-2)" },
-  memPeak: { label: "Memory peak", color: "var(--chart-2)" },
-} satisfies ChartConfig
+const memSeries: Series[] = [
+  { key: "mem", label: "Memory", color: "var(--chart-2)", kind: "area", peakKey: "memPeak" },
+]
+
+const netSeries: Series[] = [
+  { key: "netRx", label: "In", color: "var(--chart-2)", kind: "area" },
+  { key: "netTx", label: "Out", color: "var(--chart-5)", kind: "area" },
+]
+
+const blockSeries: Series[] = [
+  { key: "blockRead", label: "Read", color: "var(--chart-2)", kind: "area" },
+  { key: "blockWrite", label: "Write", color: "var(--chart-5)", kind: "area" },
+]
 
 /**
  * What this container was doing before you opened the panel.
@@ -54,48 +58,51 @@ const memConfig = {
  * the next few minutes — the exact behaviour this panel exists to replace.
  */
 export function ContainerUsage({ containerId, name }: { containerId: string; name: string }) {
-  const [range, setRange] = useState<RangeKey>("1h")
-  const spec = rangeSpec(range)
+  const controls = useMetricsWindow()
+  const win = controls.window
+  // The host's shared range preference starts on "1h", but a container has no
+  // live series to fall back on, so a "live" preference has to resolve to the
+  // narrowest recorded window rather than to nothing at all.
+  const effective = win.key === "live" && win.from === undefined ? { ...win, key: "1h" as const } : win
+  const params = windowQuery(effective, rangeSpec(effective.key).points)
+  const signature = JSON.stringify(params)
 
   const { data, error, loading } = usePoll<ContainerHistory>(
     (signal) =>
       get<ContainerHistory>(
         `/docker/containers/${encodeURIComponent(containerId)}/stats/history`,
-        { range: spec.query, points: spec.points },
+        params,
         signal,
       ),
-    spec.refreshMs,
-    [containerId, spec.query],
+    windowRefreshMs(effective),
+    [containerId, signature],
   )
+
+  // The same deploys, restarts and reboots the host charts are marked with.
+  // A container's memory falling off a cliff is a different event depending on
+  // whether the stack was redeployed a second earlier, and that is exactly the
+  // fact these markers carry.
+  const events = useMetricEvents(effective)
 
   const rows = useMemo<ContainerRow[]>(() => (data ? containerRows(data) : []), [data])
   const limit = memoryLimit(data)
+  // Docker omits `networks` entirely for a container sharing the host's
+  // network namespace — there is no per-container interface to measure. That
+  // is an absence of the measurement, not a container doing nothing, and a
+  // flat line at zero says the wrong one of those.
+  const hasNetwork = useMemo(
+    () => rows.some((r) => (r.netRx ?? 0) > 0 || (r.netTx ?? 0) > 0),
+    [rows],
+  )
   const disabled = error instanceof ApiError && error.code === "metrics_history_disabled"
   const peaks = useMemo(() => summarise(rows), [rows])
-
-  const picker = (
-    <ToggleGroup
-      type="single"
-      value={range}
-      onValueChange={(next) => setRange((next as RangeKey) || range)}
-      variant="outline"
-      size="sm"
-      aria-label="History range"
-    >
-      {HISTORY_RANGES.map((option) => (
-        <ToggleGroupItem key={option.key} value={option.key} className="px-2.5 text-[11px]">
-          {option.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
 
   if (disabled) {
     return (
       <Panel>
         <PanelHeader icon={Cpu} title="Usage history" />
         <PanelBody>
-          <Placeholder note="History is not being recorded on this server. Set JD_METRICS_RETENTION to keep it." />
+          <ChartPlaceholder note="History is not being recorded on this server. Set JD_METRICS_RETENTION to keep it." />
         </PanelBody>
       </Panel>
     )
@@ -103,138 +110,108 @@ export function ContainerUsage({ containerId, name }: { containerId: string; nam
 
   if (error) return <ErrorState error={error} />
 
-  const empty = rows.length === 0
   const note = loading
     ? "Loading history…"
     : `Nothing recorded for ${name} in this window yet — the server samples every ${data?.sampleIntervalSeconds ?? 15}s.`
 
   return (
     <div className="space-y-3">
-      <Panel>
-        <PanelHeader
-          icon={Cpu}
-          title="Processor"
-          description={caption(data, spec.label)}
-          actions={picker}
-        />
-        <PanelBody className="space-y-3">
-          {empty ? (
-            <Placeholder note={note} />
-          ) : (
-            <ChartContainer config={cpuConfig} className="h-[170px] w-full">
-              <AreaChart data={rows} margin={{ left: -16, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
-                <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={10} />
-                {/* Not capped at 100: a container using two cores is at 200%,
-                    and clipping that would hide the thing worth seeing. */}
-                <YAxis tickLine={false} axisLine={false} fontSize={10} unit="%" />
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={rowLabel}
-                      formatter={(value) => percent(Number(value))}
-                    />
-                  }
-                />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Area
-                  dataKey="cpuPeak"
-                  type="monotone"
-                  stroke="var(--color-cpuPeak)"
-                  strokeWidth={1}
-                  strokeOpacity={0.45}
-                  fill="var(--color-cpuPeak)"
-                  fillOpacity={0.07}
-                  isAnimationActive={false}
-                />
-                <Area
-                  dataKey="cpu"
-                  type="monotone"
-                  stroke="var(--color-cpu)"
-                  strokeWidth={1.5}
-                  fill="var(--color-cpu)"
-                  fillOpacity={0.14}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ChartContainer>
-          )}
+      <ChartPanel
+        icon={Cpu}
+        title="Processor"
+        description={caption(data, rangeSpec(effective.key).label)}
+        actions={<RangePicker controls={controls} ranges={HISTORY_RANGES} />}
+        rows={rows}
+        series={cpuSeries}
+        unit="%"
+        // Not capped at 100: a container using two cores is at 200%, and
+        // clipping that would hide the thing worth seeing.
+        format={(v) => percent(v)}
+        events={events}
+        onZoom={controls.zoomTo}
+        note={note}
+        height={170}
+        footer={
           <MetricStrip className="[&>*]:flex-1">
             <Metric label="Peak CPU" value={peaks.cpu === null ? "—" : percent(peaks.cpu)} />
             <Metric label="Peak memory" value={peaks.mem === null ? "—" : bytes(peaks.mem)} />
             <Metric label="Limit" value={limit > 0 ? bytes(limit) : "none"} />
           </MetricStrip>
-        </PanelBody>
-      </Panel>
+        }
+      />
 
-      <Panel>
-        <PanelHeader
-          icon={MemoryStick}
-          title="Memory"
+      <ChartPanel
+        icon={MemoryStick}
+        title="Memory"
+        description={
+          limit > 0 ? `Against a ${bytes(limit)} limit` : "No limit set — bounded only by the host"
+        }
+        rows={rows}
+        series={memSeries}
+        format={(v) => bytes(v)}
+        axisFormat={(v) => bytes(v, 0)}
+        events={events}
+        onZoom={controls.zoomTo}
+        note={note}
+        height={170}
+        // Scaled to the limit rather than to the data. A container sitting at
+        // a quarter of its ceiling draws a short line, which is the useful
+        // picture: an axis fitted to the series makes every container look
+        // equally close to being killed, and pushes the limit line off the top
+        // of the chart where recharts silently discards it.
+        domain={limit > 0 ? [0, Math.round(limit * 1.04)] : undefined}
+        // The limit is the line that explains an OOM kill, so it is drawn even
+        // when the series never gets near it.
+        thresholds={limit > 0 ? [{ value: limit, label: "limit", tone: "danger" }] : undefined}
+      />
+
+      {/*
+        Network and block throughput were being sampled for this container all
+        along and thrown away at the end of every request. They are the two
+        series that answer "is this the container saturating the host", which
+        the CPU and memory charts on their own cannot.
+      */}
+      <div className="grid gap-3 lg:grid-cols-2 [&>*]:min-w-0">
+        <ChartPanel
+          icon={Activity}
+          title="Network"
           description={
-            limit > 0
-              ? `Against a ${bytes(limit)} limit`
-              : "No limit set — bounded only by the host"
+            hasNetwork
+              ? "Bytes per second in and out of this container"
+              : "Not measured for this container"
           }
+          // An all-zero series is passed as no series at all, so the panel
+          // renders the explanation rather than a flat line at the bottom of
+          // an axis labelled in single bytes.
+          rows={hasNetwork ? rows : []}
+          series={netSeries}
+          format={(v) => rate(v)}
+          axisFormat={(v) => bytes(v, 0)}
+          events={events}
+          onZoom={controls.zoomTo}
+          showPeaks={false}
+          note={
+            hasNetwork
+              ? note
+              : "Docker reports no per-container interfaces here, which is what a container on the host's network namespace looks like. Its traffic is in the host's own network chart."
+          }
+          height={150}
         />
-        <PanelBody>
-          {empty ? (
-            <Placeholder note={note} />
-          ) : (
-            <ChartContainer config={memConfig} className="h-[170px] w-full">
-              <AreaChart data={rows} margin={{ left: 4, right: 4, top: 4 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.4} />
-                <XAxis dataKey="t" tickLine={false} axisLine={false} minTickGap={48} fontSize={10} />
-                <YAxis
-                  width={56}
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={10}
-                  tickFormatter={(v) => bytes(v)}
-                />
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={rowLabel}
-                      formatter={(value) => bytes(Number(value))}
-                    />
-                  }
-                />
-                <ChartLegend content={<ChartLegendContent />} />
-                {/* The limit is the line that explains an OOM kill, so it is
-                    drawn even when the series never gets near it. */}
-                {limit > 0 && (
-                  <ReferenceLine
-                    y={limit}
-                    stroke="var(--destructive)"
-                    strokeDasharray="4 4"
-                    strokeOpacity={0.7}
-                  />
-                )}
-                <Area
-                  dataKey="memPeak"
-                  type="monotone"
-                  stroke="var(--color-memPeak)"
-                  strokeWidth={1}
-                  strokeOpacity={0.45}
-                  fill="var(--color-memPeak)"
-                  fillOpacity={0.07}
-                  isAnimationActive={false}
-                />
-                <Area
-                  dataKey="mem"
-                  type="monotone"
-                  stroke="var(--color-mem)"
-                  strokeWidth={1.5}
-                  fill="var(--color-mem)"
-                  fillOpacity={0.14}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ChartContainer>
-          )}
-        </PanelBody>
-      </Panel>
+        <ChartPanel
+          icon={HardDrive}
+          title="Block I/O"
+          description="Reads and writes against the host's devices"
+          rows={rows}
+          series={blockSeries}
+          format={(v) => rate(v)}
+          axisFormat={(v) => bytes(v, 0)}
+          events={events}
+          onZoom={controls.zoomTo}
+          showPeaks={false}
+          note={note}
+          height={150}
+        />
+      </div>
     </div>
   )
 }
@@ -263,17 +240,4 @@ function bucketLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}s averages and peaks`
   if (seconds < 3600) return `${Math.round(seconds / 60)} minute averages and peaks`
   return `${Math.round(seconds / 3600)} hour averages and peaks`
-}
-
-function rowLabel(_: unknown, payload: readonly { payload?: unknown }[] | undefined) {
-  const row = payload?.[0]?.payload as ContainerRow | undefined
-  return row?.at ?? ""
-}
-
-function Placeholder({ note }: { note: string }) {
-  return (
-    <div className="flex h-[170px] w-full items-center justify-center rounded-lg border border-dashed border-hairline bg-surface-sunken px-4 text-center text-xs text-muted-foreground">
-      {note}
-    </div>
-  )
 }

@@ -38,7 +38,7 @@ func NewTable() *Table { return &Table{} }
 // List walks the process table. Errors on individual processes are ignored:
 // a short-lived process disappearing mid-scan is normal, not a failure of the
 // whole listing.
-func (t *Table) List(ctx context.Context, limit int) ([]Process, error) {
+func (t *Table) List(ctx context.Context, limit int, order Order) ([]Process, error) {
 	procs, err := process.ProcessesWithContext(ctx)
 	if err != nil {
 		return nil, err
@@ -76,16 +76,54 @@ func (t *Table) List(ctx context.Context, limit int) ([]Process, error) {
 		}
 		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CPUPercent != out[j].CPUPercent {
-			return out[i].CPUPercent > out[j].CPUPercent
-		}
-		return out[i].RSS > out[j].RSS
-	})
+	SortBy(out, order)
+	// The cut happens after the sort, which is what makes the limit mean "the
+	// heaviest N" rather than "the first N the kernel happened to list".
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// Order is what "heaviest" means for a particular question.
+//
+// "What is eating my CPU" and "what is eating my RAM" are asked about equally
+// often and have completely different answers — a leaking service can sit at
+// 0% CPU while holding six gigabytes, and sorting only by CPU puts it below
+// two hundred rows of nothing.
+type Order string
+
+const (
+	ByCPU    Order = "cpu"
+	ByMemory Order = "memory"
+)
+
+// ParseOrder reads the sort parameter, defaulting to CPU rather than
+// rejecting an unknown value: this decides which rows a table shows, and a
+// 400 is a worse answer than the usual one.
+func ParseOrder(s string) Order {
+	if s == string(ByMemory) {
+		return ByMemory
+	}
+	return ByCPU
+}
+
+// SortBy orders the table, using the other measure as the tie-break so a run
+// of processes all reporting 0% CPU still comes back in a stable, meaningful
+// order rather than in whatever order /proc was read.
+func SortBy(rows []Process, order Order) {
+	sort.Slice(rows, func(i, j int) bool {
+		if order == ByMemory {
+			if rows[i].RSS != rows[j].RSS {
+				return rows[i].RSS > rows[j].RSS
+			}
+			return rows[i].CPUPercent > rows[j].CPUPercent
+		}
+		if rows[i].CPUPercent != rows[j].CPUPercent {
+			return rows[i].CPUPercent > rows[j].CPUPercent
+		}
+		return rows[i].RSS > rows[j].RSS
+	})
 }
 
 func (t *Table) Detail(ctx context.Context, pid int32) (*Process, error) {

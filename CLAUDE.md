@@ -232,13 +232,62 @@ to whatever the runner-up was and reads as space freed on a disk that never chan
 Cardinality stays small because pseudo filesystems are filtered out before the write.
 
 The same recorder samples every running container into `metric_container_samples` (`GET
-/docker/containers/{id}/stats/history`). That series is keyed by container **name**, not
-id: a compose redeploy replaces the container with a new id, and seeing across the
-restart is most of the point. Docker being unavailable is not an error there — the
-recorder logs it once and carries on with the host metrics. The recorder keeps its own
-`sysinfo.Collector` and its own `dockerx.StatsSampler`, since rates are deltas against the
-previous call and sharing one with the request handlers would let a one-shot
-`GET /system/metrics` shorten the interval the next recorded rate is divided by.
+/docker/containers/{id}/stats/history`, and `GET /docker/containers/stats/history` for a
+sparkline per row of the container table in one query rather than one per row). That
+series is keyed by container **name**, not id: a compose redeploy replaces the container
+with a new id, and seeing across the restart is most of the point. Docker being
+unavailable is not an error there — the recorder logs it once and carries on with the
+host metrics. The recorder keeps its own `sysinfo.Collector` and its own
+`dockerx.StatsSampler`, since rates are deltas against the previous call and sharing one
+with the request handlers would let a one-shot `GET /system/metrics` shorten the interval
+the next recorded rate is divided by.
+
+Container network and block totals are stored as Docker's **cumulative counters** and
+differenced into rates in SQL (`MAX - MIN` within a bucket, over the bucket width). A
+total can be re-bucketed at any width later; a rate recorded against one interval cannot.
+
+### Saturation, not just utilisation
+
+Utilisation percentages answer "how busy", which is the question that stops being useful
+exactly when something is wrong. The series that answer "is work waiting" are recorded
+alongside them and are what most of the Overview page is now about:
+
+- **CPU by mode** (`sysinfo.CPUModes`) — user, system, iowait and **steal**, deltas
+  against the previous call. One "68% busy" figure cannot separate a server doing work
+  from one waiting on a disk from one whose hypervisor is running another tenant on the
+  core, and the response to each is completely different. On a VPS, steal is the one
+  whose fix is not inside the machine.
+- **Pressure** (`sysinfo.ReadPressure`, `/proc/pressure`) — the kernel's own share of
+  time spent stalled. A kernel without PSI reports `Supported: false`, which the UI shows
+  as "cannot tell" rather than as three reassuring zeroes.
+- **Disk IOPS, service time and %util** — a device saturated by small random writes moves
+  almost no bytes, so the byte rates alone describe an idle disk that cannot take another
+  request. Recorded as the worst device, not the mean, for the same reason the capacity
+  figure is the fullest mount.
+- **Sockets** (`/proc/net/sockstat`, both families) — read as totals rather than by
+  enumerating connections, which on a busy host is thousands of lines a sample.
+- **Run queue** (`load.Misc`) — `Blocked` is the field worth having: read next to iowait
+  it turns "the CPU is idle but everything is slow" into a sentence.
+- **Inodes per mount** — a build server hits this ceiling first, on a filesystem every
+  capacity chart calls half empty.
+
+`metrics.Assess` turns all of it into a verdict (`GET /system/health`): findings carrying
+what was measured, what it means and what to do, ranked worst-first. It runs on the
+server because the thresholds are a claim the product is making and belong with the code
+that records the data, and because the checks read an hour of history to tell a spike
+from a trend — which is not work to repeat for every client wanting a badge. Memory is
+judged on **available**, never on "used": Linux counts the page cache there, and judging
+a server by it produces a permanent, meaningless warning.
+
+### Why a line moved
+
+`metrics.Events` (`GET /system/metrics/events`) is the annotation layer. Grafana expects
+you to wire up a data source for this; the dashboard already *is* the thing that ran the
+deploy, took the backup and restarted the box, so it answers from `deploy_runs`,
+`backup_runs` and `audit_log` directly. Reboots are not stored anywhere and do not need
+to be — a sample whose `uptime_seconds` is lower than its predecessor's can only mean the
+machine went down in between, which also catches the restart nobody initiated from here.
+It works with `JD_METRICS_RETENTION=0`: only the reboot markers go quiet.
 
 ### History the host already keeps
 
@@ -380,7 +429,40 @@ same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, 
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
-(`docker/`, `files/`, `procs/`).
+(`docker/`, `files/`, `metrics/`, `procs/`).
+
+### Charts
+
+`components/metrics/` is the third design-system file in all but name, and every chart in
+the product goes through it rather than assembling its own recharts tree — which is how
+the old Overview page ended up with three tooltip formats and no way to compare a moment
+across its four charts. Adding a measurement should mean naming a series, not rebuilding
+a chart.
+
+- `metric-chart.tsx` — `MetricChart` plus the `Series` descriptor. The x-axis is
+  **numeric over time**, not a category axis of pre-formatted labels: a category axis
+  spaces every bucket equally, which lies whenever the record has a hole in it. It owns
+  the shared crosshair, drag-to-zoom, event markers, threshold lines and one tooltip
+  listing every series at the hovered instant.
+- `chart-panel.tsx` — `ChartPanel`, the header/chart/legend shape every metric panel
+  takes, including the empty state. A series with no numbers anywhere in the window is
+  dropped rather than drawn flat at zero, which is what makes a kernel without PSI say so
+  instead of reporting three healthy zeroes.
+- `series-legend.tsx` — min/mean/max/last per series, and **"At cursor"**: while the
+  pointer is over any chart on the page, every legend switches to the value its series
+  held at that instant. Max reads the peak column where a series has one, since the
+  maximum of the *means* is exactly the figure a downsampled window hides.
+- `sparkline.tsx` — a bare SVG path for a table cell. Not recharts: a table of forty
+  containers would otherwise mount forty responsive containers and resize observers to
+  draw forty polylines.
+- `range-picker.tsx`, `health-panel.tsx` — the window control (with pan and zoom-out,
+  which appear only once a window has been dragged) and the health verdict.
+
+`lib/metrics-crosshair.ts` holds the hovered instant outside React, for the same reason
+the live buffer is outside React: a pointer crossing a chart fires continuously, and
+routing that through a context above the router would re-render the terminal and the log
+tail on every mousemove. The value is a **timestamp**, not a row index — the charts on a
+page do not share a row array.
 
 ### Data
 
@@ -388,6 +470,13 @@ composing over editing these; feature-specific pieces live in `components/<featu
   `X-Confirm` passthrough, `ApiError` with `needsConfirmation` / `isAuthProblem` / `needsTotp`.
   `wsUrl()` and `downloadUrl()` build the non-JSON URLs.
 - `usePoll` — abort-per-run so a slow endpoint cannot stack requests, paused on a hidden tab.
+- `useMetricsWindow` — the window the charts cover, as a **stack**: zooming is
+  exploratory, so the way back out of five minutes is to the hour it was inside, not to
+  the day you started from. Deliberately component state, not a stored preference — the
+  named range is a standing choice worth remembering, a zoom is a question being asked
+  now, and restoring yesterday's zoom would show an empty window with no obvious way out.
+- `useMetricEvents` / `useHealth` — the annotation and verdict layers, polled on their
+  own much slower cadences.
 - `useSocket` — reconnect with backoff (these sockets ride a VPN tunnel that drops routinely),
   handlers kept in a ref so a fresh closure does not rebuild the socket.
 - `src/lib/types.ts` mirrors the backend's JSON shapes by hand, including the `Capability`
@@ -407,7 +496,9 @@ Metrics are the one place with machinery beyond those hooks:
   the way back in — a graph that silently stitches this minute onto one from an hour ago is
   worse than one that starts empty.
 - `lib/metrics-range.ts` defines the windows (`live`, `1h`, `6h`, `24h`, `7d`), how many
-  buckets each asks the server for, and how often it re-reads. Live and recorded data are
+  buckets each asks the server for, how often it re-reads, and the `MetricsWindow` a
+  dragged span becomes — a zoomed window is a fixed span in the past, so it is fetched
+  once and never re-polled. Live and recorded data are
   **never spliced into one line**: the cadences differ by two orders of magnitude, and a chart
   drawing twenty coarse points and a hundred fine ones at equal spacing lies about when things
   happened. Container charts offer only the recorded ranges, since nothing accumulates a
@@ -463,5 +554,10 @@ A change that weakens any of these has to say so explicitly:
    their own project ("bun install && bun run build"), not anything supplied per request.
    Do not add a second one, and do not "fix" that one into an argv.
 7. Nothing but Caddy binds a routable address.
-8. Store schema changes are additive and tolerate an existing database — there is no
-   migration tool.
+8. Store schema changes are additive and tolerate an existing database. There is no
+   migration tool: `CREATE TABLE IF NOT EXISTS` is a no-op against a database that
+   already has the table, so a **column** added later goes in `store.addedColumns` as
+   well, which `applyAddedColumns` ALTERs in at open. Every entry needs a `DEFAULT`
+   (SQLite refuses a NOT NULL column on a table with rows without one) and no entry is
+   ever removed — the list is the path from every shipped schema to the current one, not
+   a description of the current one.

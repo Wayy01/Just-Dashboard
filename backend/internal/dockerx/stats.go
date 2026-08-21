@@ -228,6 +228,29 @@ func convertStats(id string, raw container.StatsResponse) ContainerStats {
 	s.CPUTotal = raw.CPUStats.CPUUsage.TotalUsage
 	s.SystemCPU = raw.CPUStats.SystemUsage
 
+	// Network and block totals are cumulative counters and have nothing to do
+	// with the CPU delta below, so they are read before the early return that
+	// the one-shot path takes. They used to sit after it, which meant every
+	// caller that samples rather than streams — the container table, and the
+	// recorder that keeps the history — saw a permanent zero for both.
+	//
+	// An absent `networks` is not the same failure: Docker omits it entirely
+	// for a container sharing the host's network namespace, because there is
+	// no per-container interface to measure. Nothing is missing there and
+	// nothing can be reported.
+	for _, n := range raw.Networks {
+		s.NetRx += n.RxBytes
+		s.NetTx += n.TxBytes
+	}
+	for _, b := range raw.BlkioStats.IoServiceBytesRecursive {
+		switch b.Op {
+		case "read", "Read":
+			s.BlockRead += b.Value
+		case "write", "Write":
+			s.BlockWrite += b.Value
+		}
+	}
+
 	// Only the streaming endpoint fills PreCPUStats. The one-shot endpoint
 	// zeroes it, and subtracting zero turns the arithmetic below into "this
 	// container's whole lifetime divided by the host's whole uptime" — an
@@ -241,19 +264,6 @@ func convertStats(id string, raw container.StatsResponse) ContainerStats {
 	cpuDelta := float64(raw.CPUStats.CPUUsage.TotalUsage) - float64(raw.PreCPUStats.CPUUsage.TotalUsage)
 	sysDelta := float64(raw.CPUStats.SystemUsage) - float64(raw.PreCPUStats.SystemUsage)
 	s.CPUPercent = cpuPercent(cpuDelta, sysDelta, cpuCount(raw))
-
-	for _, n := range raw.Networks {
-		s.NetRx += n.RxBytes
-		s.NetTx += n.TxBytes
-	}
-	for _, b := range raw.BlkioStats.IoServiceBytesRecursive {
-		switch b.Op {
-		case "read", "Read":
-			s.BlockRead += b.Value
-		case "write", "Write":
-			s.BlockWrite += b.Value
-		}
-	}
 	return s
 }
 

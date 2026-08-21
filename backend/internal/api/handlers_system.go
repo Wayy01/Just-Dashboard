@@ -18,6 +18,8 @@ func (s *Server) mountSystemRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/metrics", s.handle(s.handleSystemMetrics))
 		r.Method(http.MethodGet, "/metrics/history", s.handle(s.handleMetricsHistory))
 		r.Method(http.MethodGet, "/metrics/storage", s.handle(s.handleStorageHistory))
+		r.Method(http.MethodGet, "/metrics/events", s.handle(s.handleMetricsEvents))
+		r.Method(http.MethodGet, "/health", s.handle(s.handleSystemHealth))
 		r.Method(http.MethodGet, "/disk-usage", s.handle(s.handleDiskBreakdown))
 		r.Method(http.MethodGet, "/stream", s.handle(s.handleSystemStream))
 	})
@@ -82,6 +84,47 @@ func (s *Server) handleStorageHistory(w http.ResponseWriter, r *http.Request) er
 		return httpx.Internal(err)
 	}
 	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
+
+// handleMetricsEvents serves what happened during a window, so a chart can say
+// *why* a line moved rather than only that it did.
+//
+// Unlike the series endpoints this one works with history recording turned
+// off: deploys, backups and audited actions are stored regardless of
+// JD_METRICS_RETENTION, and the markers are worth having on a live chart too.
+// Only the reboot markers, which are inferred from the recorded uptime column,
+// go quiet in that configuration.
+func (s *Server) handleMetricsEvents(w http.ResponseWriter, r *http.Request) error {
+	from, to, _, err := historyWindow(r)
+	if err != nil {
+		return err
+	}
+	limit := atoiDefault(r.URL.Query().Get("limit"), 200)
+	if limit > 500 {
+		limit = 500
+	}
+	events, err := s.modules.metrics.Events(r.Context(), from, to, limit)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, events)
+	return nil
+}
+
+// handleSystemHealth turns the numbers into a verdict.
+//
+// Evaluated on the server rather than in the browser for two reasons: the
+// thresholds are a claim the product is making and belong with the code that
+// records the data, and the checks that look at an hour of history would
+// otherwise mean shipping an hour of history to every client that wants a
+// badge in the top bar.
+func (s *Server) handleSystemHealth(w http.ResponseWriter, r *http.Request) error {
+	snap, err := s.modules.sys.Collect(r.Context())
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, s.modules.metrics.Assess(r.Context(), snap))
 	return nil
 }
 

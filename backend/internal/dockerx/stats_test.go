@@ -92,3 +92,65 @@ func TestSamplerForgetsContainersItNoLongerSees(t *testing.T) {
 		t.Fatal("forgot the container that is still running")
 	}
 }
+
+// The one-shot stats endpoint returns no PreCPUStats, so convertStats gives up
+// on the CPU percentage and lets StatsSampler derive it from two samples. That
+// early return used to sit above the counter loops, which meant every caller
+// that samples rather than streams — the container table and the metrics
+// recorder — recorded a permanent zero for block I/O that Docker was reporting
+// perfectly well.
+func TestConvertStatsReadsCountersOnTheOneShotPath(t *testing.T) {
+	raw := container.StatsResponse{
+		MemoryStats: container.MemoryStats{Usage: 100, Limit: 1000},
+		CPUStats: container.CPUStats{
+			CPUUsage:    container.CPUUsage{TotalUsage: 5_000},
+			SystemUsage: 9_000,
+		},
+		// Zero, exactly as the one-shot endpoint leaves it.
+		PreCPUStats: container.CPUStats{},
+		BlkioStats: container.BlkioStats{
+			IoServiceBytesRecursive: []container.BlkioStatEntry{
+				{Op: "read", Value: 4096},
+				{Op: "Write", Value: 8192},
+			},
+		},
+		Networks: map[string]container.NetworkStats{
+			"eth0": {RxBytes: 111, TxBytes: 222},
+		},
+	}
+
+	s := convertStats("abc", raw)
+
+	if s.BlockRead != 4096 || s.BlockWrite != 8192 {
+		t.Errorf("block io = %d/%d, want 4096/8192", s.BlockRead, s.BlockWrite)
+	}
+	if s.NetRx != 111 || s.NetTx != 222 {
+		t.Errorf("network = %d/%d, want 111/222", s.NetRx, s.NetTx)
+	}
+	// The percentage is still withheld: one reading of a cumulative counter is
+	// not a rate, and claiming otherwise is what the early return prevents.
+	if s.CPUPercent != 0 {
+		t.Errorf("cpu percent = %v, want 0 without a predecessor sample", s.CPUPercent)
+	}
+	if s.CPUTotal != 5_000 || s.SystemCPU != 9_000 {
+		t.Errorf("cumulative cpu = %d/%d, want the raw counters passed through", s.CPUTotal, s.SystemCPU)
+	}
+}
+
+// A container on the host's network namespace has no per-container interface,
+// so Docker omits `networks` entirely. That is an absence of the thing, not a
+// missing reading, and must not be confused with the bug above.
+func TestConvertStatsToleratesHostNetworking(t *testing.T) {
+	s := convertStats("abc", container.StatsResponse{
+		MemoryStats: container.MemoryStats{Usage: 10, Limit: 100},
+		BlkioStats: container.BlkioStats{
+			IoServiceBytesRecursive: []container.BlkioStatEntry{{Op: "read", Value: 7}},
+		},
+	})
+	if s.NetRx != 0 || s.NetTx != 0 {
+		t.Errorf("network = %d/%d, want 0 when Docker reports no interfaces", s.NetRx, s.NetTx)
+	}
+	if s.BlockRead != 7 {
+		t.Errorf("block read = %d, want 7 — the other counters still apply", s.BlockRead)
+	}
+}

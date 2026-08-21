@@ -89,6 +89,60 @@ export function serverRange(): RangeKey {
   return DEFAULT_RANGE
 }
 
+/**
+ * The window a set of charts is drawn over: either one of the named ranges, or
+ * an explicit span the reader selected by dragging across a chart.
+ *
+ * A fixed list of five ranges is the thing every lightweight monitor gets
+ * wrong. "What happened between 03:10 and 03:25" is the actual question after
+ * a chart has shown you roughly when something went wrong, and answering it by
+ * picking "6h" and squinting is what sends people to Grafana. Zooming keeps
+ * the answer in the same page.
+ */
+export type MetricsWindow = {
+  key: RangeKey
+  /** Epoch ms. Present only on a zoomed window. */
+  from?: number
+  to?: number
+}
+
+/** Query parameters for a window, whichever kind it is. */
+export function windowQuery(win: MetricsWindow, points: number): Record<string, string | number> {
+  if (win.from !== undefined && win.to !== undefined) {
+    // Unix seconds, which is what the backend's parseInstant reads without a
+    // formatting round trip.
+    return { from: Math.floor(win.from / 1000), to: Math.floor(win.to / 1000), points }
+  }
+  return { range: rangeSpec(win.key).query ?? "1h", points }
+}
+
+/** How wide the window is, in seconds — for the retention note. */
+export function windowSeconds(win: MetricsWindow): number {
+  if (win.from !== undefined && win.to !== undefined) return (win.to - win.from) / 1000
+  return rangeSpec(win.key).seconds
+}
+
+/**
+ * How often to re-read a window.
+ *
+ * A zoomed window is a fixed span in the past: it does not change, so it is
+ * fetched once and left alone rather than re-requested on the range's cadence.
+ */
+export function windowRefreshMs(win: MetricsWindow): number {
+  if (win.from !== undefined) return 0
+  return rangeSpec(win.key).refreshMs
+}
+
+/** A label for a zoomed span, used where a range would show "6h". */
+export function windowLabel(win: MetricsWindow): string {
+  if (win.from === undefined || win.to === undefined) return rangeSpec(win.key).label
+  const seconds = Math.round((win.to - win.from) / 1000)
+  if (seconds < 90) return `${seconds}s`
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`
+  if (seconds < 172800) return `${Math.round(seconds / 3600)}h`
+  return `${Math.round(seconds / 86400)}d`
+}
+
 export function storeRange(key: RangeKey) {
   if (current === key) return
   current = key
@@ -140,6 +194,39 @@ export type ChartRow = {
   diskReadPeak: number | null
   diskWrite: number | null
   diskWritePeak: number | null
+
+  /** The CPU breakdown, which stacks to the same total the `cpu` line draws. */
+  cpuUser: number | null
+  cpuSystem: number | null
+  cpuIowait: number | null
+  cpuSteal: number | null
+
+  /** Pressure: null where the kernel does not report it, so the chart shows a
+   *  gap rather than a confident zero. */
+  psiCpu: number | null
+  psiCpuPeak: number | null
+  psiMem: number | null
+  psiMemPeak: number | null
+  psiIo: number | null
+  psiIoPeak: number | null
+
+  diskReads: number | null
+  diskReadsPeak: number | null
+  diskWrites: number | null
+  diskWritesPeak: number | null
+  diskAwait: number | null
+  diskAwaitPeak: number | null
+  diskBusy: number | null
+  diskBusyPeak: number | null
+
+  tcp: number | null
+  tcpPeak: number | null
+  tcpTimeWait: number | null
+
+  load1: number | null
+  load5: number | null
+  load15: number | null
+  procsBlocked: number | null
 }
 
 /** Turns the live socket buffer into chart rows. No peaks, no gaps to bridge. */
@@ -162,6 +249,36 @@ export function liveRows(history: MetricsPoint[]): ChartRow[] {
     diskReadPeak: null,
     diskWrite: p.dwrite,
     diskWritePeak: null,
+    cpuUser: p.cpuUser,
+    cpuSystem: p.cpuSystem,
+    cpuIowait: p.cpuIowait,
+    cpuSteal: p.cpuSteal,
+    // -1 is the store's marker for "this kernel has no PSI". It becomes null
+    // here so the chart draws nothing rather than a line below the axis.
+    psiCpu: p.psiCpu < 0 ? null : p.psiCpu,
+    psiCpuPeak: null,
+    psiMem: p.psiMem < 0 ? null : p.psiMem,
+    psiMemPeak: null,
+    psiIo: p.psiIo < 0 ? null : p.psiIo,
+    psiIoPeak: null,
+    diskReads: p.dreads,
+    diskReadsPeak: null,
+    diskWrites: p.dwrites,
+    diskWritesPeak: null,
+    diskAwait: p.await,
+    diskAwaitPeak: null,
+    diskBusy: p.busy,
+    diskBusyPeak: null,
+    tcp: p.tcp,
+    tcpPeak: null,
+    tcpTimeWait: null,
+    // The live feed carries no load averages in its buffer — the tiles read
+    // them from the newest snapshot instead, which is where "right now"
+    // belongs.
+    load1: null,
+    load5: null,
+    load15: null,
+    procsBlocked: p.procsBlocked,
   }))
 }
 
@@ -209,9 +326,42 @@ function toRow(point: MetricsHistoryPoint, ts: number, step: number): ChartRow {
     diskReadPeak: point.diskReadPeak,
     diskWrite: point.diskWrite,
     diskWritePeak: point.diskWritePeak,
+    cpuUser: point.cpuUser,
+    cpuSystem: point.cpuSystem,
+    cpuIowait: point.cpuIowait,
+    cpuSteal: point.cpuSteal,
+    psiCpu: point.psiCpu,
+    psiCpuPeak: point.psiCpuPeak,
+    psiMem: point.psiMem,
+    psiMemPeak: point.psiMemPeak,
+    psiIo: point.psiIo,
+    psiIoPeak: point.psiIoPeak,
+    diskReads: point.diskReads,
+    diskReadsPeak: point.diskReadsPeak,
+    diskWrites: point.diskWrites,
+    diskWritesPeak: point.diskWritesPeak,
+    diskAwait: point.diskAwait,
+    diskAwaitPeak: point.diskAwaitPeak,
+    diskBusy: point.diskBusy,
+    diskBusyPeak: point.diskBusyPeak,
+    tcp: point.tcpConns,
+    tcpPeak: point.tcpConnsPeak,
+    tcpTimeWait: point.tcpTimeWait,
+    load1: point.load1,
+    load5: point.load5,
+    load15: point.load15,
+    // The run queue is a live-only reading; nothing stores it per bucket.
+    procsBlocked: null,
   }
 }
 
+/**
+ * A row of nothing, marking a hole in the record.
+ *
+ * Every field has to be listed: recharts breaks a line at a null and joins
+ * across a missing key, so a series omitted here would be drawn straight
+ * through the outage rather than stopping at it.
+ */
 function gapRow(ts: number): ChartRow {
   return {
     t: "",
@@ -231,6 +381,31 @@ function gapRow(ts: number): ChartRow {
     diskReadPeak: null,
     diskWrite: null,
     diskWritePeak: null,
+    cpuUser: null,
+    cpuSystem: null,
+    cpuIowait: null,
+    cpuSteal: null,
+    psiCpu: null,
+    psiCpuPeak: null,
+    psiMem: null,
+    psiMemPeak: null,
+    psiIo: null,
+    psiIoPeak: null,
+    diskReads: null,
+    diskReadsPeak: null,
+    diskWrites: null,
+    diskWritesPeak: null,
+    diskAwait: null,
+    diskAwaitPeak: null,
+    diskBusy: null,
+    diskBusyPeak: null,
+    tcp: null,
+    tcpPeak: null,
+    tcpTimeWait: null,
+    load1: null,
+    load5: null,
+    load15: null,
+    procsBlocked: null,
   }
 }
 
@@ -290,6 +465,12 @@ export type ContainerRow = {
   cpuPeak: number | null
   mem: number | null
   memPeak: number | null
+  /** Bytes per second, differenced from Docker's cumulative counters. */
+  netRx: number | null
+  netTx: number | null
+  blockRead: number | null
+  blockWrite: number | null
+  pids: number | null
 }
 
 export function containerRows(history: ContainerHistory): ContainerRow[] {
@@ -319,11 +500,29 @@ function toContainerRow(point: ContainerHistoryPoint, ts: number, step: number):
     cpuPeak: point.cpuPeak,
     mem: point.memBytes,
     memPeak: point.memBytesPeak,
+    netRx: point.netRx,
+    netTx: point.netTx,
+    blockRead: point.blockRead,
+    blockWrite: point.blockWrite,
+    pids: point.pids,
   }
 }
 
 function containerGapRow(ts: number): ContainerRow {
-  return { t: "", ts, at: "", cpu: null, cpuPeak: null, mem: null, memPeak: null }
+  return {
+    t: "",
+    ts,
+    at: "",
+    cpu: null,
+    cpuPeak: null,
+    mem: null,
+    memPeak: null,
+    netRx: null,
+    netTx: null,
+    blockRead: null,
+    blockWrite: null,
+    pids: null,
+  }
 }
 
 /** The memory ceiling to draw the limit line at, or 0 when the container has none. */
@@ -393,6 +592,7 @@ export function storageRows(history: StorageHistory): {
         byTs.set(ts, row)
       }
       row[key] = point.usedPercent
+      row[`${key}i`] = point.inodesPercent
     }
   }
 

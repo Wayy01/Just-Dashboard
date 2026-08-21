@@ -366,7 +366,9 @@ func (s *Server) handleUnitJournalStream(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleProcessList(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := timeoutCtx(r, 30*time.Second)
 	defer cancel()
-	list, err := s.modules.table.List(ctx, atoiDefault(r.URL.Query().Get("limit"), 300))
+	list, err := s.modules.table.List(ctx,
+		atoiDefault(r.URL.Query().Get("limit"), 300),
+		procs.ParseOrder(r.URL.Query().Get("sort")))
 	if err != nil {
 		return httpx.Internal(err)
 	}

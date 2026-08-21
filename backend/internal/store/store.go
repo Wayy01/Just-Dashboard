@@ -250,6 +250,117 @@ CREATE TABLE IF NOT EXISTS metric_samples (
 );
 `
 
+// addedColumns are columns that arrived after the table they belong to had
+// already shipped.
+//
+// A CREATE TABLE IF NOT EXISTS is a no-op against a database that predates
+// them, so every one of these has to be applied separately — this is what
+// "schema changes must be additive" means in practice, given there is no
+// migration tool. Each entry must therefore carry a DEFAULT: an existing table
+// has rows, and SQLite will not add a NOT NULL column to them without one.
+//
+// Never remove an entry. It is not a list of the current schema, it is the
+// list of steps between every shipped schema and the current one, and dropping
+// one strands whichever installs stopped at that version.
+var addedColumns = []struct{ table, column, spec string }{
+	// The CPU mode breakdown, added because one "busy" percentage cannot tell
+	// apart a server doing work, a server waiting on a disk, and a hypervisor
+	// running somebody else on the core you are paying for.
+	{"metric_samples", "cpu_user", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "cpu_system", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "cpu_iowait", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "cpu_steal", "REAL NOT NULL DEFAULT 0"},
+
+	// Pressure stall information: the kernel's own measure of whether tasks
+	// are waiting rather than running, which utilisation cannot express.
+	{"metric_samples", "psi_cpu", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "psi_mem", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "psi_io", "REAL NOT NULL DEFAULT 0"},
+
+	// Operations per second and service time. A disk saturated by small
+	// random writes moves almost no bytes, so the byte rates alone report an
+	// idle disk that is in fact unable to take another request.
+	{"metric_samples", "disk_reads", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "disk_writes", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "disk_await", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "disk_busy", "REAL NOT NULL DEFAULT 0"},
+
+	// Sockets, so "we ran out of connections at 3am" leaves a trace.
+	{"metric_samples", "tcp_conns", "INTEGER NOT NULL DEFAULT 0"},
+	{"metric_samples", "tcp_timewait", "INTEGER NOT NULL DEFAULT 0"},
+
+	// The other two load averages. One-minute load alone cannot distinguish a
+	// spike that is ending from one that is building.
+	{"metric_samples", "load5", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "load15", "REAL NOT NULL DEFAULT 0"},
+	{"metric_samples", "mem_available", "INTEGER NOT NULL DEFAULT 0"},
+	{"metric_samples", "procs", "INTEGER NOT NULL DEFAULT 0"},
+
+	// A container's network and block throughput, which was already being
+	// sampled for the live view but never kept.
+	{"metric_container_samples", "block_read", "INTEGER NOT NULL DEFAULT 0"},
+	{"metric_container_samples", "block_write", "INTEGER NOT NULL DEFAULT 0"},
+
+	// Inode exhaustion fills a filesystem that reports free space, and is
+	// invisible in a used-bytes percentage.
+	{"metric_mount_samples", "inodes_percent", "REAL NOT NULL DEFAULT 0"},
+}
+
+// applyAddedColumns adds any column the running binary expects and the file on
+// disk does not have.
+//
+// It reads the table's current shape rather than trying the ALTER and
+// swallowing the error: "duplicate column name" is a string comparison against
+// a message SQLite is free to reword, and a real failure would look identical.
+func applyAddedColumns(ctx context.Context, db *sql.DB) error {
+	have := map[string]map[string]bool{}
+	for _, c := range addedColumns {
+		if have[c.table] != nil {
+			continue
+		}
+		cols, err := tableColumns(ctx, db, c.table)
+		if err != nil {
+			return fmt.Errorf("read %s columns: %w", c.table, err)
+		}
+		have[c.table] = cols
+	}
+	for _, c := range addedColumns {
+		if have[c.table][c.column] {
+			continue
+		}
+		// The table name is a constant in this file, never user input, so
+		// there is nothing here to parameterise — and SQLite does not accept
+		// a placeholder for an identifier in any case.
+		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.spec)
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("add %s.%s: %w", c.table, c.column, err)
+		}
+		have[c.table][c.column] = true
+	}
+	return nil
+}
+
+func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = true
+	}
+	return cols, rows.Err()
+}
+
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
@@ -265,6 +376,13 @@ func Open(dataDir string) (*Store, error) {
 	if _, err := db.ExecContext(context.Background(), schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
+	}
+	// Run after the schema, never instead of it: a fresh database gets its
+	// tables from the block above and finds nothing to add, while an existing
+	// one gets only the columns it is missing.
+	if err := applyAddedColumns(context.Background(), db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		db.Close()

@@ -69,6 +69,26 @@ type Sample struct {
 	DiskWrite   float64   `json:"diskWrite"`
 	DiskPercent float64   `json:"diskPercent"`
 	Uptime      uint64    `json:"uptimeSeconds"`
+
+	// Everything below arrived after the first version of this table, and is
+	// what separates "the box was busy" from "here is what it was busy with".
+	CPUUser     float64 `json:"cpuUser"`
+	CPUSystem   float64 `json:"cpuSystem"`
+	CPUIOWait   float64 `json:"cpuIowait"`
+	CPUSteal    float64 `json:"cpuSteal"`
+	PSICPU      float64 `json:"psiCpu"`
+	PSIMem      float64 `json:"psiMem"`
+	PSIIO       float64 `json:"psiIo"`
+	DiskReads   float64 `json:"diskReads"`
+	DiskWrites  float64 `json:"diskWrites"`
+	DiskAwait   float64 `json:"diskAwait"`
+	DiskBusy    float64 `json:"diskBusy"`
+	TCPConns    int     `json:"tcpConns"`
+	TCPTimeWait int     `json:"tcpTimeWait"`
+	Load5       float64 `json:"load5"`
+	Load15      float64 `json:"load15"`
+	MemAvail    uint64  `json:"memAvailable"`
+	Procs       int     `json:"procs"`
 }
 
 // Point is one bucket of the aggregated series.
@@ -110,6 +130,42 @@ type Point struct {
 	// StorageRange's answer rather than this one's.
 	DiskPercent float64 `json:"diskPercent"`
 	MemUsed     uint64  `json:"memUsed"`
+
+	// The CPU breakdown, stacked by the chart into one bar of 100%. Only the
+	// mean is kept for each: a stack of peaks would sum past 100 and stop
+	// being a breakdown of anything.
+	CPUUser   float64 `json:"cpuUser"`
+	CPUSystem float64 `json:"cpuSystem"`
+	CPUIOWait float64 `json:"cpuIowait"`
+	CPUSteal  float64 `json:"cpuSteal"`
+
+	// Pressure carries peaks: a ten-second stall inside a ten-minute bucket
+	// is exactly the event the mean erases, and it is the event worth seeing.
+	PSICPU     float64 `json:"psiCpu"`
+	PSICPUPeak float64 `json:"psiCpuPeak"`
+	PSIMem     float64 `json:"psiMem"`
+	PSIMemPeak float64 `json:"psiMemPeak"`
+	PSIIO      float64 `json:"psiIo"`
+	PSIIOPeak  float64 `json:"psiIoPeak"`
+
+	DiskReads      float64 `json:"diskReads"`
+	DiskReadsPeak  float64 `json:"diskReadsPeak"`
+	DiskWrites     float64 `json:"diskWrites"`
+	DiskWritesPeak float64 `json:"diskWritesPeak"`
+	DiskAwait      float64 `json:"diskAwait"`
+	DiskAwaitPeak  float64 `json:"diskAwaitPeak"`
+	DiskBusy       float64 `json:"diskBusy"`
+	DiskBusyPeak   float64 `json:"diskBusyPeak"`
+
+	TCPConns     float64 `json:"tcpConns"`
+	TCPConnsPeak float64 `json:"tcpConnsPeak"`
+	TCPTimeWait  float64 `json:"tcpTimeWait"`
+
+	Load5     float64 `json:"load5"`
+	Load15    float64 `json:"load15"`
+	MemAvail  uint64  `json:"memAvailable"`
+	Procs     float64 `json:"procs"`
+	ProcsPeak float64 `json:"procsPeak"`
 }
 
 // Window is the frame around any recorded series: the facts a client needs to
@@ -151,6 +207,16 @@ type ContainerPoint struct {
 	MemLimit     uint64 `json:"memLimit"`
 
 	PIDs float64 `json:"pids"`
+
+	// Bytes per second, derived in SQL from the cumulative counters Docker
+	// reports. They are recorded as the raw totals rather than as rates
+	// because a total can be differenced later at any bucket width, whereas a
+	// rate recorded against one interval cannot be re-bucketed without
+	// pretending it was measured over the wider one.
+	NetRx      float64 `json:"netRx"`
+	NetTx      float64 `json:"netTx"`
+	BlockRead  float64 `json:"blockRead"`
+	BlockWrite float64 `json:"blockWrite"`
 }
 
 // ContainerSeries is a window of one container's history.
@@ -170,6 +236,11 @@ type MountPoint struct {
 
 	Used  uint64 `json:"used"`
 	Total uint64 `json:"total"`
+
+	// InodesPercent fills up independently of the bytes. A build server that
+	// writes millions of tiny files hits this ceiling first, and does so on a
+	// filesystem the capacity chart shows as half empty.
+	InodesPercent float64 `json:"inodesPercent"`
 }
 
 // MountSeries is one filesystem's history.
@@ -358,12 +429,13 @@ func (r *Recorder) recordMounts(ctx context.Context, at time.Time, mounts []sysi
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO metric_mount_samples (ts, mountpoint, used_percent, used_bytes, total_bytes)
-		VALUES (?,?,?,?,?)
+		INSERT INTO metric_mount_samples (ts, mountpoint, used_percent, used_bytes, total_bytes, inodes_percent)
+		VALUES (?,?,?,?,?,?)
 		ON CONFLICT(mountpoint, ts) DO UPDATE SET
-		  used_percent = excluded.used_percent,
-		  used_bytes   = excluded.used_bytes,
-		  total_bytes  = excluded.total_bytes`)
+		  used_percent   = excluded.used_percent,
+		  used_bytes     = excluded.used_bytes,
+		  total_bytes    = excluded.total_bytes,
+		  inodes_percent = excluded.inodes_percent`)
 	if err != nil {
 		return err
 	}
@@ -374,8 +446,16 @@ func (r *Recorder) recordMounts(ctx context.Context, at time.Time, mounts []sysi
 		if m.Mountpoint == "" {
 			continue
 		}
+		// Inodes are recorded as a percentage rather than a pair of counts:
+		// a filesystem that has run out of them reports free space and
+		// refuses to create a file, and the only thing an operator needs from
+		// the chart is how close to the ceiling it is.
+		var inodes float64
+		if m.InodesTotal > 0 {
+			inodes = float64(m.InodesUsed) / float64(m.InodesTotal) * 100
+		}
 		if _, err := stmt.ExecContext(ctx, ts, m.Mountpoint, m.UsedPercent,
-			int64(m.Used), int64(m.Total)); err != nil {
+			int64(m.Used), int64(m.Total), inodes); err != nil {
 			return err
 		}
 	}
@@ -407,7 +487,8 @@ func (r *Recorder) StorageRange(ctx context.Context, from, to time.Time, maxPoin
 		       (ts / ?) * ? AS bucket,
 		       COUNT(*),
 		       AVG(used_percent), MAX(used_percent),
-		       AVG(used_bytes),   MAX(total_bytes)
+		       AVG(used_bytes),   MAX(total_bytes),
+		       MAX(inodes_percent)
 		  FROM metric_mount_samples
 		 WHERE ts >= ? AND ts <= ?
 		 GROUP BY mountpoint, bucket
@@ -424,11 +505,13 @@ func (r *Recorder) StorageRange(ctx context.Context, from, to time.Time, maxPoin
 		var p MountPoint
 		var used, total float64
 		if err := rows.Scan(&mountpoint, &bucket, &p.Samples,
-			&p.UsedPercent, &p.UsedPercentPeak, &used, &total); err != nil {
+			&p.UsedPercent, &p.UsedPercentPeak, &used, &total,
+			&p.InodesPercent); err != nil {
 			return nil, err
 		}
 		p.TS = time.Unix(bucket, 0).UTC()
 		p.UsedPercent, p.UsedPercentPeak = round1(p.UsedPercent), round1(p.UsedPercentPeak)
+		p.InodesPercent = round1(p.InodesPercent)
 		p.Used, p.Total = uint64(used), uint64(total)
 
 		if n := len(series.Mounts); n > 0 && series.Mounts[n-1].Mountpoint == mountpoint {
@@ -483,8 +566,9 @@ func (r *Recorder) writeContainers(ctx context.Context, at time.Time, stats []do
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO metric_container_samples
-		  (ts, name, cpu_percent, mem_bytes, mem_limit, mem_percent, net_rx, net_tx, pids)
-		VALUES (?,?,?,?,?,?,?,?,?)
+		  (ts, name, cpu_percent, mem_bytes, mem_limit, mem_percent, net_rx, net_tx, pids,
+		   block_read, block_write)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(name, ts) DO UPDATE SET
 		  cpu_percent = excluded.cpu_percent,
 		  mem_bytes   = excluded.mem_bytes,
@@ -492,7 +576,9 @@ func (r *Recorder) writeContainers(ctx context.Context, at time.Time, stats []do
 		  mem_percent = excluded.mem_percent,
 		  net_rx      = excluded.net_rx,
 		  net_tx      = excluded.net_tx,
-		  pids        = excluded.pids`)
+		  pids        = excluded.pids,
+		  block_read  = excluded.block_read,
+		  block_write = excluded.block_write`)
 	if err != nil {
 		return err
 	}
@@ -505,7 +591,8 @@ func (r *Recorder) writeContainers(ctx context.Context, at time.Time, stats []do
 		}
 		if _, err := stmt.ExecContext(ctx, ts, st.Name, st.CPUPercent,
 			int64(st.MemUsage), int64(st.MemLimit), st.MemPercent,
-			int64(st.NetRx), int64(st.NetTx), int64(st.PIDs)); err != nil {
+			int64(st.NetRx), int64(st.NetTx), int64(st.PIDs),
+			int64(st.BlockRead), int64(st.BlockWrite)); err != nil {
 			return err
 		}
 	}
@@ -526,6 +613,20 @@ func Reduce(snap *sysinfo.Snapshot) Sample {
 		MemTotal:    snap.Memory.Total,
 		SwapPercent: snap.Swap.UsedPercent,
 		Uptime:      snap.Uptime,
+
+		CPUUser:     snap.CPU.Modes.User,
+		CPUSystem:   snap.CPU.Modes.System + snap.CPU.Modes.IRQ + snap.CPU.Modes.SoftIRQ,
+		CPUIOWait:   snap.CPU.Modes.IOWait,
+		CPUSteal:    snap.CPU.Modes.Steal,
+		PSICPU:      snap.Pressure.CPUSome,
+		PSIMem:      snap.Pressure.MemSome,
+		PSIIO:       snap.Pressure.IOSome,
+		TCPConns:    snap.Sockets.TCPInUse,
+		TCPTimeWait: snap.Sockets.TCPTimeWait,
+		Load5:       snap.CPU.LoadAvg5,
+		Load15:      snap.CPU.LoadAvg15,
+		MemAvail:    snap.Memory.Available,
+		Procs:       snap.Procs.Total,
 	}
 	for _, n := range snap.Net {
 		s.NetRx += n.RecvRate
@@ -534,6 +635,17 @@ func Reduce(snap *sysinfo.Snapshot) Sample {
 	for _, m := range snap.Mounts {
 		s.DiskRead += m.ReadRate
 		s.DiskWrite += m.WriteRate
+		s.DiskReads += m.ReadOps
+		s.DiskWrites += m.WriteOps
+		// The worst device rather than the mean of all of them, for the same
+		// reason the capacity figure is the fullest mount: one saturated disk
+		// is the problem, and averaging it with three idle ones hides it.
+		if m.BusyPercent > s.DiskBusy {
+			s.DiskBusy = m.BusyPercent
+		}
+		if await := maxf(m.ReadLatency, m.WriteLatency); await > s.DiskAwait {
+			s.DiskAwait = await
+		}
 		// The fullest mount, not the sum: "is a disk about to fill up" is the
 		// question, and averaging a full /boot with an empty /srv answers it
 		// wrongly in the reassuring direction.
@@ -555,8 +667,12 @@ func (r *Recorder) record(ctx context.Context, s Sample) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO metric_samples
 		  (ts, cpu_percent, load1, mem_percent, mem_used, mem_total, swap_percent,
-		   net_rx, net_tx, disk_read, disk_write, disk_percent, uptime_seconds)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+		   net_rx, net_tx, disk_read, disk_write, disk_percent, uptime_seconds,
+		   cpu_user, cpu_system, cpu_iowait, cpu_steal,
+		   psi_cpu, psi_mem, psi_io,
+		   disk_reads, disk_writes, disk_await, disk_busy,
+		   tcp_conns, tcp_timewait, load5, load15, mem_available, procs)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(ts) DO UPDATE SET
 		  cpu_percent    = excluded.cpu_percent,
 		  load1          = excluded.load1,
@@ -569,9 +685,30 @@ func (r *Recorder) record(ctx context.Context, s Sample) error {
 		  disk_read      = excluded.disk_read,
 		  disk_write     = excluded.disk_write,
 		  disk_percent   = excluded.disk_percent,
-		  uptime_seconds = excluded.uptime_seconds`,
+		  uptime_seconds = excluded.uptime_seconds,
+		  cpu_user       = excluded.cpu_user,
+		  cpu_system     = excluded.cpu_system,
+		  cpu_iowait     = excluded.cpu_iowait,
+		  cpu_steal      = excluded.cpu_steal,
+		  psi_cpu        = excluded.psi_cpu,
+		  psi_mem        = excluded.psi_mem,
+		  psi_io         = excluded.psi_io,
+		  disk_reads     = excluded.disk_reads,
+		  disk_writes    = excluded.disk_writes,
+		  disk_await     = excluded.disk_await,
+		  disk_busy      = excluded.disk_busy,
+		  tcp_conns      = excluded.tcp_conns,
+		  tcp_timewait   = excluded.tcp_timewait,
+		  load5          = excluded.load5,
+		  load15         = excluded.load15,
+		  mem_available  = excluded.mem_available,
+		  procs          = excluded.procs`,
 		ts.Unix(), s.CPUPercent, s.Load1, s.MemPercent, int64(s.MemUsed), int64(s.MemTotal),
-		s.SwapPercent, s.NetRx, s.NetTx, s.DiskRead, s.DiskWrite, s.DiskPercent, int64(s.Uptime))
+		s.SwapPercent, s.NetRx, s.NetTx, s.DiskRead, s.DiskWrite, s.DiskPercent, int64(s.Uptime),
+		s.CPUUser, s.CPUSystem, s.CPUIOWait, s.CPUSteal,
+		s.PSICPU, s.PSIMem, s.PSIIO,
+		s.DiskReads, s.DiskWrites, s.DiskAwait, s.DiskBusy,
+		s.TCPConns, s.TCPTimeWait, s.Load5, s.Load15, int64(s.MemAvail), s.Procs)
 	return err
 }
 
@@ -622,7 +759,18 @@ func (r *Recorder) Range(ctx context.Context, from, to time.Time, maxPoints int)
 		       AVG(disk_read),    MAX(disk_read),
 		       AVG(disk_write),   MAX(disk_write),
 		       AVG(load1),        MAX(load1),
-		       AVG(disk_percent), AVG(mem_used)
+		       AVG(disk_percent), AVG(mem_used),
+		       AVG(cpu_user),    AVG(cpu_system), AVG(cpu_iowait), AVG(cpu_steal),
+		       AVG(psi_cpu),     MAX(psi_cpu),
+		       AVG(psi_mem),     MAX(psi_mem),
+		       AVG(psi_io),      MAX(psi_io),
+		       AVG(disk_reads),  MAX(disk_reads),
+		       AVG(disk_writes), MAX(disk_writes),
+		       AVG(disk_await),  MAX(disk_await),
+		       AVG(disk_busy),   MAX(disk_busy),
+		       AVG(tcp_conns),   MAX(tcp_conns), AVG(tcp_timewait),
+		       AVG(load5),       AVG(load15), AVG(mem_available),
+		       AVG(procs),       MAX(procs)
 		  FROM metric_samples
 		 WHERE ts >= ? AND ts <= ?
 		 GROUP BY bucket
@@ -636,7 +784,7 @@ func (r *Recorder) Range(ctx context.Context, from, to time.Time, maxPoints int)
 	for rows.Next() {
 		var bucket int64
 		var p Point
-		var memUsed float64
+		var memUsed, memAvail float64
 		if err := rows.Scan(&bucket, &p.Samples,
 			&p.CPU, &p.CPUPeak,
 			&p.Mem, &p.MemPeak,
@@ -646,11 +794,22 @@ func (r *Recorder) Range(ctx context.Context, from, to time.Time, maxPoints int)
 			&p.DiskRead, &p.DiskReadPeak,
 			&p.DiskWrite, &p.DiskWritePeak,
 			&p.Load1, &p.Load1Peak,
-			&p.DiskPercent, &memUsed); err != nil {
+			&p.DiskPercent, &memUsed,
+			&p.CPUUser, &p.CPUSystem, &p.CPUIOWait, &p.CPUSteal,
+			&p.PSICPU, &p.PSICPUPeak,
+			&p.PSIMem, &p.PSIMemPeak,
+			&p.PSIIO, &p.PSIIOPeak,
+			&p.DiskReads, &p.DiskReadsPeak,
+			&p.DiskWrites, &p.DiskWritesPeak,
+			&p.DiskAwait, &p.DiskAwaitPeak,
+			&p.DiskBusy, &p.DiskBusyPeak,
+			&p.TCPConns, &p.TCPConnsPeak, &p.TCPTimeWait,
+			&p.Load5, &p.Load15, &memAvail,
+			&p.Procs, &p.ProcsPeak); err != nil {
 			return nil, err
 		}
 		p.TS = time.Unix(bucket, 0).UTC()
-		p.MemUsed = uint64(memUsed)
+		p.MemUsed, p.MemAvail = uint64(memUsed), uint64(memAvail)
 		round(&p)
 		series.Points = append(series.Points, p)
 	}
@@ -708,7 +867,9 @@ func (r *Recorder) ContainerRange(ctx context.Context, name string, from, to tim
 		       AVG(mem_percent), MAX(mem_percent),
 		       AVG(mem_bytes),   MAX(mem_bytes),
 		       MAX(mem_limit),
-		       AVG(pids)
+		       AVG(pids),
+		       MAX(net_rx) - MIN(net_rx), MAX(net_tx) - MIN(net_tx),
+		       MAX(block_read) - MIN(block_read), MAX(block_write) - MIN(block_write)
 		  FROM metric_container_samples
 		 WHERE name = ? AND ts >= ? AND ts <= ?
 		 GROUP BY bucket
@@ -723,11 +884,13 @@ func (r *Recorder) ContainerRange(ctx context.Context, name string, from, to tim
 		var bucket int64
 		var p ContainerPoint
 		var memBytes, memBytesPeak, memLimit float64
+		var rxSpan, txSpan, readSpan, writeSpan float64
 		if err := rows.Scan(&bucket, &p.Samples,
 			&p.CPU, &p.CPUPeak,
 			&p.Mem, &p.MemPeak,
 			&memBytes, &memBytesPeak, &memLimit,
-			&p.PIDs); err != nil {
+			&p.PIDs,
+			&rxSpan, &txSpan, &readSpan, &writeSpan); err != nil {
 			return nil, err
 		}
 		p.TS = time.Unix(bucket, 0).UTC()
@@ -735,12 +898,90 @@ func (r *Recorder) ContainerRange(ctx context.Context, name string, from, to tim
 		p.CPU, p.CPUPeak = round2(p.CPU), round2(p.CPUPeak)
 		p.Mem, p.MemPeak = round1(p.Mem), round1(p.MemPeak)
 		p.PIDs = round1(p.PIDs)
+		// The span within the bucket over the bucket's own width. A bucket
+		// holding a single sample has no span and reports zero, which is
+		// honest: one reading of a cumulative counter is not a rate.
+		p.NetRx, p.NetTx = spanRate(rxSpan, secs), spanRate(txSpan, secs)
+		p.BlockRead, p.BlockWrite = spanRate(readSpan, secs), spanRate(writeSpan, secs)
 		series.Points = append(series.Points, p)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return series, nil
+}
+
+// Sparkline is one container's recent shape, cheap enough to fetch for every
+// container at once.
+//
+// Two series and nothing else: a table row has space for a trend, not for a
+// chart. The point is to answer "which of these forty containers is the one
+// that spiked" at a glance, and then to be clicked through to the full series.
+type Sparkline struct {
+	Name string    `json:"name"`
+	CPU  []float64 `json:"cpu"`
+	Mem  []float64 `json:"mem"`
+	// Peak carries the worst moment in the window, since a sparkline drawn
+	// from means at this width would flatten exactly what is being looked for.
+	CPUPeak float64 `json:"cpuPeak"`
+	MemPeak uint64  `json:"memPeak"`
+}
+
+// Sparklines returns a short recent series for every container with history in
+// the window.
+//
+// One query for all of them rather than one request per row. A page listing
+// forty containers would otherwise open forty connections to draw forty tiny
+// charts, which is how a monitoring feature becomes the load it is monitoring.
+func (r *Recorder) Sparklines(ctx context.Context, from, to time.Time, maxPoints int) ([]Sparkline, error) {
+	if to.Before(from) {
+		from, to = to, from
+	}
+	if maxPoints < 2 {
+		maxPoints = 2
+	}
+	step := bucketFor(to.Sub(from), maxPoints, r.interval)
+	secs := int64(step / time.Second)
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT name,
+		       (ts / ?) * ? AS bucket,
+		       MAX(cpu_percent), MAX(mem_bytes)
+		  FROM metric_container_samples
+		 WHERE ts >= ? AND ts <= ?
+		 GROUP BY name, bucket
+		 ORDER BY name, bucket`,
+		secs, secs, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Sparkline{}
+	for rows.Next() {
+		var name string
+		var bucket int64
+		var cpu, mem float64
+		if err := rows.Scan(&name, &bucket, &cpu, &mem); err != nil {
+			return nil, err
+		}
+		// Peaks rather than means for the buckets themselves: at twenty pixels
+		// wide a sparkline has one job, which is to show that something
+		// happened.
+		if n := len(out); n == 0 || out[n-1].Name != name {
+			out = append(out, Sparkline{Name: name, CPU: []float64{}, Mem: []float64{}})
+		}
+		s := &out[len(out)-1]
+		s.CPU = append(s.CPU, round2(cpu))
+		s.Mem = append(s.Mem, mem)
+		if cpu > s.CPUPeak {
+			s.CPUPeak = round2(cpu)
+		}
+		if uint64(mem) > s.MemPeak {
+			s.MemPeak = uint64(mem)
+		}
+	}
+	return out, rows.Err()
 }
 
 // RecordedContainers lists the containers with history in the window, so the
@@ -797,7 +1038,40 @@ func round(p *Point) {
 	p.DiskRead, p.DiskReadPeak = round1(p.DiskRead), round1(p.DiskReadPeak)
 	p.DiskWrite, p.DiskWritePeak = round1(p.DiskWrite), round1(p.DiskWritePeak)
 	p.Load1, p.Load1Peak = round2(p.Load1), round2(p.Load1Peak)
+	p.Load5, p.Load15 = round2(p.Load5), round2(p.Load15)
 	p.DiskPercent = round1(p.DiskPercent)
+	p.CPUUser, p.CPUSystem = round1(p.CPUUser), round1(p.CPUSystem)
+	p.CPUIOWait, p.CPUSteal = round1(p.CPUIOWait), round1(p.CPUSteal)
+	p.PSICPU, p.PSICPUPeak = round2(p.PSICPU), round2(p.PSICPUPeak)
+	p.PSIMem, p.PSIMemPeak = round2(p.PSIMem), round2(p.PSIMemPeak)
+	p.PSIIO, p.PSIIOPeak = round2(p.PSIIO), round2(p.PSIIOPeak)
+	p.DiskReads, p.DiskReadsPeak = round1(p.DiskReads), round1(p.DiskReadsPeak)
+	p.DiskWrites, p.DiskWritesPeak = round1(p.DiskWrites), round1(p.DiskWritesPeak)
+	p.DiskAwait, p.DiskAwaitPeak = round2(p.DiskAwait), round2(p.DiskAwaitPeak)
+	p.DiskBusy, p.DiskBusyPeak = round1(p.DiskBusy), round1(p.DiskBusyPeak)
+	p.TCPConns, p.TCPConnsPeak = round1(p.TCPConns), round1(p.TCPConnsPeak)
+	p.TCPTimeWait = round1(p.TCPTimeWait)
+	p.Procs, p.ProcsPeak = round1(p.Procs), round1(p.ProcsPeak)
+}
+
+// spanRate turns the growth of a cumulative counter across one bucket into a
+// per-second rate.
+//
+// A negative span means the counter restarted — a container recreated under
+// the same name, which is precisely the case this series is keyed by name to
+// survive — and is reported as zero rather than as a negative throughput.
+func spanRate(span float64, seconds int64) float64 {
+	if span <= 0 || seconds <= 0 {
+		return 0
+	}
+	return round1(span / float64(seconds))
+}
+
+func maxf(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }

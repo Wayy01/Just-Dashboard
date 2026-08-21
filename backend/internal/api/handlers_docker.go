@@ -29,6 +29,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 			r.Method(http.MethodGet, "/{id}/logs", s.handle(s.handleContainerLogs))
 			r.Method(http.MethodGet, "/{id}/logs/stream", s.handle(s.handleContainerLogStream))
 			r.Method(http.MethodGet, "/{id}/stats/stream", s.handle(s.handleContainerStatStream))
+			r.Method(http.MethodGet, "/stats/history", s.handle(s.handleContainerSparklines))
 			r.Method(http.MethodGet, "/{id}/stats/history", s.handle(s.handleContainerStatsHistory))
 
 			r.Group(func(r chi.Router) {
@@ -223,6 +224,38 @@ func (s *Server) handleContainerStatsHistory(w http.ResponseWriter, r *http.Requ
 		return httpx.Internal(err)
 	}
 	httpx.JSON(w, http.StatusOK, series)
+	return nil
+}
+
+// handleContainerSparklines gives the container table a trend per row.
+//
+// One request for every container rather than one per row: a host running
+// forty containers would otherwise answer a page load with forty queries to
+// draw forty thumbnails, which is how a monitoring feature turns into the load
+// it exists to watch.
+//
+// Registered above /{id}/stats/history so chi matches the literal segment
+// first — otherwise "stats" would be read as a container id.
+func (s *Server) handleContainerSparklines(w http.ResponseWriter, r *http.Request) error {
+	if !s.modules.metrics.Enabled() {
+		return httpx.Err(http.StatusServiceUnavailable, "metrics_history_disabled",
+			"metrics history is not being recorded on this host (JD_METRICS_RETENTION=0)")
+	}
+	from, to, points, err := historyWindow(r)
+	if err != nil {
+		return err
+	}
+	// A hard ceiling on the width regardless of what was asked for: this
+	// endpoint draws thumbnails, and a hundred points in a forty-pixel chart
+	// is bandwidth spent on pixels that do not exist.
+	if points > 60 {
+		points = 60
+	}
+	lines, err := s.modules.metrics.Sparklines(r.Context(), from, to, points)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, lines)
 	return nil
 }
 

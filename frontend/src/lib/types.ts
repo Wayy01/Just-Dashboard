@@ -48,6 +48,8 @@ export type Snapshot = {
     loadAvg5: number
     loadAvg15: number
     cores: number
+    /** Where the time went. `steal` is the one a total can never express. */
+    modes: CPUModes
   }
   memory: {
     total: number
@@ -62,6 +64,60 @@ export type Snapshot = {
   mounts: MountStats[]
   net: NetStats[]
   uptimeSeconds: number
+  pressure: Pressure
+  sockets: Sockets
+  procs: ProcCounts
+}
+
+/**
+ * The CPU breakdown, as percentages of the interval that sum to 100.
+ *
+ * `iowait` and `steal` are why this exists. One "68% busy" figure cannot tell
+ * apart a server doing work, a server waiting for a disk, and a hypervisor
+ * running somebody else on the core you are paying for — and the fix for each
+ * is completely different.
+ */
+export type CPUModes = {
+  user: number
+  system: number
+  nice: number
+  iowait: number
+  irq: number
+  softirq: number
+  steal: number
+  idle: number
+}
+
+/**
+ * Kernel pressure stall information: the share of the last ten seconds during
+ * which work was waiting rather than running.
+ *
+ * `supported` is false on a kernel built without PSI, which the UI must show
+ * as "cannot tell" rather than as three reassuring zeroes.
+ */
+export type Pressure = {
+  supported: boolean
+  cpuSome: number
+  memSome: number
+  memFull: number
+  ioSome: number
+  ioFull: number
+}
+
+export type Sockets = {
+  tcpInUse: number
+  tcpTimeWait: number
+  tcpOrphan: number
+  udpInUse: number
+  used: number
+}
+
+/** The run queue. `blocked` counts tasks stuck in uninterruptible sleep — the
+ *  half of the story that turns high iowait from a curiosity into a cause. */
+export type ProcCounts = {
+  running: number
+  blocked: number
+  total: number
 }
 
 /**
@@ -93,6 +149,53 @@ export type MetricsHistoryPoint = {
   load1Peak: number
   diskPercent: number
   memUsed: number
+
+  /** The CPU breakdown. Means only: a stack of peaks would sum past 100. */
+  cpuUser: number
+  cpuSystem: number
+  cpuIowait: number
+  cpuSteal: number
+
+  psiCpu: number
+  psiCpuPeak: number
+  psiMem: number
+  psiMemPeak: number
+  psiIo: number
+  psiIoPeak: number
+
+  /** Operations per second, and the service time each one took. */
+  diskReads: number
+  diskReadsPeak: number
+  diskWrites: number
+  diskWritesPeak: number
+  diskAwait: number
+  diskAwaitPeak: number
+  diskBusy: number
+  diskBusyPeak: number
+
+  tcpConns: number
+  tcpConnsPeak: number
+  tcpTimeWait: number
+
+  load5: number
+  load15: number
+  memAvailable: number
+  procs: number
+  procsPeak: number
+}
+
+/**
+ * One container's recent shape, for a table row.
+ *
+ * Buckets are maxima rather than means: at sixty pixels wide a mean flattens
+ * exactly the spike the thumbnail exists to surface.
+ */
+export type ContainerSparkline = {
+  name: string
+  cpu: number[]
+  mem: number[]
+  cpuPeak: number
+  memPeak: number
 }
 
 /** One bucket of a single container's recorded history. */
@@ -107,6 +210,11 @@ export type ContainerHistoryPoint = {
   memBytesPeak: number
   memLimit: number
   pids: number
+  /** Bytes per second, differenced from the cumulative counters Docker reports. */
+  netRx: number
+  netTx: number
+  blockRead: number
+  blockWrite: number
 }
 
 export type ContainerHistory = {
@@ -128,6 +236,8 @@ export type MountHistoryPoint = {
   usedPercentPeak: number
   used: number
   total: number
+  /** Inodes fill independently of bytes, on a disk the capacity chart calls empty. */
+  inodesPercent: number
 }
 
 export type MountHistory = {
@@ -143,6 +253,46 @@ export type StorageHistory = {
   retentionSeconds: number
   earliest: string | null
   mounts: MountHistory[]
+}
+
+/**
+ * Something that happened to the server, positioned in time so a chart can
+ * mark it.
+ *
+ * This is what turns an observation into a cause: "memory climbed at 14:20"
+ * versus "memory climbed at 14:20, and api-server was deployed at 14:19".
+ */
+export type MetricEvent = {
+  ts: string
+  kind: "deploy" | "backup" | "reboot" | "action"
+  title: string
+  detail?: string
+  severity: "info" | "warning" | "error"
+  /** Non-zero for events that occupied a span, so a long deploy can be a band. */
+  durationSeconds?: number
+}
+
+/** One thing worth telling the operator, with the reasoning attached. */
+export type HealthFinding = {
+  id: string
+  level: "critical" | "warning" | "notice"
+  title: string
+  /** What was measured. */
+  detail: string
+  /** What to do about it — an opinion, kept separate from the fact. */
+  advice?: string
+  metric?: string
+  value: number
+  threshold: number
+  since?: string
+}
+
+export type Health = {
+  status: "ok" | "critical" | "warning" | "notice"
+  findings: HealthFinding[]
+  checkedAt: string
+  /** False when nothing is recording, which makes the verdict a shallower one. */
+  recorded: boolean
 }
 
 /** One ban or unban, read from fail2ban's own log rather than remembered here. */
@@ -179,6 +329,11 @@ export type MountStats = {
   writeBytes: number
   readRate: number
   writeRate: number
+  readOps: number
+  writeOps: number
+  readLatencyMs: number
+  writeLatencyMs: number
+  busyPercent: number
 }
 
 export type NetStats = {

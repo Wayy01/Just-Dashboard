@@ -1,10 +1,13 @@
 "use client"
 
+import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { ChevronRight, Cpu, MemoryStick, Monitor, Moon, Search, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { percent } from "@/lib/format"
 import { useMetrics } from "@/hooks/use-metrics"
+import { useHealth } from "@/hooks/use-metrics-history"
+import { HealthBadge } from "@/components/metrics/health-panel"
 import { useTheme } from "@/hooks/use-theme"
 import { THEMES } from "@/lib/themes"
 import { navLocation } from "@/components/app-sidebar"
@@ -79,14 +82,46 @@ export function TopBar() {
  */
 function Vitals() {
   const { snapshot, connection } = useMetrics()
+  // Polled slowly and shared by every page through the shell, so the verdict
+  // follows you around rather than living only on Overview. A server that
+  // started filling its disk while you were reading logs should say so from
+  // wherever you are.
+  const { health } = useHealth()
   const live = connection === "open"
+
+  const steal = snapshot?.cpu.modes?.steal ?? 0
 
   return (
     <div className="mr-1 flex items-center gap-3">
+      {health && health.status !== "ok" && (
+        // Only when there is something to say. A permanent green badge in the
+        // chrome is a badge nobody looks at, which makes it useless on the day
+        // it turns red.
+        <Link href="/" aria-label="Health findings" className="hidden sm:block">
+          <HealthBadge status={health.status} />
+        </Link>
+      )}
       {snapshot && (
         <div className="hidden items-center gap-3 md:flex">
-          <Reading icon={Cpu} label="CPU" value={snapshot.cpu.totalPercent} />
-          <Reading icon={MemoryStick} label="Memory" value={snapshot.memory.usedPercent} />
+          <Reading
+            icon={Cpu}
+            label="CPU"
+            value={snapshot.cpu.totalPercent}
+            // Steal named right here rather than folded into the total: on a
+            // VPS it is the one figure whose fix is not inside this machine.
+            detail={steal >= 1 ? `${percent(steal, 0)} stolen by the hypervisor` : undefined}
+            alarm={steal >= 5}
+          />
+          <Reading
+            icon={MemoryStick}
+            label="Memory"
+            value={snapshot.memory.usedPercent}
+            detail={
+              snapshot.memory.total > 0
+                ? `${percent((snapshot.memory.available / snapshot.memory.total) * 100, 0)} available`
+                : undefined
+            }
+          />
         </div>
       )}
       <Tooltip>
@@ -120,12 +155,18 @@ function Reading({
   icon: Icon,
   label,
   value,
+  detail,
+  alarm,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   value: number
+  /** The second fact the percentage on its own does not carry. */
+  detail?: string
+  /** Colours the figure regardless of how high the percentage itself is. */
+  alarm?: boolean
 }) {
-  const hot = value >= 90
+  const hot = alarm || value >= 90
   const warm = !hot && value >= 75
   return (
     <Tooltip>
@@ -144,6 +185,7 @@ function Reading({
       </TooltipTrigger>
       <TooltipContent>
         {label} {percent(value)}
+        {detail ? ` · ${detail}` : ""}
       </TooltipContent>
     </Tooltip>
   )

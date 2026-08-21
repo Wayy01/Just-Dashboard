@@ -9,8 +9,9 @@ import { cn } from "@/lib/utils"
 import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
+import { useMetrics } from "@/hooks/use-metrics"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Page, PageHeader, Metric, MetricStrip, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
@@ -21,6 +22,7 @@ import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Select,
   SelectContent,
@@ -456,14 +458,26 @@ function ProcessTableTab() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [query, setQuery] = useState("")
+  // "What is eating my CPU" and "what is eating my RAM" are asked equally
+  // often and have different answers — a leaking service sits at 0% CPU while
+  // holding six gigabytes, and a CPU-sorted list buries it. The server sorts
+  // before it truncates, so this changes which 200 rows come back, not just
+  // their order.
+  const [sort, setSort] = useState<"cpu" | "memory">("cpu")
   const { data, error, loading, refresh } = usePoll(
-    (signal) => get<ProcessRow[]>("/processes/", { limit: 200, q: query }, signal),
+    (signal) => get<ProcessRow[]>("/processes/", { limit: 200, q: query, sort }, signal),
     4000,
-    [query],
+    [query, sort],
   )
+  // The host figures the table is a breakdown of. Without them the heaviest
+  // row is a number with no denominator: 30% CPU is the whole problem on a
+  // quiet box and a rounding error on a busy one.
+  const { snapshot } = useMetrics()
 
   if (loading && !data) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
+
+  const memTotal = snapshot?.memory.total ?? 0
 
   return (
     <>
@@ -475,8 +489,23 @@ function ProcessTableTab() {
             data && data.length >= 200
               ? // The server caps the reply at 200 rows. Saying so beats letting
                 // someone conclude a process is not running when it was simply cut.
-                "Showing the 200 heaviest processes — filter to reach the rest"
+                `Showing the 200 heaviest by ${sort === "cpu" ? "CPU" : "memory"} — filter to reach the rest`
               : `${data?.length ?? 0} processes`
+          }
+          actions={
+            snapshot && (
+              <MetricStrip>
+                <Metric label="CPU" value={percent(snapshot.cpu.totalPercent, 0)} />
+                <Metric label="Available" value={bytes(snapshot.memory.available)} />
+                {/* Running and blocked, because they are what a long list of
+                    idle processes cannot tell you: how many are actually
+                    competing, and how many are stuck waiting on a device. */}
+                <Metric
+                  label="Run queue"
+                  value={`${snapshot.procs?.running ?? 0} / ${snapshot.procs?.blocked ?? 0}`}
+                />
+              </MetricStrip>
+            )
           }
         />
         <PanelToolbar>
@@ -485,6 +514,21 @@ function ProcessTableTab() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter by name, command or user"
           />
+          <ToggleGroup
+            type="single"
+            value={sort}
+            onValueChange={(next) => setSort((next as "cpu" | "memory") || sort)}
+            variant="outline"
+            size="sm"
+            aria-label="Sort by"
+          >
+            <ToggleGroupItem value="cpu" className="px-2.5 text-[11px]">
+              By CPU
+            </ToggleGroupItem>
+            <ToggleGroupItem value="memory" className="px-2.5 text-[11px]">
+              By memory
+            </ToggleGroupItem>
+          </ToggleGroup>
         </PanelToolbar>
         <PanelBody flush>
           <Table containerClassName="max-h-[calc(100svh-23rem)]">
@@ -520,11 +564,28 @@ function ProcessTableTab() {
                     </div>
                   </TableCell>
                   <TableCell className="text-xs">{proc.username}</TableCell>
-                  <TableCell className="numeric text-right font-mono text-xs">
+                  {/* Weight, not just value: the eye finds the two rows that
+                      matter far faster in a column where most entries are
+                      grey and one is not. */}
+                  <TableCell
+                    className={cn(
+                      "numeric text-right font-mono text-xs",
+                      proc.cpuPercent >= 50
+                        ? "font-medium text-destructive"
+                        : proc.cpuPercent >= 10
+                          ? "text-warning"
+                          : "text-muted-foreground",
+                    )}
+                  >
                     {percent(proc.cpuPercent)}
                   </TableCell>
                   <TableCell className="numeric text-right font-mono text-xs">
                     {bytes(proc.rss)}
+                    {memTotal > 0 && (
+                      <span className="ml-1 text-muted-foreground">
+                        {((proc.rss / memTotal) * 100).toFixed(0)}%
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {relativeTime(proc.createTime)}

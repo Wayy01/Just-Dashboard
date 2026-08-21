@@ -43,6 +43,28 @@ type CPUStats struct {
 	LoadAvg5     float64   `json:"loadAvg5"`
 	LoadAvg15    float64   `json:"loadAvg15"`
 	Cores        int       `json:"cores"`
+
+	// Where the time actually went. A single "68% busy" figure cannot tell
+	// apart the three situations an operator most needs to tell apart: the
+	// server is working (user/system), the server is waiting for a disk
+	// (iowait), or the hypervisor is running somebody else on this core
+	// (steal). On a VPS the last one is the difference between "I need a
+	// bigger box" and "I need a different host", and no amount of staring at
+	// a total will separate them.
+	Modes CPUModes `json:"modes"`
+}
+
+// CPUModes is the breakdown of one interval, as percentages of total CPU time
+// that sum to roughly 100 across all fields including Idle.
+type CPUModes struct {
+	User    float64 `json:"user"`
+	System  float64 `json:"system"`
+	Nice    float64 `json:"nice"`
+	IOWait  float64 `json:"iowait"`
+	IRQ     float64 `json:"irq"`
+	SoftIRQ float64 `json:"softirq"`
+	Steal   float64 `json:"steal"`
+	Idle    float64 `json:"idle"`
 }
 
 type MemoryStats struct {
@@ -76,6 +98,19 @@ type MountStats struct {
 	WriteBytes  uint64  `json:"writeBytes"`
 	ReadRate    float64 `json:"readRate"`
 	WriteRate   float64 `json:"writeRate"`
+
+	// Operations per second and the mean time each took. Bytes per second
+	// describes a bulk copy well and a database badly: a disk saturated by
+	// small random writes moves very little data while being completely
+	// unable to accept another request, and only the operation count and the
+	// service time show it.
+	ReadOps      float64 `json:"readOps"`
+	WriteOps     float64 `json:"writeOps"`
+	ReadLatency  float64 `json:"readLatencyMs"`
+	WriteLatency float64 `json:"writeLatencyMs"`
+	// BusyPercent is the share of the interval the device had at least one
+	// request in flight — the classic iostat %util.
+	BusyPercent float64 `json:"busyPercent"`
 }
 
 type NetStats struct {
@@ -105,6 +140,26 @@ type Snapshot struct {
 	Mounts []MountStats `json:"mounts"`
 	Net    []NetStats   `json:"net"`
 	Uptime uint64       `json:"uptimeSeconds"`
+
+	// Pressure and Sockets are read straight from the kernel rather than
+	// derived from anything above them. They answer questions the
+	// utilisation figures structurally cannot: whether the machine is
+	// stalling, and whether it is running out of connections.
+	Pressure Pressure   `json:"pressure"`
+	Sockets  Sockets    `json:"sockets"`
+	Procs    ProcCounts `json:"procs"`
+}
+
+// ProcCounts is the run queue, straight from /proc/stat.
+//
+// Blocked is the field worth having: it counts tasks in uninterruptible sleep,
+// which is what a process waiting on a disk looks like. Read next to iowait it
+// turns "the CPU is 90% idle but everything is slow" from a mystery into a
+// sentence — eleven processes are queued behind a device.
+type ProcCounts struct {
+	Running int `json:"running"`
+	Blocked int `json:"blocked"`
+	Total   int `json:"total"`
 }
 
 type Collector struct {
@@ -112,6 +167,14 @@ type Collector struct {
 	lastNet  map[string]net.IOCountersStat
 	lastDisk map[string]disk.IOCountersStat
 	lastAt   time.Time
+	// lastCPU is the cumulative time-per-mode counter from the previous call.
+	// The mode breakdown is a delta like every other rate here, which is why
+	// the first Collect after New reports no breakdown at all rather than the
+	// since-boot average — an average over three weeks of uptime would say
+	// nothing about the last fifteen seconds while looking exactly like it
+	// did.
+	lastCPU    cpu.TimesStat
+	lastCPUSet bool
 }
 
 func NewCollector() *Collector {
@@ -172,6 +235,7 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	if l, err := load.AvgWithContext(ctx); err == nil {
 		snap.CPU.LoadAvg1, snap.CPU.LoadAvg5, snap.CPU.LoadAvg15 = l.Load1, l.Load5, l.Load15
 	}
+	snap.CPU.Modes = c.cpuModes(ctx)
 	if v, err := mem.VirtualMemoryWithContext(ctx); err == nil {
 		snap.Memory = MemoryStats{
 			Total: v.Total, Used: v.Used, Free: v.Free, Available: v.Available,
@@ -186,11 +250,85 @@ func (c *Collector) Collect(ctx context.Context) (*Snapshot, error) {
 	}
 	snap.Mounts = c.mounts(ctx, elapsed)
 	snap.Net = c.network(ctx, elapsed)
+	// Two small file reads, done unconditionally: both are a few hundred
+	// bytes from a pseudo filesystem, which is cheaper than the branch that
+	// would decide whether to bother.
+	snap.Pressure = ReadPressure()
+	snap.Sockets = ReadSockets()
+	if misc, err := load.MiscWithContext(ctx); err == nil {
+		snap.Procs = ProcCounts{
+			Running: misc.ProcsRunning,
+			Blocked: misc.ProcsBlocked,
+			Total:   misc.ProcsTotal,
+		}
+	}
 
 	c.mu.Lock()
 	c.lastAt = now
 	c.mu.Unlock()
 	return snap, nil
+}
+
+// cpuModes turns the cumulative per-mode counters into the share of the
+// interval each mode took.
+//
+// Percentages of the delta rather than of wall time: the counters are summed
+// across every core, so dividing by their own total is what makes the result
+// read the same on a 2-core box and a 64-core one, and is what makes the
+// fields sum to 100.
+func (c *Collector) cpuModes(ctx context.Context) CPUModes {
+	times, err := cpu.TimesWithContext(ctx, false)
+	if err != nil || len(times) == 0 {
+		return CPUModes{}
+	}
+	cur := times[0]
+
+	c.mu.Lock()
+	prev, had := c.lastCPU, c.lastCPUSet
+	c.lastCPU, c.lastCPUSet = cur, true
+	c.mu.Unlock()
+
+	if !had {
+		return CPUModes{}
+	}
+	// Guest time is already counted inside User (and GuestNice inside Nice)
+	// by the kernel, so it is deliberately not added again here — doing so
+	// would push the total past 100% on a machine running VMs.
+	d := CPUModes{
+		User:    cur.User - prev.User,
+		System:  cur.System - prev.System,
+		Nice:    cur.Nice - prev.Nice,
+		IOWait:  cur.Iowait - prev.Iowait,
+		IRQ:     cur.Irq - prev.Irq,
+		SoftIRQ: cur.Softirq - prev.Softirq,
+		Steal:   cur.Steal - prev.Steal,
+		Idle:    cur.Idle - prev.Idle,
+	}
+	total := d.User + d.System + d.Nice + d.IOWait + d.IRQ + d.SoftIRQ + d.Steal + d.Idle
+	// A counter that went backwards means the CPU was hot-plugged or the
+	// host was migrated; reporting nothing for one interval beats reporting
+	// a negative percentage.
+	if total <= 0 {
+		return CPUModes{}
+	}
+	scale := 100 / total
+	return CPUModes{
+		User:    round1(max0(d.User) * scale),
+		System:  round1(max0(d.System) * scale),
+		Nice:    round1(max0(d.Nice) * scale),
+		IOWait:  round1(max0(d.IOWait) * scale),
+		IRQ:     round1(max0(d.IRQ) * scale),
+		SoftIRQ: round1(max0(d.SoftIRQ) * scale),
+		Steal:   round1(max0(d.Steal) * scale),
+		Idle:    round1(max0(d.Idle) * scale),
+	}
+}
+
+func max0(f float64) float64 {
+	if f < 0 {
+		return 0
+	}
+	return f
 }
 
 // mounts reports real filesystems only. Pseudo filesystems (tmpfs, overlay
@@ -225,6 +363,11 @@ func (c *Collector) mounts(ctx context.Context, elapsed float64) []MountStats {
 			if prev, ok := c.lastDisk[st.Name]; ok && elapsed > 0 {
 				m.ReadRate = rate(st.ReadBytes, prev.ReadBytes, elapsed)
 				m.WriteRate = rate(st.WriteBytes, prev.WriteBytes, elapsed)
+				m.ReadOps = rate(st.ReadCount, prev.ReadCount, elapsed)
+				m.WriteOps = rate(st.WriteCount, prev.WriteCount, elapsed)
+				m.ReadLatency = latency(st.ReadTime, prev.ReadTime, st.ReadCount, prev.ReadCount)
+				m.WriteLatency = latency(st.WriteTime, prev.WriteTime, st.WriteCount, prev.WriteCount)
+				m.BusyPercent = busy(st.IoTime, prev.IoTime, elapsed)
 			}
 			c.lastDisk[st.Name] = st
 			c.mu.Unlock()
@@ -287,6 +430,37 @@ func rate(cur, prev uint64, elapsed float64) float64 {
 		return 0
 	}
 	return round1(float64(cur-prev) / elapsed)
+}
+
+// latency is the mean service time of one request over the interval, in
+// milliseconds. The kernel's *Time counters are cumulative milliseconds spent
+// on requests of that kind, so dividing by the number of requests in the same
+// interval gives what iostat calls await.
+func latency(curMs, prevMs, curOps, prevOps uint64) float64 {
+	if curMs < prevMs || curOps <= prevOps {
+		return 0
+	}
+	ops := curOps - prevOps
+	if ops == 0 {
+		return 0
+	}
+	return round1(float64(curMs-prevMs) / float64(ops))
+}
+
+// busy is iostat's %util: the share of the interval during which the device
+// had at least one request outstanding. It saturates at 100 because a device
+// with a queue can accumulate more busy-milliseconds than there are
+// milliseconds, and a chart reading 340% is not more informative than one
+// reading 100.
+func busy(curMs, prevMs uint64, elapsed float64) float64 {
+	if curMs < prevMs || elapsed <= 0 {
+		return 0
+	}
+	pct := float64(curMs-prevMs) / (elapsed * 1000) * 100
+	if pct > 100 {
+		pct = 100
+	}
+	return round1(pct)
 }
 
 func deviceName(dev string) string {

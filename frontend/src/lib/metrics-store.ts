@@ -36,6 +36,27 @@ export type MetricsPoint = {
   disk: number
   dread: number
   dwrite: number
+
+  /** The CPU breakdown, so the live chart can answer "busy doing what". */
+  cpuUser: number
+  cpuSystem: number
+  cpuIowait: number
+  cpuSteal: number
+
+  /** Pressure. -1 rather than 0 on a kernel without PSI, so the chart can
+   *  leave a gap instead of drawing a confident flat line at zero. */
+  psiCpu: number
+  psiMem: number
+  psiIo: number
+
+  /** Operations per second and the worst device's service time. */
+  dreads: number
+  dwrites: number
+  await: number
+  busy: number
+
+  tcp: number
+  procsBlocked: number
 }
 
 export type ConnectionState = "connecting" | "open" | "closed" | "error"
@@ -55,10 +76,11 @@ export const HISTORY = 150
 /** Restored history older than this is discarded rather than drawn. */
 const STALE_MS = 10 * 60 * 1000
 
-// v2: points gained the disk series. A v1 point restored into a v2 chart
-// would draw a hole in it rather than a shorter line, so the old key is
-// simply abandoned.
-const STORAGE_KEY = "just-dashboard.metrics.v2"
+// v3: points gained the CPU breakdown, pressure, IOPS and socket counts. A
+// point from an older shape restored into a newer chart would draw holes in
+// the new series rather than a shorter line, so each version simply abandons
+// the previous key instead of trying to migrate it.
+const STORAGE_KEY = "just-dashboard.metrics.v3"
 
 /** Persisting on every frame would be a synchronous JSON round trip at 2Hz. */
 const PERSIST_EVERY = 5
@@ -155,14 +177,27 @@ function toPoint(snapshot: Snapshot): MetricsPoint {
   let dread = 0
   let dwrite = 0
   let disk = 0
+  let dreads = 0
+  let dwrites = 0
+  let await_ = 0
+  let busy = 0
   for (const m of snapshot.mounts) {
     dread += m.readRate
     dwrite += m.writeRate
+    dreads += m.readOps ?? 0
+    dwrites += m.writeOps ?? 0
     // The fullest mount, not the mean: averaging a full /boot with an empty
     // /srv answers "is a disk about to fill up" wrongly, in the reassuring
     // direction. This matches what the backend records.
     if (m.usedPercent > disk) disk = m.usedPercent
+    // Likewise the busiest device rather than the average of all of them: one
+    // saturated disk is the problem, and three idle ones do not dilute it.
+    if ((m.busyPercent ?? 0) > busy) busy = m.busyPercent
+    const latency = Math.max(m.readLatencyMs ?? 0, m.writeLatencyMs ?? 0)
+    if (latency > await_) await_ = latency
   }
+  const psi = snapshot.pressure
+  const supported = psi?.supported ?? false
   const ts = new Date(snapshot.ts).getTime()
   return {
     t: clock(snapshot.ts),
@@ -175,6 +210,20 @@ function toPoint(snapshot: Snapshot): MetricsPoint {
     disk,
     dread,
     dwrite,
+    cpuUser: snapshot.cpu.modes?.user ?? 0,
+    cpuSystem: (snapshot.cpu.modes?.system ?? 0) + (snapshot.cpu.modes?.irq ?? 0) +
+      (snapshot.cpu.modes?.softirq ?? 0),
+    cpuIowait: snapshot.cpu.modes?.iowait ?? 0,
+    cpuSteal: snapshot.cpu.modes?.steal ?? 0,
+    psiCpu: supported ? psi.cpuSome : -1,
+    psiMem: supported ? psi.memSome : -1,
+    psiIo: supported ? psi.ioSome : -1,
+    dreads,
+    dwrites,
+    await: await_,
+    busy,
+    tcp: snapshot.sockets?.tcpInUse ?? 0,
+    procsBlocked: snapshot.procs?.blocked ?? 0,
   }
 }
 

@@ -16,7 +16,7 @@ import {
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { bytes, percent, truncateMiddle } from "@/lib/format"
-import type { Container, ContainerStats } from "@/lib/types"
+import type { Container, ContainerSparkline, ContainerStats } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -24,6 +24,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { StatTile } from "@/components/stat-tile"
+import { Sparkline } from "@/components/metrics/sparkline"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
 import { IconAction } from "@/components/icon-action"
@@ -54,6 +55,35 @@ export default function DockerPage() {
   const [socketError, setSocketError] = useState<string>()
   const [selected, setSelected] = useState<string | null>(null)
   const [filter, setFilter] = useState("")
+
+  /**
+   * An hour of shape per container, in one request.
+   *
+   * The live socket above shows what every container is doing this second,
+   * which is the wrong question when something already went wrong: a container
+   * that pinned a core for ten minutes and then settled reads as idle. One
+   * bulk query gives every row a trend, so the one that spiked is visible in
+   * the table rather than only after opening it.
+   */
+  const trends = usePoll<ContainerSparkline[]>(
+    (signal) =>
+      get<ContainerSparkline[]>(
+        "/docker/containers/stats/history",
+        { range: "1h", points: 40 },
+        signal,
+      ),
+    // Slow on purpose: an hour-wide thumbnail does not change meaningfully in
+    // less than a minute, and this shares a page with a 2-second stats socket.
+    120_000,
+    [],
+  )
+  const trendByName = useMemo(() => {
+    const map = new Map<string, ContainerSparkline>()
+    // History is keyed by container name, which is what lets a series survive
+    // a compose redeploy giving the container a new id.
+    for (const line of trends.data ?? []) map.set(line.name, line)
+    return map
+  }, [trends.data])
 
   const ping = usePoll(
     (signal) =>
@@ -236,6 +266,7 @@ export default function DockerPage() {
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">CPU</TableHead>
                     <TableHead className="text-right">Memory</TableHead>
+                    <TableHead className="text-right">Last hour</TableHead>
                     <TableHead>Ports</TableHead>
                     <TableHead className="w-px" />
                   </TableRow>
@@ -303,6 +334,9 @@ export default function DockerPage() {
                           ) : (
                             "—"
                           )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <ContainerTrend trend={trendByName.get(container.name)} />
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -423,7 +457,7 @@ export default function DockerPage() {
                   })}
                   {visible.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="p-0">
+                      <TableCell colSpan={8} className="p-0">
                         <EmptyState
                           icon={Boxes}
                           title={filter ? "No containers match that filter" : "No containers"}
@@ -457,5 +491,31 @@ export default function DockerPage() {
       />
       {dialog}
     </Page>
+  )
+}
+
+/**
+ * One container's last hour, in a table cell.
+ *
+ * The peak is spelled out beside the line because a sparkline cannot carry a
+ * scale: two rows whose lines look identical may be a container that touched
+ * 4% and one that pinned two cores, and the number is what tells them apart.
+ * The line answers "when", the number answers "how much".
+ */
+function ContainerTrend({ trend }: { trend?: ContainerSparkline }) {
+  if (!trend || trend.cpu.length === 0) {
+    return <span className="text-[11px] text-muted-foreground">—</span>
+  }
+  return (
+    <span className="flex items-center justify-end gap-2">
+      <Sparkline
+        values={trend.cpu}
+        label={`CPU over the last hour, peaking at ${percent(trend.cpuPeak)}`}
+        color="var(--chart-1)"
+      />
+      <span className="numeric w-11 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+        {percent(trend.cpuPeak, 0)}
+      </span>
+    </span>
   )
 }
