@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, ShieldAlert, TerminalSquare } from "lucide-react"
+import {
+  Maximize2,
+  Minimize2,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  ShieldAlert,
+  TerminalSquare,
+} from "lucide-react"
 import { toast } from "sonner"
 import { del, get, patch, post, put } from "@/lib/api"
 import type {
@@ -13,11 +21,13 @@ import type {
 } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { actionFor, keymap, type ShortcutAction } from "@/lib/terminal-keymap"
+import { cn } from "@/lib/utils"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
 import { SessionRail } from "@/components/terminal/session-rail"
 import { PaneBar, WindowStrip } from "@/components/terminal/window-strip"
+import { WorkspaceTools } from "@/components/terminal/workspace-tools"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Button } from "@/components/ui/button"
 
@@ -37,6 +47,17 @@ export default function TerminalPage() {
   const { confirm, dialog } = useConfirm()
   const router = useRouter()
   const [picked, setPicked] = useState<string | null>(null)
+  // The session rail and the Files+Git companion can each be toggled, and the
+  // whole workspace can go fullscreen. These are page state, not the pane's, so
+  // that fullscreen keeps the rail, the strips *and* the tools — the previous
+  // fullscreen zoomed only the terminal, which is exactly what put the file
+  // tree and git out of reach the moment you maximised. Toggling a panel is
+  // pure React state and never touches the Fullscreen API, so it works without
+  // dropping out of fullscreen.
+  const [showRail, setShowRail] = useState(true)
+  const [showTools, setShowTools] = useState(true)
+  const [immersive, setImmersive] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   // Deep link: a compose stack, a repository or a build context can hand the
   // terminal a directory to start in, so "I need a shell here" does not mean
   // opening one and retyping the path. Read above the early returns below,
@@ -77,6 +98,30 @@ export default function TerminalPage() {
     [refresh],
   )
 
+  // Fullscreen is the browser's real thing, requested on the whole workspace
+  // rather than on the pane, so the rail, the strips and the tools go with it.
+  // The CSS overlay classes are applied whenever immersive regardless, so a
+  // browser that refuses the request still gives a viewport-filling workspace.
+  const toggleImmersive = useCallback(() => {
+    if (immersive) {
+      setImmersive(false)
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    } else {
+      setImmersive(true)
+      void workspaceRef.current?.requestFullscreen?.().catch(() => {})
+    }
+  }, [immersive])
+
+  // Esc leaves native fullscreen through the browser; drop the overlay with it
+  // so the two can never disagree.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setImmersive(false)
+    }
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
+
   // Opening a shell starts a process on the server, so this fires at most once
   // per mount: the ref is set before the call, which is what stops React's
   // development double-invoke from spawning two.
@@ -113,6 +158,11 @@ export default function TerminalPage() {
   )
 
   const activeWindow = (windows.data ?? []).find((w) => w.active)
+
+  // Where the tools panel looks: the active window's current directory, which
+  // tmux updates as the shell cds around, falling back to where the session was
+  // opened. This is what the file tree roots at and what git detection runs on.
+  const currentDir = activeWindow?.cwd || activeSession?.cwd || undefined
 
   // Panes, only for the window on screen and only once it has been split.
   // Asking for them unconditionally would be a subprocess on the host every
@@ -465,7 +515,16 @@ export default function TerminalPage() {
         filter and its "New folder" button is the more honest picture anyway —
         it shows what this page is.
       */}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        <div
+          ref={workspaceRef}
+          className={cn(
+            "flex min-h-0 flex-1 flex-col gap-3 lg:flex-row",
+            // The overlay is CSS so the panel toggles never touch the
+            // Fullscreen API; the real fullscreen request rides on top of it.
+            immersive && "fixed inset-0 z-50 gap-2 overflow-hidden bg-background p-2",
+          )}
+        >
+          {showRail && (
           <SessionRail
             sessions={data.sessions}
             folders={data.folders}
@@ -510,8 +569,46 @@ export default function TerminalPage() {
               )
             }
           />
+          )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+            {/*
+              The workspace controls. Slim on purpose — every row here is a row
+              of shell output nobody can see — but this is the one place the rail
+              and the tools panel can be shown or hidden, and the whole workspace
+              taken fullscreen. In fullscreen these are the only way back to the
+              sessions list and the file tree, so the bar stays put there too.
+            */}
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-card px-1.5 py-1">
+              <WorkspaceToggle
+                active={showRail}
+                onClick={() => setShowRail((v) => !v)}
+                label={showRail ? "Hide the sessions rail" : "Show the sessions rail"}
+                icon={PanelLeft}
+              />
+              {currentDir && (
+                <span
+                  className="min-w-0 truncate px-1 font-mono text-[11px] text-muted-foreground"
+                  title={currentDir}
+                >
+                  {currentDir}
+                </span>
+              )}
+              <span className="flex-1" />
+              <WorkspaceToggle
+                active={showTools}
+                onClick={() => setShowTools((v) => !v)}
+                label={showTools ? "Hide files & git" : "Show files & git"}
+                icon={PanelRight}
+              />
+              <WorkspaceToggle
+                active={immersive}
+                onClick={toggleImmersive}
+                label={immersive ? "Leave fullscreen" : "Fullscreen workspace"}
+                icon={immersive ? Minimize2 : Maximize2}
+              />
+            </div>
+
             {tmuxName && (
               <WindowStrip
                 windows={windows.data ?? []}
@@ -608,6 +705,11 @@ export default function TerminalPage() {
                 // box and would latch at the larger size for good.
                 className="min-h-0 flex-1"
                 onExit={refresh}
+                // The pane's fullscreen button and shortcut take the whole
+                // workspace fullscreen instead of the pane, so the rail and the
+                // tools stay reachable while maximised.
+                onToggleFullscreen={toggleImmersive}
+                fullscreenActive={immersive}
               />
             ) : (
               <EmptyState
@@ -630,8 +732,49 @@ export default function TerminalPage() {
               />
             )}
           </div>
+
+          {showTools && (
+            <div className="flex min-h-[16rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[21rem] xl:w-[23rem]">
+              <WorkspaceTools
+                dir={currentDir}
+                onOpenInFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
+                onClose={() => setShowTools(false)}
+              />
+            </div>
+          )}
         </div>
       {dialog}
     </Page>
+  )
+}
+
+/** A toggle in the workspace control bar: pressed-in when its panel is shown. */
+function WorkspaceToggle({
+  active,
+  onClick,
+  label,
+  icon: Icon,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={cn(
+        "size-7 shrink-0 p-0",
+        active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:text-foreground",
+      )}
+      onClick={onClick}
+    >
+      <Icon className="size-3.5" />
+    </Button>
   )
 }

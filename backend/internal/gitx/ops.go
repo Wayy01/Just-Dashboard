@@ -94,6 +94,78 @@ func (s *Service) StashPop(ctx context.Context, path string) (*Result, error) {
 	return s.op(ctx, path, time.Minute, "stash", "pop")
 }
 
+// validatePaths refuses anything that could climb out of the working tree or
+// be read as an option. The `--` separator every caller adds stops a leading
+// dash from becoming a flag, but a `..` still escapes the repository, so both
+// checks stay.
+func validatePaths(files []string) error {
+	for _, f := range files {
+		if f == "" || strings.Contains(f, "..") || strings.HasPrefix(f, "/") || strings.HasPrefix(f, "-") {
+			return fmt.Errorf("%w: %q", ErrInvalidRef, f)
+		}
+	}
+	return nil
+}
+
+// Stage adds paths to the index so the next commit records them. With no paths
+// it stages every change in the working tree — additions, modifications and
+// deletions alike — which is the "stage everything" the commit box offers.
+//
+// Staging is the inverse of Unstage and loses nothing, so neither is gated
+// behind a typed confirmation; both sit under service.control with the rest of
+// the recoverable operations.
+func (s *Service) Stage(ctx context.Context, path string, files []string) (*Result, error) {
+	if err := validatePaths(files); err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return s.op(ctx, path, time.Minute, "add", "-A")
+	}
+	return s.op(ctx, path, time.Minute, append([]string{"add", "--"}, files...)...)
+}
+
+// Unstage moves paths back out of the index without touching the working tree,
+// so the edits themselves are never at risk. `reset -q HEAD` is used rather
+// than the newer `restore --staged` because it works on every git a server is
+// likely to carry; the reset is index-only and cannot lose the file's content.
+func (s *Service) Unstage(ctx context.Context, path string, files []string) (*Result, error) {
+	if err := validatePaths(files); err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return s.op(ctx, path, time.Minute, "reset", "-q", "HEAD")
+	}
+	return s.op(ctx, path, time.Minute, append([]string{"reset", "-q", "HEAD", "--"}, files...)...)
+}
+
+// Commit records whatever is staged. An empty message is refused unless this is
+// an --amend that keeps the previous one, since git would otherwise open an
+// editor this request cannot answer. The message reaches git as the argument to
+// -m, so it cannot be read as an option however it begins.
+//
+// A commit needs user.name and user.email in the owner's git config; when they
+// are missing git says exactly that, and that message is more useful than
+// anything this layer could paraphrase — the operation runs AsOwner, so it is
+// the account owning the repository whose identity is used.
+func (s *Service) Commit(ctx context.Context, path, message string, amend bool) (*Result, error) {
+	msg := strings.TrimSpace(message)
+	if msg == "" && !amend {
+		return nil, fmt.Errorf("%w: a commit message is required", ErrInvalidRef)
+	}
+	args := []string{"commit"}
+	if amend {
+		args = append(args, "--amend")
+	}
+	if msg != "" {
+		args = append(args, "-m", msg)
+	} else {
+		// --amend with no new message keeps the old one rather than opening an
+		// editor the web request has no way to drive.
+		args = append(args, "--no-edit")
+	}
+	return s.op(ctx, path, time.Minute, args...)
+}
+
 // Discard throws away uncommitted changes to one file. This destroys work that
 // exists nowhere else, which is why the route above it demands a typed
 // confirmation.

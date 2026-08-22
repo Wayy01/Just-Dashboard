@@ -132,6 +132,8 @@ export function XtermPane({
   cwd,
   onOpenFiles,
   onCellClick,
+  onToggleFullscreen,
+  fullscreenActive,
 }: {
   path: string
   query?: Query
@@ -149,6 +151,15 @@ export function XtermPane({
    * can honestly report.
    */
   onCellClick?: (cell: { col: number; row: number }) => void
+  /**
+   * When set, the fullscreen button and shortcut hand off to the caller instead
+   * of fullscreening this pane alone. The terminal page uses it to take the
+   * *whole* workspace fullscreen — rail, strips and tools with it — which is
+   * the only way the file tree and git panel stay reachable while maximised.
+   * The compose runner leaves it unset and keeps the pane-only behaviour.
+   */
+  onToggleFullscreen?: () => void
+  fullscreenActive?: boolean
 }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -205,6 +216,12 @@ export function XtermPane({
   }, [map])
   // The key handler is installed once, before toggleFullscreen is defined.
   const fullscreenRef = useRef<(() => Promise<void>) | null>(null)
+  // The caller's fullscreen override, mirrored into a ref for the same reason:
+  // the key handler closes over it once and must not go stale.
+  const onToggleFullscreenRef = useRef(onToggleFullscreen)
+  useEffect(() => {
+    onToggleFullscreenRef.current = onToggleFullscreen
+  }, [onToggleFullscreen])
 
   useEffect(() => {
     const host = hostRef.current
@@ -418,7 +435,8 @@ export function XtermPane({
             term.clear()
             break
           case "terminal.fullscreen":
-            void fullscreenRef.current?.()
+            if (onToggleFullscreenRef.current) onToggleFullscreenRef.current()
+            else void fullscreenRef.current?.()
             break
           case "terminal.fontIn":
             setTerminalSettings({ fontSize: Math.min(FONT_MAX, settingsRef.current.fontSize + 1) })
@@ -721,10 +739,18 @@ export function XtermPane({
             </PaneButton>
 
             <PaneButton
-              label={fullscreen ? "Leave fullscreen (Esc)" : "Fullscreen"}
-              onClick={toggleFullscreen}
+              label={
+                (onToggleFullscreen ? fullscreenActive : fullscreen)
+                  ? "Leave fullscreen (Esc)"
+                  : "Fullscreen"
+              }
+              onClick={onToggleFullscreen ?? toggleFullscreen}
             >
-              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              {(onToggleFullscreen ? fullscreenActive : fullscreen) ? (
+                <Minimize2 className="size-3.5" />
+              ) : (
+                <Maximize2 className="size-3.5" />
+              )}
             </PaneButton>
           </>
         )}

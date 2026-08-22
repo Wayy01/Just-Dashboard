@@ -1206,6 +1206,19 @@ export type GitResult = {
   ok: boolean
 }
 
+/**
+ * The answer to "is this shell sitting inside a checkout" for a terminal's
+ * working directory. `inRoots` is false for a real repository that falls
+ * outside JD_GIT_ROOTS: it can be named but not operated on, since every other
+ * git route is gated on those roots.
+ */
+export type GitDetect = {
+  available: boolean
+  inRoots?: boolean
+  root?: string
+  repo?: GitRepo
+}
+
 // --- System updates ---
 
 export type UpdatePackage = {
