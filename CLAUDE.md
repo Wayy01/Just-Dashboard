@@ -530,10 +530,25 @@ separate fields because `send-keys` decides between them by parsing what it is
 given — a stored one-liner containing the word `Enter` would otherwise become a
 keypress — and the key names are a closed list.
 
-The session's tmux status line is turned **off** at creation. It is the same
-information the page draws above the pane, rendered green-on-green inside a
-terminal that is short to begin with; it is set per session, so the operator's
-own tmux sessions keep theirs.
+Two tmux display options are set per session — at creation *and* on reattach,
+so a session made by an older build is fixed by being picked up rather than by
+being recreated. Per session, so the operator's own tmux sessions and anything
+they reach over SSH keep their own settings.
+
+`status off`: the status line is the same information the page draws above the
+pane, rendered green-on-green inside a terminal that is short to begin with.
+
+`mouse on`: this is what makes the scroll wheel scroll. Without it the wheel
+does something actively wrong rather than nothing — tmux holds the alternate
+screen for the whole session, and xterm translates a wheel tick in the
+alternate screen into a cursor key, so scrolling up in a shell walked backwards
+through command history instead of showing what had scrolled past. The
+scrollback that matters is tmux's in any case; xterm's own stays empty because
+tmux repaints the viewport rather than emitting lines. The cost is that a plain
+drag selects into tmux's copy buffer instead of the browser's; **Shift+drag**
+restores the browser's selection, which is the convention every terminal
+emulator uses, and the shortcut sheet lists it because it is exactly the sort
+of thing discovered by finding it broken.
 
 ### Streaming
 

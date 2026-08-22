@@ -167,6 +167,32 @@ export function ShortcutsDialog({
           ))}
         </div>
 
+        {/*
+          The mouse conventions, which are not rebindable and are exactly the
+          things somebody discovers by finding them broken. tmux owns the
+          pointer inside a pane — that is what makes the wheel scroll history
+          instead of walking through commands — and the cost is that a plain
+          drag no longer selects.
+        */}
+        <section className="rounded-md border border-hairline bg-surface-sunken p-2.5">
+          <p className="eyebrow mb-1.5">Mouse</p>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            {[
+              ["Wheel", "Scroll back through the session's history"],
+              ["Click", "Focus the pane under the pointer"],
+              ["Drag", "Select — inside tmux, for its own copy buffer"],
+              ["Shift + drag", "Select with the browser, to copy out of the page"],
+              ["Middle click", "Paste"],
+              ["Ctrl + wheel", "Text size"],
+            ].map(([keys, what]) => (
+              <div key={keys} className="contents">
+                <dt className="font-mono text-[11px] whitespace-nowrap text-foreground">{keys}</dt>
+                <dd className="text-muted-foreground">{what}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
         <DialogFooter className="sm:justify-between">
           <Button size="sm" variant="ghost" onClick={() => resetAllShortcuts()}>
             <RotateCcw className="size-3.5" />

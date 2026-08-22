@@ -239,6 +239,21 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		// sessions and anything they attach to from a real SSH client keep
 		// theirs.
 		{"status", "off"},
+		// Mouse reporting on, which is what makes the scroll wheel scroll.
+		//
+		// Without it the wheel does something actively wrong rather than
+		// nothing: tmux holds the alternate screen for the whole session, and
+		// xterm translates a wheel tick in the alternate screen into a cursor
+		// key — so scrolling up in a shell walked backwards through command
+		// history instead of showing what had scrolled past. The scrollback
+		// that matters is tmux's anyway; xterm's own is empty, because tmux
+		// repaints the viewport rather than emitting lines.
+		//
+		// The cost is that a plain drag now selects in tmux rather than in the
+		// browser. Holding **Shift** brings the browser's own selection back,
+		// which is the convention every terminal emulator uses for this, and
+		// the pane's Copy button and its copy shortcut are unaffected.
+		{"mouse", "on"},
 	}
 	set := make([]option, 0, len(create))
 	for _, o := range create {
@@ -636,6 +651,10 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 		scrollback:  newRingBuffer(scrollbackKB * 1024),
 		lastActive:  time.Now(),
 	}
+	// The display options are set on the way in as well as at creation, so a
+	// session made before they existed — or by an older build — is fixed by
+	// being picked up rather than by being recreated. Both are idempotent.
+	m.rememberOptions(tmuxName, option{"status", "off"}, option{"mouse", "on"})
 	cmd := hostexec.CommandOnHost(context.Background(), "tmux", "attach-session", "-t", tmuxName)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
