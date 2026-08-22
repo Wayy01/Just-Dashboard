@@ -51,7 +51,9 @@ export function FileTree({
   canWrite,
   canDelete,
   activeFile,
+  activeDir,
   onOpenFile,
+  onNavigate,
   onConfirm,
   onChanged,
   onOpenInFiles,
@@ -62,10 +64,15 @@ export function FileTree({
   canWrite: boolean
   canDelete: boolean
   activeFile?: string
+  /** Highlight this folder as the one currently open elsewhere on the page. */
+  activeDir?: string
   onOpenFile: (path: string) => void
+  /** When set, clicking a folder also reports it — the Files page navigates its
+   *  main listing there while the tree keeps expanding as usual. */
+  onNavigate?: (path: string) => void
   onConfirm: (req: ConfirmRequest) => void
   onChanged: () => void
-  onOpenInFiles: (path: string) => void
+  onOpenInFiles?: (path: string) => void
 }) {
   const [showHidden, setShowHidden] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root]))
@@ -214,9 +221,11 @@ export function FileTree({
           />
           Hidden
         </label>
-        <TreeButton label="Reveal in the full file manager" onClick={() => onOpenInFiles(root)}>
-          <FolderOpen className="size-3.5" />
-        </TreeButton>
+        {onOpenInFiles && (
+          <TreeButton label="Reveal in the full file manager" onClick={() => onOpenInFiles(root)}>
+            <FolderOpen className="size-3.5" />
+          </TreeButton>
+        )}
         <TreeButton label="Refresh" onClick={() => reload(root)}>
           <RefreshCw className="size-3.5" />
         </TreeButton>
@@ -235,11 +244,13 @@ export function FileTree({
           failed={failed}
           statusMap={statusMap}
           activeFile={activeFile}
+          activeDir={activeDir}
           canWrite={canWrite}
           canDelete={canDelete}
           creating={creating}
           onToggle={toggle}
           onOpenFile={onOpenFile}
+          onNavigate={onNavigate}
           onStartCreate={(parent, kind) => {
             setExpanded((s) => new Set(s).add(parent))
             setCreating({ parent, kind })
@@ -265,11 +276,13 @@ type LevelProps = {
   failed: Record<string, string>
   statusMap: Record<string, GitFileChange>
   activeFile?: string
+  activeDir?: string
   canWrite: boolean
   canDelete: boolean
   creating: { parent: string; kind: "file" | "folder" } | null
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
+  onNavigate?: (path: string) => void
   onStartCreate: (parent: string, kind: "file" | "folder") => void
   onCancelCreate: () => void
   onSubmitCreate: (name: string) => void
@@ -322,7 +335,7 @@ function TreeLevel(props: LevelProps) {
 }
 
 function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry }) {
-  const { expanded, entriesByPath, statusMap, activeFile } = props
+  const { expanded, entriesByPath, statusMap, activeFile, activeDir } = props
   const indent = 8 + depth * 14
   const isOpen = expanded.has(entry.path)
   const status = statusMap[entry.path]
@@ -330,19 +343,25 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
     entry.isDir &&
     Object.keys(statusMap).some((p) => p.startsWith(entry.path + "/"))
 
+  const onFolderClick = () => {
+    props.onToggle(entry.path)
+    props.onNavigate?.(entry.path)
+  }
+
   return (
     <>
       <div
         className={cn(
           "group flex items-center gap-1 py-[3px] pr-1 text-[13px] hover:bg-[var(--row-hover)]",
           activeFile === entry.path && "bg-primary/10",
+          entry.isDir && activeDir === entry.path && "bg-primary/10",
         )}
         style={{ paddingLeft: indent }}
       >
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1 text-left"
-          onClick={() => (entry.isDir ? props.onToggle(entry.path) : props.onOpenFile(entry.path))}
+          onClick={() => (entry.isDir ? onFolderClick() : props.onOpenFile(entry.path))}
           onDoubleClick={() => entry.isDir && props.onOpenFile(entry.path)}
           title={entry.path}
         >
