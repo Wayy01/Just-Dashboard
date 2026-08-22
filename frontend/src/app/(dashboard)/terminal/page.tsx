@@ -236,40 +236,36 @@ export default function TerminalPage() {
     )
   }
 
-  const closeSession = (session: TerminalWorkspace) =>
-    confirm({
-      title: "Close terminal",
-      phrase: "close terminal",
-      confirmLabel: "Close",
-      description: (
-        <>
-          <p>
-            Ends <b>{session.title}</b> and everything running inside it, including any other
-            windows it has.
-          </p>
-          <p>
-            This is the only thing that stops a session — leaving the page, closing the tab and
-            restarting the dashboard all leave it running.
-          </p>
-        </>
-      ),
-      action: async (c) => {
-        if (session.id) {
-          await del(`/terminal/${session.id}`, { confirm: c })
-        } else if (session.tmuxName) {
-          // Nothing is attached, so there is no session id to address. Picking
-          // it up first is the only route the API offers to killing it.
-          const res = await post<{ id: string }>("/terminal/reattach", {
-            tmuxName: session.tmuxName,
-            rows: 24,
-            cols: 80,
-          })
-          await del(`/terminal/${res.id}`, { confirm: c })
-        }
-        if (active === session.id) setPicked(null)
-        refresh()
-      },
-    })
+  /**
+   * Closing a session, straight through.
+   *
+   * It used to sit behind a typed phrase. That guard is right for the things
+   * somebody deletes a handful of times a year, and wrong here: closing a
+   * shell is an everyday act, and a phrase in front of an everyday act does
+   * not get read — it gets typed. The server dropped the phrase for the same
+   * reason and still records the close in the audit log.
+   */
+  const closeSession = async (session: TerminalWorkspace) => {
+    try {
+      if (session.id) {
+        await del(`/terminal/${session.id}`)
+      } else if (session.tmuxName) {
+        // Nothing is attached, so there is no session id to address. Picking
+        // it up first is the only route the API offers to killing it.
+        const res = await post<{ id: string }>("/terminal/reattach", {
+          tmuxName: session.tmuxName,
+          rows: 24,
+          cols: 80,
+        })
+        await del(`/terminal/${res.id}`)
+      }
+    } catch (err) {
+      toast.error("Could not close that session", { description: String(err) })
+      return
+    }
+    if (active === session.id) setPicked(null)
+    refresh()
+  }
 
   const deleteFolder = (folder: TerminalFolder) =>
     confirm({
@@ -307,46 +303,19 @@ export default function TerminalPage() {
     )
 
   const closeWindow = (index: number) =>
-    confirm({
-      title: "Close window",
-      phrase: "close window",
-      confirmLabel: "Close",
-      description: (
-        <p>
-          Ends this window and whatever is running in it. The session and its other windows are
-          untouched.
-        </p>
-      ),
-      action: (c) =>
-        act(
-          () => del(`${persistent(tmuxName!)}/windows/${index}`, { confirm: c }),
-          "Could not close that window",
-          true,
-        ),
-    })
+    act(
+      () => del(`${persistent(tmuxName!)}/windows/${index}`),
+      "Could not close that window",
+      true,
+    )
 
   const closePane = (pane: number) =>
     activeWindow &&
-    confirm({
-      title: "Close pane",
-      phrase: "close pane",
-      confirmLabel: "Close",
-      description: (
-        <p>
-          Ends this pane and whatever is running in it. The window&apos;s other panes are
-          untouched.
-        </p>
-      ),
-      action: (c) =>
-        act(
-          () =>
-            del(`${persistent(tmuxName!)}/windows/${activeWindow.index}/panes/${pane}`, {
-              confirm: c,
-            }),
-          "Could not close that pane",
-          true,
-        ),
-    })
+    act(
+      () => del(`${persistent(tmuxName!)}/windows/${activeWindow.index}/panes/${pane}`),
+      "Could not close that pane",
+      true,
+    )
 
   /**
    * What every navigation shortcut does, rebuilt each render and handed to the
@@ -572,25 +541,7 @@ export default function TerminalPage() {
                     true,
                   )
                 }
-                onClose={(index) =>
-                  confirm({
-                    title: "Close window",
-                    phrase: "close window",
-                    confirmLabel: "Close",
-                    description: (
-                      <p>
-                        Ends this window and whatever is running in it. The session and its other
-                        windows are untouched.
-                      </p>
-                    ),
-                    action: (c) =>
-                      act(
-                        () => del(`${persistent(tmuxName)}/windows/${index}`, { confirm: c }),
-                        "Could not close that window",
-                        true,
-                      ),
-                  })
-                }
+                onClose={(index) => closeWindow(index)}
               />
             )}
 
@@ -618,29 +569,7 @@ export default function TerminalPage() {
                     true,
                   )
                 }
-                onClose={(pane) =>
-                  confirm({
-                    title: "Close pane",
-                    phrase: "close pane",
-                    confirmLabel: "Close",
-                    description: (
-                      <p>
-                        Ends this pane and whatever is running in it. The window&apos;s other panes
-                        are untouched.
-                      </p>
-                    ),
-                    action: (c) =>
-                      act(
-                        () =>
-                          del(
-                            `${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`,
-                            { confirm: c },
-                          ),
-                        "Could not close that pane",
-                        true,
-                      ),
-                  })
-                }
+                onClose={(pane) => void closePane(pane)}
               />
             )}
 

@@ -2,6 +2,8 @@ package term
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -269,7 +271,10 @@ func TestSendKeysRejectsAKeyItDoesNotKnow(t *testing.T) {
 
 func waitForTmuxSession(t *testing.T, m *Manager, name string) {
 	t.Helper()
-	for attempt := 0; attempt < 40; attempt++ {
+	// Generous, because what is being waited on is another process starting:
+	// tmux may have to boot a server, and a test that fails at two seconds is
+	// reporting the machine's load rather than the product's behaviour.
+	for attempt := 0; attempt < 200; attempt++ {
 		for _, s := range m.TmuxSessions(context.Background()) {
 			if s.Name == name {
 				return
@@ -277,7 +282,15 @@ func waitForTmuxSession(t *testing.T, m *Manager, name string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("tmux never reported session %s", name)
+	// What tmux does say, which is the difference between "slow" and "never
+	// created" and is the whole question when this fails.
+	names := []string{}
+	for _, s := range m.TmuxSessions(context.Background()) {
+		names = append(names, s.Name)
+	}
+	out, err := exec.Command("tmux", "list-sessions").CombinedOutput()
+	t.Fatalf("tmux never reported session %s; manager sees %v; tmux says %q (err %v); TMUX_TMPDIR=%s",
+		name, names, string(out), err, os.Getenv("TMUX_TMPDIR"))
 }
 
 func windowsOf(t *testing.T, m *Manager, name string) []Window {

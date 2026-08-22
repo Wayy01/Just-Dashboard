@@ -496,6 +496,14 @@ func (m *Manager) rememberOptions(tmuxName string, opts ...option) {
 			if attempt > 0 {
 				time.Sleep(250 * time.Millisecond)
 			}
+			// A session that has been closed is not a session that is still
+			// starting, and the difference matters: without this the retries
+			// keep firing `tmux set-option` at a name that will never exist
+			// again, and eight rounds of that per closed session is real
+			// contention on the one tmux server everything else is waiting on.
+			if attempt > 0 && !m.sessionExists(tmuxName) {
+				return
+			}
 			left := pending[:0]
 			for _, o := range pending {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -508,6 +516,18 @@ func (m *Manager) rememberOptions(tmuxName string, opts ...option) {
 			pending = left
 		}
 	}()
+}
+
+// sessionExists asks whether this process still holds the session, which is
+// the cheap half of "is it worth retrying" — no subprocess, and it is only
+// ever wrong in the direction that costs one more attempt.
+func (m *Manager) sessionExists(tmuxName string) bool {
+	for _, sess := range m.List() {
+		if sess.TmuxName == tmuxName {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultCommand is the login, as the one string tmux's `default-command`

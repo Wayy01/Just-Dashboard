@@ -44,6 +44,20 @@ func (s *Server) mountTerminalRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/persistent/{name}/windows", s.handle(s.handleTerminalWindows))
 		r.Method(http.MethodPost, "/persistent/{name}/windows", s.handle(s.handleTerminalWindowCreate))
 		r.Method(http.MethodPatch, "/persistent/{name}/windows/{index}", s.handle(s.handleTerminalWindowUpdate))
+		// Closing a window, a pane or a session is destructive — it takes
+		// whatever is running with it — and stays inside `s.destructive` for
+		// the capability check, the tighter budget and the audit entry. It
+		// deliberately carries **no typed phrase**, which is the one place in
+		// this API that combination appears.
+		//
+		// The phrase exists so that an irreversible action cannot be a
+		// mis-click. That reasoning holds for deleting a container or a backup,
+		// which somebody does a handful of times a year. Closing a shell is an
+		// everyday act — a dozen a day for anyone using this panel as intended
+		// — and a phrase in front of an everyday act does not get read, it gets
+		// typed. Training the operator to type "close terminal" without looking
+		// is worse than no guard at all, because it is exactly the habit the
+		// typed confirmation exists to prevent everywhere it still applies.
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/persistent/{name}/windows/{index}", s.handle(s.handleTerminalWindowKill))
 		})
@@ -62,7 +76,8 @@ func (s *Server) mountTerminalRoutes(r chi.Router) {
 		// one: "Ctrl+C was sent to a shell" is an event.
 		r.Method(http.MethodPost, "/persistent/{name}/windows/{index}/keys", s.handle(s.handleTerminalSendKeys))
 		s.destructive(r, func(r chi.Router) {
-			// Killing a session takes whatever is running in it with it.
+			// Killing a session takes whatever is running in it with it. No
+			// typed phrase, for the reason given above the window route.
 			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleTerminalKill))
 		})
 		r.Method(http.MethodGet, "/{id}/cwd", s.handle(s.handleTerminalCWD))
@@ -378,9 +393,6 @@ func (s *Server) handleTerminalDetach(w http.ResponseWriter, r *http.Request) er
 
 func (s *Server) handleTerminalKill(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
-	if err := httpx.RequireTypedConfirmation(w, r, "close terminal"); err != nil {
-		return err
-	}
 	if err := s.modules.term.Kill(r.Context(), id); err != nil {
 		return mapTermError(err)
 	}
@@ -633,9 +645,6 @@ func (s *Server) handleTerminalPaneKill(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, "close pane"); err != nil {
-		return err
-	}
 	if err := s.modules.term.KillPane(r.Context(), name, window, pane); err != nil {
 		if errors.Is(err, term.ErrNotFound) || errors.Is(err, term.ErrNoPersistence) {
 			return mapTermError(err)
@@ -700,9 +709,6 @@ func (s *Server) handleTerminalWindowKill(w http.ResponseWriter, r *http.Request
 	index, err := strconv.Atoi(chi.URLParam(r, "index"))
 	if err != nil {
 		return httpx.BadRequest("window index must be a number")
-	}
-	if err := httpx.RequireTypedConfirmation(w, r, "close window"); err != nil {
-		return err
 	}
 	if err := s.modules.term.KillWindow(r.Context(), name, index); err != nil {
 		// "This is the only window" is a sentence the operator needs, not a

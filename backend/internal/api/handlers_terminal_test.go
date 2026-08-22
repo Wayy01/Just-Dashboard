@@ -408,12 +408,12 @@ func TestWindowsCanBeNamedColouredReorderedAndClosed(t *testing.T) {
 		t.Errorf("after the drag the strip starts with %q, want %q", windows[0].Name, last.Name)
 	}
 
-	// Closing takes a typed phrase, like every irreversible route.
+	// Closing takes no typed phrase, unlike the rest of the destructive
+	// surface. Closing a shell is an everyday act, and a phrase in front of one
+	// gets typed rather than read — which is the habit the typed confirmation
+	// exists to prevent everywhere it does still apply.
 	victim := windows[1]
-	if rec := api.do(http.MethodDelete, base+"/windows/"+itoa(victim.Index), nil, ""); rec.Code != http.StatusPreconditionRequired && rec.Code < 400 {
-		t.Fatalf("closing a window without the phrase = %d, want a refusal", rec.Code)
-	}
-	api.ok(http.MethodDelete, base+"/windows/"+itoa(victim.Index), nil, "close window")
+	api.ok(http.MethodDelete, base+"/windows/"+itoa(victim.Index), nil, "")
 	if got := fetchWindows(t, api, base); len(got) != 2 {
 		t.Errorf("after closing one there are %d windows, want 2", len(got))
 	}
@@ -442,14 +442,14 @@ func TestPanesSplitAndClose(t *testing.T) {
 
 	api.ok(http.MethodPatch, base+"/windows/"+window+"/panes/"+itoa(panes[1].Index),
 		map[string]any{"zoom": true}, "")
-	api.ok(http.MethodDelete, base+"/windows/"+window+"/panes/"+itoa(panes[1].Index), nil, "close pane")
+	api.ok(http.MethodDelete, base+"/windows/"+window+"/panes/"+itoa(panes[1].Index), nil, "")
 	if got := fetchPanes(t, api, base+"/windows/"+window+"/panes"); len(got) != 1 {
 		t.Fatalf("after closing one there are %d panes, want 1", len(got))
 	}
 
 	// And the window's only pane is refused, because tmux would take the
 	// window with it.
-	rec := api.do(http.MethodDelete, base+"/windows/"+window+"/panes/0", nil, "close pane")
+	rec := api.do(http.MethodDelete, base+"/windows/"+window+"/panes/0", nil, "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("closing the last pane = %d, want 400: %s", rec.Code, rec.Body.String())
 	}

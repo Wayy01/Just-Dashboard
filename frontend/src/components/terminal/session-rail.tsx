@@ -362,10 +362,24 @@ function FolderGroup({
         }
         onDragEnd={endDrag}
         className={cn(
-          "group/folder flex items-center gap-1 rounded-lg border border-hairline bg-surface-header px-1.5 py-1 transition-colors",
+          "group/folder flex items-center gap-1 rounded-lg border px-1.5 py-1 transition-colors",
+          !tagVar(folder.colour) && "border-hairline bg-surface-header",
           over === "session" && "border-primary/50 bg-primary/10",
           over === "folder" && "border-t-2 border-t-primary",
         )}
+        // The whole header takes the colour, not just the icon. A folder
+        // painted only on a 20px tile is a folder nobody can pick out of a
+        // list of six at a glance, which is the entire job the colour has.
+        // Mixed against the card rather than set flat, so one hue works on a
+        // near-black surface and a near-white one.
+        style={
+          tagVar(folder.colour)
+            ? {
+                backgroundColor: "color-mix(in oklab, var(--tag) 14%, var(--card))",
+                borderColor: "color-mix(in oklab, var(--tag) 40%, transparent)",
+              }
+            : undefined
+        }
       >
         <GripVertical className="size-3 shrink-0 cursor-grab text-muted-foreground/50 opacity-0 transition-opacity group-hover/folder:opacity-100" />
         <button
@@ -382,14 +396,23 @@ function FolderGroup({
             className="flex size-5 shrink-0 items-center justify-center rounded-[5px]"
             style={{
               backgroundColor: tagVar(folder.colour)
-                ? "color-mix(in oklab, var(--tag) 22%, transparent)"
+                ? "color-mix(in oklab, var(--tag) 30%, transparent)"
                 : "var(--row-hover)",
               color: tagVar(folder.colour) ?? "var(--color-muted-foreground)",
             }}
           >
             {collapsed ? <Folder className="size-3" /> : <FolderOpen className="size-3" />}
           </span>
-          <span className="eyebrow truncate">{folder.name}</span>
+          <span
+            className="eyebrow truncate"
+            style={
+              tagVar(folder.colour)
+                ? { color: "color-mix(in oklab, var(--tag) 75%, var(--foreground))" }
+                : undefined
+            }
+          >
+            {folder.name}
+          </span>
           <span className="numeric rounded-full bg-muted px-1.5 text-[10px] leading-4 text-muted-foreground">
             {items.length}
           </span>
@@ -618,19 +641,36 @@ function SessionRow({
         }
       }}
       className={cn(
-        "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-colors",
-        active
-          ? "border-primary/40 bg-primary/10"
-          : "border-transparent hover:border-hairline hover:bg-[var(--row-hover)]",
+        "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2.5 transition-colors",
+        active && "border-primary/50",
+        !active && !colour && "border-transparent hover:border-hairline hover:bg-[var(--row-hover)]",
+        !active && colour && "hover:brightness-110",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
-      style={tagStyle(colour)}
+      // The colour fills the row rather than drawing a hairline down its edge.
+      // A 2px rule is legible when you already know to look for it and invisible
+      // when you are scanning, which is the only moment the colour is for. The
+      // selected row still wins on the border, so "which one am I looking at"
+      // and "which group is this" stay two separate readings.
+      style={{
+        ...tagStyle(colour),
+        ...(colour
+          ? {
+              backgroundColor: active
+                ? "color-mix(in oklab, var(--tag) 22%, var(--card))"
+                : "color-mix(in oklab, var(--tag) 11%, var(--card))",
+              borderColor: active
+                ? undefined
+                : "color-mix(in oklab, var(--tag) 30%, transparent)",
+            }
+          : active
+            ? { backgroundColor: "color-mix(in oklab, var(--primary) 12%, var(--card))" }
+            : undefined),
+      }}
     >
-      {/* The tag as a rule down the row's own edge, so a coloured session is
-          identifiable inside an uncoloured folder and vice versa. */}
       {colour && (
         <span
-          className="absolute inset-y-1 left-0 w-0.5 rounded-full"
+          className="absolute inset-y-1.5 left-0 w-[3px] rounded-full"
           style={{ backgroundColor: "var(--tag)" }}
         />
       )}
@@ -639,15 +679,27 @@ function SessionRow({
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         {/*
-          The one signal that matters at a glance: a filled dot is a session
-          this dashboard is holding open, a hollow one is running on the host
-          with nothing attached. Both are alive — the difference is only
-          whether clicking costs a reattach.
+          Three states, and it was one before: everything the dashboard was
+          holding drew the same green dot, which on a page where that is nearly
+          every session is a light that is always on and therefore says
+          nothing.
+
+            - **Filled primary, with a halo** — the session on screen. This is
+              the reading somebody actually wants from a list, and the row's
+              border alone was carrying it.
+            - **Filled green** — running and attached, ready without a wait.
+            - **Hollow** — running on the host with no PTY. Still alive; the
+              difference is that clicking costs a reattach.
         */}
         <span
+          data-status={active ? "active" : session.live ? "live" : "detached"}
           className={cn(
-            "size-2 shrink-0 rounded-full",
-            session.live ? "bg-success" : "ring-1 ring-muted-foreground/60 ring-inset",
+            "size-2 shrink-0 rounded-full transition-colors",
+            active
+              ? "bg-primary ring-2 ring-primary/30"
+              : session.live
+                ? "bg-success"
+                : "ring-1 ring-muted-foreground/60 ring-inset",
           )}
         />
         <span className="min-w-0 flex-1">
@@ -674,6 +726,16 @@ function SessionRow({
           onClick={() => onTogglePinned(session)}
         >
           {session.favourite ? <PinOff /> : <Pin />}
+        </IconAction>
+        {/* Closing is the third thing anybody does to a session and it was two
+            clicks down a menu. It is still in the menu for anybody who goes
+            looking there. */}
+        <IconAction
+          label={`Close ${session.title}`}
+          className="size-6 text-muted-foreground hover:text-destructive"
+          onClick={() => onClose(session)}
+        >
+          <X />
         </IconAction>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

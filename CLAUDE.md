@@ -519,7 +519,10 @@ along and nothing in this class surfaces them, and they are the only answer to
 `synchronize-panes`, which is reported in the window listing because it is the
 one setting that turns a typo into the same typo on four servers. Killing the
 last pane in a window is refused for the reason killing the last window in a
-session is: tmux would take the parent with it.
+session is: tmux would take the parent with it. That refusal, and the audit
+entry, are the whole guard on closing: none of the three close routes asks for
+a typed phrase — see invariant 3 for why frequency rather than severity decides
+that.
 
 `SendKeys` is the only way this package writes to a session other than through
 the PTY the operator is attached to. The literal text and the named keys are
@@ -910,11 +913,24 @@ A change that weakens any of these has to say so explicitly:
 
 1. The network allowlist runs **before** authentication.
 2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
-3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. The one
-   relaxation is `httpx.RequireTypedConfirmationWS`, which also accepts the phrase as a query
-   parameter — used only by WebSocket routes, where a browser cannot set a header at all, and
-   where `wsx`'s origin check supplies what the header was protecting against. Do not reach
-   for it from an ordinary handler.
+3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. There are
+   two relaxations, both deliberate and both narrow.
+
+   `httpx.RequireTypedConfirmationWS` also accepts the phrase as a query parameter — used only
+   by WebSocket routes, where a browser cannot set a header at all, and where `wsx`'s origin
+   check supplies what the header was protecting against. Do not reach for it from an ordinary
+   handler.
+
+   The three terminal close routes — a session, a window, a pane — are destructive and carry
+   **no phrase at all**. They stay inside `s.destructive`, so the capability check, the tighter
+   budget and the audit entry all still apply; only the typing is gone. The phrase exists so an
+   irreversible action cannot be a mis-click, and that holds for the things somebody deletes a
+   handful of times a year. Closing a shell is an everyday act — a dozen a day for anyone using
+   the panel as intended — and a phrase in front of an everyday act is not read, it is typed.
+   Training the operator to type "close terminal" without looking is worse than no guard,
+   because it is the exact habit the confirmation is protecting every *other* route with. This
+   is the reasoning to apply before adding a fourth exception; frequency is the test, not
+   severity.
 4. Capability checks live on the route, never in the UI alone. Where the answer depends on
    what is *in* the request rather than which route it hit, the handler checks by hand and
    fails closed: `dbx.Classify` for SQL, `api.authoriseSpec` for a container spec that is
