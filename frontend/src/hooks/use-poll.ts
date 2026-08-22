@@ -10,6 +10,22 @@ type PollState<T> = {
   refresh: () => void
 }
 
+type PollOptions = {
+  /**
+   * Whether to fetch at all. False leaves the last result in place and makes
+   * no request.
+   *
+   * `useSocket` has always had this and `usePoll` did not, which turned out to
+   * matter: a detail panel that is closed still renders, and a fetcher built
+   * as `/docker/stacks/${id ?? ""}` with no id addresses the *list* endpoint —
+   * so a closed panel quietly received an array, rendered `data.services.map`
+   * on it, and took the whole page down with a TypeError. Guarding each call
+   * site with a ternary would have worked; a hook that can be switched off is
+   * the version the next panel gets for free.
+   */
+  enabled?: boolean
+}
+
 /**
  * Fetches on mount and then on an interval. Each run aborts the previous one,
  * so a slow endpoint cannot stack requests, and the interval is paused while
@@ -20,6 +36,7 @@ export function usePoll<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   intervalMs = 5000,
   deps: unknown[] = [],
+  { enabled = true }: PollOptions = {},
 ): PollState<T> {
   const [data, setData] = useState<T>()
   const [error, setError] = useState<Error>()
@@ -36,6 +53,7 @@ export function usePoll<T>(
   const refresh = useCallback(() => setTick((t) => t + 1), [])
 
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     const controller = new AbortController()
 
@@ -75,9 +93,11 @@ export function usePoll<T>(
     // condition this relies on — a caller building `deps` conditionally would
     // crash the page rather than poll wrongly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, tick, ...deps])
+  }, [intervalMs, tick, enabled, ...deps])
 
-  return { data, error, loading, refresh }
+  // A disabled poll is not loading: nothing is in flight, and reporting
+  // otherwise would leave a caller showing a skeleton forever.
+  return { data, error, loading: enabled && loading, refresh }
 }
 
 export function isAuthError(error: Error | undefined) {

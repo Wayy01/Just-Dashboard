@@ -72,6 +72,11 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.modules.metrics.Start(ctx); err != nil {
 		return err
 	}
+	// The Docker event log is started for the same reason and never fails:
+	// Docker's stream is the only record of an OOM kill or a health check
+	// going red, and the daemon keeps none of it. A host with no Docker
+	// simply never connects, which is a steady state rather than an error.
+	s.modules.dockerEvents.Start(ctx)
 	return s.modules.backupSched.Start(ctx)
 }
 

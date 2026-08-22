@@ -54,3 +54,27 @@ func TestRequireTypedConfirmation(t *testing.T) {
 		})
 	}
 }
+
+// A browser cannot set a header on a WebSocket handshake, so the streaming
+// compose runner accepts the phrase as a query parameter instead. These pin
+// that the relaxation is exactly that and no wider: the query form works only
+// where a route opted into it, and a wrong phrase is still refused.
+func TestRequireTypedConfirmationWS(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/docker/stacks/shop/run?action=down&confirm=shop", nil)
+	if err := RequireTypedConfirmationWS(rec, r, "shop"); err != nil {
+		t.Fatalf("a matching phrase in the query must be accepted: %v", err)
+	}
+
+	wrong := httptest.NewRequest(http.MethodGet, "/api/v1/docker/stacks/shop/run?confirm=nope", nil)
+	if err := RequireTypedConfirmationWS(rec, wrong, "shop"); err == nil {
+		t.Fatal("a mismatched phrase must still be refused")
+	}
+
+	// The ordinary guard must not have widened: a query parameter is not a
+	// confirmation on a route that did not ask for one.
+	plain := httptest.NewRequest(http.MethodPost, "/api/v1/docker/containers/1/stop?confirm=shop", nil)
+	if err := RequireTypedConfirmation(rec, plain, "shop"); err == nil {
+		t.Fatal("the header-only guard must ignore the query parameter")
+	}
+}

@@ -21,11 +21,26 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/info", s.handle(s.handleDockerInfo))
 		r.Method(http.MethodGet, "/disk-usage", s.handle(s.handleDockerDiskUsage))
 
+		// What is wrong with Docker on this host, in sentences. Read-only: it
+		// only reports, and every remedy it suggests is a separate route with
+		// its own capability check.
+		r.Method(http.MethodGet, "/health", s.handle(s.handleDockerDiagnose))
+
+		// What the daemon did while nobody was watching.
+		r.Method(http.MethodGet, "/events", s.handle(s.handleDockerEvents))
+		r.Method(http.MethodGet, "/events/stream", s.handle(s.handleDockerEventStream))
+
 		r.Route("/containers", func(r chi.Router) {
 			r.Method(http.MethodGet, "/", s.handle(s.handleContainerList))
 			r.Method(http.MethodGet, "/stats", s.handle(s.handleContainerStatsAll))
 			r.Method(http.MethodGet, "/stream", s.handle(s.handleContainerStream))
 			r.Method(http.MethodGet, "/{id}", s.handle(s.handleContainerInspect))
+			r.Method(http.MethodGet, "/{id}/raw", s.handle(s.handleContainerRaw))
+			r.Method(http.MethodGet, "/{id}/spec", s.handle(s.handleContainerSpec))
+			r.Method(http.MethodGet, "/{id}/changes", s.handle(s.handleContainerChanges))
+			// Where a published port is actually reachable, including
+			// through the reverse proxy this dashboard also manages.
+			r.Method(http.MethodGet, "/{id}/routes", s.handle(s.handleContainerRoutes))
 			r.Method(http.MethodGet, "/{id}/logs", s.handle(s.handleContainerLogs))
 			r.Method(http.MethodGet, "/{id}/logs/stream", s.handle(s.handleContainerLogStream))
 			r.Method(http.MethodGet, "/{id}/stats/stream", s.handle(s.handleContainerStatStream))
@@ -37,14 +52,31 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 				r.Method(http.MethodPost, "/{id}/start", s.handle(s.containerLifecycle(dockerx.ActionStart)))
 				r.Method(http.MethodPost, "/{id}/pause", s.handle(s.containerLifecycle(dockerx.ActionPause)))
 				r.Method(http.MethodPost, "/{id}/unpause", s.handle(s.containerLifecycle(dockerx.ActionUnpause)))
+				// Creating a container is the strongest primitive the Docker
+				// socket offers, so the handler applies a second check by
+				// hand: a spec that is privileged or mounts a host path
+				// additionally requires system.admin. That is the same shape
+				// as POST /databases/{id}/query, where what the request is
+				// allowed to do depends on what is in it.
+				r.Method(http.MethodPost, "/", s.handle(s.handleContainerCreate))
+				// Renders a spec as the `docker run` and compose that would
+				// produce it. Reads nothing and changes nothing, but it is
+				// only reachable by someone who could create the container,
+				// so it sits in the same group as the form it belongs to.
+				r.Method(http.MethodPost, "/preview", s.handle(s.handleContainerPreview))
+				r.Method(http.MethodPost, "/{id}/rename", s.handle(s.handleContainerRename))
+				r.Method(http.MethodPatch, "/{id}/resources", s.handle(s.handleContainerResources))
 			})
 			// Stop, restart and kill interrupt a running service, so they
 			// carry the typed-confirmation requirement even though the
-			// container itself survives.
+			// container itself survives. Recreate destroys the container and
+			// builds a new one in its place, which is the same bargain with
+			// higher stakes.
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodPost, "/{id}/stop", s.handle(s.containerLifecycle(dockerx.ActionStop)))
 				r.Method(http.MethodPost, "/{id}/restart", s.handle(s.containerLifecycle(dockerx.ActionRestart)))
 				r.Method(http.MethodPost, "/{id}/kill", s.handle(s.containerLifecycle(dockerx.ActionKill)))
+				r.Method(http.MethodPost, "/{id}/recreate", s.handle(s.handleContainerRecreate))
 				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleContainerRemove))
 				r.Method(http.MethodPost, "/prune", s.handle(s.handleContainerPrune))
 			})
@@ -56,9 +88,15 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 
 		r.Route("/images", func(r chi.Router) {
 			r.Method(http.MethodGet, "/", s.handle(s.handleImageList))
+			// Registered above /{id} so chi matches the literal segment
+			// first — otherwise "updates" is read as an image id.
+			r.Method(http.MethodGet, "/updates", s.handle(s.handleImageUpdates))
+			r.Method(http.MethodGet, "/{id}", s.handle(s.handleImageDetail))
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireCapability(auth.CapServiceControl))
 				r.Method(http.MethodGet, "/pull", s.handle(s.handleImagePull))
+				r.Method(http.MethodPost, "/{id}/tag", s.handle(s.handleImageTag))
+				r.Method(http.MethodGet, "/build", s.handle(s.handleImageBuild))
 			})
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleImageRemove))
@@ -69,6 +107,10 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 		r.Route("/volumes", func(r chi.Router) {
 			r.Method(http.MethodGet, "/", s.handle(s.handleVolumeList))
 			r.Method(http.MethodGet, "/{name}", s.handle(s.handleVolumeInspect))
+			r.Group(func(r chi.Router) {
+				r.Use(httpx.RequireCapability(auth.CapServiceControl))
+				r.Method(http.MethodPost, "/", s.handle(s.handleVolumeCreate))
+			})
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodDelete, "/{name}", s.handle(s.handleVolumeRemove))
 				r.Method(http.MethodPost, "/prune", s.handle(s.handleVolumePrune))
@@ -78,24 +120,54 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 		r.Route("/networks", func(r chi.Router) {
 			r.Method(http.MethodGet, "/", s.handle(s.handleNetworkList))
 			r.Method(http.MethodGet, "/{id}", s.handle(s.handleNetworkInspect))
+			r.Group(func(r chi.Router) {
+				r.Use(httpx.RequireCapability(auth.CapServiceControl))
+				r.Method(http.MethodPost, "/", s.handle(s.handleNetworkCreate))
+				// Reversible in one click, and the fix for the commonest
+				// Docker problem there is, so it is not behind a typed
+				// phrase — the cost of getting it wrong is reconnecting.
+				r.Method(http.MethodPost, "/{id}/connect", s.handle(s.handleNetworkConnect))
+				r.Method(http.MethodPost, "/{id}/disconnect", s.handle(s.handleNetworkDisconnect))
+			})
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleNetworkRemove))
+				r.Method(http.MethodPost, "/prune", s.handle(s.handleNetworkPrune))
 			})
 		})
 
 		r.Route("/stacks", func(r chi.Router) {
 			r.Method(http.MethodGet, "/", s.handle(s.handleStackList))
+			r.Method(http.MethodGet, "/{name}", s.handle(s.handleStackDetail))
 			r.Method(http.MethodGet, "/{name}/config", s.handle(s.handleStackConfig))
+			r.Method(http.MethodGet, "/{name}/logs/stream", s.handle(s.handleStackLogStream))
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireCapability(auth.CapServiceControl))
 				r.Method(http.MethodPost, "/{name}/up", s.handle(s.stackAction(dockerx.ComposeUp)))
 				r.Method(http.MethodPost, "/{name}/start", s.handle(s.stackAction(dockerx.ComposeStart)))
 				r.Method(http.MethodPost, "/{name}/pull", s.handle(s.stackAction(dockerx.ComposePull)))
+				r.Method(http.MethodPost, "/{name}/build", s.handle(s.stackAction(dockerx.ComposeBuild)))
+				// The streaming runner. A socket rather than a POST because
+				// `up` on a stack that has to pull and build takes minutes,
+				// and a request that hangs for minutes is indistinguishable
+				// from a broken dashboard. Which action it runs is decided
+				// inside the handler, where the destructive ones can be given
+				// the same confirmation and budget the POSTs above get.
+				r.Method(http.MethodGet, "/{name}/run", s.handle(s.handleStackRun))
+				r.Method(http.MethodPost, "/{name}/validate", s.handle(s.handleStackValidate))
+			})
+			r.Group(func(r chi.Router) {
+				// Editing a compose file is editing a file on the server, and
+				// is gated as one. Creating a stack writes a new one.
+				r.Use(httpx.RequireCapability(auth.CapFileWrite))
+				r.Method(http.MethodPut, "/{name}/config", s.handle(s.handleStackConfigWrite))
+				r.Method(http.MethodPost, "/", s.handle(s.handleStackCreate))
 			})
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodPost, "/{name}/down", s.handle(s.stackAction(dockerx.ComposeDown)))
 				r.Method(http.MethodPost, "/{name}/stop", s.handle(s.stackAction(dockerx.ComposeStop)))
 				r.Method(http.MethodPost, "/{name}/restart", s.handle(s.stackAction(dockerx.ComposeRestart)))
+				r.Method(http.MethodPost, "/{name}/update", s.handle(s.stackAction(dockerx.ComposeUpdate)))
+				r.Method(http.MethodPost, "/{name}/recreate", s.handle(s.stackAction(dockerx.ComposeRecreate)))
 			})
 		})
 
@@ -653,8 +725,14 @@ func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
+// handleVolumeList joins the volume list to the containers using each one.
+//
+// The join is what makes the delete button honest. Docker's own RefCount
+// counts running containers only, so a volume belonging to a stopped stack
+// reads as unused — and that is precisely the volume an operator prunes by
+// accident, along with the only copy of whatever was in it.
 func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) error {
-	list, err := s.modules.docker.ListVolumes(r.Context())
+	list, err := s.modules.docker.ListVolumesWithUsers(r.Context())
 	if err != nil {
 		return s.dockerErr(err)
 	}
@@ -663,7 +741,7 @@ func (s *Server) handleVolumeList(w http.ResponseWriter, r *http.Request) error 
 }
 
 func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) error {
-	v, err := s.modules.docker.InspectVolume(r.Context(), chi.URLParam(r, "name"))
+	v, err := s.modules.docker.VolumeDetail(r.Context(), chi.URLParam(r, "name"))
 	if err != nil {
 		return s.dockerErr(err)
 	}
@@ -706,8 +784,12 @@ func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
+// handleNetworkInspect returns the network and, more usefully, who is on it
+// and what name each of them answers to. "These two containers cannot see each
+// other" is the commonest Docker problem there is and its answer is nearly
+// always here.
 func (s *Server) handleNetworkInspect(w http.ResponseWriter, r *http.Request) error {
-	n, err := s.modules.docker.InspectNetwork(r.Context(), chi.URLParam(r, "id"))
+	n, err := s.modules.docker.NetworkDetail(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		return s.dockerErr(err)
 	}
@@ -752,13 +834,7 @@ func (s *Server) imageName(ctx context.Context, id string) string {
 	return shortID(id)
 }
 
-func shortID(id string) string {
-	id = strings.TrimPrefix(id, "sha256:")
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
-}
+func shortID(id string) string { return dockerx.ShortID(id) }
 
 func (s *Server) handleStackList(w http.ResponseWriter, r *http.Request) error {
 	list, err := s.modules.docker.ListStacks(r.Context(), s.Cfg.ComposeRoots)
@@ -808,7 +884,10 @@ func (s *Server) stackAction(action dockerx.ComposeAction) httpx.Handler {
 		if !stack.Managed {
 			return httpx.BadRequest("stack %q has no compose file on disk that this dashboard can reach", name)
 		}
-		if action == dockerx.ComposeDown || action == dockerx.ComposeStop || action == dockerx.ComposeRestart {
+		// One answer to "which of these interrupts a running service", shared
+		// with the streaming runner so the socket cannot become a way around
+		// the confirmation the POST demands.
+		if composeIsDestructive(action) {
 			if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
 				return err
 			}

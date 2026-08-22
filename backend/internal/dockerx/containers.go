@@ -38,6 +38,11 @@ type Container struct {
 	SizeRw       int64             `json:"sizeRw,omitempty"`
 	ComposeStack string            `json:"composeStack,omitempty"`
 	ComposeSvc   string            `json:"composeService,omitempty"`
+	// Mounts comes free with the listing. Carried because the volumes view
+	// needs "which containers use this volume" for every volume at once, and
+	// the alternative is an inspect per container on every poll — sixty round
+	// trips to the socket to draw one table.
+	Mounts []MountPoint `json:"mounts,omitempty"`
 }
 
 func (c *Client) ListContainers(ctx context.Context, all bool) ([]Container, error) {
@@ -68,8 +73,17 @@ func (c *Client) ListContainers(ctx context.Context, all bool) ([]Container, err
 		if len(cn.Names) > 0 {
 			cn.Name = cn.Names[0]
 		}
+		if cn.Labels == nil {
+			cn.Labels = map[string]string{}
+		}
 		for _, p := range it.Ports {
 			cn.Ports = append(cn.Ports, Port{IP: p.IP, PrivatePort: p.PrivatePort, PublicPort: p.PublicPort, Type: p.Type})
+		}
+		for _, m := range it.Mounts {
+			cn.Mounts = append(cn.Mounts, MountPoint{
+				Type: string(m.Type), Name: m.Name, Source: m.Source,
+				Destination: m.Destination, Mode: m.Mode, RW: m.RW,
+			})
 		}
 		if it.NetworkSettings != nil {
 			for name := range it.NetworkSettings.Networks {
@@ -242,7 +256,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, erro
 		Env:         []string{},
 		Mounts:      []MountPoint{},
 		NetworkList: []NetworkBinding{},
-		Args:        insp.Args,
+		Args:        orEmpty(insp.Args),
 		Platform:    insp.Platform,
 		LogPath:     insp.LogPath,
 	}
@@ -250,7 +264,10 @@ func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, erro
 		d.Image = insp.Config.Image
 		d.Env = insp.Config.Env
 		d.Labels = insp.Config.Labels
-		d.Entrypoint = insp.Config.Entrypoint
+		if d.Labels == nil {
+			d.Labels = map[string]string{}
+		}
+		d.Entrypoint = orEmpty(insp.Config.Entrypoint)
 		d.WorkingDir = insp.Config.WorkingDir
 		d.User = insp.Config.User
 		d.Command = strings.Join(insp.Config.Cmd, " ")
@@ -278,7 +295,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, erro
 		d.NetworkMode = string(insp.HostConfig.NetworkMode)
 		d.RestartPol = string(insp.HostConfig.RestartPolicy.Name)
 		d.Privileged = insp.HostConfig.Privileged
-		d.CapAdd = insp.HostConfig.CapAdd
+		d.CapAdd = orEmpty(insp.HostConfig.CapAdd)
 	}
 	d.RestartNum = insp.RestartCount
 	for _, m := range insp.Mounts {
@@ -292,7 +309,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (*ContainerDetail, erro
 			d.Networks = append(d.Networks, name)
 			d.NetworkList = append(d.NetworkList, NetworkBinding{
 				Name: name, IPAddress: ep.IPAddress, Gateway: ep.Gateway,
-				MacAddress: ep.MacAddress, Aliases: ep.Aliases, NetworkID: ep.NetworkID,
+				MacAddress: ep.MacAddress, Aliases: orEmpty(ep.Aliases), NetworkID: ep.NetworkID,
 			})
 		}
 		sort.Strings(d.Networks)
@@ -387,6 +404,11 @@ type LogOptions struct {
 type LogLine struct {
 	Stream string `json:"stream"`
 	Text   string `json:"text"`
+	// Service is set only when several containers' logs are merged into one
+	// feed — a compose stack followed as a whole. Without it the merged
+	// stream is four processes talking over each other with no way to tell
+	// which said what.
+	Service string `json:"service,omitempty"`
 }
 
 // Logs returns a reader of demultiplexed log lines. The caller must drain it;

@@ -360,6 +360,8 @@ export type DirEntry = {
   entries: number
 }
 
+export type ContainerPort = { ip?: string; privatePort: number; publicPort?: number; type: string }
+
 export type Container = {
   id: string
   names: string[]
@@ -373,7 +375,7 @@ export type Container = {
   createdAt: string
   startedAt?: string
   uptimeSeconds: number
-  ports: { ip?: string; privatePort: number; publicPort?: number; type: string }[]
+  ports: ContainerPort[]
   labels: Record<string, string>
   networks: string[]
   composeStack?: string
@@ -469,21 +471,247 @@ export type DockerNetwork = {
   containers: number
 }
 
+export type ComposeService = {
+  name: string
+  container: string
+  state: string
+  status: string
+  image: string
+  health?: string
+  ports: ContainerPort[]
+  /** Declared by the compose file with no container behind it. */
+  missing?: boolean
+}
+
 export type ComposeStack = {
   name: string
   workingDir: string
   configFiles: string[]
-  services: {
-    name: string
-    container: string
-    state: string
-    status: string
-    image: string
-  }[]
+  services: ComposeService[]
   running: number
   total: number
   managed: boolean
 }
+
+export type StackDetail = ComposeStack & {
+  configPath?: string
+  declared: string[]
+  declaredError?: string
+  git?: {
+    path: string
+    branch?: string
+    dirty: boolean
+    changes: number
+    ahead: number
+    behind: number
+    commit?: string
+    subject?: string
+  }
+}
+
+export type ComposeValidation = {
+  valid: boolean
+  error?: string
+  normalised?: string
+  services: string[]
+}
+
+/**
+ * The dashboard's opinion of what Docker on this host is doing wrong.
+ * `action` names a remedy the UI turns into a button; the empty ones are
+ * findings whose fix is outside this panel.
+ */
+export type DockerFinding = {
+  id: string
+  level: "critical" | "warning" | "notice"
+  title: string
+  detail: string
+  advice?: string
+  scope: "container" | "stack" | "daemon" | string
+  target?: string
+  targetId?: string
+  action?: string
+  actionLabel?: string
+}
+
+export type DockerDiagnosis = {
+  status: "ok" | "notice" | "warning" | "critical"
+  findings: DockerFinding[]
+  checkedAt: string
+  checked: number
+}
+
+export type DockerEvent = {
+  time: string
+  type: string
+  action: string
+  name: string
+  id?: string
+  image?: string
+  stack?: string
+  exitCode?: string
+  message: string
+  level: "info" | "notice" | "error"
+}
+
+export type DockerEventFeed = {
+  events: DockerEvent[]
+  listening: boolean
+  since: string
+  buffered: number
+}
+
+/** Whether the tag a container runs still points where it did when pulled. */
+export type ImageUpdateStatus = {
+  ref: string
+  state: "current" | "outdated" | "unknown" | "local"
+  localDigest?: string
+  remoteDigest?: string
+  reason?: string
+  checkedAt: string
+}
+
+export type ImageDetail = {
+  id: string
+  repoTags: string[]
+  repoDigests: string[]
+  size: number
+  created: string
+  architecture?: string
+  os?: string
+  author?: string
+  labels: Record<string, string>
+  entrypoint: string[]
+  command: string[]
+  workingDir?: string
+  user?: string
+  exposedPorts: string[]
+  volumePaths: string[]
+  env: string[]
+  layers: {
+    id: string
+    created: string
+    createdBy: string
+    size: number
+    comment?: string
+    tags: string[]
+  }[]
+  usedBy: { id: string; name: string; state: string; stack?: string; service?: string }[]
+}
+
+export type VolumeUser = {
+  id: string
+  name: string
+  state: string
+  destination: string
+  readOnly: boolean
+  stack?: string
+}
+
+export type VolumeDetail = DockerVolume & {
+  usedBy: VolumeUser[]
+  options?: Record<string, string>
+}
+
+export type NetworkMember = {
+  id: string
+  name: string
+  ipv4?: string
+  ipv6?: string
+  mac?: string
+  aliases: string[]
+  state?: string
+  stack?: string
+}
+
+export type NetworkDetail = DockerNetwork & {
+  gateway?: string
+  options?: Record<string, string>
+  members: NetworkMember[]
+  system: boolean
+}
+
+export type FileChange = { path: string; kind: "modified" | "added" | "deleted" }
+
+/**
+ * The dashboard's description of a container to run — the shape the create
+ * form speaks, translated to the Engine's ninety fields on the server.
+ */
+export type ContainerSpec = {
+  name: string
+  image: string
+  command?: string[]
+  entrypoint?: string[]
+  env?: { name: string; value: string }[]
+  ports?: PortMapping[]
+  mounts?: MountSpec[]
+  devices?: { host: string; container?: string; permissions?: string }[]
+  labels?: { name: string; value: string }[]
+  health?: HealthSpec
+  limits: ResourceLimits
+  networks?: string[]
+  networkMode?: string
+  hostname?: string
+  extraHosts?: string[]
+  dns?: string[]
+  restartPolicy?: string
+  maxRetries?: number
+  workingDir?: string
+  user?: string
+  stopSignal?: string
+  privileged?: boolean
+  capAdd?: string[]
+  capDrop?: string[]
+  init?: boolean
+  autoRemove?: boolean
+  tty?: boolean
+  openStdin?: boolean
+  readOnlyRootfs?: boolean
+  pull?: "missing" | "always"
+  start: boolean
+}
+
+export type PortMapping = {
+  hostIp?: string
+  hostPort: number
+  containerPort: number
+  protocol?: string
+}
+
+export type MountSpec = {
+  /** "volume" is Docker-managed storage, "bind" a folder on the server, "tmpfs" memory. */
+  type: "volume" | "bind" | "tmpfs"
+  source?: string
+  target: string
+  readOnly?: boolean
+  sizeMb?: number
+}
+
+export type HealthSpec = {
+  test: string[]
+  intervalSeconds?: number
+  timeoutSeconds?: number
+  startPeriodSeconds?: number
+  retries?: number
+  disable?: boolean
+}
+
+export type ResourceLimits = {
+  memoryMb?: number
+  memorySwapMb?: number
+  cpus?: number
+  pidsLimit?: number
+  shmSizeMb?: number
+}
+
+export type CreateResult = {
+  id: string
+  name: string
+  warnings: string[]
+  started: boolean
+}
+
+export type SpecPreview = { run: string; compose: string }
 
 export type PM2Process = {
   id: number

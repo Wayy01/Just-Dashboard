@@ -2,12 +2,16 @@
 
 import { useCallback, useMemo, useState } from "react"
 import {
+  Activity,
+  ArrowUpCircle,
   Box,
   Boxes,
   CircleSlash,
+  HeartPulse,
   Layers,
   Pause,
   Play,
+  Plus,
   RotateCw,
   Square,
   Terminal as TerminalIcon,
@@ -16,7 +20,14 @@ import {
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { bytes, percent, truncateMiddle } from "@/lib/format"
-import type { Container, ContainerSparkline, ContainerStats } from "@/lib/types"
+import type {
+  Container,
+  ContainerSparkline,
+  ContainerSpec,
+  ContainerStats,
+  DockerDiagnosis,
+  DockerFinding,
+} from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -29,11 +40,14 @@ import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { StatusBadge } from "@/components/status-dot"
 import { IconAction } from "@/components/icon-action"
 import { ContainerDetailSheet } from "@/components/docker/container-detail"
+import { CreateContainerPanel } from "@/components/docker/create-container"
+import { DiagnosisPanel, healthLabel } from "@/components/docker/diagnosis-panel"
+import { EventsTab } from "@/components/docker/events-tab"
 import { ImagesTab } from "@/components/docker/images-tab"
 import { NetworksTab } from "@/components/docker/networks-tab"
 import { StacksTab } from "@/components/docker/stacks-tab"
 import { VolumesTab } from "@/components/docker/volumes-tab"
-import { Badge } from "@/components/ui/badge"
+import { PortLink } from "@/components/docker/shared"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -54,7 +68,9 @@ export default function DockerPage() {
   const [stats, setStats] = useState<Record<string, ContainerStats>>({})
   const [socketError, setSocketError] = useState<string>()
   const [selected, setSelected] = useState<string | null>(null)
+  const [creating, setCreating] = useState<ContainerSpec | true | null>(null)
   const [filter, setFilter] = useState("")
+  const [tab, setTab] = useState("containers")
 
   /**
    * An hour of shape per container, in one request.
@@ -84,6 +100,19 @@ export default function DockerPage() {
     for (const line of trends.data ?? []) map.set(line.name, line)
     return map
   }, [trends.data])
+
+  /**
+   * The verdict on Docker as a whole.
+   *
+   * One pass over every container on the server, so a finding for any one of
+   * them is available in its own panel without a second request. Polled slowly
+   * — the checks read history to tell a spike from a trend, and the answer
+   * does not change between two clicks.
+   */
+  const health = usePoll<DockerDiagnosis>(
+    (signal) => get<DockerDiagnosis>("/docker/health", undefined, signal),
+    60_000,
+  )
 
   const ping = usePoll(
     (signal) =>
@@ -121,6 +150,82 @@ export default function DockerPage() {
       throw err
     }
   }
+
+  /**
+   * A finding's remedy, carried out.
+   *
+   * This is what separates a diagnosis from a warning list: the server names
+   * an action it knows how to do, and pressing the button here does it. The
+   * ones that are not fixes — "show me the evidence" — open the panel at the
+   * tab that holds it, which is the same thing an operator would have done
+   * next anyway.
+   */
+  const runFix = useCallback(
+    (finding: DockerFinding) => {
+      switch (finding.action) {
+        case "logs":
+        case "usage":
+          setSelected(finding.targetId ?? null)
+          break
+        case "unpause":
+          if (finding.targetId) {
+            post(`/docker/containers/${finding.targetId}/unpause`)
+              .then(() => {
+                toast.success(`${finding.target} resumed`)
+                health.refresh()
+              })
+              .catch((err) => toast.error(String(err)))
+          }
+          break
+        case "set-restart":
+          // Docker cannot change a restart policy in place, so this is a
+          // recreate with one field edited. It goes through the same typed
+          // confirmation as any other recreate, because it interrupts the
+          // service for as long as the replacement takes to start.
+          if (finding.targetId && finding.target) {
+            confirm({
+              title: "Set a restart policy",
+              phrase: finding.target,
+              confirmLabel: "Apply",
+              description: (
+                <>
+                  <p>
+                    <b>{finding.target}</b> will be replaced by an identical container that comes
+                    back after a reboot. Docker cannot change this on a container that already
+                    exists, so the only way to set it is to rebuild it.
+                  </p>
+                  <p>
+                    Its volumes and settings come with it; the service is interrupted for as long
+                    as it takes to start.
+                  </p>
+                </>
+              ),
+              action: async (phrase) => {
+                const spec = await get<ContainerSpec>(
+                  `/docker/containers/${finding.targetId}/spec`,
+                )
+                await post(
+                  `/docker/containers/${finding.targetId}/recreate`,
+                  { spec: { ...spec, restartPolicy: "unless-stopped" } },
+                  { confirm: phrase },
+                )
+                health.refresh()
+              },
+            })
+          }
+          break
+        case "stack.up":
+          setTab("stacks")
+          break
+        case "prune":
+          setTab("images")
+          break
+        default:
+          if (finding.targetId) setSelected(finding.targetId)
+      }
+    },
+    [health, confirm],
+  )
 
   const visible = useMemo(() => {
     const needle = filter.toLowerCase()
@@ -167,6 +272,7 @@ export default function DockerPage() {
   const stacks = new Set(containers.map((c) => c.composeStack).filter(Boolean)).size
   const cpuTotal = Object.values(stats).reduce((s, r) => s + r.cpuPercent, 0)
   const memTotal = Object.values(stats).reduce((s, r) => s + r.memUsage, 0)
+  const status = health.data?.status ?? "ok"
 
   return (
     <Page>
@@ -175,37 +281,46 @@ export default function DockerPage() {
         title="Docker"
         description={`Engine ${ping.data?.serverVersion ?? "unknown"}`}
         actions={
-          can("destructive") && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                confirm({
-                  title: "Prune everything",
-                  phrase: "prune everything",
-                  confirmLabel: "Prune",
-                  description: (
-                    <p>
-                      Removes stopped containers, dangling images and unused networks. Volumes are
-                      left alone unless you prune them from the Volumes tab.
-                    </p>
-                  ),
-                  action: async (c) => {
-                    const reports = await post<{ kind: string; spaceReclaimed: number }[]>(
-                      "/docker/prune",
-                      undefined,
-                      { confirm: c },
-                    )
-                    const total = reports.reduce((s, r) => s + r.spaceReclaimed, 0)
-                    toast.success(`Reclaimed ${bytes(total)}`)
-                  },
-                })
-              }
-            >
-              <Trash2 className="size-4" />
-              Prune
-            </Button>
-          )
+          <>
+            {can("service.control") && (
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus className="size-4" />
+                Run a container
+              </Button>
+            )}
+            {can("destructive") && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  confirm({
+                    title: "Prune everything",
+                    phrase: "prune everything",
+                    confirmLabel: "Prune",
+                    description: (
+                      <p>
+                        Removes stopped containers, dangling images and unused networks. Volumes are
+                        left alone unless you prune them from the Volumes tab.
+                      </p>
+                    ),
+                    action: async (c) => {
+                      const reports = await post<{ kind: string; spaceReclaimed: number }[]>(
+                        "/docker/prune",
+                        undefined,
+                        { confirm: c },
+                      )
+                      const total = reports.reduce((s, r) => s + r.spaceReclaimed, 0)
+                      toast.success(`Reclaimed ${bytes(total)}`)
+                      health.refresh()
+                    },
+                  })
+                }
+              >
+                <Trash2 className="size-4" />
+                Prune
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -224,23 +339,43 @@ export default function DockerPage() {
           hint={stopped ? "not currently serving" : "everything is up"}
         />
         <StatTile label="Compose stacks" icon={Layers} value={stacks} hint="labelled projects" />
+        {/*
+          The verdict replaces the fourth "how busy" tile. Utilisation is
+          already two tiles away and on every chart; whether anything is
+          broken was nowhere.
+        */}
         <StatTile
-          label="Container load"
-          icon={Boxes}
-          value={percent(cpuTotal)}
-          hint={`${bytes(memTotal)} resident`}
+          label="Health"
+          icon={HeartPulse}
+          value={healthLabel(status)}
+          tone={status === "critical" ? "danger" : status === "warning" ? "warning" : "success"}
+          hint={
+            health.data
+              ? `${health.data.findings.length || "no"} finding${health.data.findings.length === 1 ? "" : "s"} · ${percent(cpuTotal, 0)} CPU, ${bytes(memTotal)} resident`
+              : "checking…"
+          }
         />
       </div>
 
+      {/* Only when there is something to say; an always-present "all good"
+          panel is a row of chrome that trains the eye to skip it. */}
+      {(health.data?.findings.length ?? 0) > 0 && (
+        <DiagnosisPanel diagnosis={health.data} onAction={runFix} />
+      )}
+
       {socketError && <ErrorState error={new Error(socketError)} />}
 
-      <Tabs defaultValue="containers" className="min-w-0 gap-4">
+      <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="containers">Containers</TabsTrigger>
           <TabsTrigger value="stacks">Stacks</TabsTrigger>
           <TabsTrigger value="images">Images</TabsTrigger>
           <TabsTrigger value="volumes">Volumes</TabsTrigger>
           <TabsTrigger value="networks">Networks</TabsTrigger>
+          <TabsTrigger value="events">
+            <Activity className="size-3.5" />
+            Events
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="containers" className="min-w-0">
@@ -274,6 +409,7 @@ export default function DockerPage() {
                 <TableBody>
                   {visible.map((container) => {
                     const stat = stats[container.id]
+                    const worst = worstFinding(health.data, container.id)
                     return (
                       <TableRow
                         key={container.id}
@@ -301,10 +437,26 @@ export default function DockerPage() {
                         </TableCell>
                         <TableCell>
                           <StatusBadge state={container.state} label={container.status} />
-                          {container.health && (
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              {container.health}
+                          {/*
+                            The worst finding for this row, in its own words.
+                            "Exited (137)" is already in the status; what it
+                            means was not anywhere.
+                          */}
+                          {worst ? (
+                            <p
+                              className={`mt-1 line-clamp-1 max-w-[16rem] text-[11px] ${
+                                worst.level === "critical" ? "text-destructive" : "text-warning"
+                              }`}
+                              title={worst.detail}
+                            >
+                              {worst.title}
                             </p>
+                          ) : (
+                            container.health && (
+                              <p className="mt-1 text-[11px] text-muted-foreground">
+                                {container.health}
+                              </p>
+                            )
                           )}
                         </TableCell>
                         <TableCell className="text-right">
@@ -344,13 +496,12 @@ export default function DockerPage() {
                               .filter((p) => p.publicPort)
                               .slice(0, 3)
                               .map((p, i) => (
-                                <Badge
+                                <PortLink
                                   key={i}
-                                  variant="outline"
-                                  className="font-mono text-[10px] font-normal"
-                                >
-                                  {p.publicPort}:{p.privatePort}
-                                </Badge>
+                                  ip={p.ip}
+                                  port={p.publicPort ?? 0}
+                                  target={p.privatePort}
+                                />
                               ))}
                           </div>
                         </TableCell>
@@ -418,6 +569,47 @@ export default function DockerPage() {
                                 </IconAction>
                               )
                             )}
+                            {/*
+                              Update: pull a newer image and rebuild the
+                              container from the settings it already has. The
+                              action every self-hoster wants and the one that
+                              took a shell and four commands.
+                            */}
+                            {can("destructive") && !container.composeStack && (
+                              <IconAction
+                                label="Update to a newer image"
+                                onClick={() =>
+                                  confirm({
+                                    title: "Update container",
+                                    phrase: container.name,
+                                    confirmLabel: "Update",
+                                    description: (
+                                      <>
+                                        <p>
+                                          Pulls a newer <b>{container.image}</b> and replaces{" "}
+                                          <b>{container.name}</b> with a container built from it,
+                                          keeping every setting it has now.
+                                        </p>
+                                        <p>
+                                          Its volumes come with it. Anything written inside the
+                                          container rather than into a volume does not.
+                                        </p>
+                                      </>
+                                    ),
+                                    action: async (c) => {
+                                      await post(
+                                        `/docker/containers/${container.id}/recreate`,
+                                        { pullLatest: true },
+                                        { confirm: c },
+                                      )
+                                      health.refresh()
+                                    },
+                                  })
+                                }
+                              >
+                                <ArrowUpCircle />
+                              </IconAction>
+                            )}
                             {can("terminal") && container.state === "running" && (
                               <IconAction label="Shell" onClick={() => setSelected(container.id)}>
                                 <TerminalIcon />
@@ -460,7 +652,21 @@ export default function DockerPage() {
                       <TableCell colSpan={8} className="p-0">
                         <EmptyState
                           icon={Boxes}
-                          title={filter ? "No containers match that filter" : "No containers"}
+                          title={filter ? "No containers match that filter" : "Nothing running yet"}
+                          description={
+                            filter
+                              ? undefined
+                              : "Start from a common image, paste a docker run command you found, or fill in the form yourself."
+                          }
+                          action={
+                            !filter &&
+                            can("service.control") && (
+                              <Button size="sm" onClick={() => setCreating(true)}>
+                                <Plus className="size-4" />
+                                Run a container
+                              </Button>
+                            )
+                          }
                         />
                       </TableCell>
                     </TableRow>
@@ -483,14 +689,40 @@ export default function DockerPage() {
         <TabsContent value="networks" className="min-w-0">
           <NetworksTab confirm={confirm} />
         </TabsContent>
+        <TabsContent value="events" className="min-w-0">
+          <EventsTab />
+        </TabsContent>
       </Tabs>
 
       <ContainerDetailSheet
         containerId={selected}
         onOpenChange={(open) => !open && setSelected(null)}
+        diagnosis={health.data}
+        confirm={confirm}
+        onChanged={() => health.refresh()}
+        onDuplicate={(spec) => {
+          setSelected(null)
+          setCreating(spec)
+        }}
+      />
+      <CreateContainerPanel
+        open={creating !== null}
+        initialSpec={creating === true ? undefined : (creating ?? undefined)}
+        onOpenChange={(open) => !open && setCreating(null)}
+        onCreated={() => {
+          trends.refresh()
+          health.refresh()
+        }}
       />
       {dialog}
     </Page>
+  )
+}
+
+/** The most severe thing the diagnosis has to say about one container. */
+function worstFinding(diagnosis: DockerDiagnosis | undefined, id: string): DockerFinding | undefined {
+  return (diagnosis?.findings ?? []).find(
+    (f) => f.targetId === id && (f.level === "critical" || f.level === "warning"),
   )
 }
 

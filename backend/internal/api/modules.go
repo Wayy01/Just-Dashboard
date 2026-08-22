@@ -28,6 +28,7 @@ type moduleSet struct {
 	metrics      *metrics.Recorder
 	docker       *dockerx.Client
 	dockerStats  *dockerx.StatsSampler
+	dockerEvents *dockerx.EventLog
 	pm2          *procs.PM2
 	systemd      *procs.Systemd
 	table        *procs.Table
@@ -52,6 +53,7 @@ func (s *Server) initModules() {
 	s.modules.sys = sysinfo.NewCollector()
 	s.modules.docker = dockerx.New(s.Cfg.DockerHost)
 	s.modules.dockerStats = s.modules.docker.NewStatsSampler()
+	s.modules.dockerEvents = s.modules.docker.NewEventLog(s.Log)
 	// The recorder gets a sampler of its own rather than the shared one: a
 	// series kept for a week is worth measuring over even intervals, and an
 	// operator refreshing the container table would otherwise keep shortening

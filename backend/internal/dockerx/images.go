@@ -36,14 +36,22 @@ func (c *Client) ListImages(ctx context.Context, all bool) ([]Image, error) {
 	}
 	out := make([]Image, 0, len(items))
 	for _, it := range items {
+		// Every slice is normalised to empty rather than left nil. A nil slice
+		// marshals to `null`, and the client reads these as arrays — an
+		// untagged image would arrive with `repoTags: null` and take the page
+		// down on `.length`. The API's contract is that a list field is
+		// always a list.
 		img := Image{
 			ID:          it.ID,
-			RepoTags:    it.RepoTags,
-			RepoDigests: it.RepoDigests,
+			RepoTags:    orEmpty(it.RepoTags),
+			RepoDigests: orEmpty(it.RepoDigests),
 			Size:        it.Size,
 			Created:     time.Unix(it.Created, 0).UTC(),
 			Containers:  it.Containers,
 			Labels:      it.Labels,
+		}
+		if img.Labels == nil {
+			img.Labels = map[string]string{}
 		}
 		if len(img.RepoTags) == 0 || (len(img.RepoTags) == 1 && img.RepoTags[0] == "<none>:<none>") {
 			img.Dangling = true
@@ -204,6 +212,9 @@ func (c *Client) ListVolumes(ctx context.Context) ([]Volume, error) {
 			Name: v.Name, Driver: v.Driver, Mountpoint: v.Mountpoint,
 			CreatedAt: v.CreatedAt, Scope: v.Scope, Labels: v.Labels, RefCount: -1,
 		}
+		if vol.Labels == nil {
+			vol.Labels = map[string]string{}
+		}
 		if u, ok := usage[v.Name]; ok {
 			vol.Size = u.size
 			vol.RefCount = u.refs
@@ -277,6 +288,9 @@ func (c *Client) ListNetworks(ctx context.Context) ([]Network, error) {
 			Internal: n.Internal, Attachable: n.Attachable, IPv6: n.EnableIPv6,
 			Created: n.Created.UTC(), Labels: n.Labels, Subnets: []string{},
 			Containers: len(n.Containers),
+		}
+		if nw.Labels == nil {
+			nw.Labels = map[string]string{}
 		}
 		for _, cfg := range n.IPAM.Config {
 			if cfg.Subnet != "" {
@@ -395,4 +409,15 @@ func ImageRef(ref string) string {
 		return ref + ":latest"
 	}
 	return ref
+}
+
+// orEmpty turns a nil slice into an empty one, so it marshals as `[]` rather
+// than `null`. Every list-shaped field on the wire goes through this or is
+// initialised at its declaration: the frontend reads them as arrays, and one
+// `null` is a TypeError that blanks the page rather than a missing value.
+func orEmpty(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

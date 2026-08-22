@@ -33,8 +33,10 @@ Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `file
 `httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
 hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
 to run on every change, and the ones guarding the security invariants (`httpx/confirm_test.go`,
-`api/routes_test.go`, `files/files_test.go`, `safepath/safepath_test.go`, `dbx/classify_test.go`)
-are the ones to extend when you touch that surface.
+`api/routes_test.go`, `api/docker_spec_test.go`, `files/files_test.go`,
+`safepath/safepath_test.go`, `dbx/classify_test.go`) are the ones to extend when you touch
+that surface. `dockerx/diagnose_test.go` is the other kind: it pins the *claims* the product
+makes about what is wrong with a container, which are as easy to get backwards as any check.
 
 ### Frontend (`frontend/`, Next.js + bun)
 
@@ -119,11 +121,29 @@ Adding a destructive route means doing both. It is nested inside stricter groups
 fails closed on anything it does not recognise, and the handler applies the same capability
 check and budget by hand.
 
+Two routes carry a check on the *content* of the request rather than on its path, for the
+same reason: the route cannot know. `POST /docker/containers` gates on `service.control`,
+and `api.authoriseSpec` additionally demands `system.admin` for a spec that is privileged,
+adds capabilities or devices, uses the host's network, or bind-mounts a path — those are the
+settings that turn "may run a container" into "owns the server", and there is no way to grant
+one without the other. The streaming compose runner
+(`GET /docker/stacks/{name}/run?action=…`) decides its capability and confirmation from the
+action, using the same `composeIsDestructive` set the POST routes use so a socket cannot
+become a way around either.
+
+That socket is also the one place the confirmation phrase may arrive as a query parameter,
+through `httpx.RequireTypedConfirmationWS`: a browser cannot set a header on a WebSocket
+handshake at all, so the alternative was leaving `compose down` as a request that hangs for a
+minute with no output. The header's cross-origin guarantee is replaced there by `wsx`'s
+origin check, which rejects a handshake from any page this dashboard did not serve.
+
 Handlers live in `api/handlers_*.go`, one file per feature, each with its own
 `mount<Feature>Routes(r chi.Router)` called from `Routes()`. `handlers_domains.go` is the one
 that does not own a mount function — watched-domain certificate checks are part of
 `mountProxyRoutes`, under `/certificates/watched`, because that is where they are used.
-Shared request plumbing that belongs to no feature (`atoiDefault`, `timeoutCtx`,
+`handlers_docker_manage.go` is the other: the Docker write surface is large enough to be its
+own file but is mounted from `mountDockerRoutes`, so the route map for Docker stays in one
+place. Shared request plumbing that belongs to no feature (`atoiDefault`, `timeoutCtx`,
 `recordAudit`, `detachedContext`) lives in `api/helpers.go`.
 
 ### Server, modules, degradation
@@ -131,7 +151,7 @@ Shared request plumbing that belongs to no feature (`atoiDefault`, `timeoutCtx`,
 `api.Server` holds the dependency graph — config, logger, store, auth service, sealer, audit
 logger, authenticator, WS upgrader, the three limiters, and in agent mode the `agent.Identity`.
 `api/modules.go` (`moduleSet`) holds the feature backends: `sys`, `metrics`, `docker`,
-`dockerStats`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `updates`,
+`dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `updates`,
 `proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
 `backupSched`) and the two deploy pieces (`deployStore`, `deployer`).
 
@@ -141,8 +161,8 @@ host" code that the frontend renders as information rather than an error (see `E
 `frontend/src/components/state.tsx`).
 
 `Server.Start(ctx)` is separate from `New` so a failure to schedule background work is
-reported by `main` rather than swallowed during construction. It starts the metrics recorder
-and the backup scheduler; the recorder is started here rather than lazily on first request
+reported by `main` rather than swallowed during construction. It starts the metrics recorder,
+the Docker event log and the backup scheduler; the recorder is started here rather than lazily on first request
 precisely because nothing may ever request it — its whole purpose is to have been running
 while nobody was looking. `Shutdown` releases what outlives a request: metrics sampler,
 backup scheduler, live PTYs, database pools, the Docker client.
@@ -305,6 +325,99 @@ lives in an env file nobody re-reads after install day, which is exactly why it 
 screen — a machine that quietly became reachable from the internet should say so rather than
 wait to be discovered.
 
+### Docker: what it can do, and why each piece is where it is
+
+`internal/dockerx` talks to the Engine over its socket through the official SDK. Nothing
+shells out except where the Engine genuinely has no equivalent, and those exceptions are
+named below.
+
+**Creating and replacing containers.** `dockerx.ContainerSpec` is the dashboard's description
+of a container to run, not `container.Config` plus `container.HostConfig` — those are the
+Engine's shape, split across the pair on the historical accident of which fields the daemon
+could change after creation, and rendering them as a form is how Portainer's create page
+became twelve accordions that assume you already know Docker. `toEngine` does the
+translation and returns warnings for the choices that are legal and probably unintended: a
+port on every interface, no memory limit, an anonymous volume, a writable bind mount of a
+sensitive path. `SpecOf` reads a container back into that shape, which is what makes
+duplicate, edit-and-recreate, and "save this as a stack" possible at all.
+
+`Recreate` is the one Docker has no verb for. Every field but a handful of resource limits is
+fixed at creation, so editing means destroy-and-recreate — which is fine right up until the
+create fails and the operator has nothing where their service was. The old container is
+therefore renamed aside (`<name>_jd_replaced`), and restored if anything after that point
+goes wrong; it is removed only once the replacement is running. A compose-managed container
+is refused with `ErrComposeManaged` and the stack's name, because recreating one behind
+compose's back leaves the project describing a container that no longer exists.
+`UpdateResources` is separate because it is the exception: limits really can be changed in
+place, and an operator who set the wrong number should not have to destroy the container.
+
+**`render.go` exists so the form is not a black box.** It turns a spec back into the
+`docker run` line and the compose service that would produce it. Both are rendered on the
+server so there is exactly one implementation of "what does this spec mean" — a second one in
+TypeScript would drift, and the version that mattered would be the one nobody was reading.
+The compose half is also the bridge: a container created by hand exists only in the daemon's
+memory, and the same container as a file can be committed, diffed and redeployed. The YAML is
+hand-written rather than marshalled, because key order carries meaning to a reader and a
+marshaller would sort it alphabetically into something correct and unreadable.
+
+**`diagnose.go` is the part nothing else in this class has.** Every Docker panel shows the
+same facts — a state, an exit code, a restart count — and leaves the reading to you. This
+turns them into sentences: what 137 means and what the limit was, that a container has
+restarted twelve times in the last minute, that a health check is failing and what it last
+said, that a port is published in front of the firewall, that a json-file log with no rotation
+has reached 800 MB, that the data being written is in the container rather than a volume and
+will not survive the next update. Findings carry a `Level`, the reasoning, and — where the
+dashboard can carry out the remedy itself — an `Action` the UI turns into a button. The rules
+are deliberately conservative: a panel that cries wolf gets ignored wholesale, so nothing
+fires on a container that is merely unusual. `diagnose_test.go` pins the claims that would be
+embarrassing to get backwards, including the two silences (a finished one-shot job, a
+loopback-bound port).
+
+**`events.go` keeps what Docker throws away.** The daemon emits an event for everything it
+does and stores none of them, so the answer to "why did this restart at 04:00" is nowhere.
+The same argument `internal/metrics` makes about samples applies: the dashboard is a
+long-running process already connected to the thing producing the record. The buffer is an
+in-memory ring — an event log worth keeping across restarts belongs in the audit table, which
+already holds everything the dashboard itself did. `describeEvent` renders the object/action
+pair as a sentence once, here, rather than in every component that shows an event. `oom` and
+`health_status: unhealthy` are the two that justify the feature on their own.
+
+**Update detection.** `CheckUpdate` asks the registry what a tag points at now and compares it
+against the digest that was pulled — a different and more useful question than "is there a
+newer tag", because it catches the case that matters, a moving tag that moved. Answers are
+cached for 30 minutes and fetched by a four-worker pool, because Docker Hub rate-limits
+manifest requests by address and a dashboard left open on a screen should not burn the host's
+quota. A registry that cannot be reached, or wants credentials, is reported as `unknown` with
+the reason attached; an image built locally is `local`, which is not a failure.
+
+**Compose.** `RunCompose` (blocking) still backs the simple POST actions. `RunComposeStream`
+is what the UI uses: the same commands with their output forwarded line by line, because `up`
+on a stack that pulls and builds takes minutes and a request that hangs for minutes is
+indistinguishable from a broken dashboard. `composeSteps` maps an action to its commands, and
+two of them are sequences — `update` is a pull followed by an up, in that order, so a registry
+that is down leaves the running stack alone rather than taking it half down. `ValidateCompose`
+feeds a candidate file to the compose parser on **stdin**, so a syntax error never touches
+disk; `WriteComposeFile` writes through a temporary file in the same directory and keeps the
+previous content as `<name>.bak`, which guards the failure validation cannot catch — a correct
+file that says the wrong thing. `DeclaredServices` is read on demand rather than in the stack
+list because it costs a subprocess per stack, and it supplies the one fact the container list
+cannot: a service the file declares that has no container is invisible everywhere else in
+Docker.
+
+**`Build`** drives the `docker` binary rather than the Engine's build endpoint. BuildKit is a
+separate builder the classic API path does not reach, and silently building with the legacy
+one would produce images that differ from what the same Dockerfile produces from a shell —
+different caching, no mount or secret support. Being wrong in a way that only shows up later
+is worse than shelling out. Argv is built explicitly and never passed through a shell, as
+everywhere else.
+
+**Efficiency rules that are load-bearing.** `ListContainers` carries `Mounts` because the
+Engine's summary already has them and the volumes view needs "what uses this volume" for
+every volume at once — the alternative is an inspect per container on every poll.
+`ListStacks` uses `ListContainers` rather than a filtered listing of its own so it inherits
+the health and uptime already resolved there. `Diagnose` inspects each container once and runs
+every rule against that one payload.
+
 ### Streaming
 
 `internal/wsx` wraps gorilla/websocket: origin check on upgrade (a WS handshake is not
@@ -464,6 +577,50 @@ routing that through a context above the router would re-render the terminal and
 tail on every mousemove. The value is a **timestamp**, not a row index — the charts on a
 page do not share a row array.
 
+### The Docker panel
+
+`components/docker/` is the largest feature directory and the one where the product's
+opinion about newcomers is expressed, so it is worth knowing what each file is for.
+
+- `explain.tsx` is the teaching layer: `Hint` (one line under a control), `Term` (a dotted
+  underline with the definition one hover away), `Field`, and `GLOSSARY` — the definitions
+  themselves, written for somebody who has never run a container and phrased around the
+  decision rather than the mechanism. The rule it enforces is that explanation is *quiet*: a
+  form that shouts every caveat is as unusable as one that explains nothing.
+- `create-container.tsx` is the create form, and its three entry points matter more than the
+  form does. **Paste a command** covers the overwhelmingly common case — a README with a
+  `docker run` line and a reader with nowhere to put it; `lib/docker-run.ts` parses it,
+  leniently, returning a usable spec plus an honest list of what it could not represent.
+  **Start from something common** is `lib/docker-templates.ts`: a dozen images almost every
+  server ends up running, pre-filled with the ports, volumes and settings they need, every
+  one bound to 127.0.0.1. It is a set of starting points, not an app store — the thing that
+  goes stale and becomes the maintenance burden in Yacht and CasaOS. **From scratch** is for
+  people who know what they want. The Command tab shows the server-rendered `docker run` and
+  compose equivalent, live.
+- `run-console.tsx` (`useRunConsole` + `RunConsole`) is how every long command is watched
+  rather than waited for. It deliberately **does not** let `useSocket` reconnect: reconnecting
+  re-issues the GET, and re-issuing the GET runs the command again — a redeploy fired twice
+  because a VPN blinked is not a re-render. A dropped socket ends the run and says so.
+- `diagnosis-panel.tsx` renders `dockerx.Diagnosis`, collapsed by default so the list is a
+  list of findings rather than a wall of argument, with the remedy as a button where the
+  server named one. `ContainerFindings` filters the page's single diagnosis pass rather than
+  fetching per panel.
+- `stack-detail.tsx` is a stack as the application it is: services with clickable ports, the
+  compose file editable in place (validated before saving, and saving is *not* deploying —
+  the UI says so), one merged log feed tagged by service, and the links out to Files, git and
+  a shell in the stack's directory.
+- `container-detail.tsx` gained the findings, the reachability join (a published port plus
+  the proxy site pointing at it, which is what turns "running on 3000" into a URL), the
+  writable-layer view, editable limits, raw inspect, and Update/Duplicate/Rename.
+- `events-tab.tsx`, `images-tab.tsx`, `volumes-tab.tsx`, `networks-tab.tsx`,
+  `build-dialog.tsx` are the remaining tabs. The build dialog is where the git panel and
+  Docker stop being two products: a repository the dashboard already pulls is a build context.
+
+Three deep links exist for this feature and are worth preserving: `/files?path=`,
+`/git?repo=` and `/terminal?cwd=`. The first two are read once as an initial value rather than
+kept in sync — the URL is where the reader arrived, not where they are now — and the terminal
+one opens a session exactly once per mount, because a shell is a process and not a render.
+
 ### Data
 
 - `src/lib/api.ts` is the only fetch layer: `get/post/put/patch/del`, `credentials: "include"`,
@@ -545,14 +702,25 @@ A change that weakens any of these has to say so explicitly:
 
 1. The network allowlist runs **before** authentication.
 2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
-3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side.
-4. Capability checks live on the route, never in the UI alone.
+3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. The one
+   relaxation is `httpx.RequireTypedConfirmationWS`, which also accepts the phrase as a query
+   parameter — used only by WebSocket routes, where a browser cannot set a header at all, and
+   where `wsx`'s origin check supplies what the header was protecting against. Do not reach
+   for it from an ordinary handler.
+4. Capability checks live on the route, never in the UI alone. Where the answer depends on
+   what is *in* the request rather than which route it hit, the handler checks by hand and
+   fails closed: `dbx.Classify` for SQL, `api.authoriseSpec` for a container spec that is
+   privileged or mounts a host path.
 5. Every state-changing request lands in the audit log.
-6. Client-supplied paths go through `files.Resolve`; host commands go through `hostexec`
-   with an argv, never a shell string. The one shell in the codebase is
-   `deploy.Deployer.shell`, and it is deliberate: those are pipelines an admin stored for
-   their own project ("bun install && bun run build"), not anything supplied per request.
-   Do not add a second one, and do not "fix" that one into an argv.
+6. Client-supplied paths go through `files.Resolve` — including the ones that do not look
+   like file operations: a container's bind-mount source, a build context, a new stack's
+   directory. Host commands go through `hostexec` with an argv, never a shell string. The one
+   shell in the codebase is `deploy.Deployer.shell`, and it is deliberate: those are pipelines
+   an admin stored for their own project ("bun install && bun run build"), not anything
+   supplied per request. Do not add a second one, and do not "fix" that one into an argv.
+   `dockerx` invokes the `docker` binary in three places — compose, the streaming compose
+   runner and `Build` — because the Engine API has no equivalent for compose projects or for
+   BuildKit. All three build the argv explicitly.
 7. Nothing but Caddy binds a routable address.
 8. Store schema changes are additive and tolerate an existing database. There is no
    migration tool: `CREATE TABLE IF NOT EXISTS` is a no-op against a database that

@@ -179,6 +179,26 @@ func (s *Service) Discover(ctx context.Context) ([]Repo, error) {
 }
 
 // Summary reads the cheap facts about one repository.
+// Toplevel reports the root of the repository containing a path, and an error
+// if there is not one.
+//
+// Summary deliberately never fails — it fills what it can and returns a Repo
+// for any directory — which makes it useless for the question "is this a
+// checkout at all". A caller that wants to *link* to a repository needs both
+// halves of the answer: whether one exists, and where its root is, since a
+// subdirectory of a repo is not what the repository list is keyed by.
+func (s *Service) Toplevel(ctx context.Context, path string) (string, error) {
+	out, err := s.run(ctx, path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	root := strings.TrimSpace(out)
+	if root == "" {
+		return "", errors.New("not a git repository")
+	}
+	return root, nil
+}
+
 func (s *Service) Summary(ctx context.Context, path string) (*Repo, error) {
 	r := &Repo{Path: path, Name: filepath.Base(path)}
 

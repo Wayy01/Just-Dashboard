@@ -11,11 +11,41 @@ import (
 // and a replayed URL alone can never trigger destruction.
 const ConfirmHeader = "X-Confirm"
 
+// ConfirmParam is the same phrase carried as a query parameter, accepted only
+// by RequireTypedConfirmationWS.
+const ConfirmParam = "confirm"
+
 // RequireTypedConfirmation refuses the request unless the caller repeats the
 // exact phrase. The frontend renders this as a "type <name> to confirm" input;
 // scripted callers must send the header deliberately.
 func RequireTypedConfirmation(w http.ResponseWriter, r *http.Request, phrase string) error {
+	return requireConfirmation(r, phrase, false)
+}
+
+// RequireTypedConfirmationWS is the same guard for a WebSocket route, where
+// the phrase may also arrive as a query parameter.
+//
+// A browser cannot set a header on a WebSocket handshake — the API simply has
+// no way to do it — so a destructive action reachable only over a socket would
+// otherwise be unconfirmable, and the alternative was to leave `compose down`
+// as a request that hangs for a minute with no output. The relaxation costs
+// nothing that mattered: the header was chosen because a replayed URL alone
+// should never destroy anything, and for these routes that protection comes
+// instead from wsx's origin check, which rejects a handshake from any page
+// this dashboard did not serve. CORS never applied to WebSocket upgrades in
+// the first place, which is why that check exists.
+//
+// A separate function rather than a flag on the original, so that a route
+// accepting the weaker form has to say so at the call site.
+func RequireTypedConfirmationWS(w http.ResponseWriter, r *http.Request, phrase string) error {
+	return requireConfirmation(r, phrase, true)
+}
+
+func requireConfirmation(r *http.Request, phrase string, allowQuery bool) error {
 	got := strings.TrimSpace(r.Header.Get(ConfirmHeader))
+	if got == "" && allowQuery {
+		got = strings.TrimSpace(r.URL.Query().Get(ConfirmParam))
+	}
 	if got == "" {
 		return &APIError{
 			Status:  http.StatusPreconditionRequired,

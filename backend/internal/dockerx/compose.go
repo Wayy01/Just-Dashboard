@@ -9,9 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 )
 
 // Compose stacks are discovered from the labels the compose plugin writes onto
@@ -30,6 +27,17 @@ type ComposeService struct {
 	State     string `json:"state"`
 	Status    string `json:"status"`
 	Image     string `json:"image"`
+	// Health and Ports are carried so a stack card can answer "is it working"
+	// and "where do I reach it" without opening every container in turn —
+	// which is the whole reason somebody looks at a stack rather than at the
+	// container table.
+	Health string `json:"health,omitempty"`
+	Ports  []Port `json:"ports"`
+	// Missing marks a service the compose file declares that has no container
+	// at all. Nothing else in Docker will ever mention it: `docker ps` cannot
+	// list what does not exist, so a service that failed to create is
+	// indistinguishable from one that was never written down.
+	Missing bool `json:"missing,omitempty"`
 }
 
 type ComposeStack struct {
@@ -46,13 +54,11 @@ type ComposeStack struct {
 // any compose file found on disk under the configured roots, so a stack that
 // is fully stopped still appears and can be brought up.
 func (c *Client) ListStacks(ctx context.Context, roots []string) ([]ComposeStack, error) {
-	cli, err := c.api()
-	if err != nil {
-		return nil, err
-	}
-	args := filters.NewArgs()
-	args.Add("label", labelProject)
-	items, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
+	// The general container listing rather than a filtered one of its own:
+	// it already resolves health and uptime for everything running, which a
+	// stack card needs and which a second query would have to inspect for all
+	// over again.
+	items, err := c.ListContainers(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +80,11 @@ func (c *Client) ListStacks(ctx context.Context, roots []string) ([]ComposeStack
 		}
 		name := it.Labels[labelService]
 		if name == "" {
-			name = strings.TrimPrefix(firstName(it.Names), "/")
+			name = it.Name
+		}
+		ports := it.Ports
+		if ports == nil {
+			ports = []Port{}
 		}
 		st.Services = append(st.Services, ComposeService{
 			Name:      name,
@@ -82,6 +92,8 @@ func (c *Client) ListStacks(ctx context.Context, roots []string) ([]ComposeStack
 			State:     it.State,
 			Status:    it.Status,
 			Image:     it.Image,
+			Health:    it.Health,
+			Ports:     ports,
 		})
 		st.Total++
 		if it.State == "running" {
@@ -116,13 +128,6 @@ func (c *Client) ListStacks(ctx context.Context, roots []string) ([]ComposeStack
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
-}
-
-func firstName(names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	return names[0]
 }
 
 func splitConfigFiles(v string) []string {
