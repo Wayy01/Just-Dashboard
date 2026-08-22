@@ -464,14 +464,11 @@ function FolderGroup({
         // The rule down the left is the folder's colour at low strength: it is
         // what makes four rows read as one group without repeating the colour
         // on every one of them.
-        <div
-          className="mt-1 ml-2.5 space-y-1 border-l pl-2"
-          style={{
-            borderColor: tagVar(folder.colour)
-              ? "color-mix(in oklab, var(--tag) 45%, transparent)"
-              : "var(--hairline)",
-          }}
-        >
+        // The indent rule is structure, not colour: it says these rows are
+        // children of the row above. It stays neutral now that each child
+        // carries the folder's colour as its own fill — drawing the hue a
+        // third time added nothing except something else to look at.
+        <div className="mt-1 ml-2.5 space-y-1 border-l border-hairline pl-2">
           {items.map((session) => (
             <SessionRow
               key={session.tmuxName || session.id}
@@ -641,17 +638,17 @@ function SessionRow({
         }
       }}
       className={cn(
-        "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2.5 transition-colors",
+        "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-colors",
         active && "border-primary/50",
         !active && !colour && "border-transparent hover:border-hairline hover:bg-[var(--row-hover)]",
-        !active && colour && "hover:brightness-110",
+        !active && colour && "border-transparent hover:brightness-110",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
-      // The colour fills the row rather than drawing a hairline down its edge.
-      // A 2px rule is legible when you already know to look for it and invisible
-      // when you are scanning, which is the only moment the colour is for. The
-      // selected row still wins on the border, so "which one am I looking at"
-      // and "which group is this" stay two separate readings.
+      // The colour is the fill and nothing else — no rule down the edge, no
+      // tinted outline. Three ways of saying the same thing on one 28px row is
+      // noise, and the fill is the one that works while scanning. The border is
+      // left to the selected row, so "which group is this" and "which one am I
+      // looking at" stay two separate readings that never compete.
       style={{
         ...tagStyle(colour),
         ...(colour
@@ -659,21 +656,12 @@ function SessionRow({
               backgroundColor: active
                 ? "color-mix(in oklab, var(--tag) 22%, var(--card))"
                 : "color-mix(in oklab, var(--tag) 11%, var(--card))",
-              borderColor: active
-                ? undefined
-                : "color-mix(in oklab, var(--tag) 30%, transparent)",
             }
           : active
             ? { backgroundColor: "color-mix(in oklab, var(--primary) 12%, var(--card))" }
             : undefined),
       }}
     >
-      {colour && (
-        <span
-          className="absolute inset-y-1.5 left-0 w-[3px] rounded-full"
-          style={{ backgroundColor: "var(--tag)" }}
-        />
-      )}
       <button
         onClick={() => onSelect(session)}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
