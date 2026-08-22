@@ -111,10 +111,32 @@ func Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 // instead of the server's. Falls back to a plain local command when the host
 // is not reachable, so a non-container install still works.
 func CommandOnHost(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return CommandOnHostInDir(ctx, "", name, args...)
+}
+
+// CommandOnHostInDir is CommandOnHost starting in a chosen directory.
+//
+// Setting cmd.Dir is not enough and silently does nothing useful: Go applies
+// it in *this* mount namespace, and nsenter then enters the host's and sets
+// the working directory to that namespace's root. Every host command therefore
+// starts in `/` however it was launched — which is why a terminal asked to
+// open in a stack's directory opened in `/` instead. `--wd` is nsenter's own
+// answer, applied after it crosses, and is the only thing that survives.
+//
+// The directory is an argv element, never text for a shell, and the caller is
+// expected to have established that it exists.
+func CommandOnHostInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	if !hostReachable() {
-		return exec.CommandContext(ctx, name, args...)
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		return cmd
 	}
-	full := append(append([]string{}, nsenterArgs...), name)
+	full := append([]string{}, nsenterArgs...)
+	if dir != "" {
+		// Inserted before the `--` that ends nsenter's own options.
+		full = append(full[:len(full)-1], "--wd="+dir, "--")
+	}
+	full = append(full, name)
 	full = append(full, args...)
 	return exec.CommandContext(ctx, "nsenter", full...)
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +86,9 @@ type CreateOptions struct {
 	Cols    uint16
 	CWD     string
 	Persist bool
+	// Folder files the new session away as it is created, so a shell opened
+	// from a stack lands in that stack's group without a second step.
+	Folder string
 }
 
 // Create spawns a session. When tmux is present and persistence is requested
@@ -135,20 +140,36 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		lastActive:  time.Now(),
 	}
 
+	// Where the session should start. Empty unless the caller asked for one
+	// and it is a real directory on the host, so everything below can treat a
+	// non-empty value as settled.
+	startDir := hostDir(opts.CWD)
+	cmdDir := ""
+
 	// What ssh would have run: become the account and exec its login shell.
-	argv := m.account.loginArgv(m.shell)
+	// A requested directory changes *how* the login is assembled rather than
+	// being applied on top of it — see loginArgv, where a plain login's
+	// chdir-to-home is the thing standing in the way.
+	argv := m.account.loginArgv(m.shell, startDir != "")
+	if startDir != "" {
+		// The directory the command itself starts in. It has to be handed to
+		// hostexec rather than set on cmd.Dir: a host command crosses into the
+		// host's mount namespace via nsenter, which resets the working
+		// directory to that namespace's root and discards whatever Go chdir'd
+		// to on this side.
+		cmdDir = startDir
+		sess.CWDHint = startDir
+	}
 	if m.useTmux && opts.Persist {
-		sess.TmuxName = "vpsd-" + id
+		sess.TmuxName = sessionPrefix + id
 		sess.Persisted = true
 		// tmux wraps the login rather than replacing it, so a persistent
 		// session is the same session as a plain one with a multiplexer in
-		// front. `-c` is what makes a requested working directory survive the
-		// wrapper; without tmux, su's own cd to the home directory wins, which
-		// is the ssh behaviour and the right default.
+		// front. `-c` sets the directory tmux starts the pane in, which the
+		// login above is now built to keep rather than override.
 		wrap := []string{"tmux", "new-session", "-A", "-s", sess.TmuxName}
-		if dir := hostDir(opts.CWD); dir != "" {
-			wrap = append(wrap, "-c", dir)
-			sess.CWDHint = dir
+		if startDir != "" {
+			wrap = append(wrap, "-c", startDir)
 		}
 		argv = append(wrap, argv...)
 	}
@@ -157,7 +178,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// point: the operator's tools, dotfiles and processes live out there, and
 	// a shell in here would be a convincing imitation of their server rather
 	// than their server.
-	cmd := hostexec.CommandOnHost(context.Background(), argv[0], argv[1:]...)
+	cmd := hostexec.CommandOnHostInDir(context.Background(), cmdDir, argv[0], argv[1:]...)
 	// A login resets the environment anyway; these are the two variables that
 	// survive it and that the terminal on the other end depends on to render
 	// colour and cursor keys correctly.
@@ -180,6 +201,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	m.mu.Lock()
 	m.sessions[id] = sess
 	m.mu.Unlock()
+
+	// Written onto the tmux session so it outlives this process. A session
+	// that comes back after a restart with its own name on it is the whole
+	// difference between "my work is still here" and a row of hex strings.
+	m.rememberTitle(sess.TmuxName, sess.Title)
+	if folder := sanitiseField(opts.Folder); folder != "" {
+		m.rememberOption(sess.TmuxName, folderOption, folder)
+	}
 
 	go sess.readLoop(func() { m.remove(id) })
 	return sess, nil
@@ -271,27 +300,142 @@ func (m *Manager) Detach(id string) error {
 	return sess.Close()
 }
 
-// TmuxSessions lists persistent sessions that exist in tmux but are not
-// currently tracked here — for instance after this process was restarted.
+// TmuxSession is a persistent session as tmux knows it, which is the only
+// record that survives this process restarting.
+type TmuxSession struct {
+	Name string `json:"name"`
+	// Title is the name the operator gave it, stored on the tmux session
+	// itself. Without it a session that outlives the dashboard comes back as
+	// `vpsd-3f2a91c4` — and three of those side by side are indistinguishable,
+	// which is how somebody loses track of which shell was doing what.
+	Title string `json:"title,omitempty"`
+	// Folder and Favourite are how a list of fifteen becomes readable. Both
+	// live on the tmux session, so they survive everything the work does.
+	Folder    string    `json:"folder,omitempty"`
+	Favourite bool      `json:"favourite"`
+	CreatedAt time.Time `json:"createdAt"`
+	// CWD is where the session's active pane is now, so a detached session can
+	// be identified by the work it is in the middle of.
+	CWD      string `json:"cwd,omitempty"`
+	Windows  int    `json:"windows"`
+	Attached bool   `json:"attached"`
+}
+
+// titleOption is a tmux user option. tmux keeps anything prefixed with `@` as
+// free-form metadata on the session, which makes the session itself the store
+// — exactly the property needed here, since the whole point is to survive the
+// process that created it.
+const titleOption = "@jd_title"
+
+// fieldSep separates the fields of one listing line.
+//
+// A printable character, and that is the whole point: tmux escapes
+// non-printable bytes in format output, so asking it for a 0x1f separator
+// returns the four literal characters `\037` and every line parses as a single
+// field. A pipe survives, and is safe here because the only fields that could
+// contain one are the path — which is last, and read as the remainder — and
+// the title, which is stripped of it on the way in.
+const fieldSep = "|"
+
+// TmuxSessions lists persistent sessions that exist in tmux, with enough about
+// each to tell them apart — typically ones left behind by a restart, or
+// detached after an hour idle.
+//
+// One call to tmux for all of it: the format string asks for every field at
+// once rather than a subprocess per session per field.
 //
 // It always returns a non-nil slice: a nil slice marshals to JSON null, and a
 // list endpoint that answers null instead of [] breaks every consumer that
 // reasonably expects to iterate the result.
-func (m *Manager) TmuxSessions(ctx context.Context) []string {
-	names := []string{}
+func (m *Manager) TmuxSessions(ctx context.Context) []TmuxSession {
+	out := []TmuxSession{}
 	if !m.useTmux {
-		return names
+		return out
 	}
-	out, err := hostexec.CommandOnHost(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	const format = "#{session_name}" + fieldSep + "#{" + titleOption + "}" +
+		fieldSep + "#{" + folderOption + "}" + fieldSep + "#{" + favouriteOption + "}" +
+		fieldSep + "#{session_created}" + fieldSep + "#{session_attached}" +
+		fieldSep + "#{session_windows}" + fieldSep + "#{pane_current_path}"
+	raw, err := hostexec.CommandOnHost(ctx, "tmux", "list-sessions", "-F", format).Output()
 	if err != nil {
-		return names
+		// No server running is the ordinary "nothing is persisted" case, not
+		// a failure worth reporting.
+		return out
 	}
-	for _, line := range splitLines(string(out)) {
-		if len(line) > 5 && line[:5] == "vpsd-" {
-			names = append(names, line)
+	for _, line := range splitLines(string(raw)) {
+		if sess, ok := parseTmuxLine(line); ok {
+			out = append(out, sess)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+
+// parseTmuxLine reads one line of the listing format.
+//
+// SplitN, not Split, and the path deliberately last: a directory may contain
+// the separator, and everything after the fifth one is still part of it. The
+// four fields before it cannot — a session name is `vpsd-` and hex, three are
+// numbers, and the title has the separator stripped out when it is written.
+func parseTmuxLine(line string) (TmuxSession, bool) {
+	const fields = 8
+	f := strings.SplitN(line, fieldSep, fields)
+	if len(f) < fields || !strings.HasPrefix(f[0], sessionPrefix) {
+		return TmuxSession{}, false
+	}
+	sess := TmuxSession{
+		Name: f[0], Title: f[1], Folder: f[2], Favourite: f[3] == "1",
+		CWD: f[7],
+	}
+	if secs, err := strconv.ParseInt(f[4], 10, 64); err == nil {
+		sess.CreatedAt = time.Unix(secs, 0).UTC()
+	}
+	sess.Attached = f[5] != "0"
+	sess.Windows, _ = strconv.Atoi(f[6])
+	return sess, true
+}
+
+// tmuxNames is the membership test Reattach needs, kept separate so the richer
+// listing is not what authorisation depends on.
+func (m *Manager) tmuxNames(ctx context.Context) []string {
+	names := []string{}
+	for _, s := range m.TmuxSessions(ctx) {
+		names = append(names, s.Name)
+	}
 	return names
+}
+
+// rememberTitle writes the operator's title onto the tmux session, so it is
+// still there after this process has forgotten everything.
+//
+// Retried, because the session may not exist yet: `tmux new-session` has only
+// just been handed to a PTY, and on a host where the tmux *server* also has to
+// start, the first attempt lands before there is anything to set the option on.
+// That is not hypothetical — it is why the first session opened after a reboot
+// came back with no title while the second was fine.
+//
+// Best effort throughout: a title that never sticks costs a recognisable name
+// in one list, not a working session.
+func (m *Manager) rememberTitle(tmuxName, title string) {
+	m.rememberOption(tmuxName, titleOption, sanitiseField(title))
+}
+
+// rememberOption writes one tmux user option, retrying briefly.
+func (m *Manager) rememberOption(tmuxName, option, value string) {
+	if tmuxName == "" || value == "" {
+		return
+	}
+	go func() {
+		for attempt := 0; attempt < 6; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := hostexec.CommandOnHost(ctx, "tmux", "set-option", "-t", tmuxName, option, value).Run()
+			cancel()
+			if err == nil {
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}()
 }
 
 // Reattach binds a PTY to an existing tmux session so the operator can pick up
@@ -308,7 +452,7 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	// operator attach to anybody's personal tmux session on the host — the
 	// listing endpoint already restricts itself to the vpsd- ones, and this is
 	// the same rule applied where it is enforced rather than displayed.
-	if !slices.Contains(m.TmuxSessions(ctx), tmuxName) {
+	if !slices.Contains(m.tmuxNames(ctx), tmuxName) {
 		return nil, ErrNotFound
 	}
 	// A reattached session is a session; it counts against the same cap.
@@ -323,10 +467,19 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	if cols == 0 {
 		cols = 80
 	}
+	// The title the operator gave it, recovered from the tmux session rather
+	// than reinvented: coming back to `vpsd-3f2a91c4` is the difference
+	// between picking up where you left off and guessing which shell this was.
+	title := tmuxName
+	for _, s := range m.TmuxSessions(ctx) {
+		if s.Name == tmuxName && s.Title != "" {
+			title = s.Title
+		}
+	}
 	id := randomID()
 	sess := &Session{
 		ID:          id,
-		Title:       tmuxName,
+		Title:       title,
 		Shell:       m.shell,
 		User:        m.account.Name,
 		TmuxName:    tmuxName,
@@ -363,15 +516,23 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 func (m *Manager) reap() {
 	t := time.NewTicker(5 * time.Minute)
 	for range t.C {
-		cutoff := time.Now().Add(-time.Hour)
+		cutoff := time.Now().Add(-idleDetach)
 		for _, s := range m.List() {
-			if s.Attached() == 0 && s.LastActive().Before(cutoff) {
-				if s.Persisted {
-					m.Detach(s.ID)
-				} else {
-					m.Kill(context.Background(), s.ID)
-				}
+			if s.Attached() > 0 || !s.LastActive().Before(cutoff) {
+				continue
 			}
+			if s.Persisted {
+				// Detach only. The tmux session, its processes and its
+				// scrollback all continue and it reappears under "still
+				// running" with its name — releasing the PTY and the slot
+				// without ending anybody's work.
+				m.Detach(s.ID)
+				continue
+			}
+			// Nothing is holding this one but us, so releasing the PTY *is*
+			// ending it. A forgotten root shell on a host with no tmux is a
+			// standing risk, and there is no third option available.
+			m.Kill(context.Background(), s.ID)
 		}
 	}
 }

@@ -7,6 +7,7 @@
 package term
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -17,14 +18,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 	"github.com/creack/pty"
 )
 
 var (
-	ErrDisabled  = errors.New("the web terminal is disabled in this dashboard's configuration")
-	ErrNotFound  = errors.New("terminal session not found")
-	ErrTooMany   = errors.New("too many terminal sessions are already open")
-	maxSessions  = 12
+	ErrDisabled = errors.New("the web terminal is disabled in this dashboard's configuration")
+	ErrNotFound = errors.New("terminal session not found")
+	ErrTooMany  = errors.New("too many terminal sessions are already open")
+	// Twelve was a guess made when a session was a thing you opened and
+	// closed. They are now kept — named, grouped, running for weeks — so the
+	// cap has to be a number of *workspaces* rather than of visits, and the
+	// cost of an idle one is a PTY and a goroutine.
+	maxSessions  = 32
 	scrollbackKB = 128
 )
 
@@ -190,8 +196,21 @@ func (s *Session) Close() error {
 // upload and download resolve relative paths against.
 func (s *Session) CWD() string {
 	s.mu.Lock()
-	pid := s.PID
+	pid, tmuxName := s.PID, s.TmuxName
 	s.mu.Unlock()
+
+	// A tmux-backed session is the one case the process walk below cannot
+	// answer. What we spawned is the tmux *client*; the shell is a child of
+	// the tmux **server**, in a different process tree entirely, so following
+	// our own descendants finds the client and reports its directory — which
+	// is `/`, for every session, however the operator has navigated. tmux
+	// tracks the pane's directory across every `cd`, so ask the thing that
+	// knows.
+	if tmuxName != "" {
+		if dir := tmuxPanePath(tmuxName); dir != "" {
+			return dir
+		}
+	}
 	if pid == 0 {
 		return ""
 	}
@@ -281,4 +300,19 @@ func (r *ringBuffer) Bytes() []byte {
 	out := make([]byte, len(r.buf))
 	copy(out, r.buf)
 	return out
+}
+
+// tmuxPanePath asks tmux where a session's active pane currently is.
+//
+// One short-lived subprocess, and only on the paths that need it: this is
+// called when an in-session upload or download has to resolve a relative path,
+// not on a poll.
+func tmuxPanePath(name string) string {
+	cmd := hostexec.CommandOnHost(context.Background(), "tmux",
+		"display-message", "-p", "-t", name, "#{pane_current_path}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

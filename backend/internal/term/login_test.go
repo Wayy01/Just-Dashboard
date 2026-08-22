@@ -3,6 +3,7 @@ package term
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,7 +95,7 @@ func TestLoginArgv(t *testing.T) {
 	}
 	a := Account{Name: "ubuntu", UID: 1000, GID: 1000, Home: "/home/ubuntu", Shell: "/bin/bash"}
 
-	got := a.loginArgv("")
+	got := a.loginArgv("", false)
 	want := []string{"su", "-l", "ubuntu"}
 	if !equal(got, want) {
 		t.Fatalf("loginArgv() = %v, want %v", got, want)
@@ -102,7 +103,7 @@ func TestLoginArgv(t *testing.T) {
 
 	// su hands anything after the username to the shell, so -s must come
 	// before it or the shell receives a stray flag instead.
-	got = a.loginArgv("/bin/zsh")
+	got = a.loginArgv("/bin/zsh", false)
 	want = []string{"su", "-s", "/bin/zsh", "-l", "ubuntu"}
 	if !equal(got, want) {
 		t.Fatalf("loginArgv(zsh) = %v, want %v", got, want)
@@ -111,10 +112,48 @@ func TestLoginArgv(t *testing.T) {
 	// Already root: there is nobody to become, so the login shell is exec'd
 	// directly and -l is what still makes it read the profile.
 	root := Account{Name: "root", UID: 0, GID: 0, Home: "/root", Shell: "/bin/bash"}
-	got = root.loginArgv("")
+	got = root.loginArgv("", false)
 	want = []string{"/bin/bash", "-l"}
 	if !equal(got, want) {
 		t.Fatalf("root loginArgv() = %v, want %v", got, want)
+	}
+}
+
+// "Open a shell here" is the one request `su -l` cannot serve: login means
+// chdir-to-home, so it walks away from whatever directory it was started in.
+// Setting tmux's -c was not enough for exactly this reason — tmux put the pane
+// in the right place and su moved it straight back.
+func TestLoginArgvKeepingTheWorkingDirectory(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("argv depends on being root; su is not usable otherwise")
+	}
+	a := Account{Name: "ubuntu", UID: 1000, GID: 1000, Home: "/home/ubuntu", Shell: "/bin/bash"}
+
+	// No -l on su, so it does not chdir; -l after -- reaches the shell, which
+	// is what still reads the profile. Options stay before the username.
+	got := a.loginArgv("", true)
+	want := []string{"su", "-s", "/bin/bash", "ubuntu", "--", "-l"}
+	if !equal(got, want) {
+		t.Fatalf("loginArgv(keepCWD) = %v, want %v", got, want)
+	}
+	for i, arg := range got {
+		if arg == "-l" && i < len(got)-1 {
+			t.Fatalf("-l reached su rather than the shell, which would chdir to home: %v", got)
+		}
+	}
+
+	// A configured shell is honoured the same way.
+	got = a.loginArgv("/bin/zsh", true)
+	want = []string{"su", "-s", "/bin/zsh", "ubuntu", "--", "-l"}
+	if !equal(got, want) {
+		t.Fatalf("loginArgv(zsh, keepCWD) = %v, want %v", got, want)
+	}
+
+	// Root has no su in the way, so a login shell already stays where it was
+	// started and the argv is unchanged.
+	root := Account{Name: "root", UID: 0, GID: 0, Home: "/root", Shell: "/bin/bash"}
+	if got, want := root.loginArgv("", true), []string{"/bin/bash", "-l"}; !equal(got, want) {
+		t.Fatalf("root loginArgv(keepCWD) = %v, want %v", got, want)
 	}
 }
 
@@ -128,4 +167,77 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// The listing format is parsed rather than merely read: tmux escapes
+// non-printable bytes in format output, so an "obvious" 0x1f unit separator
+// comes back as the four literal characters \037 and every line collapses into
+// a single field — which is how the persisted-session list silently became
+// empty while tmux itself had two sessions running.
+//
+// Fields, in order: name, title, folder, favourite, created, attached,
+// windows, path. The path is last so it may contain the separator.
+func TestParseTmuxLine(t *testing.T) {
+	got, ok := parseTmuxLine("vpsd-abc123|deploy|Shop|1|1787385285|0|2|/srv/app")
+	if !ok {
+		t.Fatal("a well-formed line must parse")
+	}
+	if got.Name != "vpsd-abc123" || got.Title != "deploy" || got.Windows != 2 {
+		t.Errorf("parsed = %+v", got)
+	}
+	if got.Folder != "Shop" || !got.Favourite {
+		t.Errorf("the organising fields decide where this appears: %+v", got)
+	}
+	if got.CWD != "/srv/app" {
+		t.Errorf("cwd = %q", got.CWD)
+	}
+	if got.Attached {
+		t.Error("session_attached of 0 means nothing is attached")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("the creation time is what orders the list")
+	}
+
+	// Unset options come back empty, which is the ordinary case for a session
+	// nobody has organised yet.
+	plain, ok := parseTmuxLine("vpsd-abc123||||1787385285|1|1|/home/ubuntu")
+	if !ok || plain.Title != "" || plain.Folder != "" || plain.Favourite {
+		t.Errorf("an unorganised session must parse as one: %+v", plain)
+	}
+	if !plain.Attached {
+		t.Error("a non-zero session_attached means somebody is attached")
+	}
+
+	// The path is last precisely so it can contain the separator. A directory
+	// with a pipe in its name is unusual and entirely legal.
+	odd, ok := parseTmuxLine("vpsd-abc123||||1787385285|1|1|/srv/we|rd/path")
+	if !ok || odd.CWD != "/srv/we|rd/path" {
+		t.Errorf("a path containing the separator must survive intact, got %q", odd.CWD)
+	}
+
+	// Somebody else's tmux session on the same host is not ours to list, let
+	// alone to offer an attach button for.
+	if _, ok := parseTmuxLine("my-own-work|x|||1787385285|0|1|/home/me"); ok {
+		t.Error("only sessions this dashboard created may be listed")
+	}
+	if _, ok := parseTmuxLine("vpsd-abc123|truncated"); ok {
+		t.Error("a short line must be rejected rather than half-read")
+	}
+}
+
+// A title is written into a format tmux reads back through a separator, so
+// what goes in has to survive the round trip.
+func TestSanitiseField(t *testing.T) {
+	if got := sanitiseField("build | deploy"); strings.Contains(got, fieldSep) {
+		t.Errorf("the separator must not survive into a field: %q", got)
+	}
+	if got := sanitiseField("two\nlines\tand\x07a bell"); strings.ContainsAny(got, "\n\t\x07") {
+		t.Errorf("control characters come back escaped and must be stripped: %q", got)
+	}
+	if got := sanitiseField("  padded  "); got != "padded" {
+		t.Errorf("got %q", got)
+	}
+	if got := sanitiseField(strings.Repeat("x", 200)); len(got) > 64 {
+		t.Errorf("a title has to fit a tab, got %d chars", len(got))
+	}
 }

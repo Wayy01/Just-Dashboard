@@ -186,7 +186,7 @@ func loginShellOf(name string) string {
 // The argument vector is literal. Nothing the caller supplies is interpolated
 // into a string for a shell to parse, which is what keeps the promise the rest
 // of this codebase makes about host commands.
-func (a Account) loginArgv(shellOverride string) []string {
+func (a Account) loginArgv(shellOverride string, keepCWD bool) []string {
 	shell := shellOverride
 	if shell == "" {
 		shell = a.Shell
@@ -197,15 +197,34 @@ func (a Account) loginArgv(shellOverride string) []string {
 	// Nobody to become: either the target account is already ours, or we are
 	// not root and su would demand a password no one is there to type. Exec
 	// the login shell directly — `-l` is the half of "like ssh" that still
-	// applies, since it is what makes the shell read the profile.
+	// applies, since it is what makes the shell read the profile. A login
+	// *shell* does not change directory (that is su's doing, below), so this
+	// form already honours whatever working directory it is started in.
 	if a.IsRoot() || os.Geteuid() != 0 {
 		return []string{shell, "-l"}
 	}
 	// Options come before the user: su passes anything *after* the name on to
 	// the shell as arguments, so `su - name -s sh` would hand the shell a
 	// stray `-s` instead of choosing one.
-	if shellOverride != "" {
-		return []string{"su", "-s", shell, "-l", a.Name}
+	if !keepCWD {
+		if shellOverride != "" {
+			return []string{"su", "-s", shell, "-l", a.Name}
+		}
+		return []string{"su", "-l", a.Name}
 	}
-	return []string{"su", "-l", a.Name}
+	// "Open a shell *here*" — from a compose stack, a repository, a build
+	// context — and `su -l` is the one thing that cannot deliver it: login is
+	// defined as chdir-to-home, so it lands in the home directory no matter
+	// what directory it was started in. That is why setting tmux's `-c` was
+	// not enough on a host where the terminal runs as a regular account: tmux
+	// put the pane in the right place and su moved it straight back.
+	//
+	// So the chdir is moved off su and onto the shell. Without `-l`, su still
+	// switches user and still sets HOME, USER, SHELL and LOGNAME for the
+	// target account — it simply does not change directory — and the `-l`
+	// passed through to the shell after `--` is what reads the profile and
+	// gives the same PATH a login would. The result is a login shell in the
+	// requested directory, assembled entirely from argv: the path is an
+	// argument, never text for a shell to parse.
+	return []string{"su", "-s", shell, a.Name, "--", "-l"}
 }

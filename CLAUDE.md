@@ -418,6 +418,50 @@ every volume at once — the alternative is an inspect per container on every po
 the health and uptime already resolved there. `Diagnose` inspects each container once and runs
 every rule against that one payload.
 
+### The terminal, and what keeps a session
+
+`internal/term` runs the PTYs. Three properties are load-bearing and easy to
+break:
+
+**A session outlives everything but being closed.** With tmux present the shell
+runs inside `tmux new-session`, so closing the tab, leaving the page and
+restarting the dashboard all leave it running — only `Kill` ends one, and that
+is behind a typed confirmation. The reaper detaches an idle persisted session
+after `idleDetach` to give back the PTY and the slot; it never kills one. A
+host without tmux has no third option, so there the reaper still kills, which
+is why the page says which of the two worlds it is in.
+
+**`su -l` cannot open a shell in a chosen directory**, because login *is*
+chdir-to-home. Setting tmux's `-c` is not enough — tmux puts the pane in the
+right place and su walks straight back out. `loginArgv(shell, keepCWD)`
+therefore moves the chdir off su and onto the shell: `su -s <shell> <user> --
+-l` switches user without `-l`, so it does not move, and the `-l` after `--`
+reaches the shell and still reads the profile. The other half is
+`hostexec.CommandOnHostInDir`: `nsenter` resets the working directory to the
+target namespace's root, so `cmd.Dir` is silently discarded and only nsenter's
+own `--wd` survives.
+
+**tmux is the store for everything the operator chose.** The title, the folder
+and the favourite flag live on the tmux session as user options (`@jd_title`,
+`@jd_folder`, `@jd_fav`), not in this process and not in SQLite. The same
+property that keeps the work — the session outliving the dashboard — is what
+keeps its name, with nothing to migrate and nothing to reconcile on restart.
+`Reattach` reads the title back, so a session picked up after a restart is
+still called what you called it rather than `vpsd-3f2a91c4`.
+
+Two details of the tmux listing are not optional. **tmux escapes non-printable
+bytes in format output**, so a 0x1f unit separator comes back as the four
+literal characters `\037` and every line parses as one field — `fieldSep` is
+printable for that reason. And the **path is always the last field**, read with
+`SplitN`, because a directory may contain the separator and the fields before
+it may not (a session name is `vpsd-` plus hex, three are numbers, and titles
+are sanitised on write).
+
+`GET /terminal/` returns one list of *workspaces* rather than live sessions
+plus detached names. They are the same thing in two states — `live` says
+whether this process is holding a PTY — and reconciling two lists in the
+browser is what made an idle session appear to vanish and reappear elsewhere.
+
 ### Streaming
 
 `internal/wsx` wraps gorilla/websocket: origin check on upgrade (a WS handshake is not

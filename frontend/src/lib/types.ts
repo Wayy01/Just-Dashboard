@@ -823,23 +823,6 @@ export type JournalEntry = {
   syslogIdentifier?: string
 }
 
-export type TerminalSession = {
-  id: string
-  title: string
-  shell: string
-  /** The host account the shell logged in as. */
-  user: string
-  persisted: boolean
-  tmuxName: string
-  createdAt: string
-  owner: string
-  rows: number
-  cols: number
-  pid: number
-  attached: number
-  lastActive: string
-}
-
 export type FileEntry = {
   name: string
   path: string
@@ -1271,4 +1254,37 @@ export type Exposure = {
   interfaces: string[]
   tailscaleIp?: string
   recommendation?: string
+}
+
+/**
+ * One terminal as the operator thinks of it: a named, filed piece of work that
+ * may or may not have a PTY attached right now.
+ *
+ * `id` is present only while the dashboard is holding one; without it the
+ * session is still running on the host and selecting it costs a reattach.
+ */
+export type TerminalWorkspace = {
+  id?: string
+  tmuxName?: string
+  title: string
+  folder?: string
+  favourite: boolean
+  live: boolean
+  persisted: boolean
+  cwd?: string
+  windows: number
+  createdAt: string
+  attached: number
+  user?: string
+  shell?: string
+  owner?: string
+}
+
+/** A tmux window inside a session — a tab within a tab. */
+export type TerminalWindow = {
+  index: number
+  name: string
+  active: boolean
+  panes: number
+  cwd?: string
 }

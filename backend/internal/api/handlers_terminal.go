@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
@@ -23,6 +24,22 @@ func (s *Server) mountTerminalRoutes(r chi.Router) {
 		r.Method(http.MethodPost, "/reattach", s.handle(s.handleTerminalReattach))
 		r.Method(http.MethodGet, "/{id}/attach", s.handle(s.handleTerminalAttach))
 		r.Method(http.MethodPost, "/{id}/detach", s.handle(s.handleTerminalDetach))
+
+		// Naming and filing a session. Addressed by tmux name rather than by
+		// session id, because the sessions most in need of a name are exactly
+		// the ones this process is not currently holding a PTY for — the ones
+		// left running after a restart.
+		r.Method(http.MethodPatch, "/persistent/{name}", s.handle(s.handleTerminalMeta))
+
+		// The windows inside a session: a tab strip within a tab. tmux has had
+		// these all along and an operator who has not memorised `C-b c` had no
+		// way to reach them.
+		r.Method(http.MethodGet, "/persistent/{name}/windows", s.handle(s.handleTerminalWindows))
+		r.Method(http.MethodPost, "/persistent/{name}/windows", s.handle(s.handleTerminalWindowCreate))
+		r.Method(http.MethodPatch, "/persistent/{name}/windows/{index}", s.handle(s.handleTerminalWindowUpdate))
+		s.destructive(r, func(r chi.Router) {
+			r.Method(http.MethodDelete, "/persistent/{name}/windows/{index}", s.handle(s.handleTerminalWindowKill))
+		})
 		s.destructive(r, func(r chi.Router) {
 			// Killing a session takes whatever is running in it with it.
 			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleTerminalKill))
@@ -39,25 +56,78 @@ func mapTermError(err error) error {
 		return httpx.ErrNotFound
 	case errors.Is(err, term.ErrTooMany):
 		return httpx.Err(http.StatusTooManyRequests, "too_many_sessions", err.Error())
+	case errors.Is(err, term.ErrNoPersistence):
+		return httpx.Err(http.StatusConflict, "not_persistent", err.Error())
 	default:
 		return httpx.Internal(err)
 	}
 }
 
+// workspace is one terminal as the operator thinks of it: a named, filed piece
+// of work that may or may not have a PTY attached right now.
+//
+// The page used to receive two lists — live sessions and "detached" tmux names
+// — and had to reconcile them itself, which is why a session that had been
+// idle for an hour appeared to vanish and reappear somewhere else. They are the
+// same thing in two states, so they are one list with a flag.
+type workspace struct {
+	// ID is set only while a PTY is attached; it is what the socket addresses.
+	// Without one, the session is running and reattaching gives it an id.
+	ID        string `json:"id,omitempty"`
+	TmuxName  string `json:"tmuxName,omitempty"`
+	Title     string `json:"title"`
+	Folder    string `json:"folder,omitempty"`
+	Favourite bool   `json:"favourite"`
+	// Live distinguishes "this dashboard is holding a PTY for it" from "it is
+	// running on the host and can be picked up".
+	Live      bool      `json:"live"`
+	Persisted bool      `json:"persisted"`
+	CWD       string    `json:"cwd,omitempty"`
+	Windows   int       `json:"windows"`
+	CreatedAt time.Time `json:"createdAt"`
+	Attached  int       `json:"attached"`
+	User      string    `json:"user,omitempty"`
+	Shell     string    `json:"shell,omitempty"`
+	Owner     string    `json:"owner,omitempty"`
+}
+
 func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) error {
-	sessions := s.modules.term.List()
-	view := make([]map[string]any, 0, len(sessions))
-	for _, sess := range sessions {
-		rows, cols := sess.Size()
-		view = append(view, map[string]any{
-			"id": sess.ID, "title": sess.Title, "shell": sess.Shell,
-			"user":      sess.User,
-			"persisted": sess.Persisted, "tmuxName": sess.TmuxName,
-			"createdAt": sess.CreatedAt, "owner": sess.Owner,
-			"rows": rows, "cols": cols, "pid": sess.PID,
-			"attached": sess.Attached(), "lastActive": sess.LastActive().UTC(),
+	// Keyed by tmux name so a session the dashboard is holding and the same
+	// session as tmux reports it collapse into one entry rather than appearing
+	// twice under different names.
+	byTmux := map[string]*workspace{}
+	out := []*workspace{}
+
+	for _, sess := range s.modules.term.List() {
+		ws := &workspace{
+			ID: sess.ID, TmuxName: sess.TmuxName, Title: sess.Title,
+			Live: true, Persisted: sess.Persisted, CreatedAt: sess.CreatedAt,
+			Attached: sess.Attached(), User: sess.User, Shell: sess.Shell,
+			Owner: sess.Owner, Windows: 1,
+		}
+		out = append(out, ws)
+		if sess.TmuxName != "" {
+			byTmux[sess.TmuxName] = ws
+		}
+	}
+
+	// tmux is the authority on everything an operator chose — the name, the
+	// folder, whether it is a favourite — because that is where those are
+	// stored. A live session takes them from here rather than from the copy
+	// this process happens to hold in memory.
+	for _, t := range s.modules.term.TmuxSessions(r.Context()) {
+		if ws, ok := byTmux[t.Name]; ok {
+			ws.Title, ws.Folder, ws.Favourite = orDefault(t.Title, ws.Title), t.Folder, t.Favourite
+			ws.CWD, ws.Windows = t.CWD, t.Windows
+			continue
+		}
+		out = append(out, &workspace{
+			TmuxName: t.Name, Title: orDefault(t.Title, t.Name), Folder: t.Folder,
+			Favourite: t.Favourite, Persisted: true, CWD: t.CWD,
+			Windows: t.Windows, CreatedAt: t.CreatedAt,
 		})
 	}
+
 	// Who a new session will belong to, and where it will start. The page
 	// says so before you open one: a root-equivalent shell is not somewhere to
 	// discover your identity by running whoami.
@@ -70,15 +140,22 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 		"enabled":  s.modules.term.Enabled(),
 		"tmux":     s.modules.term.TmuxAvailable(),
 		"login":    login,
-		"sessions": view,
-		"detached": s.modules.term.TmuxSessions(r.Context()),
+		"sessions": out,
 	})
 	return nil
+}
+
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 type createTerminalRequest struct {
 	Title   string `json:"title"`
 	CWD     string `json:"cwd"`
+	Folder  string `json:"folder"`
 	Rows    uint16 `json:"rows"`
 	Cols    uint16 `json:"cols"`
 	Persist *bool  `json:"persist"`
@@ -95,7 +172,7 @@ func (s *Server) handleTerminalCreate(w http.ResponseWriter, r *http.Request) er
 		persist = *req.Persist
 	}
 	sess, err := s.modules.term.Create(r.Context(), term.CreateOptions{
-		Title: req.Title, Owner: p.Username(), CWD: req.CWD,
+		Title: req.Title, Owner: p.Username(), CWD: req.CWD, Folder: req.Folder,
 		Rows: req.Rows, Cols: req.Cols, Persist: persist,
 	})
 	if err != nil {
@@ -256,5 +333,110 @@ func (s *Server) handleTerminalCWD(w http.ResponseWriter, r *http.Request) error
 			"cannot determine the session's working directory")
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"cwd": cwd, "checkedAt": time.Now().UTC()})
+	return nil
+}
+
+// handleTerminalMeta renames a session and files it away.
+//
+// A rename is not a destructive action and deliberately carries no typed
+// confirmation: the whole point is that naming a session should be as cheap as
+// naming a browser tab, or nobody does it and every session stays
+// `vpsd-3f2a91c4`.
+func (s *Server) handleTerminalMeta(w http.ResponseWriter, r *http.Request) error {
+	var meta term.SessionMeta
+	if err := httpx.DecodeJSON(r, &meta); err != nil {
+		return err
+	}
+	name := chi.URLParam(r, "name")
+	if err := s.modules.term.SetMeta(r.Context(), name, meta); err != nil {
+		return mapTermError(err)
+	}
+	httpx.SetAudit(r, "terminal.rename", name,
+		map[string]any{"title": meta.Title, "folder": meta.Folder, "favourite": meta.Favourite})
+	httpx.JSON(w, http.StatusOK, meta)
+	return nil
+}
+
+func (s *Server) handleTerminalWindows(w http.ResponseWriter, r *http.Request) error {
+	windows, err := s.modules.term.Windows(r.Context(), chi.URLParam(r, "name"))
+	if err != nil {
+		return mapTermError(err)
+	}
+	httpx.JSON(w, http.StatusOK, windows)
+	return nil
+}
+
+func (s *Server) handleTerminalWindowCreate(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Name string `json:"name"`
+		CWD  string `json:"cwd"`
+	}
+	if r.ContentLength > 0 {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
+			return err
+		}
+	}
+	name := chi.URLParam(r, "name")
+	if err := s.modules.term.NewWindow(r.Context(), name, req.Name, req.CWD); err != nil {
+		return mapTermError(err)
+	}
+	httpx.SetAudit(r, "terminal.window.create", name, map[string]any{"name": req.Name})
+	httpx.NoContent(w)
+	return nil
+}
+
+// handleTerminalWindowUpdate renames a window, selects it, or both.
+//
+// Selecting is a write rather than a read because tmux redraws every attached
+// client when the active window changes — the browser sees the switch without
+// reconnecting, which is what makes the strip a control instead of a picture.
+func (s *Server) handleTerminalWindowUpdate(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Name   string `json:"name,omitempty"`
+		Select bool   `json:"select,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	name := chi.URLParam(r, "name")
+	index, err := strconv.Atoi(chi.URLParam(r, "index"))
+	if err != nil {
+		return httpx.BadRequest("window index must be a number")
+	}
+	if req.Name != "" {
+		if err := s.modules.term.RenameWindow(r.Context(), name, index, req.Name); err != nil {
+			return mapTermError(err)
+		}
+	}
+	if req.Select {
+		if err := s.modules.term.SelectWindow(r.Context(), name, index); err != nil {
+			return mapTermError(err)
+		}
+	}
+	httpx.SetAudit(r, "terminal.window.update", name,
+		map[string]any{"index": index, "name": req.Name, "select": req.Select})
+	httpx.NoContent(w)
+	return nil
+}
+
+func (s *Server) handleTerminalWindowKill(w http.ResponseWriter, r *http.Request) error {
+	name := chi.URLParam(r, "name")
+	index, err := strconv.Atoi(chi.URLParam(r, "index"))
+	if err != nil {
+		return httpx.BadRequest("window index must be a number")
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, "close window"); err != nil {
+		return err
+	}
+	if err := s.modules.term.KillWindow(r.Context(), name, index); err != nil {
+		// "This is the only window" is a sentence the operator needs, not a
+		// 500 — it names the route they should have taken instead.
+		if errors.Is(err, term.ErrNotFound) {
+			return httpx.ErrNotFound
+		}
+		return httpx.BadRequest("%s", err.Error())
+	}
+	httpx.SetAudit(r, "terminal.window.kill", name, map[string]any{"index": index})
+	httpx.NoContent(w)
 	return nil
 }
