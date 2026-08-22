@@ -1318,4 +1318,9 @@ export type TerminalPane = {
   command?: string
   cwd?: string
   dead: boolean
+  /** Where the rectangle sits in the window, in cells. Right/bottom inclusive. */
+  left: number
+  top: number
+  right: number
+  bottom: number
 }

@@ -38,6 +38,17 @@ type Pane struct {
 	// Dead marks a pane whose process exited while `remain-on-exit` kept the
 	// rectangle. It reads as a frozen terminal otherwise.
 	Dead bool `json:"dead"`
+	// Where the rectangle is, in cells, within the window.
+	//
+	// The browser sees one terminal, not four: tmux composes every pane into a
+	// single screen and the PTY carries the result. So a click lands on a cell
+	// and nothing else, and the only way to answer "which pane was that" is to
+	// know where each one starts and ends. Right and Bottom are inclusive, as
+	// tmux reports them.
+	Left   int `json:"left"`
+	Top    int `json:"top"`
+	Right  int `json:"right"`
+	Bottom int `json:"bottom"`
 }
 
 // Layouts are tmux's own named arrangements, and the list is closed: the value
@@ -70,8 +81,10 @@ func (m *Manager) Panes(ctx context.Context, tmuxName string, window int) ([]Pan
 	const format = "#{pane_index}" + fieldSep + "#{pane_active}" + fieldSep +
 		"#{pane_width}" + fieldSep + "#{pane_height}" + fieldSep +
 		"#{pane_pid}" + fieldSep + "#{pane_dead}" + fieldSep +
+		"#{pane_left}" + fieldSep + "#{pane_top}" + fieldSep +
+		"#{pane_right}" + fieldSep + "#{pane_bottom}" + fieldSep +
 		"#{pane_current_command}" + fieldSep + "#{pane_current_path}"
-	const fields = 8
+	const fields = 12
 	raw, err := hostexec.CommandOnHost(ctx, "tmux", "list-panes",
 		"-t", target(tmuxName, window), "-F", format).Output()
 	if err != nil {
@@ -82,11 +95,15 @@ func (m *Manager) Panes(ctx context.Context, tmuxName string, window int) ([]Pan
 		if len(f) < fields {
 			continue
 		}
-		p := Pane{Active: f[1] != "0", Dead: f[5] != "0", Command: f[6], CWD: f[7]}
+		p := Pane{Active: f[1] != "0", Dead: f[5] != "0", Command: f[10], CWD: f[11]}
 		p.Index, _ = strconv.Atoi(f[0])
 		p.Width, _ = strconv.Atoi(f[2])
 		p.Height, _ = strconv.Atoi(f[3])
 		p.PID, _ = strconv.Atoi(f[4])
+		p.Left, _ = strconv.Atoi(f[6])
+		p.Top, _ = strconv.Atoi(f[7])
+		p.Right, _ = strconv.Atoi(f[8])
+		p.Bottom, _ = strconv.Atoi(f[9])
 		out = append(out, p)
 	}
 	return out, nil

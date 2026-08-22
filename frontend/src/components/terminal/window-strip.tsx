@@ -218,13 +218,17 @@ function WindowChip({
       draggable
       data-window={win.index}
       onDragStart={(event) =>
-        beginDrag(event, {
-          kind: "window",
-          session: sessionName,
-          index: win.index,
-          position,
-          name: win.name,
-        })
+        beginDrag(
+          event,
+          {
+            kind: "window",
+            session: sessionName,
+            index: win.index,
+            position,
+            name: win.name,
+          },
+          tag,
+        )
       }
       onDragEnd={() => {
         endDrag()
@@ -396,6 +400,11 @@ export function PaneBar({
       {panes.map((pane) => (
         <div
           key={pane.index}
+          // Named in the DOM for the same reason a session row and a window
+          // chip are: which pane has the focus is state the page acts on, and
+          // reading it back out of a class name is guesswork.
+          data-pane={pane.index}
+          data-active={pane.active}
           className={cn(
             "group flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors",
             pane.active ? "bg-primary/12 text-foreground" : "text-muted-foreground hover:bg-accent",

@@ -29,6 +29,7 @@ import { toast } from "sonner"
 import { wsUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/hooks/use-theme"
+import { actionFor, formatChord, useKeymap } from "@/lib/terminal-keymap"
 import {
   FONT_MAX,
   FONT_MIN,
@@ -52,6 +53,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ShortcutsDialog } from "@/components/terminal/shortcuts-dialog"
 import {
   Dialog,
   DialogContent,
@@ -114,19 +116,6 @@ const CONTROL_KEYS = [
   { label: "Ctrl+\\", hint: "Quit — stronger than Ctrl+C", bytes: "\u001c" },
 ] as const
 
-const SHORTCUTS = [
-  ["Ctrl+Shift+C", "Copy the selection"],
-  ["Ctrl+Shift+V", "Paste"],
-  ["Ctrl+Shift+F", "Search the scrollback"],
-  ["Ctrl+Shift+K", "Clear the screen"],
-  ["Ctrl+Shift+Plus / Minus", "Text size"],
-  ["Ctrl+Shift+0", "Reset the text size"],
-  ["Ctrl+scroll", "Text size"],
-  ["Middle click", "Paste, the X11 way"],
-  ["Shift+Enter (in search)", "Previous match"],
-  ["Ctrl+Alt+1…9", "Switch session"],
-] as const
-
 /**
  * An xterm.js terminal wired to a PTY over a WebSocket.
  *
@@ -142,6 +131,7 @@ export function XtermPane({
   subtitle,
   cwd,
   onOpenFiles,
+  onCellClick,
 }: {
   path: string
   query?: Query
@@ -152,6 +142,13 @@ export function XtermPane({
   /** Where the shell currently is, for the actions that act on that directory. */
   cwd?: string
   onOpenFiles?: (path: string) => void
+  /**
+   * The cell a click landed on, so the caller can work out which tmux pane was
+   * under it. The browser sees one terminal however many panes tmux has
+   * composed into it, so the column and row are the only thing this component
+   * can honestly report.
+   */
+  onCellClick?: (cell: { col: number; row: number }) => void
 }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -182,6 +179,7 @@ export function XtermPane({
   const { mode } = useTheme()
   const settings = useTerminalSettings()
   const snippets = useSnippets()
+  const map = useKeymap()
 
   // The live terminal, kept so that switching theme can re-colour it instead
   // of tearing down the PTY session behind it. The mode is mirrored into a ref
@@ -199,6 +197,14 @@ export function XtermPane({
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+  // Same reason as the settings ref: rebinding a shortcut must not tear down
+  // the terminal and the PTY behind it.
+  const keymapRef = useRef(map)
+  useEffect(() => {
+    keymapRef.current = map
+  }, [map])
+  // The key handler is installed once, before toggleFullscreen is defined.
+  const fullscreenRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -382,54 +388,52 @@ export function XtermPane({
         }),
       )
 
-      // The shortcuts a terminal emulator is expected to own. Ctrl+Shift is
-      // the standard escape hatch precisely because Ctrl+C and Ctrl+V belong
-      // to the shell — intercepting those instead would break SIGINT, which is
-      // the single most used key in any terminal.
+      // The shortcuts the emulator owns, resolved through the keymap so every
+      // one of them is the operator's to change. Ctrl+Shift is the default
+      // family precisely because Ctrl+C and Ctrl+V belong to the shell —
+      // intercepting those would break SIGINT, the most used key in any
+      // terminal.
+      //
       // Returning false tells xterm not to handle the key; it does *not* stop
       // the browser. Without preventDefault, Ctrl+Shift+V opened the paste
       // confirmation and let Chromium paste into xterm's textarea at the same
       // time — the guarded route and the unguarded one, at once.
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return true
-        const combo = event.ctrlKey && event.shiftKey
-        if (!combo) return true
-        const claim = () => {
-          event.preventDefault()
-          event.stopPropagation()
-          return false
-        }
-        switch (event.code) {
-          case "KeyC":
+        const action = actionFor(event, "terminal", keymapRef.current)
+        if (!action) return true
+        event.preventDefault()
+        event.stopPropagation()
+        switch (action) {
+          case "terminal.copy":
             void copySelection(term)
-            return claim()
-          case "KeyV":
+            break
+          case "terminal.paste":
             void requestPaste(socket, setPendingPaste)
-            return claim()
-          case "KeyF":
+            break
+          case "terminal.search":
             setSearching(true)
-            return claim()
-          case "KeyK":
+            break
+          case "terminal.clear":
             term.clear()
-            return claim()
-          case "Equal":
-          case "NumpadAdd":
-            setTerminalSettings({
-              fontSize: Math.min(FONT_MAX, settingsRef.current.fontSize + 1),
-            })
-            return claim()
-          case "Minus":
-          case "NumpadSubtract":
-            setTerminalSettings({
-              fontSize: Math.max(FONT_MIN, settingsRef.current.fontSize - 1),
-            })
-            return claim()
-          case "Digit0":
+            break
+          case "terminal.fullscreen":
+            void fullscreenRef.current?.()
+            break
+          case "terminal.fontIn":
+            setTerminalSettings({ fontSize: Math.min(FONT_MAX, settingsRef.current.fontSize + 1) })
+            break
+          case "terminal.fontOut":
+            setTerminalSettings({ fontSize: Math.max(FONT_MIN, settingsRef.current.fontSize - 1) })
+            break
+          case "terminal.fontReset":
             setTerminalSettings({ fontSize: 13 })
-            return claim()
-          default:
-            return true
+            break
+          case "terminal.shortcuts":
+            setShortcuts(true)
+            break
         }
+        return false
       })
 
       // Ctrl+scroll is the zoom gesture every browser and every terminal
@@ -517,6 +521,10 @@ export function XtermPane({
       termRef.current?.focus()
     }, 120)
   }, [])
+
+  useEffect(() => {
+    fullscreenRef.current = toggleFullscreen
+  }, [toggleFullscreen])
 
   const runSearch = useCallback(
     (direction: "next" | "previous") => {
@@ -639,14 +647,17 @@ export function XtermPane({
           </div>
         ) : (
           <>
-            <PaneButton label="Search scrollback (Ctrl+Shift+F)" onClick={() => setSearching(true)}>
+            <PaneButton
+              label={`Search scrollback (${formatChord(map["terminal.search"])})`}
+              onClick={() => setSearching(true)}
+            >
               <Search className="size-3.5" />
             </PaneButton>
 
             <SnippetMenu snippets={snippets} onSend={(command) => send(command + "\r")} />
 
             <PaneButton
-              label="Copy selection (Ctrl+Shift+C)"
+              label={`Copy selection (${formatChord(map["terminal.copy"])})`}
               onClick={() => termRef.current && copySelection(termRef.current)}
             >
               <Copy className="size-3.5" />
@@ -677,7 +688,7 @@ export function XtermPane({
             <SettingsMenu />
 
             <PaneButton
-              label="Clear the screen (Ctrl+Shift+K)"
+              label={`Clear the screen (${formatChord(map["terminal.clear"])})`}
               onClick={() => {
                 termRef.current?.clear()
                 termRef.current?.focus()
@@ -702,7 +713,10 @@ export function XtermPane({
               </PaneButton>
             )}
 
-            <PaneButton label="Keyboard shortcuts" onClick={() => setShortcuts(true)}>
+            <PaneButton
+              label={`Keyboard shortcuts (${formatChord(map["terminal.shortcuts"])})`}
+              onClick={() => setShortcuts(true)}
+            >
               <Keyboard className="size-3.5" />
             </PaneButton>
 
@@ -762,6 +776,23 @@ export function XtermPane({
             bell && "bg-warning/25",
           )}
           style={bell ? undefined : { backgroundColor: TERMINAL_THEMES[mode].background }}
+          // Clicking inside a pane focuses it, which is what clicking inside
+          // anything does. tmux composes every pane into one screen before the
+          // PTY ever sees it, so there is no element to hang a handler on —
+          // only a cell. xterm publishes no pixel-to-cell mapping and does not
+          // need to: the grid is uniform, so the screen's box divided by the
+          // terminal's own rows and columns is exact.
+          onMouseDown={(e) => {
+            const term = termRef.current
+            const screen = hostRef.current?.querySelector(".xterm-screen")
+            if (!onCellClick || !term || !screen || e.button !== 0) return
+            const box = screen.getBoundingClientRect()
+            if (box.width === 0 || box.height === 0) return
+            const col = Math.floor(((e.clientX - box.left) / box.width) * term.cols)
+            const row = Math.floor(((e.clientY - box.top) / box.height) * term.rows)
+            if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return
+            onCellClick({ col, row })
+          }}
           // Middle-click paste is the X11 convention every Linux operator has
           // in their fingers, and the browser does not provide it for us.
           onAuxClick={(e) => {
@@ -814,25 +845,7 @@ export function XtermPane({
         }}
       />
 
-      <Dialog open={shortcuts} onOpenChange={setShortcuts}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Keyboard shortcuts</DialogTitle>
-            <DialogDescription>
-              Ctrl+Shift is the terminal&apos;s prefix, because Ctrl+C and Ctrl+V belong to the
-              shell running inside it.
-            </DialogDescription>
-          </DialogHeader>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-            {SHORTCUTS.map(([keys, what]) => (
-              <div key={keys} className="contents">
-                <dt className="font-mono text-[11px] text-foreground">{keys}</dt>
-                <dd className="text-muted-foreground">{what}</dd>
-              </div>
-            ))}
-          </dl>
-        </DialogContent>
-      </Dialog>
+      <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} />
     </div>
   )
 }

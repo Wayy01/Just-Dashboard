@@ -12,8 +12,9 @@ import type {
   TerminalWorkspace,
 } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { actionFor, keymap, type ShortcutAction } from "@/lib/terminal-keymap"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Page, PageHeader } from "@/components/page"
+import { Page } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
 import { SessionRail } from "@/components/terminal/session-rail"
 import { PaneBar, WindowStrip } from "@/components/terminal/window-strip"
@@ -44,6 +45,9 @@ export default function TerminalPage() {
   const requestedCwd = params.get("cwd")
   const requestedFolder = params.get("folder") ?? undefined
   const launched = useRef(false)
+  // The navigation shortcut handlers, rebuilt each render and read by a
+  // listener that is installed once. See where it is filled in below.
+  const navigationRef = useRef<Partial<Record<ShortcutAction, () => void>>>({})
 
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<TerminalList>("/terminal/", undefined, signal),
@@ -113,35 +117,55 @@ export default function TerminalPage() {
   // Panes, only for the window on screen and only once it has been split.
   // Asking for them unconditionally would be a subprocess on the host every
   // five seconds for the overwhelmingly common case of one pane.
+  //
+  // The index is required rather than defaulted. Falling back to window 0 read
+  // as an occasional wrong answer instead of no answer: between a window being
+  // selected and the next windows poll no window reports itself active, and
+  // during that gap the bar listed window 0's panes and clicking one selected
+  // a pane in a window nobody was looking at.
+  const paneWindow = activeWindow?.index
   const panes = usePoll<TerminalPane[]>(
     (signal) =>
-      get<TerminalPane[]>(
-        `${persistent(tmuxName ?? "")}/windows/${activeWindow?.index ?? 0}/panes`,
-        undefined,
-        signal,
-      ),
+      get<TerminalPane[]>(`${persistent(tmuxName ?? "")}/windows/${paneWindow}/panes`, undefined, signal),
     5000,
-    [tmuxName, activeWindow?.index],
-    { enabled: Boolean(tmuxName) && (activeWindow?.panes ?? 1) > 1 },
+    [tmuxName, paneWindow],
+    {
+      enabled: Boolean(tmuxName) && paneWindow !== undefined && (activeWindow?.panes ?? 1) > 1,
+    },
   )
 
-  // Ctrl+Alt+1..9 switches session, the way a tabbed terminal does. Alt alone
-  // is claimed by the shell inside the pane, so the chord is deliberately one
-  // the terminal will never want.
+  // Everything the shell inside the pane does not own: moving between
+  // sessions, windows and panes. It is one listener in the capture phase for
+  // a reason — the terminal has focus, and a bubbling listener would run after
+  // xterm had already forwarded the keystroke to the PTY, so Ctrl+Alt+→ would
+  // switch the window *and* type an escape sequence at the prompt.
+  //
+  // The pane's own shortcuts (copy, paste, search) live in XtermPane against
+  // the same keymap under a different scope, so a chord belonging to the other
+  // listener falls through here rather than being swallowed.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || !e.altKey || e.metaKey) return
-      const n = Number(e.key)
-      if (!n || n < 1 || n > 9) return
-      const target = live[n - 1]
-      if (target?.id) {
-        e.preventDefault()
-        setPicked(target.id)
+    const onKey = (event: KeyboardEvent) => {
+      // Not while somebody is typing into the rail's filter or renaming a row
+      // — but the terminal itself does not count, and that exclusion is the
+      // whole point. xterm takes keystrokes through a hidden
+      // `.xterm-helper-textarea`, so a plain "is the target a text field"
+      // guard suppresses every one of these shortcuts exactly when the
+      // terminal has focus, which is the only time anybody presses them.
+      const target = event.target as HTMLElement | null
+      if (target?.closest("input, textarea, [contenteditable=true]") && !target.closest(".xterm")) {
+        return
       }
+      const action = actionFor(event, "navigation", keymap())
+      if (!action) return
+      const handler = navigationRef.current[action]
+      if (!handler) return
+      event.preventDefault()
+      event.stopPropagation()
+      handler()
     }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [live])
+    window.addEventListener("keydown", onKey, { capture: true })
+    return () => window.removeEventListener("keydown", onKey, { capture: true })
+  }, [])
 
   /** Every mutation refreshes; the failure names what did not happen. */
   const act = useCallback(
@@ -152,44 +176,18 @@ export default function TerminalPage() {
         toast.error(failure, { description: String(err) })
         return
       }
-      if (alsoWindows) windows.refresh()
+      if (alsoWindows) {
+        windows.refresh()
+        // And the panes with them. Without this a click on a pane chip did the
+        // right thing on the server and changed nothing on screen until the
+        // next five-second tick, which reads as a control that works about one
+        // time in three.
+        panes.refresh()
+      }
       refresh()
     },
-    [refresh, windows],
+    [refresh, windows, panes],
   )
-
-  if (loading) {
-    return (
-      <Page>
-        <PageHeader eyebrow="Access" title="Terminal" />
-        <LoadingPanel rows={4} />
-      </Page>
-    )
-  }
-  if (error) {
-    return (
-      <Page>
-        <PageHeader eyebrow="Access" title="Terminal" />
-        <ErrorState error={error} />
-      </Page>
-    )
-  }
-  if (!data?.enabled) {
-    return (
-      <Page>
-        <PageHeader
-          eyebrow="Access"
-          title="Terminal"
-          description="A shell on the host, in the browser"
-        />
-        <EmptyState
-          icon={TerminalSquare}
-          title="The web terminal is disabled"
-          description="Set JD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
-        />
-      </Page>
-    )
-  }
 
   /** Attaching to something that is running but has no PTY costs a reattach. */
   const select = async (session: TerminalWorkspace) => {
@@ -290,37 +288,201 @@ export default function TerminalPage() {
   const windowPatch = (index: number, body: Record<string, unknown>, failure: string) =>
     act(() => patch(`${persistent(tmuxName!)}/windows/${index}`, body), failure, true)
 
-  return (
-    <Page fill>
-      <PageHeader
-        eyebrow="Access"
-        title="Terminal"
-        description={
-          data.tmux
-            ? "Sessions keep running: closing the tab, leaving the page and restarting the dashboard all leave them alone. Only closing one stops it."
-            : "tmux is not installed, so sessions end when they are closed."
-        }
-        actions={
-          <Button size="sm" onClick={() => openSession()}>
-            <Plus className="size-4" />
-            New session
-          </Button>
-        }
-      />
+  const splitActive = (vertical: boolean) => {
+    if (!activeWindow || !tmuxName) return
+    void act(
+      () => post(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes`, { vertical }),
+      "Could not split that window",
+      true,
+    )
+  }
 
-      {data.login.error ? (
+  const selectPane = (pane: number) =>
+    activeWindow &&
+    tmuxName &&
+    act(
+      () => patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, { select: true }),
+      "Could not focus that pane",
+      true,
+    )
+
+  const closeWindow = (index: number) =>
+    confirm({
+      title: "Close window",
+      phrase: "close window",
+      confirmLabel: "Close",
+      description: (
+        <p>
+          Ends this window and whatever is running in it. The session and its other windows are
+          untouched.
+        </p>
+      ),
+      action: (c) =>
+        act(
+          () => del(`${persistent(tmuxName!)}/windows/${index}`, { confirm: c }),
+          "Could not close that window",
+          true,
+        ),
+    })
+
+  const closePane = (pane: number) =>
+    activeWindow &&
+    confirm({
+      title: "Close pane",
+      phrase: "close pane",
+      confirmLabel: "Close",
+      description: (
+        <p>
+          Ends this pane and whatever is running in it. The window&apos;s other panes are
+          untouched.
+        </p>
+      ),
+      action: (c) =>
+        act(
+          () =>
+            del(`${persistent(tmuxName!)}/windows/${activeWindow.index}/panes/${pane}`, {
+              confirm: c,
+            }),
+          "Could not close that pane",
+          true,
+        ),
+    })
+
+  /**
+   * What every navigation shortcut does, rebuilt each render and handed to the
+   * listener through a ref.
+   *
+   * The listener is installed once — re-registering a window-level capture
+   * handler on every render is a real cost while a build is scrolling past —
+   * so it cannot close over this directly without going stale on the first
+   * new session.
+   *
+   * `step` wraps in both directions on purpose: cycling is what `C-b n` does
+   * in tmux and what Ctrl+Tab does in a browser, and stopping at the end is
+   * only ever noticed as the shortcut having failed.
+   */
+  const step = <T,>(items: T[], current: number, by: number): T | undefined =>
+    items.length === 0 ? undefined : items[(((current + by) % items.length) + items.length) % items.length]
+
+  const windowList = windows.data ?? []
+  const paneList = panes.data ?? []
+  const navigation: Partial<Record<ShortcutAction, () => void>> = {
+    "session.new": () => void openSession(),
+    "session.next": () => {
+      const at = live.findIndex((sess) => sess.id === active)
+      const next = step(live, at < 0 ? -1 : at, 1)
+      if (next?.id) setPicked(next.id)
+    },
+    "session.prev": () => {
+      const at = live.findIndex((sess) => sess.id === active)
+      const prev = step(live, at < 0 ? 0 : at, -1)
+      if (prev?.id) setPicked(prev.id)
+    },
+    "window.new": () =>
+      tmuxName &&
+      void act(() => post(`${persistent(tmuxName)}/windows`, {}), "Could not open a window", true),
+    "window.next": () => {
+      const at = windowList.findIndex((w) => w.active)
+      const next = step(windowList, at < 0 ? -1 : at, 1)
+      if (next) windowPatch(next.index, { select: true }, "Could not switch window")
+    },
+    "window.prev": () => {
+      const at = windowList.findIndex((w) => w.active)
+      const prev = step(windowList, at < 0 ? 0 : at, -1)
+      if (prev) windowPatch(prev.index, { select: true }, "Could not switch window")
+    },
+    "window.close": () => activeWindow && windowList.length > 1 && closeWindow(activeWindow.index),
+    "pane.next": () => {
+      const at = paneList.findIndex((pane) => pane.active)
+      const next = step(paneList, at < 0 ? -1 : at, 1)
+      if (next) void selectPane(next.index)
+    },
+    "pane.prev": () => {
+      const at = paneList.findIndex((pane) => pane.active)
+      const prev = step(paneList, at < 0 ? 0 : at, -1)
+      if (prev) void selectPane(prev.index)
+    },
+    "pane.zoom": () => {
+      const current = paneList.find((pane) => pane.active) ?? paneList[0]
+      if (!current || !activeWindow || !tmuxName) return
+      void act(
+        () =>
+          patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${current.index}`, {
+            zoom: true,
+          }),
+        "Could not zoom that pane",
+        true,
+      )
+    },
+    "pane.splitRight": () => splitActive(true),
+    "pane.splitDown": () => splitActive(false),
+    "pane.close": () => {
+      const current = paneList.find((pane) => pane.active)
+      if (current && paneList.length > 1) closePane(current.index)
+    },
+  }
+  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+    navigation[`session.${n}`] = () => {
+      const target = live[n - 1]
+      if (target?.id) setPicked(target.id)
+    }
+    navigation[`window.${n}`] = () => {
+      const target = windowList[n - 1]
+      if (target) windowPatch(target.index, { select: true }, "Could not switch window")
+    }
+  }
+  // Written in an effect rather than during render: a ref assigned mid-render
+  // makes the component's output depend on when it ran.
+  useEffect(() => {
+    navigationRef.current = navigation
+  })
+
+  if (loading) {
+    return (
+      <Page fill className="px-2 py-2 md:px-3 md:py-3">
+        <LoadingPanel rows={4} />
+      </Page>
+    )
+  }
+  if (error) {
+    return (
+      <Page className="px-2 py-2 md:px-3 md:py-3">
+        <ErrorState error={error} />
+      </Page>
+    )
+  }
+  if (!data?.enabled) {
+    return (
+      <Page className="px-2 py-2 md:px-3 md:py-3">
+        <EmptyState
+          icon={TerminalSquare}
+          title="The web terminal is disabled"
+          description="Set JD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
+        />
+      </Page>
+    )
+  }
+
+  return (
+    // No page header, and a tighter gutter than every other page.
+    //
+    // A terminal is the one screen whose content *is* the viewport: every row
+    // the chrome takes is a row of output the operator cannot see, and a title
+    // band plus an explanatory notice was costing about a fifth of the pane on
+    // a laptop. What they said is not lost — the breadcrumb above already says
+    // where you are, "New session" moved into the rail beside "New folder",
+    // and which account a shell runs as is on the pane's own header, where it
+    // is next to the shell rather than three inches above it.
+    <Page fill className="gap-2 px-2 py-2 md:gap-2 md:px-3 md:py-3">
+      {/*
+        The one banner that stays. A missing account is not information, it is
+        a broken feature: no shell can open at all until it is fixed, so it
+        cannot be a line in a tooltip.
+      */}
+      {data.login.error && (
         <Notice icon={ShieldAlert} tone="danger" title="No account to log in as">
           {data.login.error} Set <code className="font-mono">JD_TERMINAL_USER</code> to an account
           that exists on this server.
-        </Notice>
-      ) : (
-        <Notice icon={TerminalSquare} title="A login shell on the host, not in the container">
-          Sessions log in as{" "}
-          <code className="font-mono font-medium text-foreground">{data.login.user}</code> and start
-          in <code className="font-mono">{data.login.home}</code>, running{" "}
-          <code className="font-mono">{data.login.shell}</code> — the same as an SSH session, so
-          your dotfiles, PATH and installed tools are all here. Opening and closing a session is
-          recorded in the audit log.
         </Notice>
       )}
 
@@ -396,13 +558,7 @@ export default function TerminalPage() {
                 onReorder={(index, position) =>
                   windowPatch(index, { position }, "Could not move that window")
                 }
-                onSplit={(index, vertical) =>
-                  act(
-                    () => post(`${persistent(tmuxName)}/windows/${index}/panes`, { vertical }),
-                    "Could not split that window",
-                    true,
-                  )
-                }
+                onSplit={(_index, vertical) => splitActive(vertical)}
                 onLayout={(index, layout) =>
                   windowPatch(index, { layout }, "Could not rearrange the panes")
                 }
@@ -500,6 +656,22 @@ export default function TerminalPage() {
                 }`}
                 cwd={activeSession?.cwd}
                 onOpenFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
+                // Clicking in a pane focuses it, which is what clicking in
+                // anything does — and until now the only way to move the focus
+                // was the chip in the bar above, which is a long way to go to
+                // type into the half of the screen you are already looking at.
+                //
+                // Nothing happens for a single pane, and nothing happens when
+                // the click was already inside the focused one: every one of
+                // those would be a tmux subprocess per click.
+                onCellClick={({ col, row }) => {
+                  if (paneList.length < 2) return
+                  const hit = paneList.find(
+                    (pane) =>
+                      col >= pane.left && col <= pane.right && row >= pane.top && row <= pane.bottom,
+                  )
+                  if (hit && !hit.active) void selectPane(hit.index)
+                }}
                 // No minimum height: the pane is whatever is left after the
                 // header and the strips, and a floor taller than that would
                 // push the page past the window — which is the one thing a

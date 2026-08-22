@@ -176,6 +176,9 @@ export function SessionRail({
         <IconAction label="New folder" className="size-7" onClick={() => setCreatingFolder(true)}>
           <FolderPlus />
         </IconAction>
+        <IconAction label="New session" className="size-7" onClick={() => onNew()}>
+          <Plus />
+        </IconAction>
       </div>
 
       <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-0.5">
@@ -354,7 +357,9 @@ function FolderGroup({
       */}
       <div
         draggable
-        onDragStart={(event) => beginDrag(event, { kind: "folder", name: folder.name })}
+        onDragStart={(event) =>
+          beginDrag(event, { kind: "folder", name: folder.name }, tagVar(folder.colour))
+        }
         onDragEnd={endDrag}
         className={cn(
           "group/folder flex items-center gap-1 rounded-lg border border-hairline bg-surface-header px-1.5 py-1 transition-colors",
@@ -581,12 +586,16 @@ function SessionRow({
       draggable
       data-session={session.tmuxName ?? session.id}
       onDragStart={(event) =>
-        beginDrag(event, {
-          kind: "session",
-          tmuxName: session.tmuxName ?? "",
-          folder: session.folder ?? "",
-          title: session.title,
-        })
+        beginDrag(
+          event,
+          {
+            kind: "session",
+            tmuxName: session.tmuxName ?? "",
+            folder: session.folder ?? "",
+            title: session.title,
+          },
+          tagVar(colour),
+        )
       }
       onDragEnd={endDrag}
       // A window dropped onto a session moves it there, which is how work

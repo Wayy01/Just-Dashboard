@@ -763,8 +763,19 @@ about sessions.
   against the surface, so one lightness holds up on a near-black card and a near-white one.
 - `lib/terminal-settings.ts` keeps the font, cursor, scrollback and behaviour switches in
   localStorage, on the screen and not on the account, for the same reason the theme is.
+- `lib/terminal-keymap.ts` is every shortcut, and the fact that all of them are rebindable.
+  A chord has to get past the browser, the page and the shell in the pane, and there is no
+  default that annoys nobody — tmux settled that argument with a prefix key half the world
+  rebinds. Ctrl+Alt is the default family because neither the browser nor a shell wants it;
+  Ctrl+Shift is the emulator's own, as on every Linux terminal. Matching is on `event.code`,
+  the physical key, so a binding recorded on QWERTY survives a switch to a Romanian layout.
+  Actions carry a **scope**: `navigation` is the page's (it alone knows the sessions), and
+  `terminal` is the pane's (the compose runner reuses the emulator and needs copy, paste and
+  search where there is no session at all). That split is what stops one keydown being
+  handled twice. `shortcuts-dialog.tsx` is both the cheatsheet and the editor, because a
+  read-only list is opened once and a settings page hidden elsewhere is opened never.
 
-Two things in `xterm-pane.tsx` are load-bearing and easy to undo:
+Several things in `xterm-pane.tsx` and the page are load-bearing and easy to undo:
 
 **Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every
 line but the last, immediately, with no chance to read them — and Ctrl+V, the right-click menu
@@ -786,6 +797,33 @@ callback says the replay is parsed.
 `allowProposedApi` is on because the search addon's match count and highlight-all are built on
 xterm's decoration API, which is not frozen yet. Without it `findNext` throws where it would
 have decorated and the counter reads "none" over a scrollback full of matches.
+
+**Clicking inside a pane focuses it, and the arithmetic is the only way it can.** tmux composes
+every pane into one screen before the PTY sees a byte, so the browser has a single terminal and
+no element to hang a handler on — a click lands on a cell and nothing else. `Panes` therefore
+carries `pane_left/top/right/bottom`, `XtermPane` reports the clicked cell (the grid is uniform,
+so the screen's box divided by rows and columns is exact — xterm publishes no pixel-to-cell
+mapping), and the page finds the rectangle containing it. It no-ops for a single pane and for a
+click already inside the focused one, because either would be a tmux subprocess per click.
+
+**The navigation listener runs in the capture phase and must not skip the terminal.** Bubbling
+would land after xterm had already forwarded the keystroke, so Ctrl+Alt+→ would switch the
+window *and* type an escape sequence at the prompt. And the usual "ignore keys while a text
+field has focus" guard has to make an exception for `.xterm`: xterm receives keystrokes through
+a hidden `.xterm-helper-textarea`, so the plain form of that guard disables every shortcut
+exactly when the terminal has focus, which is the only time anybody presses one.
+
+**The page has no header.** A terminal is the one screen whose content *is* the viewport, and a
+title band plus an explanatory notice cost about a fifth of the pane on a laptop. The
+breadcrumb already says where you are, "New session" sits in the rail beside "New folder", and
+which account a shell runs as is on the pane's own header. The one banner that stays is a
+missing login account, which is a broken feature rather than information.
+
+**The drag image is drawn by hand.** Left to the browser it snapshots the row, and a row with a
+transparent background — which every row here has until it is hovered — gets composited onto an
+opaque white rectangle with hard corners. Chrome exposes no way to style that, so `dnd.ts`
+builds an off-screen chip in the theme's own tokens, hands it to `setDragImage`, and removes it
+on the next frame.
 
 ### Data
 

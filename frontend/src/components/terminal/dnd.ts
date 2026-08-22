@@ -42,14 +42,59 @@ function emit() {
 }
 
 /** Called from `dragstart`: stamps the payload on the event and records it. */
-export function beginDrag(event: React.DragEvent, payload: DragPayload) {
+export function beginDrag(event: React.DragEvent, payload: DragPayload, colour?: string | null) {
   current = payload
   event.dataTransfer.effectAllowed = "move"
   event.dataTransfer.setData(DRAG_TYPES[payload.kind], JSON.stringify(payload))
   // Some browsers refuse a drag with no `text/plain`, and a readable label is
   // what a drop into an editor or a chat window would otherwise not have.
   event.dataTransfer.setData("text/plain", labelOf(payload))
+  setDragChip(event, labelOf(payload), colour)
   emit()
+}
+
+/**
+ * Draws the thing under the cursor during a drag.
+ *
+ * Left to the browser it snapshots the row, and a row whose background is
+ * transparent — which every row here is until it is hovered — gets composited
+ * onto an opaque white rectangle. The result is a white box with hard corners
+ * dragging across a dark page, which looks like a rendering fault rather than a
+ * drag. Chrome will not let that be styled: `-webkit-drag` ignores the
+ * element's own radius and there is no property for the backing.
+ *
+ * So the drag image is a purpose-built chip instead. It has to be in the
+ * document to be snapshotted and off-screen so it is never seen directly, and
+ * it is removed on the next frame because the browser only needs it for the
+ * instant it takes the picture.
+ */
+function setDragChip(event: React.DragEvent, label: string, colour?: string | null) {
+  if (typeof document === "undefined") return
+  const chip = document.createElement("div")
+  chip.textContent = label
+  Object.assign(chip.style, {
+    position: "fixed",
+    top: "-1000px",
+    left: "-1000px",
+    maxWidth: "220px",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    padding: "6px 10px",
+    borderRadius: "8px",
+    // Opaque, because the whole problem is what shows through a transparent
+    // one. The tokens keep it in whichever theme is in force.
+    background: "var(--card)",
+    color: "var(--foreground)",
+    border: `1px solid ${colour ?? "var(--border)"}`,
+    borderLeft: `3px solid ${colour ?? "var(--primary)"}`,
+    font: "500 12px/1.2 var(--font-sans, system-ui)",
+    boxShadow: "0 8px 20px rgb(0 0 0 / 0.35)",
+    pointerEvents: "none",
+  } satisfies Partial<CSSStyleDeclaration>)
+  document.body.appendChild(chip)
+  event.dataTransfer.setDragImage(chip, 12, chip.offsetHeight / 2)
+  requestAnimationFrame(() => chip.remove())
 }
 
 export function endDrag() {
