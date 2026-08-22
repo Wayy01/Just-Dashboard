@@ -175,17 +175,17 @@ func equal(a, b []string) bool {
 // a single field — which is how the persisted-session list silently became
 // empty while tmux itself had two sessions running.
 //
-// Fields, in order: name, title, folder, favourite, created, attached,
-// windows, path. The path is last so it may contain the separator.
+// Fields, in order: name, title, folder, favourite, colour, created,
+// attached, windows, path. The path is last so it may contain the separator.
 func TestParseTmuxLine(t *testing.T) {
-	got, ok := parseTmuxLine("vpsd-abc123|deploy|Shop|1|1787385285|0|2|/srv/app")
+	got, ok := parseTmuxLine("vpsd-abc123|deploy|Shop|1|violet|1787385285|0|2|/srv/app")
 	if !ok {
 		t.Fatal("a well-formed line must parse")
 	}
 	if got.Name != "vpsd-abc123" || got.Title != "deploy" || got.Windows != 2 {
 		t.Errorf("parsed = %+v", got)
 	}
-	if got.Folder != "Shop" || !got.Favourite {
+	if got.Folder != "Shop" || !got.Favourite || got.Colour != "violet" {
 		t.Errorf("the organising fields decide where this appears: %+v", got)
 	}
 	if got.CWD != "/srv/app" {
@@ -200,8 +200,8 @@ func TestParseTmuxLine(t *testing.T) {
 
 	// Unset options come back empty, which is the ordinary case for a session
 	// nobody has organised yet.
-	plain, ok := parseTmuxLine("vpsd-abc123||||1787385285|1|1|/home/ubuntu")
-	if !ok || plain.Title != "" || plain.Folder != "" || plain.Favourite {
+	plain, ok := parseTmuxLine("vpsd-abc123|||||1787385285|1|1|/home/ubuntu")
+	if !ok || plain.Title != "" || plain.Folder != "" || plain.Favourite || plain.Colour != "" {
 		t.Errorf("an unorganised session must parse as one: %+v", plain)
 	}
 	if !plain.Attached {
@@ -210,14 +210,14 @@ func TestParseTmuxLine(t *testing.T) {
 
 	// The path is last precisely so it can contain the separator. A directory
 	// with a pipe in its name is unusual and entirely legal.
-	odd, ok := parseTmuxLine("vpsd-abc123||||1787385285|1|1|/srv/we|rd/path")
+	odd, ok := parseTmuxLine("vpsd-abc123|||||1787385285|1|1|/srv/we|rd/path")
 	if !ok || odd.CWD != "/srv/we|rd/path" {
 		t.Errorf("a path containing the separator must survive intact, got %q", odd.CWD)
 	}
 
 	// Somebody else's tmux session on the same host is not ours to list, let
 	// alone to offer an attach button for.
-	if _, ok := parseTmuxLine("my-own-work|x|||1787385285|0|1|/home/me"); ok {
+	if _, ok := parseTmuxLine("my-own-work|x||||1787385285|0|1|/home/me"); ok {
 		t.Error("only sessions this dashboard created may be listed")
 	}
 	if _, ok := parseTmuxLine("vpsd-abc123|truncated"); ok {

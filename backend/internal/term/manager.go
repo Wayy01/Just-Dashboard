@@ -89,6 +89,10 @@ type CreateOptions struct {
 	// Folder files the new session away as it is created, so a shell opened
 	// from a stack lands in that stack's group without a second step.
 	Folder string
+	// Colour tags the session in the rail. A session created inside a folder
+	// inherits the folder's colour, which is what makes a group readable as a
+	// group rather than as four rows that happen to be adjacent.
+	Colour string
 }
 
 // Create spawns a session. When tmux is present and persistence is requested
@@ -128,7 +132,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	sess := &Session{
 		ID:          id,
-		Title:       defaultTitle(opts.Title),
+		Title:       m.defaultTitle(ctx, opts.Title),
 		Shell:       shell,
 		User:        m.account.Name,
 		CreatedAt:   time.Now().UTC(),
@@ -138,6 +142,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		subscribers: map[int64]chan []byte{},
 		scrollback:  newRingBuffer(scrollbackKB * 1024),
 		lastActive:  time.Now(),
+		folder:      sanitiseField(opts.Folder),
+		colour:      normaliseColour(opts.Colour),
 	}
 
 	// Where the session should start. Empty unless the caller asked for one
@@ -205,18 +211,42 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// Written onto the tmux session so it outlives this process. A session
 	// that comes back after a restart with its own name on it is the whole
 	// difference between "my work is still here" and a row of hex strings.
-	m.rememberTitle(sess.TmuxName, sess.Title)
-	// And the command every *later* window in it should run. Without this the
-	// first window is the operator's account — it was given the login
-	// explicitly — and every window after it is root, because tmux falls back
-	// to the shell of whoever started the tmux server, which is this
-	// dashboard.
-	if sess.TmuxName != "" {
-		m.rememberOption(sess.TmuxName, "default-command", m.defaultCommand())
+	//
+	// One goroutine for all of them rather than one each: they share the wait
+	// for the session to exist, and four independent retry loops firing
+	// `tmux set-option` at a server that is still starting is four times the
+	// subprocesses for the same answer. `default-command` is the odd one out
+	// — not the operator's choice but the command every *later* window in the
+	// session must run. Without it the first window is the operator's account,
+	// because it was handed the login explicitly, and every window after it is
+	// root: tmux falls back to the shell of whoever started the tmux server,
+	// which is this dashboard.
+	//
+	// Only the settings that have a value: a session created outside a folder
+	// has nothing to record there, and writing an empty option would be a
+	// subprocess to say nothing. SetMeta is the path that writes an empty
+	// value, because there it means "clear this".
+	create := []option{
+		{titleOption, sanitiseField(sess.Title)},
+		{"default-command", m.defaultCommand()},
+		{folderOption, sess.folder},
+		{colourOption, sess.colour},
+		// tmux's own status line, off. It is the same information the page
+		// already draws above the pane — the window list, which window is
+		// active, how it is named — rendered in green-on-green inside a
+		// terminal that is short to begin with, and duplicated chrome is worse
+		// than none. Set on this session only, so the operator's own tmux
+		// sessions and anything they attach to from a real SSH client keep
+		// theirs.
+		{"status", "off"},
 	}
-	if folder := sanitiseField(opts.Folder); folder != "" {
-		m.rememberOption(sess.TmuxName, folderOption, folder)
+	set := make([]option, 0, len(create))
+	for _, o := range create {
+		if o.value != "" {
+			set = append(set, o)
+		}
 	}
+	m.rememberOptions(sess.TmuxName, set...)
 
 	go sess.readLoop(func() { m.remove(id) })
 	return sess, nil
@@ -235,14 +265,36 @@ func hostDir(dir string) string {
 	return ""
 }
 
-func defaultTitle(t string) string {
-	if t == "" {
-		return "shell"
+// defaultTitle names a session the operator did not name.
+//
+// Numbered, and that is the whole point: the rail exists because five sessions
+// called `vpsd-3f2a91c4` are indistinguishable, and five called `shell` are no
+// better. The number is the lowest one free across everything this dashboard
+// knows about — live sessions and the ones only tmux is holding — so closing
+// "shell 2" and opening another gives back "shell 2" rather than counting
+// forever upward.
+func (m *Manager) defaultTitle(ctx context.Context, t string) string {
+	if t != "" {
+		if len(t) > 64 {
+			return t[:64]
+		}
+		return t
 	}
-	if len(t) > 64 {
-		return t[:64]
+	const base = "shell"
+	taken := map[string]bool{}
+	for _, meta := range m.AllMeta(ctx) {
+		taken[meta.Title] = true
 	}
-	return t
+	if !taken[base] {
+		return base
+	}
+	for n := 2; n < 1000; n++ {
+		candidate := base + " " + strconv.Itoa(n)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+	return base
 }
 
 func (m *Manager) Get(id string) (*Session, error) {
@@ -317,10 +369,12 @@ type TmuxSession struct {
 	// `vpsd-3f2a91c4` — and three of those side by side are indistinguishable,
 	// which is how somebody loses track of which shell was doing what.
 	Title string `json:"title,omitempty"`
-	// Folder and Favourite are how a list of fifteen becomes readable. Both
-	// live on the tmux session, so they survive everything the work does.
+	// Folder, Favourite and Colour are how a list of fifteen becomes readable.
+	// All three live on the tmux session, so they survive everything the work
+	// does.
 	Folder    string    `json:"folder,omitempty"`
 	Favourite bool      `json:"favourite"`
+	Colour    string    `json:"colour,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	// CWD is where the session's active pane is now, so a detached session can
 	// be identified by the work it is in the middle of.
@@ -362,6 +416,7 @@ func (m *Manager) TmuxSessions(ctx context.Context) []TmuxSession {
 	}
 	const format = "#{session_name}" + fieldSep + "#{" + titleOption + "}" +
 		fieldSep + "#{" + folderOption + "}" + fieldSep + "#{" + favouriteOption + "}" +
+		fieldSep + "#{" + colourOption + "}" +
 		fieldSep + "#{session_created}" + fieldSep + "#{session_attached}" +
 		fieldSep + "#{session_windows}" + fieldSep + "#{pane_current_path}"
 	raw, err := hostexec.CommandOnHost(ctx, "tmux", "list-sessions", "-F", format).Output()
@@ -382,24 +437,25 @@ func (m *Manager) TmuxSessions(ctx context.Context) []TmuxSession {
 // parseTmuxLine reads one line of the listing format.
 //
 // SplitN, not Split, and the path deliberately last: a directory may contain
-// the separator, and everything after the fifth one is still part of it. The
-// four fields before it cannot — a session name is `vpsd-` and hex, three are
-// numbers, and the title has the separator stripped out when it is written.
+// the separator, and everything after the last one is still part of it. The
+// fields before it cannot — a session name is `vpsd-` and hex, three are
+// numbers, the colour is one of a fixed set, and the title and folder have the
+// separator stripped out when they are written.
 func parseTmuxLine(line string) (TmuxSession, bool) {
-	const fields = 8
+	const fields = 9
 	f := strings.SplitN(line, fieldSep, fields)
 	if len(f) < fields || !strings.HasPrefix(f[0], sessionPrefix) {
 		return TmuxSession{}, false
 	}
 	sess := TmuxSession{
 		Name: f[0], Title: f[1], Folder: f[2], Favourite: f[3] == "1",
-		CWD: f[7],
+		Colour: normaliseColour(f[4]), CWD: f[8],
 	}
-	if secs, err := strconv.ParseInt(f[4], 10, 64); err == nil {
+	if secs, err := strconv.ParseInt(f[5], 10, 64); err == nil {
 		sess.CreatedAt = time.Unix(secs, 0).UTC()
 	}
-	sess.Attached = f[5] != "0"
-	sess.Windows, _ = strconv.Atoi(f[6])
+	sess.Attached = f[6] != "0"
+	sess.Windows, _ = strconv.Atoi(f[7])
 	return sess, true
 }
 
@@ -413,35 +469,43 @@ func (m *Manager) tmuxNames(ctx context.Context) []string {
 	return names
 }
 
-// rememberTitle writes the operator's title onto the tmux session, so it is
-// still there after this process has forgotten everything.
+// option is one tmux setting to write onto a session.
+type option struct{ name, value string }
+
+// rememberOptions writes the session's settings onto tmux, retrying briefly.
 //
 // Retried, because the session may not exist yet: `tmux new-session` has only
 // just been handed to a PTY, and on a host where the tmux *server* also has to
-// start, the first attempt lands before there is anything to set the option on.
+// start, the first attempt lands before there is anything to set an option on.
 // That is not hypothetical — it is why the first session opened after a reboot
-// came back with no title while the second was fine.
+// came back with no title while the second was fine, and why the copy of these
+// values on the Session is what the listing answers from in the meantime.
 //
 // Best effort throughout: a title that never sticks costs a recognisable name
-// in one list, not a working session.
-func (m *Manager) rememberTitle(tmuxName, title string) {
-	m.rememberOption(tmuxName, titleOption, sanitiseField(title))
-}
-
-// rememberOption writes one tmux user option, retrying briefly.
-func (m *Manager) rememberOption(tmuxName, option, value string) {
-	if tmuxName == "" || value == "" {
+// after the next restart, not a working session.
+func (m *Manager) rememberOptions(tmuxName string, opts ...option) {
+	if tmuxName == "" {
+		return
+	}
+	pending := append([]option(nil), opts...)
+	if len(pending) == 0 {
 		return
 	}
 	go func() {
-		for attempt := 0; attempt < 6; attempt++ {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := hostexec.CommandOnHost(ctx, "tmux", "set-option", "-t", tmuxName, option, value).Run()
-			cancel()
-			if err == nil {
-				return
+		for attempt := 0; attempt < 8 && len(pending) > 0; attempt++ {
+			if attempt > 0 {
+				time.Sleep(250 * time.Millisecond)
 			}
-			time.Sleep(500 * time.Millisecond)
+			left := pending[:0]
+			for _, o := range pending {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := hostexec.CommandOnHost(ctx, "tmux", "set-option", "-t", tmuxName, o.name, o.value).Run()
+				cancel()
+				if err != nil {
+					left = append(left, o)
+				}
+			}
+			pending = left
 		}
 	}()
 }
@@ -516,19 +580,30 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	if cols == 0 {
 		cols = 80
 	}
-	// The title the operator gave it, recovered from the tmux session rather
-	// than reinvented: coming back to `vpsd-3f2a91c4` is the difference
-	// between picking up where you left off and guessing which shell this was.
+	// Everything the operator chose, recovered from the tmux session rather
+	// than reinvented: coming back to `vpsd-3f2a91c4` in no folder is the
+	// difference between picking up where you left off and guessing which
+	// shell this was. Reading it here is also what keeps the in-memory copy
+	// authoritative for every session this process holds — it is seeded from
+	// tmux on the way in and written on the way out, so it is never behind.
 	title := tmuxName
+	var meta SessionMeta
 	for _, s := range m.TmuxSessions(ctx) {
-		if s.Name == tmuxName && s.Title != "" {
+		if s.Name != tmuxName {
+			continue
+		}
+		if s.Title != "" {
 			title = s.Title
 		}
+		meta = SessionMeta{Folder: s.Folder, Favourite: s.Favourite, Colour: s.Colour}
 	}
 	id := randomID()
 	sess := &Session{
 		ID:          id,
 		Title:       title,
+		folder:      meta.Folder,
+		favourite:   meta.Favourite,
+		colour:      meta.Colour,
 		Shell:       m.shell,
 		User:        m.account.Name,
 		TmuxName:    tmuxName,

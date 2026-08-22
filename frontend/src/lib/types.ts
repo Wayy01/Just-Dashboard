@@ -1269,6 +1269,8 @@ export type TerminalWorkspace = {
   title: string
   folder?: string
   favourite: boolean
+  /** One of TAG_COLOURS, or absent for "take the folder's". */
+  colour?: string
   live: boolean
   persisted: boolean
   cwd?: string
@@ -1280,6 +1282,16 @@ export type TerminalWorkspace = {
   owner?: string
 }
 
+/**
+ * A folder in the rail. Unlike a session it has no tmux object of its own, so
+ * the server keeps the record and reconciles it with what the sessions say.
+ */
+export type TerminalFolder = {
+  name: string
+  colour?: string
+  collapsed?: boolean
+}
+
 /** A tmux window inside a session — a tab within a tab. */
 export type TerminalWindow = {
   index: number
@@ -1287,4 +1299,23 @@ export type TerminalWindow = {
   active: boolean
   panes: number
   cwd?: string
+  colour?: string
+  /** Flags tmux keeps: something happened here while you were elsewhere. */
+  bell: boolean
+  activity: boolean
+  zoomed: boolean
+  /** Every keystroke goes to every pane at once. */
+  synchronized: boolean
+}
+
+/** One rectangle inside a window — tmux's third level. */
+export type TerminalPane = {
+  index: number
+  active: boolean
+  width: number
+  height: number
+  pid: number
+  command?: string
+  cwd?: string
+  dead: boolean
 }

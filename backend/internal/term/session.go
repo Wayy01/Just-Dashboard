@@ -55,6 +55,19 @@ type Session struct {
 	// case where /proc cannot answer.
 	CWDHint string `json:"-"`
 
+	// Folder, Favourite and Colour shadow the tmux user options that hold
+	// them. tmux remains the store — it is what makes them survive a restart
+	// — but it cannot answer for a session it has only just been asked to
+	// create: `tmux new-session` has been handed to a PTY and the set-option
+	// that follows may lose the race by half a second. During that window a
+	// listing read straight from tmux reports a session with no folder, so a
+	// shell opened *into* a folder appeared under "Other" and jumped into
+	// place on some later poll. The copy here is written before the request
+	// returns, which is what makes the answer immediate and stable.
+	folder    string
+	favourite bool
+	colour    string
+
 	mu          sync.Mutex
 	pty         *os.File
 	cmd         *exec.Cmd
@@ -85,6 +98,26 @@ func (s *Session) LastActive() time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastActive
+}
+
+// Meta reads back everything about the session that was the operator's choice
+// rather than the shell's state.
+func (s *Session) Meta() SessionMeta {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return SessionMeta{Title: s.Title, Folder: s.folder, Favourite: s.favourite, Colour: s.colour}
+}
+
+// setMeta records the operator's choice on the live session. Callers write
+// tmux as well; this is only what keeps the answer correct until tmux catches
+// up, and correct afterwards without a round trip.
+func (s *Session) setMeta(meta SessionMeta) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if meta.Title != "" {
+		s.Title = meta.Title
+	}
+	s.folder, s.favourite, s.colour = meta.Folder, meta.Favourite, meta.Colour
 }
 
 // Subscribe returns the scrollback plus a channel of subsequent output. The

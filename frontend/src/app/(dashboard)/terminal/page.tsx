@@ -1,16 +1,22 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
-import { useSearchParams } from "next/navigation"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Plus, ShieldAlert, TerminalSquare } from "lucide-react"
 import { toast } from "sonner"
-import { del, get, patch, post } from "@/lib/api"
-import type { TerminalWindow, TerminalWorkspace } from "@/lib/types"
+import { del, get, patch, post, put } from "@/lib/api"
+import type {
+  TerminalFolder,
+  TerminalPane,
+  TerminalWindow,
+  TerminalWorkspace,
+} from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
-import { SessionRail, WindowStrip } from "@/components/terminal/session-rail"
+import { SessionRail } from "@/components/terminal/session-rail"
+import { PaneBar, WindowStrip } from "@/components/terminal/window-strip"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Button } from "@/components/ui/button"
 
@@ -19,11 +25,16 @@ type TerminalList = {
   tmux: boolean
   /** Who a new session logs in as, and where it lands. */
   login: { user: string; home: string; shell: string; error?: string }
+  folders: TerminalFolder[]
   sessions: TerminalWorkspace[]
 }
 
+/** Every persistent-session route is addressed by tmux name. */
+const persistent = (name: string) => `/terminal/persistent/${encodeURIComponent(name)}`
+
 export default function TerminalPage() {
   const { confirm, dialog } = useConfirm()
+  const router = useRouter()
   const [picked, setPicked] = useState<string | null>(null)
   // Deep link: a compose stack, a repository or a build context can hand the
   // terminal a directory to start in, so "I need a shell here" does not mean
@@ -80,23 +91,38 @@ export default function TerminalPage() {
   // The live session showing in the pane. Derived rather than stored, so a
   // session that was closed elsewhere falls back on its own instead of
   // leaving a dead pane behind.
-  const live = (data?.sessions ?? []).filter((s) => s.live && s.id)
+  const live = useMemo(() => (data?.sessions ?? []).filter((s) => s.live && s.id), [data])
   const active = live.some((s) => s.id === picked) ? picked : (live[0]?.id ?? null)
   const activeSession = live.find((s) => s.id === active)
+  const tmuxName = activeSession?.tmuxName
 
   // The windows of the active session — tmux's own tabs. Polled only while
   // something is attached, and slowly: a window appears when somebody makes
-  // one, which is not a thing that happens between two heartbeats.
+  // one, which is not a thing that happens between two heartbeats. The one
+  // exception is the activity and bell flags, which change on their own — and
+  // 5s is soon enough for "something happened in that tab".
   const windows = usePoll<TerminalWindow[]>(
+    (signal) => get<TerminalWindow[]>(`${persistent(tmuxName ?? "")}/windows`, undefined, signal),
+    5000,
+    [tmuxName],
+    { enabled: Boolean(tmuxName) },
+  )
+
+  const activeWindow = (windows.data ?? []).find((w) => w.active)
+
+  // Panes, only for the window on screen and only once it has been split.
+  // Asking for them unconditionally would be a subprocess on the host every
+  // five seconds for the overwhelmingly common case of one pane.
+  const panes = usePoll<TerminalPane[]>(
     (signal) =>
-      get<TerminalWindow[]>(
-        `/terminal/persistent/${encodeURIComponent(activeSession?.tmuxName ?? "")}/windows`,
+      get<TerminalPane[]>(
+        `${persistent(tmuxName ?? "")}/windows/${activeWindow?.index ?? 0}/panes`,
         undefined,
         signal,
       ),
     5000,
-    [activeSession?.tmuxName],
-    { enabled: Boolean(activeSession?.tmuxName) },
+    [tmuxName, activeWindow?.index],
+    { enabled: Boolean(tmuxName) && (activeWindow?.panes ?? 1) > 1 },
   )
 
   // Ctrl+Alt+1..9 switches session, the way a tabbed terminal does. Alt alone
@@ -116,6 +142,21 @@ export default function TerminalPage() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [live])
+
+  /** Every mutation refreshes; the failure names what did not happen. */
+  const act = useCallback(
+    async (fn: () => Promise<unknown>, failure: string, alsoWindows = false) => {
+      try {
+        await fn()
+      } catch (err) {
+        toast.error(failure, { description: String(err) })
+        return
+      }
+      if (alsoWindows) windows.refresh()
+      refresh()
+    },
+    [refresh, windows],
+  )
 
   if (loading) {
     return (
@@ -171,25 +212,30 @@ export default function TerminalPage() {
   }
 
   /**
-   * Naming, filing and starring all write to the same place: tmux user options
-   * on the session itself, so they outlive this process exactly as the work
-   * does. A session without a tmux name has nowhere to keep them.
+   * Naming, filing, pinning and colouring all write to the same place: tmux
+   * user options on the session itself, so they outlive this process exactly
+   * as the work does. A session without a tmux name has nowhere to keep them.
+   *
+   * Only the changed field is sent. The server merges it onto what the session
+   * already has, which is what makes a drag into a folder — a request carrying
+   * one field — safe: the earlier shape, where the client echoed all four,
+   * erased whatever the client had not looked at recently.
    */
-  const setMeta = async (session: TerminalWorkspace, next: Partial<TerminalWorkspace>) => {
-    if (!session.tmuxName) {
+  const setMeta = (tmuxName: string | undefined, next: Partial<TerminalWorkspace>) => {
+    if (!tmuxName) {
       toast.error("This session is not persistent, so it cannot be named")
       return
     }
-    try {
-      await patch(`/terminal/persistent/${encodeURIComponent(session.tmuxName)}`, {
-        title: next.title ?? session.title,
-        folder: next.folder ?? session.folder ?? "",
-        favourite: next.favourite ?? session.favourite,
-      })
-      refresh()
-    } catch (err) {
-      toast.error("Could not save that", { description: String(err) })
-    }
+    return act(
+      () =>
+        patch(persistent(tmuxName), {
+          ...(next.title !== undefined && { title: next.title }),
+          ...(next.folder !== undefined && { folder: next.folder }),
+          ...(next.favourite !== undefined && { favourite: next.favourite }),
+          ...(next.colour !== undefined && { colour: next.colour }),
+        }),
+      "Could not save that",
+    )
   }
 
   const closeSession = (session: TerminalWorkspace) =>
@@ -227,17 +273,22 @@ export default function TerminalPage() {
       },
     })
 
-  const windowAction = async (fn: () => Promise<unknown>, failure: string) => {
-    try {
-      await fn()
-      windows.refresh()
-      refresh()
-    } catch (err) {
-      toast.error(failure, { description: String(err) })
-    }
-  }
+  const deleteFolder = (folder: TerminalFolder) =>
+    confirm({
+      title: `Delete ${folder.name}`,
+      confirmLabel: "Delete folder",
+      description: (
+        <p>
+          The folder goes and the sessions in it move to <b>Unfiled</b>. Nothing running is
+          touched — this is filing, not closing.
+        </p>
+      ),
+      action: () =>
+        act(() => del(`/terminal/folders/${encodeURIComponent(folder.name)}`), "Could not delete that folder"),
+    })
 
-  const tmuxName = activeSession?.tmuxName
+  const windowPatch = (index: number, body: Record<string, unknown>, failure: string) =>
+    act(() => patch(`${persistent(tmuxName!)}/windows/${index}`, body), failure, true)
 
   return (
     <Page fill>
@@ -273,59 +324,96 @@ export default function TerminalPage() {
         </Notice>
       )}
 
-      {data.sessions.length === 0 ? (
-        <EmptyState
-          icon={TerminalSquare}
-          title="No sessions yet"
-          description="A session is a shell that keeps running — name it, file it in a folder, and come back to it tomorrow exactly as you left it."
-          action={
-            <Button size="sm" onClick={() => openSession()}>
-              <Plus className="size-4" />
-              Open one
-            </Button>
-          }
-        />
-      ) : (
+      {/*
+        The rail is always here, even with nothing in it.
+
+        It used to be replaced wholesale by an empty state, which read well and
+        made the feature unreachable in one specific way: the only control that
+        creates a folder lives in the rail, so a fresh install could open a
+        session but could not make anywhere to put it. An empty rail with its
+        filter and its "New folder" button is the more honest picture anyway —
+        it shows what this page is.
+      */}
         <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
           <SessionRail
             sessions={data.sessions}
+            folders={data.folders}
             activeId={active}
             onSelect={select}
-            onRename={(s, title) => setMeta(s, { title })}
-            onToggleFavourite={(s) => setMeta(s, { favourite: !s.favourite })}
-            onSetFolder={(s, folder) => setMeta(s, { folder })}
+            onRename={(s, title) => setMeta(s.tmuxName, { title })}
+            onTogglePinned={(s) => setMeta(s.tmuxName, { favourite: !s.favourite })}
+            onSetFolder={(tmuxName, folder) => setMeta(tmuxName, { folder })}
+            onSetColour={(s, colour) => setMeta(s.tmuxName, { colour })}
             onClose={closeSession}
             onNew={(folder) => openSession(undefined, folder)}
+            onCreateFolder={(name) =>
+              act(() => post("/terminal/folders", { name }), "Could not create that folder")
+            }
+            onUpdateFolder={(name, next) =>
+              act(
+                () => patch(`/terminal/folders/${encodeURIComponent(name)}`, next),
+                "Could not update that folder",
+              )
+            }
+            onDeleteFolder={deleteFolder}
+            onReorderFolders={(names) =>
+              act(
+                () =>
+                  put("/terminal/folders", {
+                    // The colours travel with the order: the endpoint replaces
+                    // the record, so sending names alone would repaint every
+                    // folder grey.
+                    folders: names.map((name) => ({
+                      name,
+                      colour: data.folders.find((f) => f.name === name)?.colour ?? "",
+                    })),
+                  }),
+                "Could not reorder the folders",
+              )
+            }
+            onMoveWindow={(from, index, to) =>
+              act(
+                () => patch(`${persistent(from)}/windows/${index}`, { session: to }),
+                "Could not move that window",
+                true,
+              )
+            }
           />
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
             {tmuxName && (
               <WindowStrip
                 windows={windows.data ?? []}
-                onSelect={(index) =>
-                  windowAction(
-                    () =>
-                      patch(
-                        `/terminal/persistent/${encodeURIComponent(tmuxName)}/windows/${index}`,
-                        { select: true },
-                      ),
-                    "Could not switch window",
+                sessionName={tmuxName}
+                sessionColour={activeSession?.colour}
+                onSelect={(index) => windowPatch(index, { select: true }, "Could not switch window")}
+                onRename={(index, name) =>
+                  windowPatch(index, { name }, "Could not rename that window")
+                }
+                onColour={(index, colour) =>
+                  windowPatch(index, { colour }, "Could not colour that window")
+                }
+                onReorder={(index, position) =>
+                  windowPatch(index, { position }, "Could not move that window")
+                }
+                onSplit={(index, vertical) =>
+                  act(
+                    () => post(`${persistent(tmuxName)}/windows/${index}/panes`, { vertical }),
+                    "Could not split that window",
+                    true,
                   )
                 }
-                onRename={(index, name) =>
-                  windowAction(
-                    () =>
-                      patch(
-                        `/terminal/persistent/${encodeURIComponent(tmuxName)}/windows/${index}`,
-                        { name },
-                      ),
-                    "Could not rename that window",
-                  )
+                onLayout={(index, layout) =>
+                  windowPatch(index, { layout }, "Could not rearrange the panes")
+                }
+                onSynchronize={(index, on) =>
+                  windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
                 }
                 onNew={() =>
-                  windowAction(
-                    () => post(`/terminal/persistent/${encodeURIComponent(tmuxName)}/windows`, {}),
+                  act(
+                    () => post(`${persistent(tmuxName)}/windows`, {}),
                     "Could not open a window",
+                    true,
                   )
                 }
                 onClose={(index) =>
@@ -340,13 +428,60 @@ export default function TerminalPage() {
                       </p>
                     ),
                     action: (c) =>
-                      windowAction(
+                      act(
+                        () => del(`${persistent(tmuxName)}/windows/${index}`, { confirm: c }),
+                        "Could not close that window",
+                        true,
+                      ),
+                  })
+                }
+              />
+            )}
+
+            {tmuxName && activeWindow && (
+              <PaneBar
+                panes={panes.data ?? []}
+                onSelect={(pane) =>
+                  act(
+                    () =>
+                      patch(
+                        `${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`,
+                        { select: true },
+                      ),
+                    "Could not focus that pane",
+                    true,
+                  )
+                }
+                onZoom={(pane) =>
+                  act(
+                    () =>
+                      patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
+                        zoom: true,
+                      }),
+                    "Could not zoom that pane",
+                    true,
+                  )
+                }
+                onClose={(pane) =>
+                  confirm({
+                    title: "Close pane",
+                    phrase: "close pane",
+                    confirmLabel: "Close",
+                    description: (
+                      <p>
+                        Ends this pane and whatever is running in it. The window&apos;s other panes
+                        are untouched.
+                      </p>
+                    ),
+                    action: (c) =>
+                      act(
                         () =>
                           del(
-                            `/terminal/persistent/${encodeURIComponent(tmuxName)}/windows/${index}`,
+                            `${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`,
                             { confirm: c },
                           ),
-                        "Could not close that window",
+                        "Could not close that pane",
+                        true,
                       ),
                   })
                 }
@@ -363,6 +498,8 @@ export default function TerminalPage() {
                 subtitle={`${activeSession?.title ?? ""} · ${
                   activeSession?.user ?? data.login.user
                 }`}
+                cwd={activeSession?.cwd}
+                onOpenFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
                 // No minimum height: the pane is whatever is left after the
                 // header and the strips, and a floor taller than that would
                 // push the page past the window — which is the one thing a
@@ -375,13 +512,24 @@ export default function TerminalPage() {
               <EmptyState
                 className="flex-1"
                 icon={TerminalSquare}
-                title="Pick a session"
-                description="A hollow dot means it is running on the server with nothing attached — clicking picks it up where you left it."
+                title={data.sessions.length === 0 ? "No sessions yet" : "Pick a session"}
+                description={
+                  data.sessions.length === 0
+                    ? "A session is a shell that keeps running — name it, file it in a folder, colour the folder, and come back to it tomorrow exactly as you left it."
+                    : "A hollow dot means it is running on the server with nothing attached — clicking picks it up where you left it."
+                }
+                action={
+                  data.sessions.length === 0 ? (
+                    <Button size="sm" onClick={() => openSession()}>
+                      <Plus className="size-4" />
+                      Open one
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </div>
         </div>
-      )}
       {dialog}
     </Page>
   )

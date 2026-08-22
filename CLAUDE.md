@@ -32,7 +32,14 @@ fail on a network-restricted machine. Check `go version` before blaming the code
 Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
 `httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
 hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
-to run on every change, and the ones guarding the security invariants (`httpx/confirm_test.go`,
+to run on every change. The two exceptions are `term` and the terminal half of `api`, which
+drive the machine's real tmux and skip when it is absent: the bugs they exist to catch live in
+the gap between this process and that one — what tmux has been told, what it has got round to
+storing, and what it reports half a second later — and a fake tmux would answer instantly and
+pass every one of them while the product stayed broken. Both packages give themselves a
+private tmux server in `TestMain` (`TMUX_TMPDIR`), so a test run never lists or outlives the
+operator's own sessions and two packages running concurrently under `go test ./...` cannot see
+each other's. The ones guarding the security invariants (`httpx/confirm_test.go`,
 `api/routes_test.go`, `api/docker_spec_test.go`, `files/files_test.go`,
 `safepath/safepath_test.go`, `dbx/classify_test.go`) are the ones to extend when you touch
 that surface. `dockerx/diagnose_test.go` is the other kind: it pins the *claims* the product
@@ -462,6 +469,69 @@ plus detached names. They are the same thing in two states — `live` says
 whether this process is holding a PTY — and reconciling two lists in the
 browser is what made an idle session appear to vanish and reappear elsewhere.
 
+**The listing answers from memory for a live session, and from tmux for the
+rest.** tmux stores the title, folder, colour and favourite flag, and it is
+still the store — but it cannot answer for a session it has only just been
+asked to create: `tmux new-session` has been handed to a PTY and the
+`set-option` that files the session away lands up to half a second later. The
+page refreshes the instant the POST returns, which is inside that window, so a
+shell opened *into* a folder appeared under "Other" and jumped into place on
+some later poll — reading, from the operator's side, as two sessions swapping
+groups. `Session` therefore shadows the four values, seeded by `Create`, read
+back by `Reattach` and written by `SetMeta`, so for a session this process
+holds the copy is never behind and is sometimes ahead. `Manager.Meta` and
+`Manager.AllMeta` are that reconciliation for callers that need one session or
+all of them; anything acting on "every session in this folder" must use
+`AllMeta`, or it silently skips the newest one.
+
+`SetMeta` follows the same rule: it writes memory first, and if tmux refuses
+because the session does not exist yet, it retries in the background rather
+than failing. Filing away the session you just opened is the commonest thing
+anybody does, and it must not be the one case that errors.
+
+**Folders are the dashboard's record, not tmux's.** They are the one piece of
+organisation with no tmux object to hang off — a folder exists because some
+sessions name it — which was fine while a folder was only a string and stops
+being fine once it has an order, a colour and the ability to exist while empty.
+So `api/handlers_terminal_folders.go` keeps the list in the `settings` table
+under `terminal.folders`, membership stays on the sessions, and the two are
+reconciled on read: a folder named by a session but missing from the record is
+still shown, because a session must never become unreachable by losing its
+group. Renaming a folder moves every session in it **in one request**, since a
+page that did it as eight requests left half of them behind if the tab closed
+halfway.
+
+**Colour is inherited, and that is the point.** A folder can be painted; a
+session created in it takes the folder's colour, and a window takes its
+session's. Colouring eight sessions by hand is work nobody does twice, and a
+group whose members are individually grey is not a group. The palette is a
+closed set (`term.Colours`) because the value is written into a tmux format and
+read back out of one, and because it has to render against twelve themes.
+
+**Windows and panes.** `organise.go` covers windows — naming, colouring,
+reordering (`MoveWindow`, as the adjacent swaps tmux actually offers, since it
+has no insert), and handing one to another session (`MoveWindowToSession`,
+which checks ownership of *both*). The listing carries `window_bell_flag`,
+`window_activity_flag` and `window_zoomed_flag`: tmux has tracked them all
+along and nothing in this class surfaces them, and they are the only answer to
+"which of these five tabs did something while I was looking at another one".
+`panes.go` is tmux's third level — split, select, zoom, kill, layout, and
+`synchronize-panes`, which is reported in the window listing because it is the
+one setting that turns a typo into the same typo on four servers. Killing the
+last pane in a window is refused for the reason killing the last window in a
+session is: tmux would take the parent with it.
+
+`SendKeys` is the only way this package writes to a session other than through
+the PTY the operator is attached to. The literal text and the named keys are
+separate fields because `send-keys` decides between them by parsing what it is
+given — a stored one-liner containing the word `Enter` would otherwise become a
+keypress — and the key names are a closed list.
+
+The session's tmux status line is turned **off** at creation. It is the same
+information the page draws above the pane, rendered green-on-green inside a
+terminal that is short to begin with; it is set per session, so the operator's
+own tmux sessions keep theirs.
+
 ### Streaming
 
 `internal/wsx` wraps gorilla/websocket: origin check on upgrade (a WS handshake is not
@@ -586,7 +656,7 @@ same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, 
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
-(`docker/`, `files/`, `metrics/`, `procs/`).
+(`docker/`, `files/`, `metrics/`, `procs/`, `terminal/`).
 
 ### Charts
 
@@ -665,6 +735,58 @@ Three deep links exist for this feature and are worth preserving: `/files?path=`
 kept in sync — the URL is where the reader arrived, not where they are now — and the terminal
 one opens a session exactly once per mount, because a shell is a process and not a render.
 
+### The terminal panel
+
+`components/terminal/` is the rail, the strips and the tags; `components/xterm-pane.tsx` is
+the emulator. The split matters: the pane is reused by the compose runner and knows nothing
+about sessions.
+
+- `session-rail.tsx` is the workspace tree. Its first version drew a folder and a session as
+  the same row at the same weight, which put the hierarchy in the data and nowhere on
+  screen. Four things carry it now and are worth keeping: a folder header is **chrome** (the
+  panel-header tint, an icon in a tinted tile, an uppercase label) while a session is content;
+  children are indented behind a rule in the folder's colour; colour is inherited; and
+  everything is draggable. Pinning sorts a session to the top *of its folder* rather than
+  lifting it into a separate group — the separate group was the earlier design and it made a
+  starred session vanish from the folder it had been filed in.
+- `dnd.ts` holds the in-flight drag payload outside React, for the reason
+  `lib/metrics-crosshair.ts` does: `dragover` fires at pointer rate across the whole rail, and
+  a context above it would re-render the terminal on every one. The browser will not let a
+  `dragover` handler read the payload — only its MIME types — so the payload is kept beside
+  the drag and read back on the way over.
+- `window-strip.tsx` is the window chips plus `PaneBar`. A pane's label is the command
+  running in it: "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
+- `tags.tsx` is the colour vocabulary. The values live in `globals.css` as `--tag-*` and are
+  the one deliberate exception to "compute it from the palette": a tag is a label the operator
+  applied, and one that changed hue with the theme would stop being the same label. What *is*
+  computed is everything drawn from it — the row tint and the edge rule are `color-mix`
+  against the surface, so one lightness holds up on a near-black card and a near-white one.
+- `lib/terminal-settings.ts` keeps the font, cursor, scrollback and behaviour switches in
+  localStorage, on the screen and not on the account, for the same reason the theme is.
+
+Two things in `xterm-pane.tsx` are load-bearing and easy to undo:
+
+**Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every
+line but the last, immediately, with no chance to read them — and Ctrl+V, the right-click menu
+and the X11 middle click all arrive as a browser paste event that becomes one `onData` call.
+Guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. The explicit
+clipboard reads guard themselves, and the shortcut handler must call `preventDefault`:
+returning false from `attachCustomKeyEventHandler` stops xterm, not the browser, so without it
+Ctrl+Shift+V opened the confirmation *and* pasted natively at the same time.
+
+**Replies are suppressed while the scrollback is replayed.** A terminal answers some of what
+is written to it — `CSI c` and the other device queries are the shell asking the terminal a
+question, and xterm replies down the same channel a keystroke uses. Replaying a buffer that
+contains one makes it answer again, at whatever prompt exists now: reopening a tab typed
+`1;2c0;276` into the shell and left a column of "command not found". The server announces the
+replay with a `scrollback` frame before the binary snapshot, because from the browser's side
+the bytes are identical either way, and the client drops its own output until xterm's write
+callback says the replay is parsed.
+
+`allowProposedApi` is on because the search addon's match count and highlight-all are built on
+xterm's decoration API, which is not frozen yet. Without it `findNext` throws where it would
+have decorated and the counter reads "none" over a scrollback full of matches.
+
 ### Data
 
 - `src/lib/api.ts` is the only fetch layer: `get/post/put/patch/del`, `credentials: "include"`,
@@ -685,7 +807,11 @@ one opens a session exactly once per mount, because a shell is a process and not
 - `useAuth`'s `can("capability")` predicate hides controls a role cannot use. This is UI
   affordance only; the server re-decides every request.
 - `ConfirmDialog` collects the typed phrase and passes it to the API call; the server
-  re-checks it.
+  re-checks it. Its `phrase` is optional, and the absence is meaningful: a request without
+  one is a reversible action that still deserves a pause — deleting a terminal folder, which
+  loses a grouping and nothing else — and asking somebody to type "delete folder" for that
+  teaches them to type phrases without reading, which is the one habit the typed confirmation
+  exists to prevent.
 
 Metrics are the one place with machinery beyond those hooks:
 

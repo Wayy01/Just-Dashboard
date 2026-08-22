@@ -21,8 +21,16 @@ export type ConfirmRequest = {
   title: string
   /** What will happen, in plain language. */
   description: React.ReactNode
-  /** The exact phrase the server expects echoed in X-Confirm. */
-  phrase: string
+  /**
+   * The exact phrase the server expects echoed in X-Confirm.
+   *
+   * Optional, and its absence is meaningful: a request without one is a
+   * reversible action that still deserves a pause — deleting a folder, which
+   * loses a grouping and nothing else — and asking somebody to type "delete
+   * folder" for it teaches them to type phrases without reading, which is the
+   * one habit the typed confirmation exists to prevent.
+   */
+  phrase?: string
   confirmLabel?: string
   /** Runs the action; the typed phrase is passed through to the API call. */
   action: (confirm: string) => Promise<void>
@@ -44,7 +52,9 @@ export function ConfirmDialog({
   if (!request) return null
   // Keyed on the phrase so a second dialog never opens pre-filled with what
   // was typed into the previous one — which would defeat the whole point.
-  return <ConfirmBody key={request.phrase} request={request} onOpenChange={onOpenChange} />
+  return (
+    <ConfirmBody key={request.phrase ?? request.title} request={request} onOpenChange={onOpenChange} />
+  )
 }
 
 function ConfirmBody({
@@ -56,7 +66,7 @@ function ConfirmBody({
 }) {
   const [typed, setTyped] = useState("")
   const [busy, setBusy] = useState(false)
-  const matches = typed === request.phrase
+  const matches = !request.phrase || typed === request.phrase
 
   const run = async () => {
     if (!matches || busy) return
@@ -79,7 +89,7 @@ function ConfirmBody({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="size-4 text-destructive" />
+            {request.phrase && <AlertTriangle className="size-4 text-destructive" />}
             {request.title}
           </DialogTitle>
           <DialogDescription asChild>
@@ -87,29 +97,35 @@ function ConfirmBody({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2">
-          <Label htmlFor="confirm-phrase" className="text-xs text-muted-foreground">
-            Type <span className="font-mono font-semibold text-foreground">{request.phrase}</span>{" "}
-            to confirm
-          </Label>
-          <Input
-            id="confirm-phrase"
-            autoFocus
-            autoComplete="off"
-            spellCheck={false}
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && run()}
-            className="font-mono"
-            placeholder="Type the phrase above"
-          />
-        </div>
+        {request.phrase && (
+          <div className="space-y-2">
+            <Label htmlFor="confirm-phrase" className="text-xs text-muted-foreground">
+              Type <span className="font-mono font-semibold text-foreground">{request.phrase}</span>{" "}
+              to confirm
+            </Label>
+            <Input
+              id="confirm-phrase"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && run()}
+              className="font-mono"
+              placeholder="Type the phrase above"
+            />
+          </div>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={run} disabled={!matches || busy}>
+          <Button
+            variant={request.phrase ? "destructive" : "default"}
+            onClick={run}
+            disabled={!matches || busy}
+          >
             {busy && <Loader2 className="size-4 animate-spin" />}
             {request.confirmLabel ?? request.title}
           </Button>

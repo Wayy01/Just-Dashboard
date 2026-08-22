@@ -100,6 +100,25 @@
   /* Row banding and hover, expressed against the card rather than as a
      translucent grey, so it lands the same way on a light and a dark card. */
   --row-hover: color-mix(in oklab, var(--muted) 55%, transparent);
+
+  /* Colour tags, for the terminal rail: a folder, the sessions inside it and
+     the windows inside those.
+
+     Fixed hues rather than computed from the palette, and deliberately the one
+     exception to the rule above. A tag is a label the operator applied — "the
+     red one is production" — and a label that changed hue with the theme would
+     stop being the same label. What *is* computed is everything drawn from it:
+     the tint behind a row and the rule down its edge are color-mix against the
+     surface they sit on, so one lightness holds up against a near-black card
+     and a near-white one alike. */
+  --tag-slate: oklch(0.68 0.035 260);
+  --tag-red: oklch(0.66 0.19 25);
+  --tag-amber: oklch(0.75 0.15 75);
+  --tag-green: oklch(0.7 0.16 155);
+  --tag-cyan: oklch(0.72 0.12 205);
+  --tag-blue: oklch(0.65 0.17 255);
+  --tag-violet: oklch(0.65 0.18 295);
+  --tag-pink: oklch(0.68 0.19 350);
 }
 
 @theme inline {
