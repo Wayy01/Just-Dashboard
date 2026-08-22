@@ -241,3 +241,44 @@ func TestSanitiseField(t *testing.T) {
 		t.Errorf("a title has to fit a tab, got %d chars", len(got))
 	}
 }
+
+// tmux runs a window with no command of its own through `default-command`, and
+// falls back to the shell of whoever started the tmux *server* — which is this
+// dashboard, as root. So the first window of a session was the operator's
+// account, because it was handed the login explicitly, and every window after
+// it was a root shell nobody asked for.
+func TestDefaultCommandIsTheLogin(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("argv depends on being root; su is not usable otherwise")
+	}
+	m := &Manager{account: Account{Name: "ubuntu", UID: 1000, GID: 1000, Home: "/home/ubuntu", Shell: "/bin/bash"}}
+
+	got := m.defaultCommand()
+	if got != "su -s /bin/bash ubuntu -- -l" {
+		t.Fatalf("defaultCommand() = %q", got)
+	}
+	// It must not chdir to home: a window inherits the directory tmux started
+	// it in, and `su -l` would walk straight back out of it.
+	if strings.Contains(got, "-l ubuntu") {
+		t.Error("-l reached su rather than the shell, which would chdir to home")
+	}
+}
+
+// tmux hands default-command to `sh -c`, so anything with a space in it has to
+// survive as one word. The values are operator configuration rather than
+// per-request input, but a shell path or account name containing a space is
+// entirely legal and would otherwise be read as two arguments.
+func TestShellWordQuoting(t *testing.T) {
+	if got := shellWord("/bin/bash"); got != "/bin/bash" {
+		t.Errorf("an ordinary path needs no quoting, got %q", got)
+	}
+	if got := shellWord("/opt/my shell/bash"); got != "'/opt/my shell/bash'" {
+		t.Errorf("a path with a space must become one word, got %q", got)
+	}
+	if got := shellWord(""); got != "''" {
+		t.Errorf("an empty argument must stay an argument, got %q", got)
+	}
+	if got := shellWord("it's"); !strings.HasPrefix(got, "'") || strings.Count(got, "'") < 4 {
+		t.Errorf("a quote must be escaped rather than ending the word, got %q", got)
+	}
+}

@@ -206,6 +206,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// that comes back after a restart with its own name on it is the whole
 	// difference between "my work is still here" and a row of hex strings.
 	m.rememberTitle(sess.TmuxName, sess.Title)
+	// And the command every *later* window in it should run. Without this the
+	// first window is the operator's account — it was given the login
+	// explicitly — and every window after it is root, because tmux falls back
+	// to the shell of whoever started the tmux server, which is this
+	// dashboard.
+	if sess.TmuxName != "" {
+		m.rememberOption(sess.TmuxName, "default-command", m.defaultCommand())
+	}
 	if folder := sanitiseField(opts.Folder); folder != "" {
 		m.rememberOption(sess.TmuxName, folderOption, folder)
 	}
@@ -436,6 +444,47 @@ func (m *Manager) rememberOption(tmuxName, option, value string) {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}()
+}
+
+// defaultCommand is the login, as the one string tmux's `default-command`
+// takes. tmux runs that value through `sh -c`, so it is the one place in this
+// package that produces a shell command rather than an argument vector.
+//
+// What it is built from is why that is acceptable: the account name comes from
+// JD_TERMINAL_USER or /etc/passwd and the shell from JD_TERMINAL_SHELL or the
+// account's entry — operator configuration resolved once at boot, never
+// anything supplied per request. Each field is quoted anyway, so a shell path
+// or account name containing a space is passed as one word rather than two.
+func (m *Manager) defaultCommand() string {
+	argv := m.account.loginArgv(m.shell, true)
+	quoted := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		quoted = append(quoted, shellWord(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// shellWord quotes a token so `sh -c` sees exactly one argument.
+func shellWord(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("_-./:=@+,", r):
+		default:
+			safe = false
+		}
+		if !safe {
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // Reattach binds a PTY to an existing tmux session so the operator can pick up

@@ -183,12 +183,29 @@ func (m *Manager) NewWindow(ctx context.Context, tmuxName, name, cwd string) err
 		return ErrNotFound
 	}
 	args := []string{"new-window", "-d", "-t", tmuxName}
-	if dir := hostDir(cwd); dir != "" {
+
+	// Where the new window starts. Falling back to the directory the session
+	// is currently in, rather than to tmux's default of wherever the session
+	// began, is what every tabbed terminal does: a new tab opens beside the
+	// one you were looking at, not back at the start.
+	dir := hostDir(cwd)
+	if dir == "" {
+		dir = hostDir(tmuxPanePath(tmuxName))
+	}
+	if dir != "" {
 		args = append(args, "-c", dir)
 	}
 	if n := sanitiseField(name); n != "" {
 		args = append(args, "-n", n)
 	}
+
+	// The login, passed explicitly. The session also carries a
+	// `default-command` that says the same thing — which is what covers a
+	// window opened with `C-b c` from inside tmux — but naming it here does
+	// not depend on that option having been set, and this is the path the
+	// dashboard's own button takes. Without either, tmux runs the shell of
+	// whoever started the tmux server: the dashboard, as root.
+	args = append(args, m.account.loginArgv(m.shell, true)...)
 	return hostexec.CommandOnHost(ctx, "tmux", args...).Run()
 }
 
