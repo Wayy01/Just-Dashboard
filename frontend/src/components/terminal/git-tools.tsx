@@ -31,7 +31,7 @@ import { usePoll } from "@/hooks/use-poll"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
-import type { ConfirmRequest } from "@/components/terminal/file-tree"
+import type { ConfirmRequest } from "@/components/files/file-tree"
 
 type DiffRequest = { title: string; subtitle?: string; body: string }
 

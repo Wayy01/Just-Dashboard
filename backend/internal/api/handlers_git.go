@@ -51,6 +51,9 @@ func (s *Server) mountGitRoutes(r chi.Router) {
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodPost, "/discard", s.handle(s.handleGitDiscard))
 			r.Method(http.MethodPost, "/reset", s.handle(s.handleGitReset))
+			// Deleting a branch can strand commits when forced, so it sits with
+			// the other irreversible operations behind a typed confirmation.
+			r.Method(http.MethodPost, "/branch/delete", s.handle(s.handleGitBranchDelete))
 		})
 	})
 }
@@ -316,6 +319,22 @@ func (s *Server) handleGitDiscard(w http.ResponseWriter, r *http.Request) error 
 	}
 	return s.gitAction(w, r, "discard", func(p string) (*gitx.Result, error) {
 		return s.modules.git.Discard(r.Context(), p, req.File)
+	})
+}
+
+func (s *Server) handleGitBranchDelete(w http.ResponseWriter, r *http.Request) error {
+	var req gitRefRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	// The confirmation stands whether or not force is set: a safe delete of a
+	// merged branch is still a deliberate act, and the phrase is the same either
+	// way so the habit does not depend on which kind it turned out to be.
+	if err := httpx.RequireTypedConfirmation(w, r, "delete branch"); err != nil {
+		return err
+	}
+	return s.gitAction(w, r, "branch.delete", func(p string) (*gitx.Result, error) {
+		return s.modules.git.DeleteBranch(r.Context(), p, req.Ref, req.Hard)
 	})
 }
 

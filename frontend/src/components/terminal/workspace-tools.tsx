@@ -21,7 +21,8 @@ import { CodeEditor } from "@/components/code-editor"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { FileTree, type ConfirmRequest } from "@/components/terminal/file-tree"
+import { FileTree, type ConfirmRequest } from "@/components/files/file-tree"
+import { DiffView } from "@/components/files/diff-view"
 import { GitTools } from "@/components/terminal/git-tools"
 
 type Overlay =
@@ -343,23 +344,7 @@ function InlineDiff({
           <X className="size-3.5" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        <pre className="p-3 font-mono text-[11px] leading-relaxed">
-          {body.split("\n").map((line, i) => {
-            let cls = ""
-            if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-success"
-            else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-destructive"
-            else if (line.startsWith("@@")) cls = "text-primary"
-            else if (line.startsWith("diff ") || line.startsWith("index "))
-              cls = "text-muted-foreground"
-            return (
-              <div key={i} className={cn("whitespace-pre", cls)}>
-                {line || " "}
-              </div>
-            )
-          })}
-        </pre>
-      </div>
+      <DiffView body={body} className="min-h-0 flex-1" />
     </div>
   )
 }

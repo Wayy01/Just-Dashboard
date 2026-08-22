@@ -73,6 +73,23 @@ func (s *Service) CreateBranch(ctx context.Context, path, name string) (*Result,
 	return s.op(ctx, path, time.Minute, "checkout", "-b", name, "--")
 }
 
+// DeleteBranch removes a local branch. Without force git refuses to delete one
+// whose commits are not merged anywhere — the safety a non-expert most wants —
+// and force (-D) overrides that check, which can strand commits, so the route
+// above it takes a typed confirmation. The `--` ends the options so the name
+// can never be read as one, on top of ValidateRef already refusing a leading
+// dash.
+func (s *Service) DeleteBranch(ctx context.Context, path, name string, force bool) (*Result, error) {
+	if err := ValidateRef(name); err != nil {
+		return nil, err
+	}
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	return s.op(ctx, path, time.Minute, "branch", flag, "--", name)
+}
+
 // Stash puts local modifications aside, including untracked files, so the
 // operator can switch branches without losing work.
 func (s *Service) Stash(ctx context.Context, path, message string) (*Result, error) {

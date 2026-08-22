@@ -199,6 +199,27 @@ func TestStageCommitUnstage(t *testing.T) {
 	if st, err = s.Status(ctx, dir); err != nil || len(st.Files) != 1 || st.Files[0].Staged {
 		t.Fatalf("after Unstage the file should be modified-not-staged, got %+v (err %v)", st.Files, err)
 	}
+
+	// A branch can be created and then deleted; the delete must actually remove
+	// it from the branch listing.
+	if _, err := s.CreateBranch(ctx, dir, "scratch"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if _, err := s.Checkout(ctx, dir, "main"); err != nil {
+		t.Fatalf("Checkout main: %v", err)
+	}
+	if _, err := s.DeleteBranch(ctx, dir, "scratch", true); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	branches, err := s.Branches(ctx, dir)
+	if err != nil {
+		t.Fatalf("Branches: %v", err)
+	}
+	for _, b := range branches {
+		if b.Name == "scratch" {
+			t.Fatalf("DeleteBranch left 'scratch' in the listing: %+v", branches)
+		}
+	}
 }
 
 func mkRepo(t *testing.T, path string) {
