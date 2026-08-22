@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   ArrowUp,
   Download,
@@ -61,7 +62,13 @@ import {
 export default function FilesPage() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
-  const [path, setPath] = useState("/")
+  // Deep link: other pages hand this one a directory to open — a stack's
+  // working directory, a volume's mountpoint, a build context. Read once as
+  // the initial value rather than kept in sync, because the URL is where the
+  // reader arrived and not where they are now: navigating a level up should
+  // not have to rewrite it.
+  const initialPath = useSearchParams().get("path")
+  const [path, setPath] = useState(initialPath || "/")
   const [showHidden, setShowHidden] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   // The selection is scoped to the directory it was made in, so navigating

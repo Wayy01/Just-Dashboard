@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react"
 import { useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -47,6 +48,23 @@ export default function GitPage() {
     (signal) => get<{ available: boolean; repos: GitRepo[] }>("/git/", undefined, signal),
     60000,
   )
+
+  // Deep link: a compose stack whose directory is a checkout links straight to
+  // it, so "is this deploying what I think it is" is one click from the stack
+  // rather than a search through the repository list.
+  //
+  // Derived rather than pushed into state by an effect. The panel is open when
+  // the URL names a repository the list contains and the reader has not closed
+  // it — which is a fact about this render, not a state transition, and
+  // writing it into state would mean the panel briefly disagreeing with the
+  // URL on the render the list arrives.
+  const requested = useSearchParams().get("repo")
+  const [dismissedDeepLink, setDismissedDeepLink] = useState(false)
+  const deepLinked =
+    requested && !dismissedDeepLink
+      ? ((repos.data?.repos ?? []).find((r) => r.path === requested) ?? null)
+      : null
+  const active = selected ?? deepLinked
 
   const visible = useMemo(() => {
     const list = repos.data?.repos ?? []
@@ -195,8 +213,12 @@ export default function GitPage() {
         ))}
 
       <RepoSheet
-        repo={selected}
-        onOpenChange={(open) => !open && setSelected(null)}
+        repo={active}
+        onOpenChange={(open) => {
+          if (open) return
+          setSelected(null)
+          setDismissedDeepLink(true)
+        }}
         onChanged={() => repos.refresh()}
       />
     </Page>
