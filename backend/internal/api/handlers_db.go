@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
@@ -32,6 +34,7 @@ type dbConnection struct {
 func (s *Server) mountDatabaseRoutes(r chi.Router) {
 	r.Route("/databases", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleDBConnList))
+		r.Method(http.MethodGet, "/drivers", s.handle(s.handleDBDrivers))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/", s.handle(s.handleDBConnCreate))
@@ -54,6 +57,15 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Method(http.MethodPost, "/{id}/orm", s.handle(s.handleDBGenerateORM))
 		r.Method(http.MethodGet, "/{id}/queries", s.handle(s.handleDBSavedList))
 		r.Method(http.MethodGet, "/{id}/history", s.handle(s.handleDBHistory))
+		r.Method(http.MethodGet, "/{id}/count", s.handle(s.handleDBCount))
+		r.Method(http.MethodGet, "/{id}/outline", s.handle(s.handleDBOutline))
+		r.Method(http.MethodGet, "/{id}/relations", s.handle(s.handleDBRelations))
+		// Redis and Mongo reads. They are separate paths rather than a
+		// pretence that a key or a document is a row: the vocabulary is part of
+		// what makes each engine legible.
+		r.Method(http.MethodGet, "/{id}/keys", s.handle(s.handleRedisScan))
+		r.Method(http.MethodGet, "/{id}/keys/value", s.handle(s.handleRedisGet))
+		r.Method(http.MethodGet, "/{id}/collections/indexes", s.handle(s.handleMongoIndexes))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
 			r.Method(http.MethodPost, "/{id}/query", s.handle(s.handleDBQuery))
@@ -62,6 +74,20 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Method(http.MethodPatch, "/{id}/rows", s.handle(s.handleDBRowUpdate))
 			r.Method(http.MethodPost, "/{id}/queries", s.handle(s.handleDBSavedCreate))
 			r.Method(http.MethodDelete, "/{id}/queries/{qid}", s.handle(s.handleDBSavedDelete))
+			r.Method(http.MethodPost, "/{id}/import", s.handle(s.handleDBImport))
+			// Schema changes that only add: the same capability the query
+			// runner needs for the CREATE it classifies as medium risk, so the
+			// form and the SQL console agree on who may do this.
+			r.Method(http.MethodPost, "/{id}/ddl/table", s.handle(s.handleDDLCreateTable))
+			r.Method(http.MethodPost, "/{id}/ddl/column", s.handle(s.handleDDLAddColumn))
+			r.Method(http.MethodPost, "/{id}/ddl/index", s.handle(s.handleDDLCreateIndex))
+			r.Method(http.MethodPost, "/{id}/ddl/rename", s.handle(s.handleDDLRename))
+			r.Method(http.MethodPost, "/{id}/keys/value", s.handle(s.handleRedisSet))
+			r.Method(http.MethodPost, "/{id}/keys/expire", s.handle(s.handleRedisExpire))
+			r.Method(http.MethodPost, "/{id}/documents", s.handle(s.handleMongoInsert))
+			r.Method(http.MethodPatch, "/{id}/documents", s.handle(s.handleMongoReplace))
+			r.Method(http.MethodPost, "/{id}/aggregate", s.handle(s.handleMongoAggregate))
+			r.Method(http.MethodPost, "/{id}/collections", s.handle(s.handleMongoCreateCollection))
 		})
 		// A row delete is an irreversible DELETE, so it carries the destructive
 		// capability, the tighter budget and a typed confirmation naming the
@@ -69,6 +95,16 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}/rows", s.handle(s.handleDBRowDelete))
 			r.Method(http.MethodPost, "/{id}/restore", s.handle(s.handleDBRestore))
+			// Schema changes that destroy. Each demands a typed confirmation
+			// naming what it removes, so this group is the whole answer to
+			// "which database routes are irreversible?".
+			r.Method(http.MethodDelete, "/{id}/ddl/table", s.handle(s.handleDDLDropTable))
+			r.Method(http.MethodDelete, "/{id}/ddl/column", s.handle(s.handleDDLDropColumn))
+			r.Method(http.MethodDelete, "/{id}/ddl/index", s.handle(s.handleDDLDropIndex))
+			r.Method(http.MethodPost, "/{id}/ddl/truncate", s.handle(s.handleDDLTruncate))
+			r.Method(http.MethodDelete, "/{id}/keys", s.handle(s.handleRedisDelete))
+			r.Method(http.MethodDelete, "/{id}/documents", s.handle(s.handleMongoDelete))
+			r.Method(http.MethodDelete, "/{id}/collections", s.handle(s.handleMongoDropCollection))
 		})
 	})
 }
@@ -106,8 +142,11 @@ func (s *Server) dbPool(ctx context.Context, id int64) (*sql.DB, *dbConnection, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if conn.Driver == dbx.DriverMongo {
-		return nil, conn, httpx.BadRequest("this endpoint is not available for MongoDB connections")
+	// Anything that is not a SQL engine has no pool to hand back. Naming the
+	// engine in the refusal beats a generic "not available": the operator picked
+	// this connection and needs to know which of its tabs apply.
+	if !conn.Driver.IsSQL() {
+		return nil, conn, httpx.BadRequest("this endpoint is for SQL engines; %s uses its own surface", conn.Driver)
 	}
 	pool, err := s.modules.dbs.Pool(ctx, id, conn.Driver, dsn)
 	if err != nil {
@@ -401,14 +440,42 @@ func (s *Server) handleDBBrowse(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	filters, err := parseFilters(q.Get("filters"))
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
-	res, err := dbx.BrowseTable(ctx, pool, conn.Driver, q.Get("schema"), q.Get("table"), limit, offset)
+	res, err := dbx.Browse(ctx, pool, conn.Driver, dbx.BrowseOptions{
+		Schema: q.Get("schema"), Table: q.Get("table"),
+		Limit: limit, Offset: offset,
+		OrderBy: q.Get("orderBy"), Desc: q.Get("dir") == "desc",
+		Filters: filters,
+	})
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
 	httpx.JSON(w, http.StatusOK, res)
 	return nil
+}
+
+// parseFilters decodes the grid's filter list, which travels as a JSON array in
+// a query parameter because a GET has no body and a filter is structured. An
+// unparseable list is an error rather than an ignored filter: silently
+// returning unfiltered rows to somebody who asked for filtered ones is the
+// worst of the available failures.
+func parseFilters(raw string) ([]dbx.Filter, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var filters []dbx.Filter
+	if err := json.Unmarshal([]byte(raw), &filters); err != nil {
+		return nil, fmt.Errorf("filters must be a JSON array: %v", err)
+	}
+	if len(filters) > 12 {
+		return nil, fmt.Errorf("too many filters")
+	}
+	return filters, nil
 }
 
 type queryRequest struct {
@@ -1026,4 +1093,121 @@ func (s *Server) recordDBHistory(ctx context.Context, connID int64, query, risk 
 		`DELETE FROM db_query_history WHERE connection_id = ? AND id NOT IN (
 		    SELECT id FROM db_query_history WHERE connection_id = ? ORDER BY ran_at DESC LIMIT 100
 		 )`, connID, connID)
+}
+
+// --- Engine catalogue and schema reads -----------------------------------
+
+// driverInfo tells the frontend what an engine can do, so the UI does not keep
+// its own copy of that knowledge and drift from what the server enforces. A tab
+// that would 400 on every request should not be offered at all.
+type driverInfo struct {
+	ID          dbx.Driver `json:"id"`
+	Label       string     `json:"label"`
+	Kind        string     `json:"kind"`
+	Placeholder string     `json:"placeholder"`
+	SQL         bool       `json:"sql"`
+	DDL         bool       `json:"ddl"`
+	ColumnTypes []string   `json:"columnTypes,omitempty"`
+	FilterOps   []string   `json:"filterOps,omitempty"`
+}
+
+var driverLabels = map[dbx.Driver]struct{ label, kind, placeholder string }{
+	dbx.DriverPostgres:   {"PostgreSQL", "sql", "postgres://user:password@127.0.0.1:5432/dbname?sslmode=disable"},
+	dbx.DriverMySQL:      {"MySQL / MariaDB", "sql", "user:password@tcp(127.0.0.1:3306)/dbname"},
+	dbx.DriverSQLite:     {"SQLite", "sql", "/var/lib/myapp/data.db"},
+	dbx.DriverMSSQL:      {"SQL Server", "sql", "sqlserver://user:password@127.0.0.1:1433?database=dbname"},
+	dbx.DriverClickHouse: {"ClickHouse", "sql", "clickhouse://user:password@127.0.0.1:9000/default"},
+	dbx.DriverOracle:     {"Oracle", "sql", "oracle://user:password@127.0.0.1:1521/ORCLPDB1"},
+	dbx.DriverMongo:      {"MongoDB", "document", "mongodb://user:password@127.0.0.1:27017/dbname"},
+	dbx.DriverRedis:      {"Redis", "keyvalue", "redis://:password@127.0.0.1:6379/0"},
+}
+
+func (s *Server) handleDBDrivers(w http.ResponseWriter, r *http.Request) error {
+	httpx.SkipAudit(r)
+	out := []driverInfo{}
+	for _, d := range dbx.Drivers() {
+		meta := driverLabels[d]
+		info := driverInfo{
+			ID: d, Label: meta.label, Kind: meta.kind,
+			Placeholder: meta.placeholder, SQL: d.IsSQL(),
+		}
+		if dl, err := dbx.DialectFor(d); err == nil {
+			info.DDL = dl.SupportsDDL()
+			info.ColumnTypes = dl.ColumnTypes()
+			info.FilterOps = dbx.FilterOps()
+		}
+		out = append(out, info)
+	}
+	httpx.JSON(w, http.StatusOK, out)
+	return nil
+}
+
+// handleDBCount answers how many rows match the current filters. It is its own
+// request because COUNT(*) is a scan on most engines and the page fetch must
+// stay cheap whether or not anyone asked for a total.
+func (s *Server) handleDBCount(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	filters, err := parseFilters(q.Get("filters"))
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	ctx, cancel := timeoutCtx(r, 120*time.Second)
+	defer cancel()
+	n, err := dbx.Count(ctx, pool, conn.Driver, dbx.BrowseOptions{
+		Schema: q.Get("schema"), Table: q.Get("table"), Filters: filters,
+	})
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"count": n})
+	return nil
+}
+
+// handleDBOutline feeds the SQL editor's completion.
+func (s *Server) handleDBOutline(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.SkipAudit(r)
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+	outline, err := dbx.Outline(ctx, pool, conn.Driver, r.URL.Query().Get("schema"))
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, outline)
+	return nil
+}
+
+// handleDBRelations returns the foreign-key graph the entity diagram draws.
+func (s *Server) handleDBRelations(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+	rels, err := dbx.Relations(ctx, pool, conn.Driver, r.URL.Query().Get("schema"))
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, rels)
+	return nil
 }
