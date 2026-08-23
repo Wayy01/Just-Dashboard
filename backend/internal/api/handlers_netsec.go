@@ -19,13 +19,21 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 
 	r.Route("/firewall", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFirewallStatus))
+		r.Method(http.MethodGet, "/apps", s.handle(s.handleFirewallApps))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/rules", s.handle(s.handleFirewallAddRule))
+			// Logging is the one firewall setting that cannot cost anybody
+			// their access, so it is the one that stays out of the
+			// destructive group.
+			r.Method(http.MethodPost, "/logging", s.handle(s.handleFirewallLogging))
 			s.destructive(r, func(r chi.Router) {
-				// Turning the firewall off, or deleting the rule that admits
-				// you, is how an operator locks themselves out of the box.
+				// Turning the firewall off, deleting the rule that admits
+				// you, flipping the inbound default or wiping every rule is
+				// how an operator locks themselves out of the box.
 				r.Method(http.MethodPost, "/enabled", s.handle(s.handleFirewallToggle))
+				r.Method(http.MethodPost, "/policy", s.handle(s.handleFirewallPolicy))
+				r.Method(http.MethodPost, "/reset", s.handle(s.handleFirewallReset))
 				r.Method(http.MethodDelete, "/rules/{number}", s.handle(s.handleFirewallDeleteRule))
 			})
 		})
@@ -34,10 +42,18 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 	r.Route("/fail2ban", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFail2banStatus))
 		r.Method(http.MethodGet, "/history", s.handle(s.handleBanHistory))
+		r.Method(http.MethodGet, "/offenders", s.handle(s.handleBanOffenders))
+		r.Method(http.MethodGet, "/{jail}/config", s.handle(s.handleJailConfig))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/{jail}/unban", s.handle(s.handleFail2banUnban))
 			r.Method(http.MethodPost, "/{jail}/ban", s.handle(s.handleFail2banBan))
+			r.Method(http.MethodPost, "/{jail}/config", s.handle(s.handleJailParam))
+			r.Method(http.MethodPost, "/{jail}/ignore", s.handle(s.handleJailIgnore))
+			// Releasing every ban is undone by the jail itself within
+			// minutes — whoever earned a ban earns the next one — so it is
+			// not in the destructive group despite reading like it should be.
+			r.Method(http.MethodPost, "/{jail}/unban-all", s.handle(s.handleJailUnbanAll))
 		})
 	})
 
@@ -55,6 +71,11 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 			r.Method(http.MethodGet, "/failed", s.handle(s.handleFailedLogins))
 		})
 	})
+
+	// The posture verdict, SSH hardening, the connection table and the
+	// diagnostic tools. Kept in handlers_security.go, mounted from here so
+	// the security route map still has one place to be read.
+	s.mountSecurityRoutes(r)
 }
 
 // handleBanHistory answers what fail2ban has actually been doing.

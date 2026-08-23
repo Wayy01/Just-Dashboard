@@ -1,0 +1,396 @@
+"use client"
+
+import { useState } from "react"
+import { AlertTriangle, BadgeCheck, Clock, Loader2, RefreshCw, ShieldX } from "lucide-react"
+import { toast } from "sonner"
+import { get, post, ApiError } from "@/lib/api"
+import type { CertbotState } from "@/lib/types"
+import { usePoll } from "@/hooks/use-poll"
+import { useAuth } from "@/hooks/use-auth"
+import { useConfirm } from "@/components/confirm-dialog"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+
+/**
+ * Certificates, issued and renewed from the page that says they are expiring.
+ *
+ * The dashboard already knows a certificate has eleven days left; leaving the
+ * operator to go and remember certbot's arguments is where every panel in this
+ * class stops and where the work starts. The arguments are also the part that
+ * is easy to get wrong expensively — --standalone on a host running nginx
+ * binds port 80 and fails, and forcing renewal is how people spend their five
+ * duplicate certificates a week.
+ *
+ * The renewal schedule gets a line of its own because it is the real story
+ * behind almost every expired certificate: not a forgotten renewal, a renewal
+ * timer that stopped months ago and told nobody.
+ */
+/** Busy sentinel for "renew everything", which has no certificate name. */
+const ALL_CERTS = "*"
+
+export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
+  const { can } = useAuth()
+  const { confirm, dialog } = useConfirm()
+  const { data, error, loading, refresh } = usePoll<CertbotState>(
+    (signal) => get("/certificates/certbot", undefined, signal),
+    300000,
+  )
+  const [busy, setBusy] = useState("")
+  const admin = can("system.admin")
+
+  const unavailable = error instanceof ApiError && error.code === "certbot_unavailable"
+  if (loading) return <LoadingPanel />
+  if (unavailable) {
+    return (
+      <EmptyState
+        icon={ShieldX}
+        title="certbot is not installed"
+        description="Install it to issue and renew Let's Encrypt certificates from here. A certificate placed on disk by any other means still shows up in the list above."
+      />
+    )
+  }
+  if (error) return <ErrorState error={error} />
+  if (!data) return null
+
+  const renew = async (name: string, dryRun: boolean) => {
+    setBusy(name)
+    const label = name === ALL_CERTS ? "everything due" : name
+    try {
+      const res = await post<{ output: string }>("/certificates/renew", {
+        // certbot renews every due lineage when no --cert-name is given.
+        name: name === ALL_CERTS ? "" : name,
+        dryRun,
+      })
+      toast.success(dryRun ? `Dry run passed for ${label}` : `${label} renewed`, {
+        description: res.output.split("\n").slice(-1)[0],
+      })
+      refresh()
+      onChanged?.()
+    } catch (err) {
+      toast.error(dryRun ? "Dry run failed" : "Renewal failed", { description: String(err) })
+    } finally {
+      setBusy("")
+    }
+  }
+
+  return (
+    <>
+      <div className="flex min-w-0 flex-col gap-4">
+        {!data.autoRenew && data.certs.length > 0 && (
+          <Notice tone="warning" icon={Clock} title="Nothing is scheduled to renew these">
+            No certbot timer and no cron entry was found. Let&rsquo;s Encrypt certificates last
+            ninety days, so without a schedule every one of these expires — which is what has
+            happened to almost every expired certificate anybody has ever had.
+          </Notice>
+        )}
+
+        <Panel>
+          <PanelHeader
+            icon={BadgeCheck}
+            title="certbot"
+            description={
+              [
+                data.version,
+                data.autoRenew ? `auto-renewing via ${data.renewSource}` : "no renewal scheduled",
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            }
+            actions={
+              admin && (
+                <>
+                  <IssueDialog
+                    onDone={() => {
+                      refresh()
+                      onChanged?.()
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy !== ""}
+                    onClick={() => renew(ALL_CERTS, false)}
+                  >
+                    {busy === ALL_CERTS ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3.5" />
+                    )}
+                    Renew all due
+                  </Button>
+                </>
+              )
+            }
+          />
+          <PanelBody flush>
+            {data.certs.length === 0 ? (
+              <EmptyState icon={BadgeCheck} title="certbot manages no certificates yet" />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Name</TableHead>
+                    <TableHead>Domains</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead className="w-px" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.certs.map((cert) => (
+                    <TableRow key={cert.name} className="group">
+                      <TableCell className="text-[13px] font-medium">{cert.name}</TableCell>
+                      <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
+                        {cert.domains.join(", ")}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            !cert.valid
+                              ? "destructive"
+                              : cert.daysLeft <= 14
+                                ? "warning"
+                                : "success"
+                          }
+                          className="font-normal"
+                        >
+                          {cert.valid ? `${cert.daysLeft}d left` : "expired"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {admin && (
+                          <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              disabled={busy === cert.name}
+                              onClick={() => renew(cert.name, true)}
+                              title="Run the whole exchange against the staging authority, changing nothing"
+                            >
+                              Dry run
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              disabled={busy === cert.name}
+                              onClick={() => renew(cert.name, false)}
+                            >
+                              {busy === cert.name && <Loader2 className="size-3 animate-spin" />}
+                              Renew
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              className="text-destructive"
+                              onClick={() =>
+                                confirm({
+                                  title: `Revoke ${cert.name}`,
+                                  phrase: `revoke ${cert.name}`,
+                                  confirmLabel: "Revoke and delete",
+                                  description: (
+                                    <p className="text-destructive">
+                                      The authority publishes that this certificate is no longer to
+                                      be trusted and the files are deleted. There is no undo, and
+                                      every client holding it starts refusing the site.
+                                    </p>
+                                  ),
+                                  action: async (c) => {
+                                    await post(
+                                      "/certificates/revoke",
+                                      { name: cert.name },
+                                      { confirm: c },
+                                    )
+                                    refresh()
+                                    onChanged?.()
+                                  },
+                                })
+                              }
+                            >
+                              Revoke
+                            </Button>
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </PanelBody>
+        </Panel>
+      </div>
+      {dialog}
+    </>
+  )
+}
+
+function IssueDialog({ onDone }: { onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [domains, setDomains] = useState("")
+  const [email, setEmail] = useState("")
+  const [method, setMethod] = useState("nginx")
+  const [webRoot, setWebRoot] = useState("/var/www/html")
+  const [staging, setStaging] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [output, setOutput] = useState("")
+
+  const submit = async () => {
+    setBusy(true)
+    setOutput("")
+    try {
+      const res = await post<{ output: string }>("/certificates/issue", {
+        domains: domains.split(/[\s,]+/).filter(Boolean),
+        email,
+        method,
+        webRoot,
+        staging,
+      })
+      setOutput(res.output)
+      toast.success(staging ? "Test certificate issued" : "Certificate issued", {
+        description: staging
+          ? "It is not trusted by browsers. Turn the test switch off to get the real one."
+          : undefined,
+      })
+      onDone()
+    } catch (err) {
+      setOutput(String(err))
+      toast.error("Could not issue", { description: String(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">Issue certificate</Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Issue a certificate</DialogTitle>
+          <DialogDescription>
+            Let&rsquo;s Encrypt proves you control the domain, then signs a certificate for ninety
+            days. The renewal is automatic once the first one works.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="issue-domains">Domains</Label>
+            <Input
+              id="issue-domains"
+              value={domains}
+              onChange={(e) => setDomains(e.target.value)}
+              placeholder="app.example.com www.app.example.com"
+              className="font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Every name must already resolve to this server, or the challenge cannot reach it.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="issue-email">Contact email</Label>
+            <Input
+              id="issue-email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Where expiry warnings go if renewal ever stops working.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>How to prove control</Label>
+            <ToggleGroup
+              type="single"
+              value={method}
+              onValueChange={(v) => v && setMethod(v)}
+              variant="outline"
+              size="sm"
+              className="w-full"
+            >
+              <ToggleGroupItem value="nginx" className="flex-1 text-[11px]">
+                Through nginx
+              </ToggleGroupItem>
+              <ToggleGroupItem value="webroot" className="flex-1 text-[11px]">
+                A folder
+              </ToggleGroupItem>
+              <ToggleGroupItem value="standalone" className="flex-1 text-[11px]">
+                Standalone
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {method === "nginx" &&
+                "certbot asks the running nginx to serve the challenge. The right answer when nginx is already serving these domains."}
+              {method === "webroot" &&
+                "The challenge file is written into a folder your web server already serves."}
+              {method === "standalone" &&
+                "certbot runs its own server on port 80. It fails if nginx is holding that port, which on this host it probably is."}
+            </p>
+          </div>
+          {method === "webroot" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="issue-webroot">Folder</Label>
+              <Input
+                id="issue-webroot"
+                value={webRoot}
+                onChange={(e) => setWebRoot(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </div>
+          )}
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-hairline bg-surface-sunken p-2.5">
+            <div className="min-w-0 space-y-0.5">
+              <Label className="font-normal">Test run first</Label>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Issues from Let&rsquo;s Encrypt&rsquo;s staging authority: not trusted by browsers,
+                and not rate-limited. The real limit is five failures an hour and it is easy to
+                reach, so this is the right first attempt.
+              </p>
+            </div>
+            <Switch checked={staging} onCheckedChange={setStaging} className="mt-0.5 shrink-0" />
+          </div>
+          {!staging && (
+            <Notice tone="warning" icon={AlertTriangle} title="This counts against the rate limit">
+              Five failed attempts an hour for the same set of names, and five duplicate
+              certificates a week. Get a staging run to pass first.
+            </Notice>
+          )}
+          {output && (
+            <pre className="max-h-48 overflow-auto rounded-lg border border-hairline bg-surface-sunken p-3 font-mono text-[11px] whitespace-pre-wrap">
+              {output}
+            </pre>
+          )}
+        </div>
+        <DialogFooter>
+          <Button onClick={submit} disabled={busy || !domains.trim() || !email.trim()}>
+            {busy && <Loader2 className="size-4 animate-spin" />}
+            {staging ? "Run the test" : "Issue"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

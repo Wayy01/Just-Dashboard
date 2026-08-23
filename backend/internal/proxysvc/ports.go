@@ -1,12 +1,9 @@
 package proxysvc
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"sort"
-	"strings"
 
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
@@ -85,15 +82,4 @@ func ListListeners(ctx context.Context) ([]Listener, error) {
 
 func isWildcard(ip string) bool {
 	return ip == "0.0.0.0" || ip == "::" || ip == "*" || ip == ""
-}
-
-func execOutput(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
-		return buf.String(), fmt.Errorf("%s: %s", name, strings.TrimSpace(buf.String()))
-	}
-	return buf.String(), nil
 }

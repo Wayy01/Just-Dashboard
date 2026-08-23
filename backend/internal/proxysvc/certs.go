@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -165,16 +164,4 @@ func intermediates(chain []*x509.Certificate) *x509.CertPool {
 		pool.AddCert(c)
 	}
 	return pool
-}
-
-// CertbotCertificates asks certbot itself, which knows about renewal
-// configuration that the PEM files alone do not reveal.
-func CertbotCertificates(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	out, err := execOutput(ctx, "certbot", "certificates")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
 }

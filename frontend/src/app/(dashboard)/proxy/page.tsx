@@ -2,14 +2,18 @@
 
 import { useEffect, useState } from "react"
 import {
+  BadgeCheck,
   CheckCircle2,
   FileCode,
   Globe,
   Loader2,
   Plug,
+  Plus,
   RefreshCw,
+  ScanLine,
   ShieldCheck,
   ShieldX,
+  Trash2,
   XCircle,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -25,8 +29,12 @@ import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { CertbotPanel } from "@/components/proxy/certbot-panel"
+import { SiteForm } from "@/components/proxy/site-form"
+import { TLSReport } from "@/components/proxy/tls-report"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { IconAction } from "@/components/icon-action"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -70,15 +78,31 @@ export default function ProxyPage() {
       />
       <Tabs defaultValue="vhosts" className="min-w-0 gap-4">
         <TabsList>
-          <TabsTrigger value="vhosts">Virtual hosts</TabsTrigger>
-          <TabsTrigger value="certs">Certificates</TabsTrigger>
-          <TabsTrigger value="ports">Listening ports</TabsTrigger>
+          <TabsTrigger value="vhosts">
+            <Globe className="size-3.5" />
+            Sites
+          </TabsTrigger>
+          <TabsTrigger value="certs">
+            <BadgeCheck className="size-3.5" />
+            Certificates
+          </TabsTrigger>
+          <TabsTrigger value="report">
+            <ScanLine className="size-3.5" />
+            TLS report
+          </TabsTrigger>
+          <TabsTrigger value="ports">
+            <Plug className="size-3.5" />
+            Listening ports
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="vhosts" className="min-w-0">
-          <VHostsTab />
+          <VHostsTab hasNginx={status.data?.nginx ?? false} />
         </TabsContent>
         <TabsContent value="certs" className="min-w-0">
           <CertsTab />
+        </TabsContent>
+        <TabsContent value="report" className="min-w-0">
+          <TLSReport />
         </TabsContent>
         <TabsContent value="ports" className="min-w-0">
           <PortsTab />
@@ -88,18 +112,22 @@ export default function ProxyPage() {
   )
 }
 
-function VHostsTab() {
+function VHostsTab({ hasNginx }: { hasNginx: boolean }) {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [editing, setEditing] = useState<VHost | null>(null)
+  const [formSite, setFormSite] = useState<string | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<VHost[]>("/proxy/vhosts", undefined, signal),
     30000,
   )
+  const admin = can("system.admin")
 
-  if (loading) return <LoadingPanel />
-  if (error) return <ErrorState error={error} />
-  if (!data?.length) return <EmptyState icon={Globe} title="No virtual hosts found" />
+  const openForm = (name: string | null) => {
+    setFormSite(name)
+    setFormOpen(true)
+  }
 
   const toggle = async (vhost: VHost, enabled: boolean) => {
     const body = { enabled, reload: true }
@@ -132,80 +160,163 @@ function VHostsTab() {
     }
   }
 
-  const secured = data.filter((v) => v.tls).length
+  if (loading) return <LoadingPanel />
+  if (error) return <ErrorState error={error} />
+
+  const hosts = data ?? []
+  const secured = hosts.filter((v) => v.tls).length
 
   return (
     <>
-      <Panel>
-        <PanelHeader
-          icon={Globe}
-          title="Virtual hosts"
-          description={`${data.length} defined · ${secured} on TLS`}
-        />
-        <PanelBody flush>
-          <Table containerClassName="max-h-[calc(100svh-20rem)]">
-            <TableHeader className={stickyTableHeader}>
-              <TableRow>
-                <TableHead className="w-full">Host</TableHead>
-                <TableHead>Server names</TableHead>
-                <TableHead>Upstreams</TableHead>
-                <TableHead>TLS</TableHead>
-                <TableHead className="w-24">Enabled</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.map((vhost) => (
-                <TableRow key={vhost.path} onActivate={() => setEditing(vhost)}>
-                  <TableCell>
-                    <div className="max-w-[20rem] min-w-0">
-                      <button
-                        className="truncate text-[13px] font-medium hover:underline"
-                        onClick={() => setEditing(vhost)}
-                      >
-                        {vhost.name}
-                      </button>
-                      <p className="truncate font-mono text-[11px] text-muted-foreground">
-                        {vhost.path}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {vhost.serverNames.join(", ") || (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="font-mono text-[11px] text-muted-foreground">
-                    {vhost.upstreams.slice(0, 2).join(", ") || "—"}
-                  </TableCell>
-                  <TableCell>
-                    {vhost.tls ? (
-                      <Badge variant="success" className="font-normal">
-                        <ShieldCheck className="size-3" />
-                        yes
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">
-                        no
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {vhost.kind === "caddy" ? (
-                      <span className="text-xs text-muted-foreground">n/a</span>
-                    ) : (
-                      <Switch
-                        checked={vhost.enabled}
-                        disabled={!can("system.admin")}
-                        onCheckedChange={(v) => toggle(vhost, v)}
-                      />
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </PanelBody>
-      </Panel>
+      <div className="flex min-w-0 flex-col gap-4">
+        <Panel>
+          <PanelHeader
+            icon={Globe}
+            title="Sites"
+            description={`${hosts.length} defined · ${secured} on TLS`}
+            actions={
+              admin &&
+              hasNginx && (
+                <Button size="sm" onClick={() => openForm(null)}>
+                  <Plus className="size-4" />
+                  New site
+                </Button>
+              )
+            }
+          />
+          <PanelBody flush>
+            {hosts.length === 0 ? (
+              <EmptyState
+                icon={Globe}
+                title="No virtual hosts found"
+                description={
+                  hasNginx
+                    ? "Put a domain in front of something running on this machine — the form writes the nginx config for you."
+                    : "No nginx configuration directory was found on this host."
+                }
+                action={
+                  admin &&
+                  hasNginx && (
+                    <Button size="sm" onClick={() => openForm(null)}>
+                      <Plus className="size-4" />
+                      New site
+                    </Button>
+                  )
+                }
+              />
+            ) : (
+              <Table containerClassName="max-h-[calc(100svh-22rem)]">
+                <TableHeader className={stickyTableHeader}>
+                  <TableRow>
+                    <TableHead className="w-full">Host</TableHead>
+                    <TableHead>Server names</TableHead>
+                    <TableHead>Upstreams</TableHead>
+                    <TableHead>TLS</TableHead>
+                    <TableHead className="w-24">Enabled</TableHead>
+                    <TableHead className="w-px" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {hosts.map((vhost) => (
+                    <TableRow key={vhost.path} className="group">
+                      <TableCell>
+                        <div className="max-w-[20rem] min-w-0">
+                          <button
+                            className="truncate text-[13px] font-medium hover:underline"
+                            onClick={() =>
+                              vhost.kind === "nginx" ? openForm(vhost.name) : setEditing(vhost)
+                            }
+                          >
+                            {vhost.name}
+                          </button>
+                          <p className="truncate font-mono text-[11px] text-muted-foreground">
+                            {vhost.path}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {vhost.serverNames.join(", ") || (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-mono text-[11px] text-muted-foreground">
+                        {vhost.upstreams.slice(0, 2).join(", ") || "—"}
+                      </TableCell>
+                      <TableCell>
+                        {vhost.tls ? (
+                          <Badge variant="success" className="font-normal">
+                            <ShieldCheck className="size-3" />
+                            yes
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="font-normal">
+                            no
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {vhost.kind === "caddy" ? (
+                          <span className="text-xs text-muted-foreground">n/a</span>
+                        ) : (
+                          <Switch
+                            checked={vhost.enabled}
+                            disabled={!admin}
+                            onCheckedChange={(v) => toggle(vhost, v)}
+                            aria-label={`${vhost.name} enabled`}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                          <IconAction label="Edit the raw config" onClick={() => setEditing(vhost)}>
+                            <FileCode />
+                          </IconAction>
+                          {admin && vhost.kind === "nginx" && (
+                            <IconAction
+                              label="Delete site"
+                              className="text-destructive"
+                              onClick={() =>
+                                confirm({
+                                  title: `Delete ${vhost.name}`,
+                                  phrase: vhost.name,
+                                  confirmLabel: "Delete and reload",
+                                  description: (
+                                    <p>
+                                      The file and its symlink are removed and nginx reloads. The
+                                      previous content is kept as{" "}
+                                      <code className="font-mono">{vhost.name}.bak</code>.
+                                    </p>
+                                  ),
+                                  action: async (c) => {
+                                    await del(
+                                      `/proxy/sites/${encodeURIComponent(vhost.name)}`,
+                                      { confirm: c },
+                                    )
+                                    refresh()
+                                  },
+                                })
+                              }
+                            >
+                              <Trash2 />
+                            </IconAction>
+                          )}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </PanelBody>
+        </Panel>
+      </div>
+
+      <SiteForm
+        open={formOpen}
+        editing={formSite}
+        onOpenChange={setFormOpen}
+        onSaved={refresh}
+      />
       <ConfigEditor
         vhost={editing}
         onOpenChange={(o) => !o && setEditing(null)}
@@ -390,11 +501,13 @@ function CertsTab() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <CertbotPanel onChanged={certs.refresh} />
+
       <Panel>
         <PanelHeader
           icon={ShieldCheck}
           title="Installed certificates"
-          description="From certbot and from the proxy configuration on disk"
+          description="Every certificate on disk, including the ones certbot did not put there"
         />
         <PanelBody flush>
           {certs.loading && <LoadingPanel />}

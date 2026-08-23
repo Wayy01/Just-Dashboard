@@ -29,9 +29,9 @@ go run ./cmd/server                 # needs JD_MASTER_KEY set and JD_DATA_DIR wr
 `go.mod` declares `go 1.25.0`; an older local toolchain will try to auto-download 1.25 and
 fail on a network-restricted machine. Check `go version` before blaming the code.
 
-Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
-`httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
-hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
+Fifteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
+`httpx`, `metrics`, `netsec`, `procs`, `proxysvc`, `safepath`, `term`, `updates`). They are all
+fast and hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
 to run on every change. The two exceptions are `term` and the terminal half of `api`, which
 drive the machine's real tmux and skip when it is absent: the bugs they exist to catch live in
 the gap between this process and that one — what tmux has been told, what it has got round to
@@ -41,9 +41,18 @@ private tmux server in `TestMain` (`TMUX_TMPDIR`), so a test run never lists or 
 operator's own sessions and two packages running concurrently under `go test ./...` cannot see
 each other's. The ones guarding the security invariants (`httpx/confirm_test.go`,
 `api/routes_test.go`, `api/docker_spec_test.go`, `files/files_test.go`,
-`safepath/safepath_test.go`, `dbx/classify_test.go`) are the ones to extend when you touch
-that surface. `dockerx/diagnose_test.go` is the other kind: it pins the *claims* the product
-makes about what is wrong with a container, which are as easy to get backwards as any check.
+`safepath/safepath_test.go`, `dbx/classify_test.go`, `api/handlers_security_test.go`) are the
+ones to extend when you touch that surface. The last of those signs a real admin in — password,
+TOTP enrolment, second factor — and drives the security and proxy routes through the whole
+chain, because a rule tested in its own package says nothing about whether the route it backs
+was mounted inside the group it was meant to be in.
+
+`dockerx/diagnose_test.go`, `netsec/posture_test.go` and `proxysvc/tlsscan_test.go` are the
+other kind: they pin the *claims* the product makes — what is wrong with a container, whether
+a host is hardened, what a TLS grade means — which are as easy to get backwards as any check
+and considerably more embarrassing. `proxysvc/sites_test.go` pins the rendered nginx, including
+the round trip: the form reads a file back, so anything the renderer emits and the parser
+cannot recognise is a field silently dropped the next time somebody saves.
 
 ### Frontend (`frontend/`, Next.js + bun)
 
@@ -332,6 +341,90 @@ lives in an env file nobody re-reads after install day, which is exactly why it 
 screen — a machine that quietly became reachable from the internet should say so rather than
 wait to be discovered.
 
+### The verdict, not the settings
+
+`netsec.Assess` (`GET /security/posture`) is to the host's security what `metrics.Assess` is
+to its load and `dockerx.Diagnose` is to its containers, and for the same reason: every panel
+in this class shows the facts — a rule list, a jail, a set of sshd directives, a table of open
+ports — and leaves the reading to somebody who already knows how, which is not the person who
+needs the answer. The hosting panels that do take a position sell a score out of a hundred,
+which is a number to optimise rather than a thing to fix.
+
+So a `SecurityFinding` carries what was measured, what it means and what to do as three
+separate fields, plus a `Fix` naming a remedy the dashboard can carry out itself. It is a
+**pure function of its inputs**: the handler gathers exposure, firewall, fail2ban, sshd,
+listeners, certificates, failed logins and pending updates concurrently, and `Assess` decides.
+That is what makes the rules testable without a firewall, an sshd or a network, and
+`posture_test.go` pins each claim — including the two that are easy to get backwards. An
+exposed database behind a default-deny firewall is a warning rather than a critical, because
+saying otherwise is crying wolf; and "turn off password authentication" stops being offered as
+a one-click fix when no account on the host has an authorized key, because there it is not
+advice, it is a lockout.
+
+Three inputs are shapes declared *in* netsec (`ExposedPort`, `CertSummary`) rather than
+imported from `proxysvc`, so the audit keeps no dependency on how ports or certificates are
+discovered.
+
+### sshd, and the guard that makes it offerable
+
+`netsec/sshd.go` reads the **effective** configuration — `sshd -T`, falling back to parsing
+the file — because a file that sets `PasswordAuthentication` twice does not behave the way it
+reads. Two of sshd's own semantics are load-bearing and get read backwards by anyone treating
+the file as an ini: the **first** value for a keyword wins, not the last, and everything after
+a `Match` applies conditionally. So the parser never overwrites an earlier value, a `Match`
+ends the file for it, and the fact that one exists is reported rather than dropped.
+
+`sshd_apply.go` writes. The order is the proxy editor's, for the same reason: refuse the
+changes that are certainly a lockout, write, validate with `sshd -t`, restore on failure,
+reload only then. The write target is a drop-in under `sshd_config.d` **only when the main
+file includes that directory before setting anything itself** — position is the whole question,
+since first-value-wins means a drop-in included at the bottom is a file this dashboard wrote
+and sshd ignored, which is the worst possible outcome for a security setting. Otherwise the
+directive is replaced where it stands in the main file and later duplicates are commented out
+rather than deleted.
+
+`guardSSHLockout` is deliberately narrow, like the firewall's: it refuses only the certain
+cases — passwords off with no key anywhere, both passwords and keys off, root the only keyed
+account with passwords off. Disabling passwords on a host where somebody has a key is the
+correct thing to do and must never be blocked.
+
+The directive list is **closed**. Every entry is a line this code is willing to write into
+sshd_config, and an open set would make the endpoint a config editor with extra steps — one
+that can take the machine off the network.
+
+### Firewall: the parts that decide what the rules mean
+
+A rule list on its own is half the picture. `FirewallStatus` now carries the three default
+policies structured (`DefaultPolicy`) and the logging level, because a list of allows in front
+of a default of *allow* is decoration, and a firewall that drops silently leaves an incident
+with no record of what was refused.
+
+Reading them needed a fix rather than an addition: `ufw status numbered verbose` looks like it
+should work and is rejected outright — ufw's parser takes exactly one of the two words and
+raises "Invalid syntax" for both. The old single call therefore returned an error, no rules,
+and a firewall the page reported as inactive on **every host that had one**. It is two calls
+now: `numbered` for the rules with the numbers the delete route needs, `verbose` for the
+policy block, with the second a soft failure.
+
+`ServiceCatalogue` (`GET /security/services`) is the teaching layer for the rule form, the way
+`GLOSSARY` is for Docker: a short list of the ports a single-server operator actually opens
+plus the ones they open by accident, each with a `Danger` line for the ones that should never
+face the internet. It is served from here rather than duplicated in TypeScript so the warning
+the form shows and the finding the audit raises are the same claim. `parseUFWRule` attaches it
+to each rule — but only warns when the source is unrestricted, since the same port limited to
+a private range is the arrangement being recommended.
+
+`AddRule` gained `insert` (ufw stops at the first match, so a deny added after a broad allow
+does nothing at all, which looks exactly like a deny that works), application profiles, and
+comma-separated port lists. `SetDefaultPolicy` refuses an inbound deny on a host whose rule
+list admits nobody; the ambiguous cases go to the typed confirmation, because a rule list that
+admits *something* cannot be judged from here without knowing which port the browser arrived
+on.
+
+There is deliberately **no start/stop for a fail2ban jail**. `fail2ban-client status` lists
+only running jails, so one stopped from the UI would vanish from every listing with nothing
+left to start it again — a control that can only be used once is a trap.
+
 ### Docker: what it can do, and why each piece is where it is
 
 `internal/dockerx` talks to the Engine over its socket through the official SDK. Nothing
@@ -550,6 +643,54 @@ restores the browser's selection, which is the convention every terminal
 emulator uses, and the shortcut sheet lists it because it is exactly the sort
 of thing discovered by finding it broken.
 
+### The proxy: a site, a certificate, and what a visitor actually gets
+
+Three additions to `proxysvc`, each closing a gap that sent the operator somewhere else.
+
+**`sites.go` / `sites_render.go` / `sites_apply.go` — the site builder.** `SiteSpec` is the
+dashboard's description of a site, not nginx's, for the reason `dockerx.ContainerSpec` is not
+`container.Config`: the server's own shape is a historical accident and rendering it as a form
+is how a proxy UI becomes twelve accordions. Rendering happens **on the server**, so there is
+exactly one implementation of what a spec means — a second one in TypeScript would drift, and
+the version that mattered would be the one nobody was reading. The output is hand-written
+rather than templated, because order carries meaning to whoever maintains the file after this
+dashboard is gone.
+
+`ApplySite`'s order differs from the plain config editor's, and the difference is the point: a
+brand-new file in `sites-available` is not in nginx's include tree, so `nginx -t` has nothing
+to say about it. The symlink goes in **before** the test, and both the file and the link are
+undone together if it fails.
+
+Three details in the renderer are load-bearing. The ACME challenge location is emitted **above**
+the catch-all redirect, or renewal stops working in sixty days and nobody finds out until the
+certificate expires. `http2 on;` is a directive, not a `listen` parameter, which nginx 1.25
+deprecated and warns about on every reload. And WebSocket upgrades pass `$http_connection`
+through rather than the usual `$connection_upgrade` map, because a `map` is only legal in the
+`http` block and a site file cannot reach there.
+
+`ParseSiteSpec` reads a file back so the form can edit one, and reports whether it carries our
+marker — a hand-written file round-trips only as far as the parser recognises, and the UI says
+so rather than silently offering to overwrite somebody's work. It skips the generated ACME
+location: reading that back as one of the operator's own emits it twice on the next save.
+
+**`tlsscan.go` — what the domain is actually serving.** Everything else on that page reads
+files, which answers a question nobody has: a certificate renewed and never reloaded, a proxy
+still offering TLS 1.0, a redirect that quietly stopped working are all invisible on disk. Each
+protocol version is probed on a connection pinned to exactly that version, so the answer is the
+server's rather than a negotiation — and a version this client will not ask for is reported as
+`unknown`, never as `refused`, because reporting it absent would be a false reassurance about
+exactly the versions that matter most. `grade` is a pure function of the scan for the same
+reason `Assess` is.
+
+**`certbot.go` — issue, renew, revoke.** The dashboard already knows a certificate has eleven
+days left; leaving the operator to remember certbot's arguments is where every panel in this
+class stops. `renewalScheduled` gets a field of its own because it is the real story behind
+almost every expired certificate: not a forgotten renewal, a timer that stopped months ago.
+Issuance defaults to `--staging` in the UI — the real limit is five failures an hour and it is
+easy to reach. `dns.go` answers "does this domain point here yet", and recognises Cloudflare
+explicitly, because reporting a CDN as a misconfiguration is the commonest false alarm a check
+like this produces.
+
 ### Streaming
 
 `internal/wsx` wraps gorilla/websocket: origin check on upgrade (a WS handshake is not
@@ -674,7 +815,7 @@ same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, 
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
-(`docker/`, `files/`, `metrics/`, `procs/`, `terminal/`).
+(`docker/`, `files/`, `metrics/`, `procs/`, `proxy/`, `security/`, `terminal/`).
 
 ### Charts
 
@@ -752,6 +893,35 @@ Three deep links exist for this feature and are worth preserving: `/files?path=`
 `/git?repo=` and `/terminal?cwd=`. The first two are read once as an initial value rather than
 kept in sync — the URL is where the reader arrived, not where they are now — and the terminal
 one opens a session exactly once per mount, because a shell is a process and not a render.
+
+### The security and proxy panels
+
+`components/security/` and `components/proxy/` are the two feature directories added for the
+network pages, and they follow the Docker panel's rule: explanation is quiet, and the teaching
+lives next to the control rather than in a banner above it.
+
+- `posture-panel.tsx` renders `netsec.Posture` the way `health-panel.tsx` renders `Health`,
+  with one addition — a finding whose `fix` the server named becomes a button, and the page
+  maps that string to the request plus the confirmation it deserves. `AreaFindings` filters the
+  page's single verdict rather than fetching per tab.
+- `rule-form.tsx` is the firewall's create form and the reason the catalogue exists on the
+  server: picking "Redis" fills in 6379 *and* raises the warning at the moment of choosing,
+  rather than in a report afterwards. The `ufw` line it would run is shown in the footer, for
+  the reason the Docker create form shows its `docker run`.
+- `ssh-panel.tsx` stages every change and applies them together, since each one is a write, a
+  parse and a reload. The dialog says to keep the session open and check a second terminal —
+  the one piece of advice that matters and the one no error message can give afterwards.
+- `site-form.tsx` shows the server-rendered nginx live beside the form, debounced. The preview
+  request is the same renderer that writes the file, so the form is not a black box and what
+  is on screen is what lands on disk. `DNSCheck` sits under the domain field because "the name
+  does not point here yet" is the cause of most certificate failures and certbot reports it as
+  "challenge failed".
+- `tls-report.tsx` renders the scan, and says out loud what `unknown` means for a protocol row.
+  A grade with no working is a number to optimise.
+
+`ConnectionsPanel` and `OffendersPanel` both offer a one-click firewall deny, which is the
+join that makes the pages one product: the address the ban log keeps naming is the one that
+deserves a rule outliving the ban.
 
 ### The terminal panel
 
