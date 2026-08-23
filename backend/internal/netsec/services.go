@@ -2,9 +2,6 @@ package netsec
 
 import (
 	"bufio"
-	"context"
-	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -106,8 +103,9 @@ func PresetFor(port, protocol string) (ServicePreset, bool) {
 	return ServicePreset{}, false
 }
 
-// AppProfile is an application profile ufw knows about — the named bundles
-// packages drop into /etc/ufw/applications.d ("Nginx Full", "OpenSSH").
+// AppProfile is a named service bundle the host itself defines — ufw's
+// application profiles from /etc/ufw/applications.d ("Nginx Full", "OpenSSH"),
+// or firewalld's predefined services ("http", "postgresql").
 //
 // They are worth surfacing because they are the form the host's own packages
 // speak: a rule added as "Nginx Full" keeps meaning what it says if the
@@ -118,37 +116,6 @@ type AppProfile struct {
 	Description string   `json:"description,omitempty"`
 	Ports       []string `json:"ports"`
 }
-
-// AppProfiles lists ufw's application profiles with their ports resolved.
-//
-// `ufw app list` gives only names, so each is expanded with `ufw app info`.
-// The names come from ufw's own listing and are checked against a pattern
-// before being passed back to it — the file they come from is writable by
-// root, and root is not the same as this code.
-func (s *Service) AppProfiles(ctx context.Context) ([]AppProfile, error) {
-	out, err := run(ctx, "ufw", "app", "list")
-	if err != nil {
-		return nil, err
-	}
-	profiles := []AppProfile{}
-	for _, name := range parseAppList(out) {
-		if !appNameRe.MatchString(name) {
-			continue
-		}
-		p := AppProfile{Name: name, Ports: []string{}}
-		if info, err := run(ctx, "ufw", "app", "info", name); err == nil {
-			p.Title, p.Description, p.Ports = parseAppInfo(info)
-		}
-		profiles = append(profiles, p)
-	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-	return profiles, nil
-}
-
-// A profile name is free text in a package's own file, so it may contain
-// spaces — but not the characters that would make it something other than a
-// name.
-var appNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._/+-]{0,63}$`)
 
 // parseAppList reads the indented names under "Available applications:".
 func parseAppList(out string) []string {

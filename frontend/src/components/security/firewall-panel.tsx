@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
+import { AlertTriangle, Lock, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -63,10 +63,29 @@ export function FirewallPanel({
   if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!status?.available) {
-    return <EmptyState icon={Shield} title="No firewall tool found" description={status?.error} />
+    return (
+      <EmptyState
+        icon={Shield}
+        title="No firewall on this host"
+        description={
+          status?.error ??
+          "Neither ufw, firewalld nor iptables answered. Install one — without it, every port anything on this machine opens is reachable from wherever the machine is."
+        }
+      />
+    )
   }
 
-  const ufw = status.backend === "ufw"
+  // Controls are keyed off what the backend says it can do rather than off its
+  // name, so adding a fourth firewall does not mean revisiting this file.
+  const caps = status.capabilities ?? {
+    editable: false,
+    toggle: false,
+    defaultPolicy: false,
+    logging: false,
+    reset: false,
+    profiles: false,
+  }
+  const writable = admin && caps.editable
   // ufw prints every rule twice on a dual-stack host and distinguishes the
   // pair only by a "(v6)" suffix. Folding the duplicate away is what keeps
   // eight rules from reading as sixteen.
@@ -109,6 +128,12 @@ export function FirewallPanel({
       <div className="flex min-w-0 flex-col gap-4">
         <AreaFindings posture={posture} area="firewall" />
 
+        {caps.readOnlyReason && (
+          <Notice icon={Lock} title={`${status.backend} can be read here, not changed`}>
+            {caps.readOnlyReason}
+          </Notice>
+        )}
+
         <Notice icon={ShieldAlert} title="Lockout protection">
           A rule that would block the address you are connected from is refused before it is
           applied, and so is an inbound default of deny on a host with no allow rule at all. A
@@ -119,12 +144,16 @@ export function FirewallPanel({
           <PanelHeader
             icon={Shield}
             title={`${status.backend} · ${status.enabled ? "active" : "inactive"}`}
-            description={status.defaultPolicy ?? "no default policy reported"}
+            description={
+              [status.defaultPolicy ?? "no default policy reported", status.zone && `zone ${status.zone}`]
+                .filter(Boolean)
+                .join(" · ")
+            }
             actions={
-              admin &&
-              ufw && (
+              writable && (
                 <>
-                  <AddRuleDialog onDone={refresh} />
+                  <AddRuleDialog onDone={refresh} hasProfiles={caps.profiles} />
+                  {caps.toggle && (
                   <Switch
                     aria-label="Firewall enabled"
                     checked={status.enabled}
@@ -150,24 +179,30 @@ export function FirewallPanel({
                       })
                     }
                   />
+                  )}
                 </>
               )
             }
           />
-          {admin && ufw && (
+          {writable && (caps.defaultPolicy || caps.logging || caps.reset) && (
             <PanelToolbar className="gap-4">
-              <PolicySelect
-                label="Inbound"
-                value={status.policy?.incoming}
-                onChange={(v) => setPolicy("incoming", v)}
-                hint="What happens to a connection no rule matched"
-              />
-              <PolicySelect
-                label="Outbound"
-                value={status.policy?.outgoing}
-                onChange={(v) => setPolicy("outgoing", v)}
-                hint="What this host may reach"
-              />
+              {caps.defaultPolicy && (
+                <PolicySelect
+                  label="Inbound"
+                  value={status.policy?.incoming}
+                  onChange={(v) => setPolicy("incoming", v)}
+                  hint="What happens to a connection no rule matched"
+                />
+              )}
+              {caps.defaultPolicy && status.backend === "ufw" && (
+                <PolicySelect
+                  label="Outbound"
+                  value={status.policy?.outgoing}
+                  onChange={(v) => setPolicy("outgoing", v)}
+                  hint="What this host may reach"
+                />
+              )}
+              {caps.logging && (
               <div className="space-y-1">
                 <Label className="eyebrow">Logging</Label>
                 <Select
@@ -193,7 +228,9 @@ export function FirewallPanel({
                   </SelectContent>
                 </Select>
               </div>
+              )}
               <span className="flex-1" />
+              {caps.reset && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -219,6 +256,7 @@ export function FirewallPanel({
                 <RotateCcw className="size-3.5" />
                 Reset
               </Button>
+              )}
             </PanelToolbar>
           )}
           <PanelBody flush>
@@ -277,7 +315,7 @@ export function FirewallPanel({
                       )}
                     </TableCell>
                     <TableCell>
-                      {admin && rule.number !== undefined && (
+                      {writable && rule.number !== undefined && (
                         <IconAction
                           label="Delete rule"
                           className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"

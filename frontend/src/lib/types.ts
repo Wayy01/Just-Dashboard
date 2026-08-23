@@ -995,13 +995,33 @@ export type DefaultPolicy = {
   routed?: string
 }
 
+/**
+ * What this host's firewall can actually be told to do.
+ *
+ * ufw, firewalld and raw iptables answer the same questions differently — one
+ * has an on/off switch, one has a service, one has no persistence at all — so
+ * the status says what is possible and the UI hides the rest, with a reason.
+ */
+export type FirewallCapabilities = {
+  editable: boolean
+  toggle: boolean
+  defaultPolicy: boolean
+  logging: boolean
+  reset: boolean
+  profiles: boolean
+  readOnlyReason?: string
+}
+
 export type FirewallStatus = {
-  backend: "ufw" | "iptables"
+  backend: "ufw" | "firewalld" | "iptables"
   available: boolean
   enabled: boolean
   defaultPolicy?: string
   policy: DefaultPolicy
   logging?: string
+  /** firewalld's active zone. Absent for backends with no such idea. */
+  zone?: string
+  capabilities: FirewallCapabilities
   rules: FirewallRule[]
   raw?: string
   error?: string
@@ -1282,6 +1302,12 @@ export type UpdateReport = {
   manager?: string
   packages: UpdatePackage[]
   securityCount: number
+  /**
+   * Whether this manager can tell a security update from any other. Alpine
+   * and Arch publish no advisory data, so a zero count there means "cannot
+   * tell", not "none outstanding".
+   */
+  securityFiltering: boolean
   rebootRequired: boolean
   rebootPackages?: string[]
   lastChecked: string

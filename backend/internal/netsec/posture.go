@@ -215,7 +215,11 @@ func assessFirewall(in AssessInput) []SecurityFinding {
 			Title:  "The firewall is installed but switched off",
 			Detail: fmt.Sprintf("%s reports itself inactive with %d rule(s) configured.", fw.Backend, len(fw.Rules)),
 			Advice: "Rules that are not being enforced are worse than no rules, because the page looks configured. Check that the rules admit the port you are reading this on, then enable it.",
-			Fix:    "firewall.enable", FixLabel: "Enable firewall",
+			// Only offered where the dashboard can actually do it. A button
+			// that always returns "not supported on this host" is worse than
+			// no button, because it looks like the fix is one click away.
+			Fix:      fixIf(fw.Capabilities.Toggle, "firewall.enable"),
+			FixLabel: fixIf(fw.Capabilities.Toggle, "Enable firewall"),
 		})
 	}
 	if fw.Enabled && fw.Policy.Incoming == "allow" {
@@ -224,6 +228,14 @@ func assessFirewall(in AssessInput) []SecurityFinding {
 			Title:  "Inbound traffic is allowed by default",
 			Detail: "The default incoming policy is allow, so the deny rules are a blocklist rather than a fence.",
 			Advice: "Set the inbound default to deny and add allow rules for what should be reachable. A blocklist can only ever refuse what somebody thought of.",
+		})
+	}
+	if fw.Available && !fw.Capabilities.Editable {
+		out = append(out, SecurityFinding{
+			ID: "firewall.read-only", Level: "notice", Area: "firewall",
+			Title:  "This firewall can be read but not changed from here",
+			Detail: fmt.Sprintf("%s is in charge of this host.", fw.Backend),
+			Advice: fw.Capabilities.ReadOnlyReason,
 		})
 	}
 	if fw.Enabled && strings.HasPrefix(strings.ToLower(fw.Logging), "off") {

@@ -159,11 +159,24 @@ func (s *Server) handleFirewallAddRule(w http.ResponseWriter, r *http.Request) e
 			httpx.SetAudit(r, "firewall.rule.add", req.Port, map[string]any{"result": "refused_lockout"})
 			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
 		}
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.rule.add", req.Port, req)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
 	return nil
+}
+
+// mapFirewallError distinguishes "this host's firewall cannot do that" from
+// "you asked for something invalid". They deserve different words, and only
+// the first is worth a code the UI keys off.
+func mapFirewallError(err error) error {
+	if errors.Is(err, netsec.ErrReadOnly) {
+		return httpx.Err(http.StatusNotImplemented, "firewall_read_only", err.Error())
+	}
+	if errors.Is(err, netsec.ErrNoFirewall) {
+		return httpx.Err(http.StatusServiceUnavailable, "no_firewall", err.Error())
+	}
+	return httpx.BadRequest("%v", err)
 }
 
 func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request) error {
@@ -176,7 +189,7 @@ func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request
 	}
 	out, err := s.modules.netsec.DeleteRule(r.Context(), number)
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.rule.delete", strconv.Itoa(number), nil)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
@@ -203,7 +216,7 @@ func (s *Server) handleFirewallToggle(w http.ResponseWriter, r *http.Request) er
 	}
 	out, err := s.modules.netsec.SetEnabled(r.Context(), req.Enabled)
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.toggle", "", map[string]any{"enabled": req.Enabled})
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})

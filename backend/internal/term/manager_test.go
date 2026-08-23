@@ -40,7 +40,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-
 // A list endpoint that answers JSON null instead of [] crashes any client that
 // iterates the result, so the contract is worth pinning down.
 func TestTmuxSessionsMarshalsAsArray(t *testing.T) {

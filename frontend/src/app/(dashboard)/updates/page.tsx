@@ -167,9 +167,17 @@ export default function UpdatesPage() {
             <StatTile
               label="Security updates"
               value={data.securityCount}
-              hint={data.securityCount ? "apply these first" : "none outstanding"}
+              hint={
+                !data.securityFiltering
+                  ? `${data.manager} publishes no advisory data`
+                  : data.securityCount
+                    ? "apply these first"
+                    : "none outstanding"
+              }
               icon={ShieldAlert}
-              tone={data.securityCount > 0 ? "warning" : "success"}
+              tone={
+                !data.securityFiltering ? "default" : data.securityCount > 0 ? "warning" : "success"
+              }
             />
             <StatTile
               label="Reboot"

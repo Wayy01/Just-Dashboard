@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { AlertTriangle, Plus } from "lucide-react"
+import { AlertTriangle, Check, ChevronsUpDown, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -21,6 +21,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
@@ -46,7 +55,13 @@ import {
  * the host's own package speaking, and it keeps meaning what it says if that
  * package later adds a port.
  */
-export function AddRuleDialog({ onDone }: { onDone: () => void }) {
+export function AddRuleDialog({
+  onDone,
+  hasProfiles = true,
+}: {
+  onDone: () => void
+  hasProfiles?: boolean
+}) {
   const [open, setOpen] = useState(false)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -62,6 +77,7 @@ export function AddRuleDialog({ onDone }: { onDone: () => void }) {
         {open && (
           <RuleForm
             key="rule-form"
+            hasProfiles={hasProfiles}
             onDone={() => {
               setOpen(false)
               onDone()
@@ -80,7 +96,7 @@ const SOURCE_PRESETS = [
   { key: "custom", label: "Specific address", value: "", hint: "One IP or a CIDR" },
 ] as const
 
-function RuleForm({ onDone }: { onDone: () => void }) {
+function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: boolean }) {
   const [action, setAction] = useState("allow")
   const [mode, setMode] = useState<"service" | "profile">("service")
   const [preset, setPreset] = useState("")
@@ -96,7 +112,9 @@ function RuleForm({ onDone }: { onDone: () => void }) {
     (signal) => get("/security/services", undefined, signal),
     0,
   )
-  const profiles = usePoll<AppProfile[]>((signal) => get("/firewall/apps", undefined, signal), 0)
+  const profiles = usePoll<AppProfile[]>((signal) => get("/firewall/apps", undefined, signal), 0, [], {
+    enabled: hasProfiles,
+  })
 
   const chosen = useMemo(
     () => services.data?.find((s) => s.key === preset),
@@ -170,7 +188,11 @@ function RuleForm({ onDone }: { onDone: () => void }) {
             <TabsTrigger value="service" className="flex-1">
               Port
             </TabsTrigger>
-            <TabsTrigger value="profile" className="flex-1" disabled={!profiles.data?.length}>
+            <TabsTrigger
+              value="profile"
+              className="flex-1"
+              disabled={!hasProfiles || !profiles.data?.length}
+            >
               Application profile
             </TabsTrigger>
           </TabsList>
@@ -238,19 +260,14 @@ function RuleForm({ onDone }: { onDone: () => void }) {
 
           <TabsContent value="profile" className="mt-3 space-y-1.5">
             <Label>Profile</Label>
-            <Select value={profile} onValueChange={setProfile}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Installed by the host's own packages" />
-              </SelectTrigger>
-              <SelectContent>
-                {profiles.data?.map((p) => (
-                  <SelectItem key={p.name} value={p.name}>
-                    {p.name}
-                    {p.ports.length > 0 && ` · ${p.ports.join(" ")}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Searchable rather than a plain select: ufw defines a handful of
+                profiles and firewalld defines several hundred, and the same
+                control has to be usable for both. */}
+            <ProfilePicker
+              profiles={profiles.data ?? []}
+              value={profile}
+              onChange={setProfile}
+            />
             <p className="text-[11px] text-muted-foreground">
               A profile names its own ports, so the rule keeps meaning what it says if the package
               later adds one.
@@ -323,5 +340,67 @@ function RuleForm({ onDone }: { onDone: () => void }) {
         </Button>
       </DialogFooter>
     </>
+  )
+}
+
+/**
+ * A searchable picker for the host's service profiles.
+ *
+ * ufw defines about a dozen; firewalld ships several hundred. One dropdown has
+ * to work for both, and a plain select at that size is a scroll bar and a
+ * guess.
+ */
+function ProfilePicker({
+  profiles,
+  value,
+  onChange,
+}: {
+  profiles: AppProfile[]
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          {value || <span className="text-muted-foreground">Defined by the host&rsquo;s packages</span>}
+          <ChevronsUpDown className="size-3.5 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search profiles…" className="h-9" />
+          <CommandList>
+            <CommandEmpty>Nothing matches.</CommandEmpty>
+            <CommandGroup>
+              {profiles.map((p) => (
+                <CommandItem
+                  key={p.name}
+                  value={p.name}
+                  onSelect={() => {
+                    onChange(p.name)
+                    setOpen(false)
+                  }}
+                >
+                  <Check className={cn("size-3.5", value === p.name ? "opacity-100" : "opacity-0")} />
+                  <span className="flex-1 truncate">{p.name}</span>
+                  {p.ports.length > 0 && (
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {p.ports.join(" ")}
+                    </span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }

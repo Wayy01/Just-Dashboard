@@ -1,6 +1,8 @@
 package netsec
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -46,11 +48,15 @@ func TestApplyUFWVerbose(t *testing.T) {
 	}
 }
 
-func TestParseUFWRuleNamesTheServiceAndFlagsTheDangerousOnes(t *testing.T) {
+// Annotation is applied centrally in Status rather than by each backend, so
+// firewalld's rules get the same names and warnings ufw's do. These drive it
+// through the ufw parser because that is where the awkward text is.
+func TestAnnotateNamesTheServiceAndFlagsTheDangerousOnes(t *testing.T) {
 	rule := parseUFWRule(3, "6379/tcp                   ALLOW IN    Anywhere")
 	if rule.Port != "6379" || rule.Protocol != "tcp" {
 		t.Fatalf("port/proto = %q/%q", rule.Port, rule.Protocol)
 	}
+	annotateRule(&rule)
 	if rule.Service != "Redis" {
 		t.Errorf("service = %q, want Redis", rule.Service)
 	}
@@ -61,13 +67,32 @@ func TestParseUFWRuleNamesTheServiceAndFlagsTheDangerousOnes(t *testing.T) {
 
 // The same port restricted to a private source is the arrangement being
 // recommended. Warning about it would train the operator to ignore warnings.
-func TestParseUFWRuleDoesNotWarnAboutARestrictedSource(t *testing.T) {
+func TestAnnotateDoesNotWarnAboutARestrictedSource(t *testing.T) {
 	rule := parseUFWRule(4, "6379/tcp                   ALLOW IN    10.0.0.0/8")
+	annotateRule(&rule)
 	if rule.Service != "Redis" {
 		t.Fatalf("service = %q", rule.Service)
 	}
 	if rule.Danger != "" {
 		t.Errorf("restricted rule warned anyway: %q", rule.Danger)
+	}
+}
+
+// A firewalld rule reaches annotation with no protocol on a service entry and
+// a full port on a rich rule; both have to come out named.
+func TestAnnotateWorksForFirewalldShapes(t *testing.T) {
+	port := Rule{Action: "ALLOW", From: "Anywhere", To: "5432/tcp", Port: "5432", Protocol: "tcp"}
+	annotateRule(&port)
+	if port.Service != "PostgreSQL" || port.Danger == "" {
+		t.Fatalf("port rule = %+v", port)
+	}
+	rich := Rule{Action: "ALLOW", From: "10.0.0.0/8", To: "5432/tcp", Port: "5432", Protocol: "tcp"}
+	annotateRule(&rich)
+	if rich.Service != "PostgreSQL" {
+		t.Errorf("rich rule unnamed: %+v", rich)
+	}
+	if rich.Danger != "" {
+		t.Error("a source-restricted database rule is the recommendation, not a warning")
 	}
 }
 
@@ -151,10 +176,11 @@ func TestValidAddress(t *testing.T) {
 	}
 }
 
-// AddRule's validation runs before anything is executed, so these exercise the
-// rejections without needing ufw on the machine.
-func TestAddRuleRejectsBadInput(t *testing.T) {
-	s := New()
+// Validation is a pure function now that there is more than one backend: the
+// checks run once, before dispatch, so a new firewall cannot be added without
+// them. These exercise it directly rather than through a host that may have no
+// firewall installed at all.
+func TestNormaliseRuleRejectsBadInput(t *testing.T) {
 	cases := []struct {
 		name string
 		req  RuleRequest
@@ -168,13 +194,40 @@ func TestAddRuleRejectsBadInput(t *testing.T) {
 		{"source that is not an address", RuleRequest{Action: "allow", Port: "22", From: "$(whoami)"}},
 		{"profile and port together", RuleRequest{Action: "allow", Port: "22", App: "OpenSSH"}},
 		{"position out of range", RuleRequest{Action: "allow", Port: "22", Position: -1}},
+		{"nothing to match on", RuleRequest{Action: "allow"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := s.AddRule(t.Context(), tc.req, "203.0.113.9"); err == nil {
+			if _, err := normaliseRule(tc.req); err == nil {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+func TestNormaliseRuleAcceptsAndCanonicalises(t *testing.T) {
+	got, err := normaliseRule(RuleRequest{Action: "ALLOW", Port: "443", Protocol: "TCP"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != "allow" || got.Protocol != "tcp" {
+		t.Fatalf("not lowercased: %+v", got)
+	}
+	// An omitted direction is inbound, which is what every rule form means.
+	if got.Direction != "in" {
+		t.Fatalf("direction = %q", got.Direction)
+	}
+}
+
+// A read-only backend has to refuse at the Service layer too, or the capability
+// flags would be advice the API ignores.
+func TestServiceRefusesWritesOnAReadOnlyBackend(t *testing.T) {
+	caps := iptablesBackend{}.Capabilities()
+	if caps.Editable {
+		t.Skip("iptables became writable; this test guards the read-only path")
+	}
+	if !errors.Is(fmt.Errorf("%w: %s", ErrReadOnly, caps.ReadOnlyReason), ErrReadOnly) {
+		t.Fatal("the refusal must be identifiable as ErrReadOnly so the API can map it")
 	}
 }
 

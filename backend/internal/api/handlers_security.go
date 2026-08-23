@@ -184,7 +184,7 @@ func (s *Server) handleFirewallPolicy(w http.ResponseWriter, r *http.Request) er
 			httpx.SetAudit(r, "firewall.policy", req.Direction, map[string]any{"result": "refused_lockout"})
 			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
 		}
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.policy", req.Direction, map[string]any{"policy": req.Policy})
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
@@ -202,7 +202,7 @@ func (s *Server) handleFirewallLogging(w http.ResponseWriter, r *http.Request) e
 	}
 	out, err := s.modules.netsec.SetLogging(r.Context(), req.Level)
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.logging", req.Level, nil)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
@@ -215,7 +215,7 @@ func (s *Server) handleFirewallReset(w http.ResponseWriter, r *http.Request) err
 	}
 	out, err := s.modules.netsec.Reset(r.Context())
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.reset", "", nil)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})

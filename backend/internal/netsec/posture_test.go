@@ -9,6 +9,13 @@ import (
 // case is one thing an operator would be told, and getting any of them
 // backwards is the kind of mistake that is embarrassing rather than subtle.
 
+// writableFirewall is what ufw and firewalld report. Most cases here are about
+// something other than capability, and leaving it zero would add a read-only
+// notice to every one of them.
+var writableFirewall = FirewallCapabilities{
+	Editable: true, Toggle: true, DefaultPolicy: true, Logging: true, Reset: true, Profiles: true,
+}
+
 func findingByID(p *Posture, id string) (SecurityFinding, bool) {
 	for _, f := range p.Findings {
 		if f.ID == id {
@@ -23,8 +30,9 @@ func TestAssessAQuietHostReportsNothing(t *testing.T) {
 		Exposure: &Exposure{Grade: "tailscale"},
 		Firewall: &FirewallStatus{
 			Available: true, Enabled: true, Logging: "on (low)",
-			Policy: DefaultPolicy{Incoming: "deny", Outgoing: "allow"},
-			Rules:  []Rule{{Action: "ALLOW", To: "22/tcp", Port: "22"}},
+			Policy:       DefaultPolicy{Incoming: "deny", Outgoing: "allow"},
+			Rules:        []Rule{{Action: "ALLOW", To: "22/tcp", Port: "22"}},
+			Capabilities: writableFirewall,
 		},
 		Fail2ban: &Fail2banStatus{Available: true, Running: true, Jails: []Jail{{Name: "sshd"}}},
 		SSH: &SSHDConfig{Available: true, Settings: []SSHSetting{
@@ -66,7 +74,10 @@ func TestAssessFirewall(t *testing.T) {
 		t.Error("a check that could not run must say so rather than passing quietly")
 	}
 
-	off := Assess(AssessInput{Firewall: &FirewallStatus{Available: true, Enabled: false, Rules: []Rule{{}}}})
+	off := Assess(AssessInput{Firewall: &FirewallStatus{
+		Available: true, Enabled: false, Rules: []Rule{{}},
+		Capabilities: FirewallCapabilities{Editable: true, Toggle: true},
+	}})
 	f, ok := findingByID(off, "firewall.disabled")
 	if !ok || f.Level != "critical" {
 		t.Fatalf("disabled firewall = %+v", f)
@@ -77,6 +88,7 @@ func TestAssessFirewall(t *testing.T) {
 
 	permissive := Assess(AssessInput{Firewall: &FirewallStatus{
 		Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "allow"},
+		Capabilities: writableFirewall,
 	}})
 	if _, ok := findingByID(permissive, "firewall.default-allow"); !ok {
 		t.Error("a default-allow inbound policy should be reported")
@@ -84,7 +96,8 @@ func TestAssessFirewall(t *testing.T) {
 
 	quiet := Assess(AssessInput{Firewall: &FirewallStatus{
 		Available: true, Enabled: true, Logging: "off",
-		Policy: DefaultPolicy{Incoming: "deny"},
+		Policy:       DefaultPolicy{Incoming: "deny"},
+		Capabilities: writableFirewall,
 	}})
 	if _, ok := findingByID(quiet, "firewall.logging-off"); !ok {
 		t.Error("logging off should be reported")
@@ -94,6 +107,7 @@ func TestAssessFirewall(t *testing.T) {
 func TestAssessDangerousFirewallRule(t *testing.T) {
 	p := Assess(AssessInput{Firewall: &FirewallStatus{
 		Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "deny"},
+		Capabilities: writableFirewall,
 		Rules: []Rule{{
 			Number: 3, Action: "ALLOW", To: "6379/tcp", Port: "6379",
 			Service: "Redis", Danger: "Never open this to the world.", Raw: "6379/tcp ALLOW IN Anywhere",
@@ -110,6 +124,7 @@ func TestAssessDangerousFirewallRule(t *testing.T) {
 func TestAssessDoesNotDoubleCountTheV6Rule(t *testing.T) {
 	p := Assess(AssessInput{Firewall: &FirewallStatus{
 		Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "deny"},
+		Capabilities: writableFirewall,
 		Rules: []Rule{
 			{Number: 3, Action: "ALLOW", Port: "6379", Danger: "no"},
 			{Number: 4, Action: "ALLOW", Port: "6379", Danger: "no", IPv6: true},
@@ -195,7 +210,10 @@ func TestAssessExposedPorts(t *testing.T) {
 // so is the difference between a finding and a false alarm.
 func TestAssessSoftensAnExposedPortBehindADenyPolicy(t *testing.T) {
 	p := Assess(AssessInput{
-		Firewall:  &FirewallStatus{Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "deny"}},
+		Firewall: &FirewallStatus{
+			Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "deny"},
+			Capabilities: writableFirewall,
+		},
 		Listeners: []ExposedPort{{Port: 6379, Protocol: "tcp", Address: "0.0.0.0", Exposed: true}},
 	})
 	f, ok := findingByID(p, "ports.exposed.tcp.6379")
@@ -291,5 +309,27 @@ func TestAssessOrdersFindingsWorstFirst(t *testing.T) {
 			t.Fatalf("finding %s (%s) came after a milder one", f.ID, f.Level)
 		}
 		last = rank
+	}
+}
+
+// A firewall the dashboard can read but not write should say so once, and must
+// not offer a fix it cannot carry out — a button that always answers "not
+// supported here" is worse than no button.
+func TestAssessReportsAReadOnlyFirewall(t *testing.T) {
+	p := Assess(AssessInput{Firewall: &FirewallStatus{
+		Backend: BackendIPTables, Available: true, Enabled: false,
+		Rules:        []Rule{{Action: "ALLOW", Port: "22"}},
+		Capabilities: FirewallCapabilities{ReadOnlyReason: "no persistence across a reboot"},
+	}})
+	notice, ok := findingByID(p, "firewall.read-only")
+	if !ok {
+		t.Fatal("a read-only firewall was not reported")
+	}
+	if notice.Advice == "" {
+		t.Error("the reason should reach the operator")
+	}
+	disabled, _ := findingByID(p, "firewall.disabled")
+	if disabled.Fix != "" {
+		t.Errorf("offered a fix this backend cannot perform: %q", disabled.Fix)
 	}
 }
