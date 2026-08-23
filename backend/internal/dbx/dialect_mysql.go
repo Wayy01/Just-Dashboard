@@ -164,3 +164,9 @@ func (d mysqlDialect) CreateSQL(ctx context.Context, db *sql.DB, schema, table s
 }
 
 func (mysqlDialect) CastText(e string) string { return "CAST(" + e + " AS CHAR)" }
+
+func (mysqlDialect) AddColumnKeyword() string { return "ADD COLUMN" }
+
+func (mysqlDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
+	return nil
+}

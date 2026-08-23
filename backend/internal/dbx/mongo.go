@@ -2,7 +2,10 @@ package dbx
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -290,6 +293,13 @@ func MongoInsert(ctx context.Context, client *mongo.Client, dbName, collection, 
 	if err != nil {
 		return "", err
 	}
+	// Bare hex, matching what the grid displays and what an edit sends back as
+	// its filter. fmt.Sprint on an ObjectID yields `ObjectID("…")`, which is not
+	// a value anything downstream can use — pasting it into a filter is not even
+	// valid JSON.
+	if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
+		return oid.Hex(), nil
+	}
 	return fmt.Sprint(res.InsertedID), nil
 }
 
@@ -452,6 +462,284 @@ func MongoCollStats(ctx context.Context, client *mongo.Client, dbName, collectio
 		if v, ok := raw[key]; ok {
 			out[key] = normaliseBSON(v)
 		}
+	}
+	return out, nil
+}
+
+// --- Mongo export and import ---------------------------------------------
+
+// MongoExport streams a filtered find straight to w in CSV or JSON.
+//
+// It cannot share StreamExport, which walks a *sql.Rows: the two engines differ
+// in exactly the way that matters here. A SQL result set has a fixed column
+// list known before the first row; a Mongo cursor does not, because documents
+// are heterogeneous. CSV needs a header before any row is written, so the
+// column set has to be settled up front — this makes a bounded first pass to
+// learn the keys, then a second to write. JSON has no such constraint and
+// streams in one pass.
+func MongoExport(
+	ctx context.Context,
+	client *mongo.Client,
+	dbName, collection string,
+	opts MongoFindOptions,
+	format ExportFormat,
+	w io.Writer,
+	maxRows int,
+) (int, bool, error) {
+	if maxRows <= 0 || maxRows > 1_000_000 {
+		maxRows = 100_000
+	}
+	filter, err := mongoParseFilter(opts.Filter)
+	if err != nil {
+		return 0, false, err
+	}
+	find := options.Find().SetLimit(int64(maxRows))
+	if strings.TrimSpace(opts.Sort) != "" && strings.TrimSpace(opts.Sort) != "{}" {
+		sortDoc := bson.D{}
+		if err := bson.UnmarshalExtJSON([]byte(opts.Sort), false, &sortDoc); err != nil {
+			return 0, false, fmt.Errorf("sort is not valid JSON: %w", err)
+		}
+		find.SetSort(sortDoc)
+	}
+
+	coll := client.Database(dbName).Collection(collection)
+
+	if format == ExportJSON {
+		cur, err := coll.Find(ctx, filter, find)
+		if err != nil {
+			return 0, false, err
+		}
+		defer cur.Close(ctx)
+		return mongoStreamJSON(ctx, cur, w, maxRows)
+	}
+
+	// CSV: settle the header first.
+	columns, err := mongoColumnUnion(ctx, coll, filter, find, maxRows)
+	if err != nil {
+		return 0, false, err
+	}
+	cur, err := coll.Find(ctx, filter, find)
+	if err != nil {
+		return 0, false, err
+	}
+	defer cur.Close(ctx)
+	return mongoStreamCSV(ctx, cur, columns, w, maxRows)
+}
+
+// mongoColumnUnion reads the documents once to learn every key present, so the
+// CSV header covers fields that only later documents carry. The scan is bounded
+// by the same row cap as the export itself.
+func mongoColumnUnion(ctx context.Context, coll *mongo.Collection, filter any, find *options.FindOptions, maxRows int) ([]string, error) {
+	cur, err := coll.Find(ctx, filter, find)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	seen := map[string]bool{}
+	columns := []string{}
+	n := 0
+	for cur.Next(ctx) && n < maxRows {
+		var doc bson.M
+		if err := cur.Decode(&doc); err != nil {
+			continue
+		}
+		for k := range doc {
+			if !seen[k] {
+				seen[k] = true
+				columns = append(columns, k)
+			}
+		}
+		n++
+	}
+	sortMongoColumns(columns)
+	return columns, cur.Err()
+}
+
+// sortMongoColumns puts _id first and the rest alphabetically, matching what
+// the grid shows so an exported file's column order is not a surprise.
+func sortMongoColumns(columns []string) {
+	sort.Slice(columns, func(i, j int) bool {
+		if columns[i] == "_id" {
+			return true
+		}
+		if columns[j] == "_id" {
+			return false
+		}
+		return columns[i] < columns[j]
+	})
+}
+
+func mongoStreamCSV(ctx context.Context, cur *mongo.Cursor, columns []string, w io.Writer, maxRows int) (int, bool, error) {
+	cw := csv.NewWriter(w)
+	if err := cw.Write(columns); err != nil {
+		return 0, false, err
+	}
+	rec := make([]string, len(columns))
+	count, truncated := 0, false
+	for cur.Next(ctx) {
+		if count >= maxRows {
+			truncated = true
+			break
+		}
+		var doc bson.M
+		if err := cur.Decode(&doc); err != nil {
+			continue
+		}
+		for i, c := range columns {
+			v, ok := doc[c]
+			if !ok {
+				rec[i] = ""
+				continue
+			}
+			rec[i] = csvCell(normaliseBSON(v))
+		}
+		if err := cw.Write(rec); err != nil {
+			return count, truncated, err
+		}
+		count++
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return count, truncated, err
+	}
+	return count, truncated, cur.Err()
+}
+
+func mongoStreamJSON(ctx context.Context, cur *mongo.Cursor, w io.Writer, maxRows int) (int, bool, error) {
+	if _, err := io.WriteString(w, "[\n"); err != nil {
+		return 0, false, err
+	}
+	enc := json.NewEncoder(w)
+	count, truncated := 0, false
+	for cur.Next(ctx) {
+		if count >= maxRows {
+			truncated = true
+			break
+		}
+		var doc bson.M
+		if err := cur.Decode(&doc); err != nil {
+			continue
+		}
+		flat := map[string]any{}
+		for k, v := range doc {
+			flat[k] = normaliseBSON(v)
+		}
+		if count > 0 {
+			if _, err := io.WriteString(w, ",\n"); err != nil {
+				return count, truncated, err
+			}
+		}
+		if err := enc.Encode(flat); err != nil {
+			return count, truncated, err
+		}
+		count++
+	}
+	if _, err := io.WriteString(w, "]\n"); err != nil {
+		return count, truncated, err
+	}
+	return count, truncated, cur.Err()
+}
+
+// MongoImport loads documents into a collection from JSON or CSV.
+//
+// Mongo has no transaction to wrap this in on a standalone server — multi
+// document transactions need a replica set — so unlike the SQL import this one
+// cannot promise all-or-nothing. It therefore reports precisely what landed and
+// what did not, and the UI says so rather than implying a rollback that is not
+// there.
+func MongoImport(
+	ctx context.Context,
+	client *mongo.Client,
+	dbName, collection, format, data string,
+	stopOnError bool,
+) (*ImportResult, error) {
+	docs, err := parseImportDocuments(format, data)
+	if err != nil {
+		return nil, err
+	}
+	coll := client.Database(dbName).Collection(collection)
+	res := &ImportResult{Errors: []string{}, Statement: fmt.Sprintf("db.%s.insertMany(…)", collection)}
+	for i, doc := range docs {
+		if _, err := coll.InsertOne(ctx, doc); err != nil {
+			res.Failed++
+			if len(res.Errors) < maxImportErrors {
+				res.Errors = append(res.Errors, fmt.Sprintf("document %d: %v", i+1, err))
+			} else {
+				res.Truncated = true
+			}
+			if stopOnError {
+				return res, fmt.Errorf("document %d: %w", i+1, err)
+			}
+			continue
+		}
+		res.Inserted++
+	}
+	return res, nil
+}
+
+// parseImportDocuments turns either format into a list of BSON documents. CSV
+// values arrive as strings and are left that way: guessing that "007" is the
+// number 7, or that "true" is a boolean, silently changes data on the way in,
+// and a document store has no column type to appeal to for the right answer.
+func parseImportDocuments(format, data string) ([]any, error) {
+	if strings.EqualFold(format, "csv") {
+		cr := csv.NewReader(strings.NewReader(data))
+		cr.FieldsPerRecord = -1
+		header, err := cr.Read()
+		if err != nil {
+			return nil, fmt.Errorf("could not read the header row: %w", err)
+		}
+		for i := range header {
+			header[i] = strings.TrimSpace(strings.TrimPrefix(header[i], "\ufeff"))
+		}
+		out := []any{}
+		for {
+			rec, err := cr.Read()
+			if err != nil {
+				break
+			}
+			doc := bson.D{}
+			for i, field := range rec {
+				if i < len(header) {
+					doc = append(doc, bson.E{Key: header[i], Value: field})
+				}
+			}
+			out = append(out, doc)
+		}
+		return out, nil
+	}
+
+	trimmed := strings.TrimSpace(data)
+	if strings.HasPrefix(trimmed, "[") {
+		var arr []bson.D
+		if err := bson.UnmarshalExtJSON([]byte(`{"d":`+trimmed+`}`), false, &struct {
+			D *[]bson.D `bson:"d"`
+		}{D: &arr}); err != nil {
+			return nil, fmt.Errorf("could not parse the JSON array: %w", err)
+		}
+		out := make([]any, 0, len(arr))
+		for _, d := range arr {
+			out = append(out, d)
+		}
+		return out, nil
+	}
+
+	// Not an array, so treat it as newline-delimited JSON — which is what
+	// mongoexport produces and what people paste most often.
+	out := []any{}
+	for i, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		doc := bson.D{}
+		if err := bson.UnmarshalExtJSON([]byte(line), false, &doc); err != nil {
+			return nil, fmt.Errorf("line %d is not valid JSON: %w", i+1, err)
+		}
+		out = append(out, doc)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no documents found to import")
 	}
 	return out, nil
 }

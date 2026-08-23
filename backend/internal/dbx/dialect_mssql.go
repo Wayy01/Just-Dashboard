@@ -41,6 +41,13 @@ func (mssqlDialect) ColumnTypes() []string {
 	}
 }
 
+// Databases lists user databases, plus whichever one this connection is
+// actually using.
+//
+// The system databases are noise and stay hidden — but a fresh instance has no
+// user databases at all, and hiding master too left the picker empty while the
+// operator was demonstrably connected to something. An empty list that is not
+// the truth is worse than one extra row.
 func (mssqlDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, error) {
 	rows, err := db.QueryContext(ctx, `SELECT d.name,
 	              ISNULL(CAST(SUM(CAST(mf.size AS BIGINT)) * 8192 AS BIGINT), 0),
@@ -48,7 +55,7 @@ func (mssqlDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, erro
 	              ISNULL(d.collation_name, '')
 	       FROM sys.databases d
 	       LEFT JOIN sys.master_files mf ON mf.database_id = d.database_id
-	       WHERE d.database_id > 4
+	       WHERE d.database_id > 4 OR d.name = DB_NAME()
 	       GROUP BY d.name, d.owner_sid, d.collation_name
 	       ORDER BY d.name`)
 	if err != nil {
@@ -162,3 +169,56 @@ func (d mssqlDialect) CreateSQL(_ context.Context, _ *sql.DB, schema, table stri
 }
 
 func (mssqlDialect) CastText(e string) string { return "CAST(" + e + " AS NVARCHAR(MAX))" }
+
+// SQL Server rejects the COLUMN keyword after ADD.
+func (mssqlDialect) AddColumnKeyword() string { return "ADD" }
+
+// BeforeDropColumn removes the column's default constraint.
+//
+// SQL Server materialises `DEFAULT 0` as a separate constraint object and then
+// refuses to drop the column while that object references it — "one or more
+// objects access this column", which tells the operator nothing about what to
+// do next. The constraint is an implementation detail of the column being
+// dropped, so clearing it here is not overreach: it is the rest of the same
+// action. Anything else still holding the column (an index, a check
+// constraint) is a real dependency and its error is left to surface.
+func (d mssqlDialect) BeforeDropColumn(ctx context.Context, db *sql.DB, schema, table, column string) error {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT dc.name
+	  FROM sys.default_constraints dc
+	  JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+	  JOIN sys.objects o ON o.object_id = dc.parent_object_id
+	  JOIN sys.schemas s ON s.schema_id = o.schema_id
+	  WHERE s.name = @p1 AND o.name = @p2 AND c.name = @p3`, schema, table, column)
+	if err != nil {
+		return err
+	}
+	names := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	rel, err := qualify(d, schema, table)
+	if err != nil {
+		return err
+	}
+	for _, n := range names {
+		q, err := d.QuoteIdent(n)
+		if err != nil {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, "ALTER TABLE "+rel+" DROP CONSTRAINT "+q); err != nil {
+			return err
+		}
+	}
+	return nil
+}

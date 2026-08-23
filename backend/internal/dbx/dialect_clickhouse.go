@@ -180,3 +180,9 @@ func (clickhouseDialect) CreateSQL(ctx context.Context, db *sql.DB, schema, tabl
 }
 
 func (clickhouseDialect) CastText(e string) string { return "toString(" + e + ")" }
+
+func (clickhouseDialect) AddColumnKeyword() string { return "ADD COLUMN" }
+
+func (clickhouseDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
+	return nil
+}

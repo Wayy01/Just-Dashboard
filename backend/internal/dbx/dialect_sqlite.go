@@ -253,3 +253,9 @@ func (sqliteDialect) CreateSQL(ctx context.Context, db *sql.DB, _, table string,
 }
 
 func (sqliteDialect) CastText(e string) string { return "CAST(" + e + " AS TEXT)" }
+
+func (sqliteDialect) AddColumnKeyword() string { return "ADD COLUMN" }
+
+func (sqliteDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
+	return nil
+}

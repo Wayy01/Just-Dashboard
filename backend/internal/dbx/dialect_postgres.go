@@ -165,3 +165,9 @@ func (d postgresDialect) CreateSQL(_ context.Context, _ *sql.DB, schema, table s
 }
 
 func (postgresDialect) CastText(e string) string { return "CAST(" + e + " AS TEXT)" }
+
+func (postgresDialect) AddColumnKeyword() string { return "ADD COLUMN" }
+
+func (postgresDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
+	return nil
+}

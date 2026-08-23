@@ -77,6 +77,16 @@ type Dialect interface {
 	// list per engine, because a free-text type field in a DDL builder is how
 	// you get a column of type "vachar".
 	ColumnTypes() []string
+	// AddColumnKeyword is how this engine introduces a new column.
+	//
+	// Most spell it `ALTER TABLE t ADD COLUMN c type`. SQL Server and Oracle
+	// spell it `ALTER TABLE t ADD c type` and reject the COLUMN keyword outright
+	// — a difference invisible until a real server parses the statement, which
+	// is exactly how it was found.
+	AddColumnKeyword() string
+	// BeforeDropColumn clears anything the engine requires gone before a column
+	// can be dropped. Most engines require nothing and return nil.
+	BeforeDropColumn(ctx context.Context, db *sql.DB, schema, table, column string) error
 	// SupportsDDL reports whether this engine accepts the generated DDL at all.
 	// ClickHouse's CREATE TABLE needs an engine and a sorting key, so it opts
 	// out rather than emitting statements that will not run.

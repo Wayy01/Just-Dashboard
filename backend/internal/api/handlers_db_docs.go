@@ -86,6 +86,12 @@ type redisWriteRequest struct {
 	Value string   `json:"value"`
 	TTL   int64    `json:"ttl"`
 	Keys  []string `json:"keys"`
+	// Member names one entry of a collection to remove, leaving the rest of the
+	// collection alone. It is deliberately distinct from Keys, which removes
+	// whole keys: the confirmation phrase and the audit entry differ.
+	Member string `json:"member"`
+	To     string `json:"to"`
+	Create bool   `json:"create"`
 }
 
 func (s *Server) handleRedisSet(w http.ResponseWriter, r *http.Request) error {
@@ -103,7 +109,11 @@ func (s *Server) handleRedisSet(w http.ResponseWriter, r *http.Request) error {
 	defer client.Close()
 	ctx, cancel := timeoutCtx(r, 30*time.Second)
 	defer cancel()
-	if err := dbx.RedisSet(ctx, client, req.Key, req.Type, req.Field, req.Value, req.TTL); err != nil {
+	if req.Create {
+		if err := dbx.RedisCreateKey(ctx, client, req.Key, req.Type, req.Field, req.Value, req.TTL); err != nil {
+			return httpx.BadRequest("%v", err)
+		}
+	} else if err := dbx.RedisSet(ctx, client, req.Key, req.Type, req.Field, req.Value, req.TTL); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
 	// The value itself is not audited: a Redis value is application data and
@@ -156,12 +166,16 @@ func (s *Server) handleRedisDelete(w http.ResponseWriter, r *http.Request) error
 	if len(keys) == 0 {
 		return httpx.BadRequest("at least one key is required")
 	}
+	// Removing one member of a collection confirms on that member; removing
+	// whole keys confirms on the key, or on a count when there are several,
+	// because asking somebody to type out eight key names teaches them to paste
+	// without reading.
 	phrase := keys[0]
 	if len(keys) > 1 {
 		phrase = "delete " + itoaLocal(len(keys)) + " keys"
 	}
-	if req.Field != "" {
-		phrase = req.Field
+	if req.Member != "" {
+		phrase = req.Member
 	}
 	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
 		return err
@@ -175,8 +189,8 @@ func (s *Server) handleRedisDelete(w http.ResponseWriter, r *http.Request) error
 	defer cancel()
 
 	var removed int64
-	if req.Field != "" {
-		removed, err = dbx.RedisHashFieldDelete(ctx, client, keys[0], req.Field)
+	if req.Member != "" {
+		removed, err = dbx.RedisDeleteMember(ctx, client, keys[0], req.Type, req.Member)
 	} else {
 		removed, err = dbx.RedisDelete(ctx, client, keys...)
 	}
@@ -184,7 +198,7 @@ func (s *Server) handleRedisDelete(w http.ResponseWriter, r *http.Request) error
 		return httpx.BadRequest("%v", err)
 	}
 	httpx.SetAudit(r, "database.redis.delete", conn.Name,
-		map[string]any{"keys": keys, "field": req.Field, "removed": removed})
+		map[string]any{"keys": keys, "member": req.Member, "removed": removed})
 	httpx.JSON(w, http.StatusOK, map[string]any{"removed": removed})
 	return nil
 }
@@ -463,4 +477,30 @@ func itoaLocal(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// handleRedisRename moves a key to a new name, refusing to clobber an existing
+// one — which plain RENAME would do silently.
+func (s *Server) handleRedisRename(w http.ResponseWriter, r *http.Request) error {
+	var req redisWriteRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Key == "" || req.To == "" {
+		return httpx.BadRequest("both the current and the new key name are required")
+	}
+	client, conn, err := s.redisClient(r)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	if err := dbx.RedisRename(ctx, client, req.Key, req.To); err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.redis.rename", conn.Name,
+		map[string]any{"from": req.Key, "to": req.To})
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
 }

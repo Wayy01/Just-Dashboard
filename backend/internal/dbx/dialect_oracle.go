@@ -226,3 +226,10 @@ func (d oracleDialect) CreateSQL(ctx context.Context, db *sql.DB, schema, table 
 }
 
 func (oracleDialect) CastText(e string) string { return "TO_CHAR(" + e + ")" }
+
+// Oracle, like SQL Server, takes ADD without COLUMN.
+func (oracleDialect) AddColumnKeyword() string { return "ADD" }
+
+func (oracleDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
+	return nil
+}

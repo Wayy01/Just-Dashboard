@@ -265,10 +265,14 @@ func RedisGet(ctx context.Context, client *redis.Client, key string) (*RedisValu
 	return v, nil
 }
 
-// RedisSet writes a value. Only the types with an unambiguous single-value
-// write are supported: setting a whole list or stream from a form is a
-// different operation from editing one entry, and pretending otherwise would
-// silently drop everything the form did not show.
+// RedisSet writes a value.
+//
+// Every collection type is writable, but each writes the *member* the caller
+// named rather than the collection as a whole. That distinction is the whole
+// design: a form showing 500 of a list's 10,000 entries must never be able to
+// save "the list" — it would silently drop the 9,500 it never showed. So a
+// write here always identifies one member, and replacing a whole collection is
+// something the operator does deliberately through the Query tab.
 func RedisSet(ctx context.Context, client *redis.Client, key, typ, field, value string, ttlSeconds int64) error {
 	var ttl time.Duration
 	if ttlSeconds > 0 {
@@ -292,8 +296,20 @@ func RedisSet(ctx context.Context, client *redis.Client, key, typ, field, value 
 			return err
 		}
 	case "list":
-		if err := client.RPush(ctx, key, value).Err(); err != nil {
-			return err
+		// An empty field means append; an index means replace that position,
+		// which is the only in-place list edit Redis offers.
+		if field == "" {
+			if err := client.RPush(ctx, key, value).Err(); err != nil {
+				return err
+			}
+		} else {
+			idx, err := strconv.ParseInt(field, 10, 64)
+			if err != nil {
+				return fmt.Errorf("a list position must be a number")
+			}
+			if err := client.LSet(ctx, key, idx, value).Err(); err != nil {
+				return err
+			}
 		}
 	case "zset":
 		score, err := strconv.ParseFloat(field, 64)
@@ -314,15 +330,68 @@ func RedisSet(ctx context.Context, client *redis.Client, key, typ, field, value 
 	return nil
 }
 
+// RedisDeleteMember removes one member of a collection, leaving the rest.
+//
+// Lists are the awkward case: Redis has no "delete by index". The documented
+// idiom is to write a sentinel into the position and then LREM it, which is
+// what this does — and it is done in a MULTI so no other client can observe the
+// sentinel as if it were real data.
+func RedisDeleteMember(ctx context.Context, client *redis.Client, key, typ, member string) (int64, error) {
+	switch typ {
+	case "hash":
+		return client.HDel(ctx, key, member).Result()
+	case "set":
+		return client.SRem(ctx, key, member).Result()
+	case "zset":
+		return client.ZRem(ctx, key, member).Result()
+	case "list":
+		idx, err := strconv.ParseInt(member, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("a list position must be a number")
+		}
+		const sentinel = "__jd_deleted__"
+		pipe := client.TxPipeline()
+		pipe.LSet(ctx, key, idx, sentinel)
+		removed := pipe.LRem(ctx, key, 1, sentinel)
+		if _, err := pipe.Exec(ctx); err != nil {
+			return 0, err
+		}
+		return removed.Val(), nil
+	default:
+		return 0, fmt.Errorf("a %s has no members to remove individually", typ)
+	}
+}
+
+// RedisCreateKey makes a new key of the requested type with one initial member,
+// which is the only way to create a collection: Redis has no empty collections,
+// and a key with no members does not exist.
+func RedisCreateKey(ctx context.Context, client *redis.Client, key, typ, field, value string, ttl int64) error {
+	exists, err := client.Exists(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("key %q already exists", key)
+	}
+	return RedisSet(ctx, client, key, typ, field, value, ttl)
+}
+
+// RedisRename moves a key. NX so an existing destination is refused rather than
+// silently overwritten, which is what plain RENAME would do.
+func RedisRename(ctx context.Context, client *redis.Client, from, to string) error {
+	ok, err := client.RenameNX(ctx, from, to).Result()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("a key named %q already exists", to)
+	}
+	return nil
+}
+
 // RedisDelete removes whole keys.
 func RedisDelete(ctx context.Context, client *redis.Client, keys ...string) (int64, error) {
 	return client.Del(ctx, keys...).Result()
-}
-
-// RedisHashFieldDelete removes one field from a hash, which is the one
-// sub-key delete worth having: the alternative is rewriting the whole hash.
-func RedisHashFieldDelete(ctx context.Context, client *redis.Client, key, field string) (int64, error) {
-	return client.HDel(ctx, key, field).Result()
 }
 
 // RedisExpire sets or clears a key's TTL. A ttl of zero or less persists the

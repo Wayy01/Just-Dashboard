@@ -196,7 +196,7 @@ func AddColumn(ctx context.Context, db *sql.DB, driver Driver, schema, table str
 	if err != nil {
 		return "", err
 	}
-	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", rel, def)
+	stmt := fmt.Sprintf("ALTER TABLE %s %s %s", rel, d.AddColumnKeyword(), def)
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return stmt, err
 	}
@@ -216,6 +216,11 @@ func DropColumn(ctx context.Context, db *sql.DB, driver Driver, schema, table, c
 	col, err := d.QuoteIdent(column)
 	if err != nil {
 		return "", err
+	}
+	// Some engines hold the column hostage behind an object they created
+	// themselves; clearing that is part of the same action, not a separate one.
+	if err := d.BeforeDropColumn(ctx, db, schema, table, column); err != nil {
+		return "", fmt.Errorf("could not clear what depends on %s first: %w", column, err)
 	}
 	stmt := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", rel, col)
 	if _, err := db.ExecContext(ctx, stmt); err != nil {

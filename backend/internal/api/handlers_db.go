@@ -84,6 +84,7 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Method(http.MethodPost, "/{id}/ddl/rename", s.handle(s.handleDDLRename))
 			r.Method(http.MethodPost, "/{id}/keys/value", s.handle(s.handleRedisSet))
 			r.Method(http.MethodPost, "/{id}/keys/expire", s.handle(s.handleRedisExpire))
+			r.Method(http.MethodPost, "/{id}/keys/rename", s.handle(s.handleRedisRename))
 			r.Method(http.MethodPost, "/{id}/documents", s.handle(s.handleMongoInsert))
 			r.Method(http.MethodPatch, "/{id}/documents", s.handle(s.handleMongoReplace))
 			r.Method(http.MethodPost, "/{id}/aggregate", s.handle(s.handleMongoAggregate))
