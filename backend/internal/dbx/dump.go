@@ -3,7 +3,9 @@ package dbx
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -28,6 +30,19 @@ type ConnInfo struct {
 // ParseDSN understands the URL form used by Postgres and Mongo, and both the
 // URL and the go-sql-driver form for MySQL.
 func ParseDSN(driver Driver, dsn string) (*ConnInfo, error) {
+	if driver == DriverSQLite {
+		// A SQLite DSN is a file path (optionally with ?_pragma=… query), not a
+		// URL. The "database" is the file, which is what the UI shows and what
+		// the dump copies.
+		path := dsn
+		if strings.HasPrefix(path, "file:") {
+			path = strings.TrimPrefix(path, "file:")
+		}
+		if q := strings.IndexByte(path, '?'); q >= 0 {
+			path = path[:q]
+		}
+		return &ConnInfo{Host: "localhost", Database: path}, nil
+	}
 	if driver == DriverMySQL && !strings.Contains(dsn, "://") {
 		return parseMySQLDSN(dsn)
 	}
@@ -110,6 +125,9 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	if err != nil {
 		return nil, err
 	}
+	if driver == DriverSQLite {
+		return dumpSQLite(ctx, dsn, info.Database, outDir)
+	}
 	if database == "" {
 		database = info.Database
 	}
@@ -186,14 +204,17 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 	if err != nil {
 		return "", err
 	}
+	if _, err := os.Stat(dumpPath); err != nil {
+		return "", fmt.Errorf("dump file not readable: %w", err)
+	}
+	if driver == DriverSQLite {
+		return restoreSQLite(dumpPath, info.Database)
+	}
 	if database == "" {
 		database = info.Database
 	}
 	if !identifierRe.MatchString(database) {
 		return "", fmt.Errorf("invalid database name %q", database)
-	}
-	if _, err := os.Stat(dumpPath); err != nil {
-		return "", fmt.Errorf("dump file not readable: %w", err)
 	}
 
 	var cmd *exec.Cmd
@@ -235,6 +256,77 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 		return buf.String(), fmt.Errorf("restore failed: %s", strings.TrimSpace(buf.String()))
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// dumpSQLite writes a consistent snapshot of a SQLite file with VACUUM INTO,
+// which the engine performs against a live database without blocking it — a
+// plain file copy could capture a torn write mid-transaction. The result is an
+// ordinary SQLite file, so a "restore" is just copying it back.
+func dumpSQLite(ctx context.Context, dsn, path, outDir string) (*DumpResult, error) {
+	if path == "" {
+		return nil, fmt.Errorf("connection has no database file path")
+	}
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	stamp := time.Now().UTC().Format("20060102-150405")
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if base == "" {
+		base = "sqlite"
+	}
+	out := filepath.Join(outDir, fmt.Sprintf("%s-%s.sqlite", base, stamp))
+
+	db, err := sql.Open("sqlite", sqliteDSN(dsn))
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	// VACUUM INTO takes a string literal, not a bound parameter, and there is no
+	// identifier form to quote — a single-quoted SQLite string literal escapes
+	// one character (the quote, by doubling), so that is the whole escaping.
+	lit := "'" + strings.ReplaceAll(out, "'", "''") + "'"
+	if _, err := db.ExecContext(ctx, "VACUUM INTO "+lit); err != nil {
+		os.Remove(out)
+		return nil, fmt.Errorf("dump failed: %w", err)
+	}
+	st, err := os.Stat(out)
+	if err != nil {
+		return nil, err
+	}
+	return &DumpResult{
+		Path: out, Size: st.Size(), Driver: DriverSQLite, Database: filepath.Base(path),
+		Duration: time.Since(start).Round(time.Millisecond).String(), StartedAt: start.UTC(),
+	}, nil
+}
+
+// restoreSQLite replaces the live database file with a dump. The previous file
+// is kept alongside as <name>.bak-<stamp> rather than deleted, so a restore
+// from the wrong dump is recoverable — the same guard WriteComposeFile applies.
+func restoreSQLite(dumpPath, target string) (string, error) {
+	if target == "" {
+		return "", fmt.Errorf("connection has no database file path")
+	}
+	src, err := os.Open(dumpPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	if _, err := os.Stat(target); err == nil {
+		backup := fmt.Sprintf("%s.bak-%s", target, time.Now().UTC().Format("20060102-150405"))
+		if data, err := os.ReadFile(target); err == nil {
+			_ = os.WriteFile(backup, data, 0o600)
+		}
+	}
+	dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", fmt.Errorf("restore failed: %w", err)
+	}
+	return "restored " + target, nil
 }
 
 // mongoConfigFile writes the connection string to a mode-0600 temporary file

@@ -19,6 +19,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
 )
 
 type Driver string
@@ -27,16 +28,27 @@ const (
 	DriverPostgres Driver = "postgres"
 	DriverMySQL    Driver = "mysql"
 	DriverMongo    Driver = "mongodb"
+	// DriverSQLite treats a single database file as the connection. It shares
+	// the SQL query path with Postgres and MySQL, and uses the same pure-Go
+	// driver (modernc.org/sqlite) the dashboard already stores its own state in,
+	// so it adds no new build dependency and needs no CGO.
+	DriverSQLite Driver = "sqlite"
 )
 
 var ErrUnsupported = errors.New("unsupported database driver")
 
 func (d Driver) Valid() bool {
 	switch d {
-	case DriverPostgres, DriverMySQL, DriverMongo:
+	case DriverPostgres, DriverMySQL, DriverMongo, DriverSQLite:
 		return true
 	}
 	return false
+}
+
+// IsSQL reports whether the driver goes through database/sql. Mongo is the one
+// engine that does not, so callers branch on this rather than listing drivers.
+func (d Driver) IsSQL() bool {
+	return d == DriverPostgres || d == DriverMySQL || d == DriverSQLite
 }
 
 // sqlDriverName maps our driver identity onto the registered database/sql
@@ -47,9 +59,21 @@ func (d Driver) sqlDriverName() (string, error) {
 		return "pgx", nil
 	case DriverMySQL:
 		return "mysql", nil
+	case DriverSQLite:
+		return "sqlite", nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupported, d)
 	}
+}
+
+// placeholder renders the n-th bind marker for the driver. Postgres numbers its
+// markers ($1, $2); MySQL and SQLite use a positional '?'. Keeping this in one
+// place is what lets the query builders below stay driver-agnostic.
+func (d Driver) placeholder(n int) string {
+	if d == DriverPostgres {
+		return fmt.Sprintf("$%d", n)
+	}
+	return "?"
 }
 
 // Manager owns the connection pools. Pools are opened lazily and reused: a
@@ -74,6 +98,9 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	if err != nil {
 		return nil, err
 	}
+	if driver == DriverSQLite {
+		dsn = sqliteDSN(dsn)
+	}
 	db, err := sql.Open(name, dsn)
 	if err != nil {
 		return nil, err
@@ -83,6 +110,13 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	// SQLite serialises writers at the file level, so a pool of five racing
+	// connections turns every concurrent write into a "database is locked"
+	// error. One connection plus the busy timeout below is the documented way
+	// to make a single-file database behave under a web front end.
+	if driver == DriverSQLite {
+		db.SetMaxOpenConns(1)
+	}
 
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -92,6 +126,46 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	}
 	m.pools[id] = db
 	return db, nil
+}
+
+// Probe opens a throwaway connection to verify a DSN before it is saved, and
+// returns the server version so the operator gets confirmation they reached the
+// engine they meant to. It never touches the manager's pool cache: a connection
+// being tested may be wrong, and a failed test must not leave a broken pool
+// cached under some id.
+func Probe(ctx context.Context, driver Driver, dsn string) (string, error) {
+	if !driver.IsSQL() {
+		return "", fmt.Errorf("%w: %s", ErrUnsupported, driver)
+	}
+	name, err := driver.sqlDriverName()
+	if err != nil {
+		return "", err
+	}
+	if driver == DriverSQLite {
+		dsn = sqliteDSN(dsn)
+	}
+	db, err := sql.Open(name, dsn)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		return "", err
+	}
+	var version string
+	switch driver {
+	case DriverSQLite:
+		_ = db.QueryRowContext(pingCtx, "SELECT sqlite_version()").Scan(&version)
+		if version != "" {
+			version = "SQLite " + version
+		}
+	default:
+		_ = db.QueryRowContext(pingCtx, "SELECT version()").Scan(&version)
+	}
+	return version, nil
 }
 
 func (m *Manager) Close(id int64) {
@@ -146,9 +220,40 @@ type Database struct {
 	Encoding string `json:"encoding,omitempty"`
 }
 
+// sqliteDSN makes a caller-supplied file path safe to open read-write under a
+// web front end: it turns a bare path into a file: URI and appends the busy
+// timeout and foreign-key pragmas the dashboard's own store uses, but leaves an
+// already-parameterised DSN untouched so an operator can still pass mode=ro.
+func sqliteDSN(dsn string) string {
+	if strings.Contains(dsn, "?") || strings.HasPrefix(dsn, "file:") {
+		return dsn
+	}
+	return dsn + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+}
+
 func ListDatabases(ctx context.Context, db *sql.DB, driver Driver) ([]Database, error) {
 	var query string
 	switch driver {
+	case DriverSQLite:
+		// A SQLite connection is a single file, but ATTACHed databases show up
+		// as extra rows; "main" is always present. The file path is reported so
+		// the operator can see which file they are browsing.
+		rows, err := db.QueryContext(ctx, `PRAGMA database_list`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := []Database{}
+		for rows.Next() {
+			var seq int
+			var name, file string
+			if err := rows.Scan(&seq, &name, &file); err != nil {
+				return nil, err
+			}
+			d := Database{Name: name, Owner: file}
+			out = append(out, d)
+		}
+		return out, rows.Err()
 	case DriverPostgres:
 		query = `SELECT d.datname,
 		                pg_database_size(d.datname),
@@ -200,6 +305,18 @@ func ListTables(ctx context.Context, db *sql.DB, driver Driver, schema string) (
 		args  []any
 	)
 	switch driver {
+	case DriverSQLite:
+		// SQLite has one schema per file. sqlite_master carries tables and
+		// views; the internal sqlite_* tables are hidden. Row and size figures
+		// are not free here, so they are left at zero rather than run a COUNT
+		// per table on every listing.
+		query = `SELECT 'main', name,
+		                CASE type WHEN 'table' THEN 'table' ELSE type END,
+		                0, 0, ''
+		         FROM sqlite_master
+		         WHERE type IN ('table','view')
+		           AND name NOT LIKE 'sqlite_%'
+		         ORDER BY name`
 	case DriverPostgres:
 		query = `SELECT n.nspname, c.relname,
 		                CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view'
@@ -254,6 +371,9 @@ type Column struct {
 }
 
 func ListColumns(ctx context.Context, db *sql.DB, driver Driver, schema, table string) ([]Column, error) {
+	if driver == DriverSQLite {
+		return sqliteColumns(ctx, db, table)
+	}
 	var (
 		query string
 		args  []any
@@ -292,6 +412,41 @@ func ListColumns(ctx context.Context, db *sql.DB, driver Driver, schema, table s
 	return out, rows.Err()
 }
 
+// sqliteColumns reads columns from PRAGMA table_info. The pragma cannot bind a
+// parameter for the table name, so the identifier is validated and quoted the
+// same way every other generated statement in this package is.
+func sqliteColumns(ctx context.Context, db *sql.DB, table string) ([]Column, error) {
+	qTable, err := quoteIdent(DriverSQLite, table)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+qTable+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Column{}
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		c := Column{
+			Name: name, Type: ctype, Nullable: notnull == 0,
+			Default: dflt.String, Position: cid + 1,
+		}
+		if pk > 0 {
+			c.Key = "PRI"
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // identifierRe restricts what may be interpolated into a generated query.
 // Table and schema names cannot be bound as parameters, so the only safe
 // option is to reject anything that is not a plain identifier and then quote it.
@@ -310,11 +465,7 @@ func quoteIdent(driver Driver, name string) (string, error) {
 // BrowseTable pages through a table's rows. It builds the statement from
 // validated, quoted identifiers and binds limit and offset as parameters.
 func BrowseTable(ctx context.Context, db *sql.DB, driver Driver, schema, table string, limit, offset int) (*QueryResult, error) {
-	qSchema, err := quoteIdent(driver, schema)
-	if err != nil {
-		return nil, err
-	}
-	qTable, err := quoteIdent(driver, table)
+	rel, err := qualifiedName(driver, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -324,13 +475,30 @@ func BrowseTable(ctx context.Context, db *sql.DB, driver Driver, schema, table s
 	if offset < 0 {
 		offset = 0
 	}
-	var query string
-	if driver == DriverPostgres {
-		query = fmt.Sprintf(`SELECT * FROM %s.%s LIMIT $1 OFFSET $2`, qSchema, qTable)
-	} else {
-		query = fmt.Sprintf(`SELECT * FROM %s.%s LIMIT ? OFFSET ?`, qSchema, qTable)
-	}
+	// No ORDER BY: adding one would force a sort over an arbitrary column on a
+	// table that may have millions of rows and no index on it, turning a cheap
+	// page fetch into a full scan. Ordered access is what the Query tab is for.
+	query := fmt.Sprintf(`SELECT * FROM %s LIMIT %s OFFSET %s`,
+		rel, driver.placeholder(1), driver.placeholder(2))
 	return RunQuery(ctx, db, query, limit, limit, offset)
+}
+
+// qualifiedName renders a validated, quoted schema.table reference. SQLite has
+// no per-schema namespacing worth qualifying, and an empty schema (the common
+// case for it) yields a bare table name rather than a dangling dot.
+func qualifiedName(driver Driver, schema, table string) (string, error) {
+	qTable, err := quoteIdent(driver, table)
+	if err != nil {
+		return "", err
+	}
+	if schema == "" || driver == DriverSQLite {
+		return qTable, nil
+	}
+	qSchema, err := quoteIdent(driver, schema)
+	if err != nil {
+		return "", err
+	}
+	return qSchema + "." + qTable, nil
 }
 
 type QueryResult struct {

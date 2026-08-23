@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -34,23 +35,39 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/", s.handle(s.handleDBConnCreate))
+			r.Method(http.MethodPost, "/test", s.handle(s.handleDBConnTest))
+			r.Method(http.MethodPut, "/{id}", s.handle(s.handleDBConnUpdate))
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDBConnDelete))
 			})
 		})
+		// Read surface: available to any authenticated role, including readonly.
 		r.Method(http.MethodGet, "/{id}/ping", s.handle(s.handleDBPing))
 		r.Method(http.MethodGet, "/{id}/stats", s.handle(s.handleDBStats))
 		r.Method(http.MethodGet, "/{id}/schemas", s.handle(s.handleDBList))
 		r.Method(http.MethodGet, "/{id}/tables", s.handle(s.handleDBTables))
 		r.Method(http.MethodGet, "/{id}/columns", s.handle(s.handleDBColumns))
+		r.Method(http.MethodGet, "/{id}/table", s.handle(s.handleDBTableDetail))
 		r.Method(http.MethodGet, "/{id}/browse", s.handle(s.handleDBBrowse))
+		r.Method(http.MethodGet, "/{id}/export", s.handle(s.handleDBExport))
 		r.Method(http.MethodPost, "/{id}/classify", s.handle(s.handleDBClassify))
+		r.Method(http.MethodPost, "/{id}/orm", s.handle(s.handleDBGenerateORM))
+		r.Method(http.MethodGet, "/{id}/queries", s.handle(s.handleDBSavedList))
+		r.Method(http.MethodGet, "/{id}/history", s.handle(s.handleDBHistory))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
 			r.Method(http.MethodPost, "/{id}/query", s.handle(s.handleDBQuery))
 			r.Method(http.MethodPost, "/{id}/backup", s.handle(s.handleDBBackup))
+			r.Method(http.MethodPost, "/{id}/rows", s.handle(s.handleDBRowInsert))
+			r.Method(http.MethodPatch, "/{id}/rows", s.handle(s.handleDBRowUpdate))
+			r.Method(http.MethodPost, "/{id}/queries", s.handle(s.handleDBSavedCreate))
+			r.Method(http.MethodDelete, "/{id}/queries/{qid}", s.handle(s.handleDBSavedDelete))
 		})
+		// A row delete is an irreversible DELETE, so it carries the destructive
+		// capability, the tighter budget and a typed confirmation naming the
+		// table — the same treatment DROP/TRUNCATE get through the query path.
 		s.destructive(r, func(r chi.Router) {
+			r.Method(http.MethodDelete, "/{id}/rows", s.handle(s.handleDBRowDelete))
 			r.Method(http.MethodPost, "/{id}/restore", s.handle(s.handleDBRestore))
 		})
 	})
@@ -142,7 +159,7 @@ func (s *Server) handleDBConnCreate(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	if !req.Driver.Valid() {
-		return httpx.BadRequest("driver must be one of postgres, mysql, mongodb")
+		return httpx.BadRequest("driver must be one of postgres, mysql, mongodb, sqlite")
 	}
 	if req.Name == "" || req.DSN == "" {
 		return httpx.BadRequest("name and dsn are required")
@@ -447,12 +464,16 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx, cancel := timeoutCtx(r, 120*time.Second)
 	defer cancel()
+	start := time.Now()
 	res, err := dbx.RunQuery(ctx, pool, req.Query, req.MaxRows)
+	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
+		s.recordDBHistory(r.Context(), id, req.Query, risk.Level, false, elapsed, 0)
 		httpx.SetAudit(r, "database.query", strconv.FormatInt(id, 10),
 			map[string]any{"risk": risk.Level, "error": err.Error()})
 		return httpx.BadRequest("%v", err)
 	}
+	s.recordDBHistory(r.Context(), id, req.Query, risk.Level, true, elapsed, res.RowCount)
 	httpx.SetAudit(r, "database.query", strconv.FormatInt(id, 10), map[string]any{
 		"risk": risk.Level, "destructive": risk.Destructive,
 		"rowsAffected": res.Affected, "rowCount": res.RowCount, "statement": req.Query,
@@ -538,4 +559,471 @@ func (s *Server) handleDBRestore(w http.ResponseWriter, r *http.Request) error {
 		map[string]any{"database": target, "dumpPath": req.DumpPath})
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
 	return nil
+}
+
+// handleDBConnTest verifies a DSN before it is saved. It reports the server
+// version on success so the operator can see they reached the engine they
+// meant to, and never persists anything.
+func (s *Server) handleDBConnTest(w http.ResponseWriter, r *http.Request) error {
+	var req createDBConnRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if !req.Driver.Valid() {
+		return httpx.BadRequest("driver must be one of postgres, mysql, mongodb, sqlite")
+	}
+	if req.DSN == "" {
+		return httpx.BadRequest("dsn is required")
+	}
+	httpx.SkipAudit(r)
+	ctx, cancel := timeoutCtx(r, 15*time.Second)
+	defer cancel()
+	if req.Driver == dbx.DriverMongo {
+		client, err := dbx.MongoClient(ctx, req.DSN)
+		if err != nil {
+			httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return nil
+		}
+		defer client.Disconnect(context.Background())
+		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+		return nil
+	}
+	version, err := dbx.Probe(ctx, req.Driver, req.DSN)
+	if err != nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return nil
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "version": version})
+	return nil
+}
+
+type updateDBConnRequest struct {
+	Name string `json:"name"`
+	DSN  string `json:"dsn"`
+}
+
+// handleDBConnUpdate edits a connection's name and, optionally, its DSN. The
+// driver is fixed at creation — changing it would mean the stored secret no
+// longer parses — so it is not editable here. An empty DSN leaves the existing
+// one untouched, so an operator can rename without re-typing a password they
+// cannot read back.
+func (s *Server) handleDBConnUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	conn, _, err := s.dbConnRow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	var req updateDBConnRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	name := req.Name
+	if name == "" {
+		name = conn.Name
+	}
+	if !connNameRe.MatchString(name) {
+		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
+	}
+	if req.DSN != "" {
+		sealed, err := s.Sealer.Seal(req.DSN)
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		if _, err := s.Store.DB.ExecContext(r.Context(),
+			`UPDATE db_connections SET name = ?, dsn_enc = ? WHERE id = ?`, name, sealed, id); err != nil {
+			return httpx.BadRequest("could not update connection: %v", err)
+		}
+		// The pool was opened against the old DSN; drop it so the next request
+		// dials the new one.
+		s.modules.dbs.Close(id)
+	} else {
+		if _, err := s.Store.DB.ExecContext(r.Context(),
+			`UPDATE db_connections SET name = ? WHERE id = ?`, name, id); err != nil {
+			return httpx.BadRequest("could not update connection: %v", err)
+		}
+	}
+	updated, _, err := s.dbConnRow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.SetAudit(r, "database.connection.update", name,
+		map[string]any{"dsnChanged": req.DSN != ""})
+	httpx.JSON(w, http.StatusOK, updated)
+	return nil
+}
+
+// handleDBTableDetail returns a table's structure: columns, primary key,
+// indexes, foreign keys and the DDL that would recreate it.
+func (s *Server) handleDBTableDetail(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	detail, err := dbx.Detail(ctx, pool, conn.Driver, q.Get("schema"), q.Get("table"))
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, detail)
+	return nil
+}
+
+// handleDBExport streams an entire table as CSV or JSON. It is a read, so it
+// needs no capability beyond the browse routes; the row cap is high and a
+// truncated download is flagged in a trailing header rather than silently cut.
+func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	table := q.Get("table")
+	if table == "" {
+		return httpx.BadRequest("table is required")
+	}
+	format := dbx.ExportFormat(q.Get("format"))
+	if !format.Valid() {
+		format = dbx.ExportCSV
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 10*time.Minute)
+	defer cancel()
+
+	filename := fmt.Sprintf("%s.%s", table, format.Extension())
+	w.Header().Set("Content-Type", format.ContentType())
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	count, truncated, err := dbx.ExportTable(ctx, pool, conn.Driver, q.Get("schema"), table, format, w,
+		atoiDefault(q.Get("limit"), 0))
+	if err != nil {
+		// Headers are already sent, so the error cannot become a JSON body; it is
+		// recorded in the audit trail and the connection is dropped by the client
+		// seeing a short file. This is the one export failure mode worth logging.
+		httpx.SetAudit(r, "database.export", conn.Name,
+			map[string]any{"table": table, "error": err.Error()})
+		return nil
+	}
+	httpx.SetAudit(r, "database.export", conn.Name,
+		map[string]any{"table": table, "format": string(format), "rows": count, "truncated": truncated})
+	return nil
+}
+
+type ormRequest struct {
+	Target dbx.ORMTarget `json:"target"`
+	Schema string        `json:"schema"`
+}
+
+// handleDBGenerateORM introspects the connection and returns a generated ORM
+// schema file (Prisma or Drizzle). It is a read of the schema catalogue, so it
+// needs no write capability.
+func (s *Server) handleDBGenerateORM(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req ormRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if !req.Target.Valid() {
+		return httpx.BadRequest("target must be prisma or drizzle")
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+	tables, err := dbx.ListTables(ctx, pool, conn.Driver, req.Schema)
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	details := map[string]*dbx.TableDetail{}
+	for _, t := range tables {
+		d, err := dbx.Detail(ctx, pool, conn.Driver, t.Schema, t.Name)
+		if err != nil {
+			continue
+		}
+		details[t.Name] = d
+	}
+	schema, err := dbx.GenerateORM(req.Target, conn.Driver, tables, details)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	filename := "schema.prisma"
+	if req.Target == dbx.ORMDrizzle {
+		filename = "schema.ts"
+	}
+	httpx.SetAudit(r, "database.orm.generate", conn.Name, map[string]any{"target": string(req.Target)})
+	httpx.JSON(w, http.StatusOK, map[string]any{"schema": schema, "filename": filename})
+	return nil
+}
+
+type rowRequest struct {
+	Schema string         `json:"schema"`
+	Table  string         `json:"table"`
+	Values map[string]any `json:"values"`
+	Key    map[string]any `json:"key"`
+}
+
+func (s *Server) handleDBRowInsert(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req rowRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Table == "" {
+		return httpx.BadRequest("table is required")
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	res, err := dbx.InsertRow(ctx, pool, conn.Driver, req.Schema, req.Table, req.Values)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.row.insert", conn.Name,
+		map[string]any{"table": req.Table, "columns": len(req.Values)})
+	httpx.JSON(w, http.StatusOK, map[string]any{"result": res})
+	return nil
+}
+
+func (s *Server) handleDBRowUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req rowRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Table == "" {
+		return httpx.BadRequest("table is required")
+	}
+	if len(req.Key) == 0 {
+		return httpx.BadRequest("a primary key is required to identify the row to update")
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	res, err := dbx.UpdateRow(ctx, pool, conn.Driver, req.Schema, req.Table, req.Values, req.Key)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.row.update", conn.Name,
+		map[string]any{"table": req.Table, "key": req.Key})
+	httpx.JSON(w, http.StatusOK, map[string]any{"result": res})
+	return nil
+}
+
+func (s *Server) handleDBRowDelete(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req rowRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Table == "" {
+		return httpx.BadRequest("table is required")
+	}
+	if len(req.Key) == 0 {
+		return httpx.BadRequest("a primary key is required to identify the row to delete")
+	}
+	conn, _, err := s.dbConnRow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	// Deleting a row is an irreversible DELETE. Confirming on the table name
+	// forces the operator to read which table they are editing, matching the
+	// query path's treatment of DROP/TRUNCATE.
+	if err := httpx.RequireTypedConfirmation(w, r, req.Table); err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	res, err := dbx.DeleteRow(ctx, pool, conn.Driver, req.Schema, req.Table, req.Key)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.row.delete", conn.Name,
+		map[string]any{"table": req.Table, "key": req.Key})
+	httpx.JSON(w, http.StatusOK, map[string]any{"result": res})
+	return nil
+}
+
+// --- Saved queries and history ------------------------------------------
+
+type savedQuery struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	SQL       string    `json:"sql"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (s *Server) handleDBSavedList(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	rows, err := s.Store.DB.QueryContext(r.Context(),
+		`SELECT id, name, sql, created_at FROM db_saved_queries WHERE connection_id = ? ORDER BY name`, id)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	defer rows.Close()
+	out := []savedQuery{}
+	for rows.Next() {
+		var q savedQuery
+		var created int64
+		if err := rows.Scan(&q.ID, &q.Name, &q.SQL, &created); err != nil {
+			return httpx.Internal(err)
+		}
+		q.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, q)
+	}
+	httpx.JSON(w, http.StatusOK, out)
+	return nil
+}
+
+type savedQueryRequest struct {
+	Name string `json:"name"`
+	SQL  string `json:"sql"`
+}
+
+func (s *Server) handleDBSavedCreate(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req savedQueryRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Name == "" || req.SQL == "" {
+		return httpx.BadRequest("name and sql are required")
+	}
+	if _, _, err := s.dbConnRow(r.Context(), id); err != nil {
+		return err
+	}
+	res, err := s.Store.DB.ExecContext(r.Context(),
+		`INSERT INTO db_saved_queries(connection_id, name, sql, created_at) VALUES(?,?,?,?)`,
+		id, req.Name, req.SQL, time.Now().Unix())
+	if err != nil {
+		return httpx.BadRequest("could not save query: %v", err)
+	}
+	newID, _ := res.LastInsertId()
+	httpx.SetAudit(r, "database.query.save", req.Name, nil)
+	httpx.JSON(w, http.StatusCreated, savedQuery{
+		ID: newID, Name: req.Name, SQL: req.SQL, CreatedAt: time.Now().UTC(),
+	})
+	return nil
+}
+
+func (s *Server) handleDBSavedDelete(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	qid, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		return httpx.BadRequest("invalid query id")
+	}
+	if _, err := s.Store.DB.ExecContext(r.Context(),
+		`DELETE FROM db_saved_queries WHERE id = ? AND connection_id = ?`, qid, id); err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.SetAudit(r, "database.query.unsave", strconv.FormatInt(qid, 10), nil)
+	httpx.NoContent(w)
+	return nil
+}
+
+type historyEntry struct {
+	ID       int64     `json:"id"`
+	SQL      string    `json:"sql"`
+	Risk     string    `json:"risk"`
+	Success  bool      `json:"success"`
+	Duration int64     `json:"durationMs"`
+	RowCount int       `json:"rowCount"`
+	RanAt    time.Time `json:"ranAt"`
+}
+
+func (s *Server) handleDBHistory(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	limit := atoiDefault(r.URL.Query().Get("limit"), 50)
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.Store.DB.QueryContext(r.Context(),
+		`SELECT id, sql, risk, success, duration_ms, row_count, ran_at
+		 FROM db_query_history WHERE connection_id = ? ORDER BY ran_at DESC LIMIT ?`, id, limit)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	defer rows.Close()
+	out := []historyEntry{}
+	for rows.Next() {
+		var e historyEntry
+		var success, ranAt int64
+		if err := rows.Scan(&e.ID, &e.SQL, &e.Risk, &success, &e.Duration, &e.RowCount, &ranAt); err != nil {
+			return httpx.Internal(err)
+		}
+		e.Success = success != 0
+		e.RanAt = time.Unix(ranAt, 0).UTC()
+		out = append(out, e)
+	}
+	httpx.JSON(w, http.StatusOK, out)
+	return nil
+}
+
+// recordDBHistory appends a statement to the per-connection history and prunes
+// it to the most recent entries. It never fails the request it records: a
+// history write that errors is logged and swallowed, because losing an audit
+// convenience must not turn a successful query into a failed one.
+func (s *Server) recordDBHistory(ctx context.Context, connID int64, query, risk string, success bool, durationMs int64, rowCount int) {
+	succ := 0
+	if success {
+		succ = 1
+	}
+	if _, err := s.Store.DB.ExecContext(ctx,
+		`INSERT INTO db_query_history(connection_id, sql, risk, success, duration_ms, row_count, ran_at)
+		 VALUES(?,?,?,?,?,?,?)`,
+		connID, query, risk, succ, durationMs, rowCount, time.Now().Unix()); err != nil {
+		s.Log.Warn("db history write failed", "err", err)
+		return
+	}
+	// Keep only the newest 100 statements per connection. Pruning on write means
+	// no separate reaper and no unbounded growth.
+	_, _ = s.Store.DB.ExecContext(ctx,
+		`DELETE FROM db_query_history WHERE connection_id = ? AND id NOT IN (
+		    SELECT id FROM db_query_history WHERE connection_id = ? ORDER BY ran_at DESC LIMIT 100
+		 )`, connID, connID)
 }
