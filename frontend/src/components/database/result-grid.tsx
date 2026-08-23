@@ -1,0 +1,184 @@
+"use client"
+
+import { useState } from "react"
+import { Copy, Pencil, Trash2 } from "lucide-react"
+import { toast } from "sonner"
+import { cn } from "@/lib/utils"
+import type { QueryResult } from "@/lib/types"
+import { Button } from "@/components/ui/button"
+import {
+  stickyTableHeader,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+
+/**
+ * The one result grid every database view renders through, so a query result, a
+ * table browse and an edited row all read the same. It keeps the read-only shape
+ * from the original page and adds the two things a browser needs to become an
+ * editor: per-row actions (when the caller can identify a row by primary key)
+ * and a click-to-expand cell, because a JSON blob or a paragraph of text
+ * truncated to a table cell is the one value you most need to see in full.
+ */
+export function ResultGrid({
+  result,
+  onEdit,
+  onDelete,
+  className,
+  maxHeightClass = "max-h-[calc(100svh-22rem)]",
+}: {
+  result: QueryResult
+  onEdit?: (row: Record<string, unknown>) => void
+  onDelete?: (row: Record<string, unknown>) => void
+  className?: string
+  maxHeightClass?: string
+}) {
+  const [detail, setDetail] = useState<{ column: string; value: unknown } | null>(null)
+  const hasActions = Boolean(onEdit || onDelete)
+
+  if (result.columns.length === 0) {
+    return (
+      <p className="p-4 text-[13px] text-muted-foreground">
+        {result.rowsAffected} row(s) affected in {result.duration}.
+      </p>
+    )
+  }
+
+  const rowRecord = (row: unknown[]): Record<string, unknown> => {
+    const rec: Record<string, unknown> = {}
+    result.columns.forEach((c, i) => {
+      rec[c] = row[i]
+    })
+    return rec
+  }
+
+  return (
+    <>
+      <Table containerClassName={cn(maxHeightClass, className)}>
+        <TableHeader className={stickyTableHeader}>
+          <TableRow>
+            {hasActions && <TableHead className="w-[5.5rem]" />}
+            {result.columns.map((col, i) => (
+              <TableHead key={col} className="whitespace-nowrap">
+                {col}
+                {result.types[i] && (
+                  <span className="ml-1 text-[10px] font-normal normal-case text-muted-foreground/70">
+                    {result.types[i].toLowerCase()}
+                  </span>
+                )}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {result.rows.map((row, i) => (
+            <TableRow key={i} className="group">
+              {hasActions && (
+                <TableCell className="w-[5.5rem]">
+                  <div className="flex items-center gap-0.5 opacity-40 transition-opacity group-hover:opacity-100">
+                    {onEdit && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-6"
+                        title="Edit row"
+                        onClick={() => onEdit(rowRecord(row))}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                    )}
+                    {onDelete && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-6 text-destructive"
+                        title="Delete row"
+                        onClick={() => onDelete(rowRecord(row))}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              )}
+              {row.map((cell, j) => (
+                <TableCell
+                  key={j}
+                  onClick={() => setDetail({ column: result.columns[j], value: cell })}
+                  className="max-w-xs cursor-pointer truncate font-mono text-xs hover:bg-accent/50"
+                  title="Click to view full value"
+                >
+                  <CellValue value={cell} />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+
+      <Dialog open={detail !== null} onOpenChange={(o) => !o && setDetail(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">{detail?.column}</DialogTitle>
+          </DialogHeader>
+          {detail && <CellDetail value={detail.value} />}
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function CellValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined)
+    return <span className="text-muted-foreground italic">null</span>
+  if (typeof value === "object") return <>{JSON.stringify(value)}</>
+  if (typeof value === "boolean")
+    return <span className="text-primary">{String(value)}</span>
+  return <>{String(value)}</>
+}
+
+function CellDetail({ value }: { value: unknown }) {
+  const text =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "object"
+        ? JSON.stringify(value, null, 2)
+        : String(value)
+  const isNull = value === null || value === undefined
+  return (
+    <div className="space-y-2">
+      <div className="max-h-[60vh] overflow-auto rounded-md border border-hairline bg-muted/40 p-3">
+        {isNull ? (
+          <span className="text-sm text-muted-foreground italic">null</span>
+        ) : (
+          <pre className="font-mono text-xs whitespace-pre-wrap break-words">{text}</pre>
+        )}
+      </div>
+      {!isNull && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            navigator.clipboard
+              .writeText(text)
+              .then(() => toast.success("Copied to clipboard"))
+              .catch(() => toast.error("Could not copy"))
+          }
+        >
+          <Copy className="size-3.5" />
+          Copy value
+        </Button>
+      )}
+    </div>
+  )
+}

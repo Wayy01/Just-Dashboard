@@ -1,10 +1,16 @@
-// Package dbx provides read-mostly database administration: browsing schemas,
-// running queries, and dumping or restoring data.
+// Package dbx provides database administration across Postgres, MySQL, SQLite
+// and MongoDB: browsing schemas and tables, introspecting a table's full
+// structure, editing rows through safe generated statements, running arbitrary
+// queries, exporting data, generating ORM schemas, and dumping or restoring.
 //
 // Connection strings are secrets — they carry credentials — so they are held
-// encrypted at rest and never returned to a client. A query runner is
-// inherently powerful, so destructive statements are classified before they
-// run and the handler demands a typed confirmation for them.
+// encrypted at rest and never returned to a client. Two rules keep the write
+// paths safe: identifiers (schema, table and column names) are always validated
+// and quoted, never bound, while values are always bound, never interpolated;
+// and a query runner is inherently powerful, so destructive statements are
+// classified before they run and the handler demands a typed confirmation for
+// them. Row edits go one step further and refuse to run without a primary key,
+// so an UPDATE or DELETE cannot silently touch more than the one row intended.
 package dbx
 
 import (

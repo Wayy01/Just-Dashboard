@@ -898,10 +898,12 @@ export type Listener = {
   exposed: boolean
 }
 
+export type DbDriver = "postgres" | "mysql" | "mongodb" | "sqlite"
+
 export type DbConnection = {
   id: number
   name: string
-  driver: "postgres" | "mysql" | "mongodb"
+  driver: DbDriver
   host: string
   port: string
   user: string
@@ -944,6 +946,57 @@ export type QueryRisk = {
   level: "read" | "medium" | "high" | "critical"
   reasons: string[]
 }
+
+/** One index on a table, with the columns it covers in order. */
+export type DbIndex = {
+  name: string
+  columns: string[]
+  unique: boolean
+  primary: boolean
+}
+
+/** One outgoing foreign key. Composite keys keep columns paired in order. */
+export type DbForeignKey = {
+  name: string
+  columns: string[]
+  refSchema?: string
+  refTable: string
+  refColumns: string[]
+  onUpdate?: string
+  onDelete?: string
+}
+
+/** Everything the Structure tab shows and everything row editing needs. */
+export type DbTableDetail = {
+  schema: string
+  name: string
+  columns: DbColumn[]
+  primaryKey: string[]
+  indexes: DbIndex[]
+  foreignKeys: DbForeignKey[]
+  createSql?: string
+}
+
+/** A named SQL snippet kept against a connection. */
+export type DbSavedQuery = {
+  id: number
+  name: string
+  sql: string
+  createdAt: string
+}
+
+/** One entry in a connection's recent-statement history. */
+export type DbHistoryEntry = {
+  id: number
+  sql: string
+  risk: string
+  success: boolean
+  durationMs: number
+  rowCount: number
+  ranAt: string
+}
+
+export type OrmTarget = "prisma" | "drizzle"
 
 export type SystemUser = {
   username: string
