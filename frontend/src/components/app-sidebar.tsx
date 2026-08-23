@@ -26,6 +26,7 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { useCommandPalette } from "@/components/command-palette"
+import { Logo, LogoMark } from "@/components/logo"
 import type { Capability } from "@/lib/types"
 import {
   Sidebar,
@@ -130,17 +131,16 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarHeader className="gap-3 p-3">
+        {/* The wordmark alone: no tile, and no "Control panel" strapline under
+            it. The strapline named the product category to somebody already
+            inside the product, and the tile spent a third of the header's
+            width saying nothing the name did not. */}
         <Link
           href="/"
-          className="flex min-w-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50"
+          className="flex h-8 min-w-0 items-center rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50 group-data-[collapsible=icon]:justify-center"
         >
-          <span className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Activity className="size-4" />
-          </span>
-          <span className="grid min-w-0 flex-1 text-left group-data-[collapsible=icon]:hidden">
-            <span className="truncate text-[13px] leading-tight font-semibold">Just Dashboard</span>
-            <span className="eyebrow truncate">Control panel</span>
-          </span>
+          <Logo className="group-data-[collapsible=icon]:hidden" />
+          <LogoMark className="hidden group-data-[collapsible=icon]:block" />
         </Link>
 
         {/* The palette is the fastest route to any of fifteen pages, so it gets

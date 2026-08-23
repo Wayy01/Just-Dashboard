@@ -604,6 +604,19 @@ backend.
 Wherever a variable is read, its documentation lives in four places that must stay in step:
 the reading site, `.env.example`, `docker-compose.yml` and the README's configuration table.
 
+### The version
+
+Two constants, and nothing else: `internal/version.Version` and
+`frontend/src/lib/version.ts`. Everything that shows or logs a version reads one of them —
+the wordmark in the sidebar and on the sign-in page, and the line the server logs at boot.
+
+They are separate because neither half can reach the other's build, and `internal/version`'s
+test reads the TypeScript file and fails the run if the two disagree, which is what makes a
+release two one-line edits rather than a hunt. It skips when the frontend is absent, so the
+backend module still tests on its own. `frontend/package.json` carries a third copy because
+npm demands the field; the same test pins it to the same release, loosely, since npm wants
+three components and the product version has two.
+
 ### Deployment topology
 
 ```
@@ -671,6 +684,15 @@ whatever padding and title size its author picked, which is why fourteen pages r
 fourteen products. **Reach for `Panel`/`Page`, not raw `Card`, and add a variant here rather
 than a one-off in a feature page.** `components/state.tsx` covers the non-happy paths the
 same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, `Notice`.
+
+`components/logo.tsx` is the third, and it is smaller than it looks: the logo is the
+wordmark and nothing else — "Just" in `text-primary`, "Dashboard" in the text colour, the
+version as small muted text beside it. No mark, no tile, no strapline. It is the only
+rendering of the product's name in the app, so the sidebar, the sign-in screen and the
+loading splash all show the same thing and a rename is one file. Colour comes from the
+palette rather than from a fixed hex, so the logo re-themes with everything else, and
+`LogoMark` is the single letter the collapsed rail falls back to when three rem is all there
+is.
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`

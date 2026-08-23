@@ -28,6 +28,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/version"
 )
 
 func main() {
@@ -143,6 +144,7 @@ func run(agentFlag, agentReset bool) error {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("just-dashboard listening",
+			"version", version.Version,
 			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs),
 			"require2fa", cfg.Require2FA, "agent", cfg.AgentMode)
 		var err error
