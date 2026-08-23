@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  Activity,
   ArrowRight,
   Check,
   Copy,
@@ -24,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Notice } from "@/components/state"
+import { Logo } from "@/components/logo"
 
 type Step = "credentials" | "totp" | "enroll"
 
@@ -145,15 +145,7 @@ export default function LoginPage() {
 
       <main className="relative z-10 flex min-w-0 flex-1 items-center justify-center px-5 py-10 lg:py-12">
         <div className="w-full max-w-[26rem]">
-          <div className="mb-6 flex items-center gap-2.5 lg:hidden">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Activity className="size-4.5" />
-            </span>
-            <div>
-              <p className="text-sm leading-tight font-semibold">Just Dashboard</p>
-              <p className="eyebrow">Control panel</p>
-            </div>
-          </div>
+          <Logo size="md" className="mb-6 lg:hidden" />
 
           <Stepper current={recoveryCodes ? "totp" : step} />
 
@@ -346,15 +338,7 @@ function BrandPanel() {
     // product to be. The footnote is the exception — it belongs at the foot.
     <aside className="relative z-10 hidden flex-col justify-center border-r p-10 lg:flex xl:p-14">
       <div className="max-w-lg space-y-9">
-        <div className="flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Activity className="size-5" />
-          </span>
-          <div>
-            <p className="text-[15px] leading-tight font-semibold">Just Dashboard</p>
-            <p className="eyebrow">Self-hosted control panel</p>
-          </div>
-        </div>
+        <Logo size="lg" />
 
         <h2 className="text-[28px] leading-[1.15] font-semibold tracking-tight text-balance xl:text-[32px]">
           One server. Metrics, containers, files, a real shell — behind one door.

@@ -61,8 +61,12 @@ yes_no() {
 
 # ── preflight ───────────────────────────────────────────────────────────────
 
+# Read rather than repeated, so the installer cannot announce a version this
+# checkout is not. Empty if the file moves — a nameless banner beats a wrong one.
+version="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' backend/internal/version/version.go 2>/dev/null)"
+
 say ""
-say "${BOLD}Just Dashboard — setup${RESET}"
+say "${BOLD}Just Dashboard${version:+ $version} — setup${RESET}"
 say "${DIM}Self-hosted management for a single Linux server.${RESET}"
 
 [ "$(id -u)" -eq 0 ] || die "run this with sudo — the dashboard manages the host, so setup needs root."
