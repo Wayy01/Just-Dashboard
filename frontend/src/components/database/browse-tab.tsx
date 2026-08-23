@@ -243,14 +243,18 @@ export function BrowseTab({
                     Insert
                   </Button>
                 )}
-                <Button size="sm" variant="ghost" title="Export CSV" onClick={() => exportTable("csv")}>
-                  <Download className="size-3.5" />
-                  CSV
-                </Button>
-                <Button size="sm" variant="ghost" title="Export JSON" onClick={() => exportTable("json")}>
-                  <FileJson className="size-3.5" />
-                  JSON
-                </Button>
+                {conn.driver !== "mongodb" && (
+                  <>
+                    <Button size="sm" variant="ghost" title="Export CSV" onClick={() => exportTable("csv")}>
+                      <Download className="size-3.5" />
+                      CSV
+                    </Button>
+                    <Button size="sm" variant="ghost" title="Export JSON" onClick={() => exportTable("json")}>
+                      <FileJson className="size-3.5" />
+                      JSON
+                    </Button>
+                  </>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
