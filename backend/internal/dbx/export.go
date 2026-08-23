@@ -67,7 +67,11 @@ func StreamExport(ctx context.Context, db *sql.DB, query string, args []any, for
 // validated, quoted identifiers — the same choke point BrowseTable uses — so no
 // caller-supplied text reaches the statement unescaped.
 func ExportTable(ctx context.Context, db *sql.DB, driver Driver, schema, table string, format ExportFormat, w io.Writer, maxRows int) (int, bool, error) {
-	rel, err := qualifiedName(driver, schema, table)
+	d, err := DialectFor(driver)
+	if err != nil {
+		return 0, false, err
+	}
+	rel, err := qualify(d, schema, table)
 	if err != nil {
 		return 0, false, err
 	}

@@ -277,7 +277,7 @@ func dumpSQLite(ctx context.Context, dsn, path, outDir string) (*DumpResult, err
 	}
 	out := filepath.Join(outDir, fmt.Sprintf("%s-%s.sqlite", base, stamp))
 
-	db, err := sql.Open("sqlite", sqliteDSN(dsn))
+	db, err := sql.Open("sqlite", sqliteDialect{}.NormaliseDSN(dsn))
 	if err != nil {
 		return nil, err
 	}

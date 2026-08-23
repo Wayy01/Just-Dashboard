@@ -1,0 +1,164 @@
+package dbx
+
+import (
+	"context"
+	"database/sql"
+)
+
+type mssqlDialect struct{}
+
+func (mssqlDialect) Driver() Driver                      { return DriverMSSQL }
+func (mssqlDialect) SQLDriverName() string               { return "sqlserver" }
+func (mssqlDialect) NormaliseDSN(d string) string        { return d }
+func (mssqlDialect) VersionQuery() string                { return "SELECT @@VERSION" }
+func (mssqlDialect) TunePool(*sql.DB)                    {}
+func (mssqlDialect) DefaultSchema() string               { return "dbo" }
+func (mssqlDialect) SupportsDDL() bool                   { return true }
+func (mssqlDialect) Placeholder(n int) string            { return "@p" + itoa(n) }
+func (mssqlDialect) QuoteIdent(s string) (string, error) { return quoteBracket(s) }
+
+// SQL Server's OUTPUT clause is its RETURNING, but it sits in a different place
+// in the statement and breaks on tables carrying triggers. The row editors fall
+// back to reporting what they affected, which is always correct.
+func (mssqlDialect) SupportsReturning() bool { return false }
+
+// Paginate supplies the ORDER BY that SQL Server requires in front of OFFSET.
+// `(SELECT NULL)` is the documented way to satisfy that requirement without
+// asking the engine to actually sort, which is what keeps a browse page cheap
+// on a table with no useful index.
+func (d mssqlDialect) Paginate(limit, offset, argStart int) (string, []any) {
+	clause, args := fetchFirstLimit(d, limit, offset, argStart)
+	return "ORDER BY (SELECT NULL) " + clause, args
+}
+
+func (mssqlDialect) ColumnTypes() []string {
+	return []string{
+		"nvarchar(255)", "nvarchar(max)", "varchar(255)", "char(1)", "bit",
+		"tinyint", "smallint", "int", "bigint",
+		"decimal(18,2)", "numeric(18,2)", "float", "real", "money",
+		"date", "time", "datetime2", "datetimeoffset",
+		"uniqueidentifier", "varbinary(max)", "xml",
+	}
+}
+
+func (mssqlDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, error) {
+	rows, err := db.QueryContext(ctx, `SELECT d.name,
+	              ISNULL(CAST(SUM(CAST(mf.size AS BIGINT)) * 8192 AS BIGINT), 0),
+	              ISNULL(SUSER_SNAME(d.owner_sid), ''),
+	              ISNULL(d.collation_name, '')
+	       FROM sys.databases d
+	       LEFT JOIN sys.master_files mf ON mf.database_id = d.database_id
+	       WHERE d.database_id > 4
+	       GROUP BY d.name, d.owner_sid, d.collation_name
+	       ORDER BY d.name`)
+	if err != nil {
+		return nil, err
+	}
+	return scanDatabases(rows)
+}
+
+// Tables reads the catalogue views rather than information_schema so that row
+// counts and on-disk size come back in the same pass. Both subqueries use only
+// catalogue views, which need no VIEW DATABASE STATE grant — the dynamic
+// management views that would be tidier do, and failing the whole listing for a
+// least-privilege login is worse than an approximate size.
+func (mssqlDialect) Tables(ctx context.Context, db *sql.DB, schema string) ([]Table, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT s.name, t.name, 'table',
+	         ISNULL((SELECT SUM(p.rows) FROM sys.partitions p
+	                  WHERE p.object_id = t.object_id AND p.index_id IN (0,1)), 0),
+	         ISNULL((SELECT SUM(au.total_pages) * 8192 FROM sys.allocation_units au
+	                  JOIN sys.partitions p2 ON p2.partition_id = au.container_id
+	                 WHERE p2.object_id = t.object_id), 0),
+	         ISNULL(CAST(ep.value AS NVARCHAR(4000)), '')
+	  FROM sys.tables t
+	  JOIN sys.schemas s ON s.schema_id = t.schema_id
+	  LEFT JOIN sys.extended_properties ep
+	         ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+	  WHERE (@p1 = '' OR s.name = @p1)
+	  UNION ALL
+	  SELECT s.name, v.name, 'view', 0, 0, ''
+	  FROM sys.views v
+	  JOIN sys.schemas s ON s.schema_id = v.schema_id
+	  WHERE (@p1 = '' OR s.name = @p1)
+	  ORDER BY 1, 2`, schema)
+	if err != nil {
+		return nil, err
+	}
+	return scanTables(rows)
+}
+
+func (d mssqlDialect) Columns(ctx context.Context, db *sql.DB, schema, table string) ([]Column, error) {
+	return infoSchemaColumns(ctx, db, d, schema, table)
+}
+
+func (d mssqlDialect) PrimaryKey(ctx context.Context, db *sql.DB, schema, table string) ([]string, error) {
+	return infoSchemaPrimaryKey(ctx, db, d, schema, table)
+}
+
+func (mssqlDialect) Indexes(ctx context.Context, db *sql.DB, schema, table string) ([]Index, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT i.name, i.is_unique, i.is_primary_key, c.name
+	  FROM sys.indexes i
+	  JOIN sys.objects o ON o.object_id = i.object_id
+	  JOIN sys.schemas s ON s.schema_id = o.schema_id
+	  JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+	  JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+	  WHERE s.name = @p1 AND o.name = @p2 AND i.name IS NOT NULL
+	  ORDER BY i.name, ic.key_ordinal`, schema, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	acc := newIndexAcc()
+	for rows.Next() {
+		var name, col string
+		var unique, primary bool
+		if err := rows.Scan(&name, &unique, &primary, &col); err != nil {
+			return nil, err
+		}
+		acc.add(name, col, unique, primary)
+	}
+	return acc.slice(), rows.Err()
+}
+
+func (mssqlDialect) ForeignKeys(ctx context.Context, db *sql.DB, schema, table string) ([]ForeignKey, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT fk.name, pc.name, rs.name, rt.name, rc.name,
+	         fk.update_referential_action_desc, fk.delete_referential_action_desc
+	  FROM sys.foreign_keys fk
+	  JOIN sys.tables pt ON pt.object_id = fk.parent_object_id
+	  JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+	  JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+	  JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+	  JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
+	  JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+	  JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+	  WHERE ps.name = @p1 AND pt.name = @p2
+	  ORDER BY fk.name, fkc.constraint_column_id`, schema, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	acc := newFKAcc()
+	for rows.Next() {
+		var name, col, refSchema, refTable, refCol, upd, del string
+		if err := rows.Scan(&name, &col, &refSchema, &refTable, &refCol, &upd, &del); err != nil {
+			return nil, err
+		}
+		fk := acc.get(name)
+		fk.Columns = append(fk.Columns, col)
+		fk.RefSchema, fk.RefTable = refSchema, refTable
+		fk.RefColumns = append(fk.RefColumns, refCol)
+		fk.OnUpdate, fk.OnDelete = underscoreToWords(upd), underscoreToWords(del)
+	}
+	return acc.slice(), rows.Err()
+}
+
+// SQL Server has no SHOW CREATE TABLE; scripting one out is an SMO operation,
+// not a query, so the statement is synthesised from the introspected structure.
+func (d mssqlDialect) CreateSQL(_ context.Context, _ *sql.DB, schema, table string, detail *TableDetail) (string, error) {
+	return synthCreateTable(d, schema, table, detail), nil
+}
+
+func (mssqlDialect) CastText(e string) string { return "CAST(" + e + " AS NVARCHAR(MAX))" }

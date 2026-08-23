@@ -19,7 +19,7 @@ func openTestDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	db, err := sql.Open("sqlite", sqliteDialect{}.NormaliseDSN(path))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSQLiteDumpRestore(t *testing.T) {
 	if _, err := Restore(ctx, DriverSQLite, target, "", res.Path); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	rdb, err := sql.Open("sqlite", sqliteDSN(target))
+	rdb, err := sql.Open("sqlite", sqliteDialect{}.NormaliseDSN(target))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,14 +17,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/ClickHouse/clickhouse-go/v2"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/sijms/go-ora/v2"
 	_ "modernc.org/sqlite"
 )
 
@@ -34,53 +37,56 @@ const (
 	DriverPostgres Driver = "postgres"
 	DriverMySQL    Driver = "mysql"
 	DriverMongo    Driver = "mongodb"
-	// DriverSQLite treats a single database file as the connection. It shares
-	// the SQL query path with Postgres and MySQL, and uses the same pure-Go
-	// driver (modernc.org/sqlite) the dashboard already stores its own state in,
-	// so it adds no new build dependency and needs no CGO.
-	DriverSQLite Driver = "sqlite"
+	// DriverSQLite treats a single database file as the connection. It uses the
+	// same pure-Go driver (modernc.org/sqlite) the dashboard already stores its
+	// own state in, so it adds no build dependency and needs no CGO.
+	DriverSQLite     Driver = "sqlite"
+	DriverMSSQL      Driver = "sqlserver"
+	DriverClickHouse Driver = "clickhouse"
+	DriverOracle     Driver = "oracle"
+	// DriverRedis is the one key/value engine. It has no tables, no SQL and no
+	// rows, so it shares none of the query path below and is driven entirely
+	// through redis.go.
+	DriverRedis Driver = "redis"
 )
 
 var ErrUnsupported = errors.New("unsupported database driver")
 
+// Drivers lists every engine the dashboard can connect to, in the order the UI
+// offers them. Deriving the list here rather than repeating it in the handler
+// and again in the frontend is what stops a newly registered dialect being
+// invisible in the connection form.
+func Drivers() []Driver {
+	return []Driver{
+		DriverPostgres, DriverMySQL, DriverSQLite, DriverMSSQL,
+		DriverClickHouse, DriverOracle, DriverMongo, DriverRedis,
+	}
+}
+
 func (d Driver) Valid() bool {
-	switch d {
-	case DriverPostgres, DriverMySQL, DriverMongo, DriverSQLite:
+	if d == DriverMongo || d == DriverRedis {
 		return true
 	}
-	return false
+	_, ok := dialects[d]
+	return ok
 }
 
-// IsSQL reports whether the driver goes through database/sql. Mongo is the one
-// engine that does not, so callers branch on this rather than listing drivers.
+// IsSQL reports whether the driver goes through database/sql and the dialect
+// layer. Mongo and Redis are the two that do not, so callers branch on this
+// rather than listing engines — a list that was wrong the moment a seventh
+// engine arrived.
 func (d Driver) IsSQL() bool {
-	return d == DriverPostgres || d == DriverMySQL || d == DriverSQLite
+	_, ok := dialects[d]
+	return ok
 }
 
-// sqlDriverName maps our driver identity onto the registered database/sql
-// driver. pgx registers itself as "pgx" through its stdlib shim.
-func (d Driver) sqlDriverName() (string, error) {
-	switch d {
-	case DriverPostgres:
-		return "pgx", nil
-	case DriverMySQL:
-		return "mysql", nil
-	case DriverSQLite:
-		return "sqlite", nil
-	default:
-		return "", fmt.Errorf("%w: %s", ErrUnsupported, d)
-	}
-}
+// itoa is strconv.Itoa without the import, used by the placeholder renderers on
+// a hot enough path that the dialects call it constantly.
+func itoa(n int) string { return strconv.Itoa(n) }
 
-// placeholder renders the n-th bind marker for the driver. Postgres numbers its
-// markers ($1, $2); MySQL and SQLite use a positional '?'. Keeping this in one
-// place is what lets the query builders below stay driver-agnostic.
-func (d Driver) placeholder(n int) string {
-	if d == DriverPostgres {
-		return fmt.Sprintf("$%d", n)
-	}
-	return "?"
-}
+// underscoreToWords turns SQL Server's NO_ACTION into NO ACTION, so referential
+// actions read the same whichever engine reported them.
+func underscoreToWords(s string) string { return strings.ReplaceAll(s, "_", " ") }
 
 // Manager owns the connection pools. Pools are opened lazily and reused: a
 // query runner that dialled a fresh connection per request would exhaust the
@@ -100,14 +106,11 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	if db, ok := m.pools[id]; ok {
 		return db, nil
 	}
-	name, err := driver.sqlDriverName()
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	if driver == DriverSQLite {
-		dsn = sqliteDSN(dsn)
-	}
-	db, err := sql.Open(name, dsn)
+	db, err := sql.Open(d.SQLDriverName(), d.NormaliseDSN(dsn))
 	if err != nil {
 		return nil, err
 	}
@@ -116,13 +119,8 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(30 * time.Minute)
-	// SQLite serialises writers at the file level, so a pool of five racing
-	// connections turns every concurrent write into a "database is locked"
-	// error. One connection plus the busy timeout below is the documented way
-	// to make a single-file database behave under a web front end.
-	if driver == DriverSQLite {
-		db.SetMaxOpenConns(1)
-	}
+	// Then whatever the engine needs on top — SQLite's single writer, say.
+	d.TunePool(db)
 
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -140,17 +138,11 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 // being tested may be wrong, and a failed test must not leave a broken pool
 // cached under some id.
 func Probe(ctx context.Context, driver Driver, dsn string) (string, error) {
-	if !driver.IsSQL() {
-		return "", fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	name, err := driver.sqlDriverName()
+	d, err := DialectFor(driver)
 	if err != nil {
 		return "", err
 	}
-	if driver == DriverSQLite {
-		dsn = sqliteDSN(dsn)
-	}
-	db, err := sql.Open(name, dsn)
+	db, err := sql.Open(d.SQLDriverName(), d.NormaliseDSN(dsn))
 	if err != nil {
 		return "", err
 	}
@@ -161,17 +153,11 @@ func Probe(ctx context.Context, driver Driver, dsn string) (string, error) {
 	if err := db.PingContext(pingCtx); err != nil {
 		return "", err
 	}
+	// A version string is a courtesy, not the test — the ping already proved the
+	// connection. An engine that refuses the query still reports as reachable.
 	var version string
-	switch driver {
-	case DriverSQLite:
-		_ = db.QueryRowContext(pingCtx, "SELECT sqlite_version()").Scan(&version)
-		if version != "" {
-			version = "SQLite " + version
-		}
-	default:
-		_ = db.QueryRowContext(pingCtx, "SELECT version()").Scan(&version)
-	}
-	return version, nil
+	_ = db.QueryRowContext(pingCtx, d.VersionQuery()).Scan(&version)
+	return strings.TrimSpace(version), nil
 }
 
 func (m *Manager) Close(id int64) {
@@ -226,74 +212,12 @@ type Database struct {
 	Encoding string `json:"encoding,omitempty"`
 }
 
-// sqliteDSN makes a caller-supplied file path safe to open read-write under a
-// web front end: it turns a bare path into a file: URI and appends the busy
-// timeout and foreign-key pragmas the dashboard's own store uses, but leaves an
-// already-parameterised DSN untouched so an operator can still pass mode=ro.
-func sqliteDSN(dsn string) string {
-	if strings.Contains(dsn, "?") || strings.HasPrefix(dsn, "file:") {
-		return dsn
-	}
-	return dsn + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-}
-
 func ListDatabases(ctx context.Context, db *sql.DB, driver Driver) ([]Database, error) {
-	var query string
-	switch driver {
-	case DriverSQLite:
-		// A SQLite connection is a single file, but ATTACHed databases show up
-		// as extra rows; "main" is always present. The file path is reported so
-		// the operator can see which file they are browsing.
-		rows, err := db.QueryContext(ctx, `PRAGMA database_list`)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		out := []Database{}
-		for rows.Next() {
-			var seq int
-			var name, file string
-			if err := rows.Scan(&seq, &name, &file); err != nil {
-				return nil, err
-			}
-			d := Database{Name: name, Owner: file}
-			out = append(out, d)
-		}
-		return out, rows.Err()
-	case DriverPostgres:
-		query = `SELECT d.datname,
-		                pg_database_size(d.datname),
-		                COALESCE(pg_get_userbyid(d.datdba), ''),
-		                pg_encoding_to_char(d.encoding)
-		         FROM pg_database d
-		         WHERE NOT d.datistemplate
-		         ORDER BY 1`
-	case DriverMySQL:
-		query = `SELECT s.SCHEMA_NAME,
-		                COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0),
-		                '',
-		                s.DEFAULT_CHARACTER_SET_NAME
-		         FROM information_schema.SCHEMATA s
-		         LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
-		         GROUP BY s.SCHEMA_NAME, s.DEFAULT_CHARACTER_SET_NAME
-		         ORDER BY 1`
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Database{}
-	for rows.Next() {
-		var d Database
-		if err := rows.Scan(&d.Name, &d.Size, &d.Owner, &d.Encoding); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return d.Databases(ctx, db)
 }
 
 type Table struct {
@@ -306,65 +230,11 @@ type Table struct {
 }
 
 func ListTables(ctx context.Context, db *sql.DB, driver Driver, schema string) ([]Table, error) {
-	var (
-		query string
-		args  []any
-	)
-	switch driver {
-	case DriverSQLite:
-		// SQLite has one schema per file. sqlite_master carries tables and
-		// views; the internal sqlite_* tables are hidden. Row and size figures
-		// are not free here, so they are left at zero rather than run a COUNT
-		// per table on every listing.
-		query = `SELECT 'main', name,
-		                CASE type WHEN 'table' THEN 'table' ELSE type END,
-		                0, 0, ''
-		         FROM sqlite_master
-		         WHERE type IN ('table','view')
-		           AND name NOT LIKE 'sqlite_%'
-		         ORDER BY name`
-	case DriverPostgres:
-		query = `SELECT n.nspname, c.relname,
-		                CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view'
-		                               WHEN 'm' THEN 'materialized view' ELSE c.relkind::text END,
-		                COALESCE(c.reltuples::bigint, 0),
-		                pg_total_relation_size(c.oid),
-		                COALESCE(obj_description(c.oid), '')
-		         FROM pg_class c
-		         JOIN pg_namespace n ON n.oid = c.relnamespace
-		         WHERE c.relkind IN ('r','v','m','p')
-		           AND n.nspname NOT IN ('pg_catalog','information_schema')
-		           AND ($1 = '' OR n.nspname = $1)
-		         ORDER BY 1, 2`
-		args = []any{schema}
-	case DriverMySQL:
-		query = `SELECT TABLE_SCHEMA, TABLE_NAME,
-		                CASE TABLE_TYPE WHEN 'BASE TABLE' THEN 'table' ELSE LOWER(TABLE_TYPE) END,
-		                COALESCE(TABLE_ROWS, 0),
-		                COALESCE(DATA_LENGTH + INDEX_LENGTH, 0),
-		                COALESCE(TABLE_COMMENT, '')
-		         FROM information_schema.TABLES
-		         WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys')
-		           AND (? = '' OR TABLE_SCHEMA = ?)
-		         ORDER BY 1, 2`
-		args = []any{schema, schema}
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query, args...)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Table{}
-	for rows.Next() {
-		var t Table
-		if err := rows.Scan(&t.Schema, &t.Name, &t.Type, &t.Rows, &t.Size, &t.Comment); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return d.Tables(ctx, db, schema)
 }
 
 type Column struct {
@@ -377,130 +247,33 @@ type Column struct {
 }
 
 func ListColumns(ctx context.Context, db *sql.DB, driver Driver, schema, table string) ([]Column, error) {
-	if driver == DriverSQLite {
-		return sqliteColumns(ctx, db, table)
-	}
-	var (
-		query string
-		args  []any
-	)
-	switch driver {
-	case DriverPostgres:
-		query = `SELECT column_name, data_type, is_nullable = 'YES',
-		                COALESCE(column_default, ''), ordinal_position
-		         FROM information_schema.columns
-		         WHERE table_schema = $1 AND table_name = $2
-		         ORDER BY ordinal_position`
-		args = []any{schema, table}
-	case DriverMySQL:
-		query = `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE = 'YES',
-		                COALESCE(COLUMN_DEFAULT, ''), ORDINAL_POSITION
-		         FROM information_schema.COLUMNS
-		         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-		         ORDER BY ORDINAL_POSITION`
-		args = []any{schema, table}
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query, args...)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Column{}
-	for rows.Next() {
-		var c Column
-		if err := rows.Scan(&c.Name, &c.Type, &c.Nullable, &c.Default, &c.Position); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return d.Columns(ctx, db, schema, table)
 }
 
-// sqliteColumns reads columns from PRAGMA table_info. The pragma cannot bind a
-// parameter for the table name, so the identifier is validated and quoted the
-// same way every other generated statement in this package is.
-func sqliteColumns(ctx context.Context, db *sql.DB, table string) ([]Column, error) {
-	qTable, err := quoteIdent(DriverSQLite, table)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+qTable+")")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Column{}
-	for rows.Next() {
-		var (
-			cid, notnull, pk int
-			name, ctype      string
-			dflt             sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return nil, err
-		}
-		c := Column{
-			Name: name, Type: ctype, Nullable: notnull == 0,
-			Default: dflt.String, Position: cid + 1,
-		}
-		if pk > 0 {
-			c.Key = "PRI"
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// identifierRe restricts what may be interpolated into a generated query.
-// Table and schema names cannot be bound as parameters, so the only safe
-// option is to reject anything that is not a plain identifier and then quote it.
+// identifierRe is the strict form, used where a name becomes a path segment or
+// a shell argument rather than a quoted SQL identifier — a database name headed
+// for a dump filename, say. SQL identifiers use validateIdent plus the
+// dialect's own quoting, which is both safer and permissive enough for the
+// hyphens and non-ASCII letters real schemas contain.
 var identifierRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
 
-func quoteIdent(driver Driver, name string) (string, error) {
-	if !identifierRe.MatchString(name) {
-		return "", fmt.Errorf("invalid identifier %q", name)
-	}
-	if driver == DriverMySQL {
-		return "`" + name + "`", nil
-	}
-	return `"` + name + `"`, nil
-}
-
-// BrowseTable pages through a table's rows. It builds the statement from
-// validated, quoted identifiers and binds limit and offset as parameters.
-func BrowseTable(ctx context.Context, db *sql.DB, driver Driver, schema, table string, limit, offset int) (*QueryResult, error) {
-	rel, err := qualifiedName(driver, schema, table)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	// No ORDER BY: adding one would force a sort over an arbitrary column on a
-	// table that may have millions of rows and no index on it, turning a cheap
-	// page fetch into a full scan. Ordered access is what the Query tab is for.
-	query := fmt.Sprintf(`SELECT * FROM %s LIMIT %s OFFSET %s`,
-		rel, driver.placeholder(1), driver.placeholder(2))
-	return RunQuery(ctx, db, query, limit, limit, offset)
-}
-
-// qualifiedName renders a validated, quoted schema.table reference. SQLite has
-// no per-schema namespacing worth qualifying, and an empty schema (the common
-// case for it) yields a bare table name rather than a dangling dot.
-func qualifiedName(driver Driver, schema, table string) (string, error) {
-	qTable, err := quoteIdent(driver, table)
+// qualify renders a validated, quoted schema.table reference for a dialect.
+// An empty schema — the normal case for SQLite, and for an engine where the
+// operator has not narrowed it — yields a bare table name rather than a
+// dangling dot.
+func qualify(d Dialect, schema, table string) (string, error) {
+	qTable, err := d.QuoteIdent(table)
 	if err != nil {
 		return "", err
 	}
-	if schema == "" || driver == DriverSQLite {
+	if schema == "" || d.Driver() == DriverSQLite {
 		return qTable, nil
 	}
-	qSchema, err := quoteIdent(driver, schema)
+	qSchema, err := d.QuoteIdent(schema)
 	if err != nil {
 		return "", err
 	}

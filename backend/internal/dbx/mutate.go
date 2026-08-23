@@ -25,26 +25,26 @@ import (
 var ErrNoPrimaryKey = fmt.Errorf("table has no primary key, so a single row cannot be identified for editing")
 
 // buildInsert renders an INSERT for the given (sorted) columns. returning asks
-// for the inserted row back, which Postgres and SQLite support and MySQL does
-// not.
-func buildInsert(driver Driver, schema, table string, cols []string, returning bool) (string, error) {
-	rel, err := qualifiedName(driver, schema, table)
+// for the inserted row back, which only some engines can do — the dialect
+// decides, so a caller never has to know which.
+func buildInsert(d Dialect, schema, table string, cols []string, returning bool) (string, error) {
+	rel, err := qualify(d, schema, table)
 	if err != nil {
 		return "", err
 	}
 	qCols := make([]string, len(cols))
 	marks := make([]string, len(cols))
 	for i, c := range cols {
-		q, err := quoteIdent(driver, c)
+		q, err := d.QuoteIdent(c)
 		if err != nil {
 			return "", err
 		}
 		qCols[i] = q
-		marks[i] = driver.placeholder(i + 1)
+		marks[i] = d.Placeholder(i + 1)
 	}
 	q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", rel,
 		joinComma(qCols), joinComma(marks))
-	if returning && driver != DriverMySQL {
+	if returning && d.SupportsReturning() {
 		q += " RETURNING *"
 	}
 	return q, nil
@@ -53,57 +53,57 @@ func buildInsert(driver Driver, schema, table string, cols []string, returning b
 // buildUpdate renders an UPDATE that sets setCols and is scoped by whereCols.
 // Placeholders run continuously across the SET list and then the WHERE list, so
 // the caller appends its args in the same order.
-func buildUpdate(driver Driver, schema, table string, setCols, whereCols []string, returning bool) (string, error) {
+func buildUpdate(d Dialect, schema, table string, setCols, whereCols []string, returning bool) (string, error) {
 	if len(whereCols) == 0 {
 		return "", ErrNoPrimaryKey
 	}
-	rel, err := qualifiedName(driver, schema, table)
+	rel, err := qualify(d, schema, table)
 	if err != nil {
 		return "", err
 	}
 	n := 0
 	sets := make([]string, len(setCols))
 	for i, c := range setCols {
-		q, err := quoteIdent(driver, c)
+		q, err := d.QuoteIdent(c)
 		if err != nil {
 			return "", err
 		}
 		n++
-		sets[i] = q + " = " + driver.placeholder(n)
+		sets[i] = q + " = " + d.Placeholder(n)
 	}
 	wheres := make([]string, len(whereCols))
 	for i, c := range whereCols {
-		q, err := quoteIdent(driver, c)
+		q, err := d.QuoteIdent(c)
 		if err != nil {
 			return "", err
 		}
 		n++
-		wheres[i] = q + " = " + driver.placeholder(n)
+		wheres[i] = q + " = " + d.Placeholder(n)
 	}
 	q := fmt.Sprintf("UPDATE %s SET %s WHERE %s", rel,
 		joinComma(sets), joinAnd(wheres))
-	if returning && driver != DriverMySQL {
+	if returning && d.SupportsReturning() {
 		q += " RETURNING *"
 	}
 	return q, nil
 }
 
 // buildDelete renders a DELETE scoped by whereCols.
-func buildDelete(driver Driver, schema, table string, whereCols []string) (string, error) {
+func buildDelete(d Dialect, schema, table string, whereCols []string) (string, error) {
 	if len(whereCols) == 0 {
 		return "", ErrNoPrimaryKey
 	}
-	rel, err := qualifiedName(driver, schema, table)
+	rel, err := qualify(d, schema, table)
 	if err != nil {
 		return "", err
 	}
 	wheres := make([]string, len(whereCols))
 	for i, c := range whereCols {
-		q, err := quoteIdent(driver, c)
+		q, err := d.QuoteIdent(c)
 		if err != nil {
 			return "", err
 		}
-		wheres[i] = q + " = " + driver.placeholder(i+1)
+		wheres[i] = q + " = " + d.Placeholder(i+1)
 	}
 	return fmt.Sprintf("DELETE FROM %s WHERE %s", rel, joinAnd(wheres)), nil
 }
@@ -124,8 +124,12 @@ func InsertRow(ctx context.Context, db *sql.DB, driver Driver, schema, table str
 	if len(values) == 0 {
 		return nil, fmt.Errorf("no column values supplied")
 	}
+	d, err := DialectFor(driver)
+	if err != nil {
+		return nil, err
+	}
 	cols := sortedKeys(values)
-	query, err := buildInsert(driver, schema, table, cols, true)
+	query, err := buildInsert(d, schema, table, cols, true)
 	if err != nil {
 		return nil, err
 	}
@@ -144,9 +148,13 @@ func UpdateRow(ctx context.Context, db *sql.DB, driver Driver, schema, table str
 	if len(key) == 0 {
 		return nil, ErrNoPrimaryKey
 	}
+	d, err := DialectFor(driver)
+	if err != nil {
+		return nil, err
+	}
 	setCols := sortedKeys(values)
 	whereCols := sortedKeys(key)
-	query, err := buildUpdate(driver, schema, table, setCols, whereCols, true)
+	query, err := buildUpdate(d, schema, table, setCols, whereCols, true)
 	if err != nil {
 		return nil, err
 	}
@@ -165,8 +173,12 @@ func DeleteRow(ctx context.Context, db *sql.DB, driver Driver, schema, table str
 	if len(key) == 0 {
 		return nil, ErrNoPrimaryKey
 	}
+	d, err := DialectFor(driver)
+	if err != nil {
+		return nil, err
+	}
 	whereCols := sortedKeys(key)
-	query, err := buildDelete(driver, schema, table, whereCols)
+	query, err := buildDelete(d, schema, table, whereCols)
 	if err != nil {
 		return nil, err
 	}
