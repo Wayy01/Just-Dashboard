@@ -1,10 +1,14 @@
 "use client"
 
-import { Copy, KeyRound, Link2, ListTree, Table2 } from "lucide-react"
+import { Copy, KeyRound, Link2, ListTree, Pencil, Table2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { get } from "@/lib/api"
-import type { DbConnection, DbTableDetail } from "@/lib/types"
+import { del, get } from "@/lib/api"
+import type { DbConnection, DbDriverInfo, DbTableDetail } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { useAuth } from "@/hooks/use-auth"
+import { useState } from "react"
+import type { useConfirm } from "@/components/confirm-dialog"
+import { RenameDialog } from "@/components/database/ddl-dialogs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
@@ -25,11 +29,17 @@ export function StructureTab({
   conn,
   schema,
   table,
+  info,
+  confirm,
 }: {
   conn: DbConnection
   schema: string
   table?: string
+  info?: DbDriverInfo
+  confirm: ReturnType<typeof useConfirm>["confirm"]
 }) {
+  const { can } = useAuth()
+  const [renaming, setRenaming] = useState<string | null>(null)
   const detail = usePoll(
     (signal) =>
       table
@@ -46,6 +56,49 @@ export function StructureTab({
 
   const d = detail.data
   const pk = new Set(d.primaryKey)
+  const canEdit = can("service.control") && (info?.ddl ?? false)
+
+  const dropColumn = (column: string) =>
+    confirm({
+      title: "Drop column",
+      phrase: column,
+      confirmLabel: "Drop column",
+      description: (
+        <p>
+          Permanently removes <span className="font-mono text-xs">{column}</span> from{" "}
+          <b>{table}</b>, and every value stored in it. This cannot be undone.
+        </p>
+      ),
+      action: async (c) => {
+        await del(`/databases/${conn.id}/ddl/column`, {
+          body: { schema, table, name: column },
+          confirm: c,
+        })
+        toast.success(`Dropped ${column}`)
+        detail.refresh()
+      },
+    })
+
+  const dropIndex = (name: string) =>
+    confirm({
+      title: "Drop index",
+      phrase: name,
+      confirmLabel: "Drop index",
+      description: (
+        <p>
+          Removes the index <span className="font-mono text-xs">{name}</span>. Queries relying on it
+          will fall back to a scan.
+        </p>
+      ),
+      action: async (c) => {
+        await del(`/databases/${conn.id}/ddl/index`, {
+          body: { schema, table, name },
+          confirm: c,
+        })
+        toast.success(`Dropped ${name}`)
+        detail.refresh()
+      },
+    })
 
   return (
     <div className="grid gap-4">
@@ -64,11 +117,12 @@ export function StructureTab({
                 <TableHead>Nullable</TableHead>
                 <TableHead>Default</TableHead>
                 <TableHead>Key</TableHead>
+                {canEdit && <TableHead className="w-20" />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {d.columns.map((c) => (
-                <TableRow key={c.name}>
+                <TableRow key={c.name} className="group">
                   <TableCell className="font-mono text-xs font-medium">{c.name}</TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {c.type.toLowerCase()}
@@ -91,6 +145,30 @@ export function StructureTab({
                       </Badge>
                     )}
                   </TableCell>
+                  {canEdit && (
+                    <TableCell className="w-20">
+                      <div className="flex items-center gap-0.5 opacity-40 transition-opacity group-hover:opacity-100">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-6"
+                          title="Rename column"
+                          onClick={() => setRenaming(c.name)}
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-6 text-destructive"
+                          title="Drop column"
+                          onClick={() => dropColumn(c.name)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -111,11 +189,12 @@ export function StructureTab({
                     <TableHead>Name</TableHead>
                     <TableHead>Columns</TableHead>
                     <TableHead>Unique</TableHead>
+                    {canEdit && <TableHead className="w-10" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {d.indexes.map((ix) => (
-                    <TableRow key={ix.name}>
+                    <TableRow key={ix.name} className="group">
                       <TableCell className="font-mono text-xs">
                         {ix.name}
                         {ix.primary && (
@@ -128,6 +207,21 @@ export function StructureTab({
                         {ix.columns.join(", ")}
                       </TableCell>
                       <TableCell className="text-xs">{ix.unique ? "yes" : "no"}</TableCell>
+                      {canEdit && (
+                        <TableCell className="w-10">
+                          {!ix.primary && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-6 text-destructive opacity-0 group-hover:opacity-100"
+                              title="Drop index"
+                              onClick={() => dropIndex(ix.name)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -168,6 +262,19 @@ export function StructureTab({
           </PanelBody>
         </Panel>
       </div>
+
+      {renaming && table && (
+        <RenameDialog
+          open
+          onOpenChange={(o) => !o && setRenaming(null)}
+          connId={conn.id}
+          schema={schema}
+          table={table}
+          kind="column"
+          current={renaming}
+          onDone={detail.refresh}
+        />
+      )}
 
       {d.createSql && (
         <Panel>

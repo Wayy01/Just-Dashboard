@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { DbConnection } from "@/lib/types"
+import type { DbConnection, DbDriverInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -26,14 +26,10 @@ import { BrowseTab, type TableSelection } from "@/components/database/browse-tab
 import { StructureTab } from "@/components/database/structure-tab"
 import { QueryTab } from "@/components/database/query-tab"
 import { OrmTab } from "@/components/database/orm-tab"
+import { ErDiagram } from "@/components/database/er-diagram"
+import { RedisBrowser } from "@/components/database/redis-browser"
+import { MongoBrowser } from "@/components/database/mongo-browser"
 import { ConnectionDialog } from "@/components/database/connection-dialog"
-
-const DRIVER_LABELS: Record<string, string> = {
-  postgres: "PostgreSQL",
-  mysql: "MySQL",
-  mongodb: "MongoDB",
-  sqlite: "SQLite",
-}
 
 export default function DatabasesPage() {
   const { can } = useAuth()
@@ -50,19 +46,26 @@ export default function DatabasesPage() {
     (signal) => get<DbConnection[]>("/databases/", undefined, signal),
     60000,
   )
+  // The engine catalogue decides which tabs exist. Keeping that on the server
+  // means a newly registered dialect shows up here with no frontend change, and
+  // a tab that would fail on every request is never offered.
+  const drivers = usePoll((signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal), 0)
 
   const active = connections.data?.find((c) => c.id === selectedId) ?? connections.data?.[0] ?? null
   const setActive = (conn: DbConnection | null) => setSelectedId(conn?.id ?? null)
 
   const activeSelection = selection && selection.connId === active?.id ? selection : null
-  const isSQL = active?.driver !== "mongodb"
+  const info = drivers.data?.find((d) => d.id === active?.driver)
+  const isSQL = info?.sql ?? false
+  const isRedis = active?.driver === "redis"
+  const isMongo = active?.driver === "mongodb"
 
   return (
     <Page>
       <PageHeader
         eyebrow="Access"
         title="Databases"
-        description="Browse and edit data, run queries, inspect structure, and generate ORM schemas"
+        description="Browse and edit data, reshape schemas, run queries, and generate ORM models"
         actions={
           can("system.admin") && (
             <Button size="sm" onClick={() => setAddOpen(true)}>
@@ -80,7 +83,7 @@ export default function DatabasesPage() {
         <EmptyState
           icon={Database}
           title="No connections configured"
-          description="Add a PostgreSQL, MySQL, MongoDB or SQLite connection to browse it here. Connection strings are encrypted at rest and never sent back to the browser."
+          description="Add a PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, Oracle, MongoDB or Redis connection to browse it here. Connection strings are encrypted at rest and never sent back to the browser."
         />
       )}
 
@@ -99,7 +102,8 @@ export default function DatabasesPage() {
               <SelectContent>
                 {connections.data.map((conn) => (
                   <SelectItem key={conn.id} value={conn.id.toString()}>
-                    {conn.name} · {DRIVER_LABELS[conn.driver] ?? conn.driver} · {conn.host}
+                    {conn.name} · {drivers.data?.find((d) => d.id === conn.driver)?.label ?? conn.driver}
+                    {conn.host ? ` · ${conn.host}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -146,26 +150,45 @@ export default function DatabasesPage() {
           {active && (
             <Tabs defaultValue="browse" key={active.id} className="min-w-0 gap-4">
               <TabsList>
-                <TabsTrigger value="browse">Browse</TabsTrigger>
+                <TabsTrigger value="browse">
+                  {isRedis ? "Keys" : isMongo ? "Collections" : "Browse"}
+                </TabsTrigger>
                 {isSQL && <TabsTrigger value="structure">Structure</TabsTrigger>}
+                {isSQL && <TabsTrigger value="diagram">Diagram</TabsTrigger>}
                 {isSQL && <TabsTrigger value="query">Query</TabsTrigger>}
                 {isSQL && <TabsTrigger value="orm">ORM</TabsTrigger>}
               </TabsList>
+
               <TabsContent value="browse" className="min-w-0">
-                <BrowseTab
-                  conn={active}
-                  confirm={confirm}
-                  selection={activeSelection}
-                  onSelect={(sel) => setSelection({ ...sel, connId: active.id })}
-                />
+                {isRedis ? (
+                  <RedisBrowser conn={active} confirm={confirm} />
+                ) : isMongo ? (
+                  <MongoBrowser conn={active} confirm={confirm} />
+                ) : (
+                  <BrowseTab
+                    conn={active}
+                    info={info}
+                    confirm={confirm}
+                    selection={activeSelection}
+                    onSelect={(sel) => setSelection({ ...sel, connId: active.id })}
+                  />
+                )}
               </TabsContent>
+
               {isSQL && (
                 <TabsContent value="structure" className="min-w-0">
                   <StructureTab
                     conn={active}
+                    info={info}
+                    confirm={confirm}
                     schema={activeSelection?.schema ?? ""}
                     table={activeSelection?.table}
                   />
+                </TabsContent>
+              )}
+              {isSQL && (
+                <TabsContent value="diagram" className="min-w-0">
+                  <ErDiagram conn={active} schema={activeSelection?.schema ?? ""} />
                 </TabsContent>
               )}
               {isSQL && (

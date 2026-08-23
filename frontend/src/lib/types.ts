@@ -898,7 +898,33 @@ export type Listener = {
   exposed: boolean
 }
 
-export type DbDriver = "postgres" | "mysql" | "mongodb" | "sqlite"
+export type DbDriver =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse"
+  | "oracle"
+  | "mongodb"
+  | "redis"
+
+/**
+ * What one engine can do, as the server reports it.
+ *
+ * The frontend deliberately keeps no table of its own: a tab that would 400 on
+ * every request should not be offered, and the only thing that actually knows
+ * which those are is the dialect registry on the server.
+ */
+export type DbDriverInfo = {
+  id: DbDriver
+  label: string
+  kind: "sql" | "document" | "keyvalue"
+  placeholder: string
+  sql: boolean
+  ddl: boolean
+  columnTypes?: string[]
+  filterOps?: string[]
+}
 
 export type DbConnection = {
   id: number
@@ -997,6 +1023,77 @@ export type DbHistoryEntry = {
 }
 
 export type OrmTarget = "prisma" | "drizzle"
+
+/** One condition in the data grid's filter row. */
+export type DbFilter = {
+  column: string
+  op: string
+  value: string
+}
+
+/** A column being created or added, as the DDL form describes it. */
+export type DbNewColumn = {
+  name: string
+  type: string
+  notNull?: boolean
+  primaryKey?: boolean
+  default?: string
+}
+
+export type DbImportResult = {
+  inserted: number
+  failed: number
+  errors: string[]
+  errorsTruncated: boolean
+  statement: string
+}
+
+/** Table name to column names, for editor completion. */
+export type DbOutline = {
+  schema: string
+  tables: Record<string, string[]>
+}
+
+/** table -> its outgoing foreign keys, for the entity diagram. */
+export type DbRelations = Record<string, DbForeignKey[]>
+
+// --- Redis ---------------------------------------------------------------
+
+export type RedisKeyInfo = {
+  key: string
+  type: string
+  /** Seconds; -1 means no expiry, -2 means the key is gone. */
+  ttl: number
+  size: number
+}
+
+export type RedisPage = {
+  keys: RedisKeyInfo[]
+  cursor: number
+  done: boolean
+}
+
+export type RedisZMember = { member: string; score: number }
+
+export type RedisValue = {
+  key: string
+  type: string
+  ttl: number
+  string?: string
+  list?: string[]
+  set?: string[]
+  hash?: Record<string, string>
+  zset?: RedisZMember[]
+  stream?: { id: string; values: Record<string, unknown> }[]
+  truncated: boolean
+}
+
+// --- MongoDB -------------------------------------------------------------
+
+export type MongoCollectionInfo = {
+  indexes: DbIndex[]
+  stats?: Record<string, unknown>
+}
 
 export type SystemUser = {
   username: string

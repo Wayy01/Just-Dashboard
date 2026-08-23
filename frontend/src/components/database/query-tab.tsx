@@ -14,7 +14,14 @@ import {
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { DbConnection, DbHistoryEntry, DbSavedQuery, QueryResult, QueryRisk } from "@/lib/types"
+import type {
+  DbConnection,
+  DbHistoryEntry,
+  DbOutline,
+  DbSavedQuery,
+  QueryResult,
+  QueryRisk,
+} from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import type { useConfirm } from "@/components/confirm-dialog"
@@ -55,6 +62,14 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
   )
   const history = usePoll(
     (signal) => get<DbHistoryEntry[]>(`/databases/${conn.id}/history`, { limit: 50 }, signal),
+    0,
+    [conn.id],
+  )
+  // The schema, fetched once per connection, so completion knows what exists.
+  // A failure here is silent: an editor without suggestions still runs SQL, and
+  // an error toast for a convenience nobody asked for is noise.
+  const outline = usePoll(
+    (signal) => get<DbOutline>(`/databases/${conn.id}/outline`, undefined, signal),
     0,
     [conn.id],
   )
@@ -156,7 +171,13 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
         <Panel>
           <PanelHeader icon={Database} title="SQL" description={`${conn.driver} · ${conn.database}`} />
           <PanelBody flush>
-            <CodeEditor className="h-56" language="sql" value={sql} onChange={setSql} />
+            <CodeEditor
+              className="h-56"
+              language="sql"
+              value={sql}
+              onChange={setSql}
+              completions={outline.data?.tables}
+            />
           </PanelBody>
           <PanelFooter>
             <Button size="sm" onClick={run} disabled={busy || !can("service.control")}>
@@ -176,6 +197,11 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
               <Badge variant="secondary" className="font-normal">
                 {risk.level}
               </Badge>
+            )}
+            {outline.data && (
+              <span className="text-[11px] text-muted-foreground">
+                {Object.keys(outline.data.tables).length} tables available to autocomplete
+              </span>
             )}
             {!can("service.control") && (
               <span className="text-xs text-muted-foreground">

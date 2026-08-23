@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, Pencil, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ChevronsUpDown, Copy, Pencil, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import type { QueryResult } from "@/lib/types"
@@ -34,12 +34,17 @@ export function ResultGrid({
   result,
   onEdit,
   onDelete,
+  sort,
+  onSort,
   className,
   maxHeightClass = "max-h-[calc(100svh-22rem)]",
 }: {
   result: QueryResult
   onEdit?: (row: Record<string, unknown>) => void
   onDelete?: (row: Record<string, unknown>) => void
+  /** The column the server is ordering by, when the caller supports sorting. */
+  sort?: { column: string; desc: boolean } | null
+  onSort?: (column: string) => void
   className?: string
   maxHeightClass?: string
 }) {
@@ -70,7 +75,18 @@ export function ResultGrid({
             {hasActions && <TableHead className="w-[5.5rem]" />}
             {result.columns.map((col, i) => (
               <TableHead key={col} className="whitespace-nowrap">
-                {col}
+                {onSort ? (
+                  <button
+                    onClick={() => onSort(col)}
+                    className="group/sort inline-flex items-center gap-1 hover:text-foreground"
+                    title={`Sort by ${col}`}
+                  >
+                    {col}
+                    <SortIcon active={sort?.column === col} desc={sort?.desc ?? false} />
+                  </button>
+                ) : (
+                  col
+                )}
                 {result.types[i] && (
                   <span className="ml-1 text-[10px] font-normal normal-case text-muted-foreground/70">
                     {result.types[i].toLowerCase()}
@@ -136,6 +152,14 @@ export function ResultGrid({
       </Dialog>
     </>
   )
+}
+
+function SortIcon({ active, desc }: { active: boolean; desc: boolean }) {
+  if (!active)
+    return (
+      <ChevronsUpDown className="size-3 opacity-0 transition-opacity group-hover/sort:opacity-50" />
+    )
+  return desc ? <ArrowDown className="size-3 text-primary" /> : <ArrowUp className="size-3 text-primary" />
 }
 
 function CellValue({ value }: { value: unknown }) {

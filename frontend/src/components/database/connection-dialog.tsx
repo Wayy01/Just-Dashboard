@@ -3,8 +3,9 @@
 import { useState } from "react"
 import { CheckCircle2, Plug, XCircle } from "lucide-react"
 import { toast } from "sonner"
-import { post, put } from "@/lib/api"
-import type { DbConnection, DbDriver } from "@/lib/types"
+import { get, post, put } from "@/lib/api"
+import { usePoll } from "@/hooks/use-poll"
+import type { DbConnection, DbDriver, DbDriverInfo } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -23,20 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-
-const PLACEHOLDERS: Record<DbDriver, string> = {
-  postgres: "postgres://user:password@127.0.0.1:5432/dbname?sslmode=disable",
-  mysql: "user:password@tcp(127.0.0.1:3306)/dbname",
-  mongodb: "mongodb://user:password@127.0.0.1:27017/dbname",
-  sqlite: "/var/lib/myapp/data.db",
-}
-
-const DRIVER_LABELS: Record<DbDriver, string> = {
-  postgres: "PostgreSQL",
-  mysql: "MySQL / MariaDB",
-  mongodb: "MongoDB",
-  sqlite: "SQLite (file path)",
-}
 
 /**
  * Add or edit a connection, with a Test button that dials the DSN before it is
@@ -58,8 +45,13 @@ export function ConnectionDialog({
   existing?: DbConnection
 }) {
   const editing = Boolean(existing)
+  // The engine list comes from the server, which is the only thing that knows
+  // which dialects are registered. A hard-coded copy here went stale the moment
+  // an engine was added and offered a driver the backend would reject.
+  const drivers = usePoll((signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal), 0)
   const [name, setName] = useState(existing?.name ?? "")
   const [driver, setDriver] = useState<DbDriver>(existing?.driver ?? "postgres")
+  const info = drivers.data?.find((d) => d.id === driver)
   const [dsn, setDsn] = useState("")
   const [testResult, setTestResult] = useState<{ ok: boolean; version?: string; error?: string } | null>(
     null,
@@ -124,9 +116,9 @@ export function ConnectionDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(DRIVER_LABELS) as DbDriver[]).map((d) => (
-                  <SelectItem key={d} value={d}>
-                    {DRIVER_LABELS[d]}
+                {(drivers.data ?? []).map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -150,7 +142,7 @@ export function ConnectionDialog({
                 setTestResult(null)
               }}
               className="font-mono text-xs"
-              placeholder={PLACEHOLDERS[driver]}
+              placeholder={info?.placeholder}
             />
             <p className="text-xs text-muted-foreground">
               Encrypted with the dashboard&apos;s master key and never returned to a browser.

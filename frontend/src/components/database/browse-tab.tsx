@@ -1,12 +1,31 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Database, Download, FileJson, Plus, Table2 } from "lucide-react"
+import {
+  Database,
+  Download,
+  FileJson,
+  Filter as FilterIcon,
+  Hash,
+  MoreHorizontal,
+  Plus,
+  Table2,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { DbConnection, DbTable, DbTableDetail, QueryResult } from "@/lib/types"
+import type {
+  DbConnection,
+  DbDriverInfo,
+  DbFilter,
+  DbTable,
+  DbTableDetail,
+  QueryResult,
+} from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import type { useConfirm } from "@/components/confirm-dialog"
@@ -19,33 +38,62 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Panel, PanelBody, PanelHeader } from "@/components/panel"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
 import { ResultGrid } from "@/components/database/result-grid"
 import { RowEditor } from "@/components/database/row-editor"
+import { ImportDialog } from "@/components/database/import-dialog"
+import {
+  AddColumnDialog,
+  CreateIndexDialog,
+  CreateTableDialog,
+  RenameDialog,
+} from "@/components/database/ddl-dialogs"
 
 type ConfirmFn = ReturnType<typeof useConfirm>["confirm"]
 export type TableSelection = { schema: string; table: string }
 const PAGE = 100
 
+const OP_LABELS: Record<string, string> = {
+  eq: "=",
+  ne: "≠",
+  lt: "<",
+  lte: "≤",
+  gt: ">",
+  gte: "≥",
+  contains: "contains",
+  prefix: "starts with",
+  is_null: "is null",
+  not_null: "is not null",
+}
+
 /**
- * The Browse tab: a schema/table rail beside a data grid that can now insert,
- * edit and delete rows and export the table, not only page through it.
+ * The Browse tab: a table rail beside a data grid that reads, edits, filters,
+ * sorts, imports and reshapes.
  *
- * Tables are listed across every schema in one request, each carrying its real
- * schema, and browsing keys off that — a plainer and more correct model than
- * feeding a database name in where a namespace was expected. The schema filter
- * is built from the schemas actually present, so it says something true on every
- * engine. Editing is offered only when a table has a primary key and the role
- * permits it: without a key the server cannot scope a change to one row.
+ * Two decisions are worth keeping. Sorting and filtering happen on the server,
+ * not over the fetched page — filtering one page of a million-row table is not
+ * filtering, it is a trick that looks right until somebody relies on it. And
+ * the row count is a button rather than part of every page fetch, because
+ * COUNT(*) is a full scan on most engines and paying for it on every page turn
+ * would make deep paging progressively slower for a number nobody asked for.
  */
 export function BrowseTab({
   conn,
+  info,
   confirm,
   selection,
   onSelect,
 }: {
   conn: DbConnection
+  info?: DbDriverInfo
   confirm: ConfirmFn
   selection: TableSelection | null
   onSelect: (sel: TableSelection) => void
@@ -54,9 +102,15 @@ export function BrowseTab({
   const [textFilter, setTextFilter] = useState("")
   const [schemaFilter, setSchemaFilter] = useState("all")
   const [offset, setOffset] = useState(0)
-  const [editor, setEditor] = useState<{ mode: "insert" | "edit"; initial?: Record<string, unknown> } | null>(
-    null,
-  )
+  const [sort, setSort] = useState<{ column: string; desc: boolean } | null>(null)
+  const [filters, setFilters] = useState<DbFilter[]>([])
+  const [showFilters, setShowFilters] = useState(false)
+  const [count, setCount] = useState<number | null>(null)
+  const [counting, setCounting] = useState(false)
+  const [editor, setEditor] = useState<{ mode: "insert" | "edit"; initial?: Record<string, unknown> } | null>(null)
+  const [dialog, setDialog] = useState<
+    null | "createTable" | "addColumn" | "createIndex" | "renameTable" | "import"
+  >(null)
 
   const tables = usePoll(
     (signal) => get<DbTable[]>(`/databases/${conn.id}/tables`, { schema: "" }, signal),
@@ -65,7 +119,7 @@ export function BrowseTab({
   )
   const detail = usePoll(
     (signal) =>
-      selection && conn.driver !== "mongodb"
+      selection
         ? get<DbTableDetail>(
             `/databases/${conn.id}/table`,
             { schema: selection.schema, table: selection.table },
@@ -75,17 +129,34 @@ export function BrowseTab({
     0,
     [conn.id, selection?.schema, selection?.table],
   )
+
+  // Only filters with a value (or one of the two null tests) are sent, so a
+  // half-typed filter row does not blank the grid while it is being written.
+  const activeFilters = useMemo(
+    () => filters.filter((f) => f.column && (f.value !== "" || f.op === "is_null" || f.op === "not_null")),
+    [filters],
+  )
+  const filterParam = activeFilters.length ? JSON.stringify(activeFilters) : undefined
+
   const rows = usePoll(
     (signal) =>
       selection
         ? get<QueryResult>(
             `/databases/${conn.id}/browse`,
-            { schema: selection.schema, table: selection.table, limit: PAGE, offset },
+            {
+              schema: selection.schema,
+              table: selection.table,
+              limit: PAGE,
+              offset,
+              orderBy: sort?.column,
+              dir: sort?.desc ? "desc" : undefined,
+              filters: filterParam,
+            },
             signal,
           )
         : Promise.resolve(null as unknown as QueryResult),
     0,
-    [conn.id, selection?.schema, selection?.table, offset],
+    [conn.id, selection?.schema, selection?.table, offset, sort?.column, sort?.desc, filterParam],
   )
 
   const schemaNames = useMemo(() => {
@@ -104,25 +175,53 @@ export function BrowseTab({
 
   const select = (t: DbTable) => {
     setOffset(0)
+    setSort(null)
+    setFilters([])
+    setCount(null)
     onSelect({ schema: t.schema, table: t.name })
   }
 
   const pk = detail.data?.primaryKey ?? []
-  const canWrite = can("service.control") && conn.driver !== "mongodb"
+  const canWrite = can("service.control")
   const canEditRows = canWrite && pk.length > 0 && detail.data !== null
+  const canDDL = canWrite && (info?.ddl ?? false)
   const table = selection?.table
+  const schema = selection?.schema ?? ""
 
   const reload = () => {
     rows.refresh()
     tables.refresh()
+    detail.refresh()
+    setCount(null)
   }
+
+  const toggleSort = (column: string) => {
+    setOffset(0)
+    setSort((s) => (s?.column === column ? (s.desc ? null : { column, desc: true }) : { column, desc: false }))
+  }
+
+  const fetchCount = async () => {
+    if (!selection) return
+    setCounting(true)
+    try {
+      const res = await get<{ count: number }>(`/databases/${conn.id}/count`, {
+        schema, table, filters: filterParam,
+      })
+      setCount(res.count)
+    } catch (err) {
+      toast.error("Could not count rows", { description: String(err) })
+    } finally {
+      setCounting(false)
+    }
+  }
+
   const insertRow = async (values: Record<string, unknown>) => {
-    await post(`/databases/${conn.id}/rows`, { schema: selection?.schema, table, values })
+    await post(`/databases/${conn.id}/rows`, { schema, table, values })
     toast.success("Row inserted")
     reload()
   }
   const updateRow = async (values: Record<string, unknown>, key?: Record<string, unknown>) => {
-    await patch(`/databases/${conn.id}/rows`, { schema: selection?.schema, table, values, key })
+    await patch(`/databases/${conn.id}/rows`, { schema, table, values, key })
     toast.success("Row updated")
     reload()
   }
@@ -143,10 +242,7 @@ export function BrowseTab({
         </p>
       ),
       action: async (c) => {
-        await del(`/databases/${conn.id}/rows`, {
-          body: { schema: selection?.schema, table, key },
-          confirm: c,
-        })
+        await del(`/databases/${conn.id}/rows`, { body: { schema, table, key }, confirm: c })
         toast.success("Row deleted")
         reload()
       },
@@ -156,13 +252,44 @@ export function BrowseTab({
   const exportTable = (format: "csv" | "json") => {
     if (!selection) return
     const a = document.createElement("a")
-    a.href = downloadUrl(`/databases/${conn.id}/export`, {
-      schema: selection.schema,
-      table: selection.table,
-      format,
-    })
+    a.href = downloadUrl(`/databases/${conn.id}/export`, { schema, table, format })
     a.click()
   }
+
+  const dropTable = () =>
+    confirm({
+      title: "Drop table",
+      phrase: table,
+      confirmLabel: "Drop table",
+      description: (
+        <p>
+          Permanently destroys <b>{table}</b> and every row in it. This cannot be undone.
+        </p>
+      ),
+      action: async (c) => {
+        await del(`/databases/${conn.id}/ddl/table`, { body: { schema, table }, confirm: c })
+        toast.success(`Dropped ${table}`)
+        setCount(null)
+        tables.refresh()
+      },
+    })
+
+  const truncateTable = () =>
+    confirm({
+      title: "Empty table",
+      phrase: table,
+      confirmLabel: "Empty it",
+      description: (
+        <p>
+          Removes every row from <b>{table}</b>, keeping the table itself. This cannot be undone.
+        </p>
+      ),
+      action: async (c) => {
+        await post(`/databases/${conn.id}/ddl/truncate`, { schema, table }, { confirm: c })
+        toast.success(`Emptied ${table}`)
+        reload()
+      },
+    })
 
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] [&>*]:min-w-0">
@@ -171,6 +298,14 @@ export function BrowseTab({
           icon={Database}
           title="Tables"
           description={`${visibleTables.length} of ${tables.data?.length ?? 0}`}
+          actions={
+            canDDL && (
+              <Button size="sm" variant="outline" onClick={() => setDialog("createTable")}>
+                <Plus className="size-3.5" />
+                New
+              </Button>
+            )
+          }
         />
         <PanelBody className="space-y-3">
           {schemaNames.length > 1 && (
@@ -209,7 +344,8 @@ export function BrowseTab({
                 <span className="truncate text-[13px]">{t.name}</span>
                 <span className="truncate text-[11px] text-muted-foreground">
                   {schemaNames.length > 1 ? `${t.schema} · ` : ""}
-                  {t.type} · {t.estimatedRows.toLocaleString()} rows
+                  {t.type}
+                  {t.estimatedRows > 0 && ` · ${t.estimatedRows.toLocaleString()} rows`}
                   {t.size ? ` · ${bytes(t.size)}` : ""}
                 </span>
               </button>
@@ -231,7 +367,9 @@ export function BrowseTab({
           title={table ?? "Pick a table"}
           description={
             rows.data
-              ? `${rows.data.rowCount} rows in ${rows.data.duration}${rows.data.truncated ? " (truncated)" : ""}`
+              ? `${rows.data.rowCount} rows in ${rows.data.duration}${
+                  count !== null ? ` · ${count.toLocaleString()} total` : ""
+                }`
               : undefined
           }
           actions={
@@ -243,24 +381,16 @@ export function BrowseTab({
                     Insert
                   </Button>
                 )}
-                {conn.driver !== "mongodb" && (
-                  <>
-                    <Button size="sm" variant="ghost" title="Export CSV" onClick={() => exportTable("csv")}>
-                      <Download className="size-3.5" />
-                      CSV
-                    </Button>
-                    <Button size="sm" variant="ghost" title="Export JSON" onClick={() => exportTable("json")}>
-                      <FileJson className="size-3.5" />
-                      JSON
-                    </Button>
-                  </>
-                )}
                 <Button
                   size="sm"
-                  variant="outline"
-                  disabled={offset === 0}
-                  onClick={() => setOffset((o) => Math.max(0, o - PAGE))}
+                  variant={showFilters ? "default" : "ghost"}
+                  onClick={() => setShowFilters((v) => !v)}
                 >
+                  <FilterIcon className="size-3.5" />
+                  Filter
+                  {activeFilters.length > 0 && ` (${activeFilters.length})`}
+                </Button>
+                <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - PAGE))}>
                   Previous
                 </Button>
                 <Button
@@ -271,10 +401,65 @@ export function BrowseTab({
                 >
                   Next
                 </Button>
+                <TableMenu
+                  canWrite={canWrite}
+                  canDDL={canDDL}
+                  counting={counting}
+                  onCount={fetchCount}
+                  onExport={exportTable}
+                  onImport={() => setDialog("import")}
+                  onAddColumn={() => setDialog("addColumn")}
+                  onCreateIndex={() => setDialog("createIndex")}
+                  onRename={() => setDialog("renameTable")}
+                  onTruncate={truncateTable}
+                  onDrop={dropTable}
+                />
               </>
             )
           }
         />
+
+        {table && showFilters && (
+          <PanelToolbar className="flex-col items-stretch gap-1.5">
+            {filters.map((f, i) => (
+              <FilterRow
+                key={i}
+                filter={f}
+                columns={detail.data?.columns.map((c) => c.name) ?? []}
+                ops={info?.filterOps ?? Object.keys(OP_LABELS)}
+                onChange={(patchF) => {
+                  setOffset(0)
+                  setFilters((fs) => fs.map((x, j) => (j === i ? { ...x, ...patchF } : x)))
+                }}
+                onRemove={() => {
+                  setOffset(0)
+                  setFilters((fs) => fs.filter((_, j) => j !== i))
+                }}
+              />
+            ))}
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setFilters((fs) => [
+                    ...fs,
+                    { column: detail.data?.columns[0]?.name ?? "", op: "eq", value: "" },
+                  ])
+                }
+              >
+                <Plus className="size-3.5" />
+                Add condition
+              </Button>
+              {activeFilters.length > 0 && (
+                <span className="text-[11px] text-muted-foreground">
+                  Applied on the server, across the whole table — not just this page.
+                </span>
+              )}
+            </div>
+          </PanelToolbar>
+        )}
+
         <PanelBody flush>
           {rows.error && <ErrorState error={rows.error} className="m-4" />}
           {!table && <EmptyState icon={Table2} title="Select a table to browse" />}
@@ -288,6 +473,8 @@ export function BrowseTab({
               )}
               <ResultGrid
                 result={rows.data}
+                sort={sort}
+                onSort={toggleSort}
                 onEdit={canEditRows ? (row) => setEditor({ mode: "edit", initial: row }) : undefined}
                 onDelete={canEditRows ? deleteRow : undefined}
               />
@@ -307,6 +494,199 @@ export function BrowseTab({
           onSubmit={editor.mode === "insert" ? insertRow : updateRow}
         />
       )}
+
+      {dialog === "createTable" && (
+        <CreateTableDialog
+          open
+          onOpenChange={() => setDialog(null)}
+          connId={conn.id}
+          schema={schemaFilter === "all" ? "" : schemaFilter}
+          info={info}
+          onDone={reload}
+        />
+      )}
+      {dialog === "addColumn" && table && (
+        <AddColumnDialog
+          open
+          onOpenChange={() => setDialog(null)}
+          connId={conn.id}
+          schema={schema}
+          table={table}
+          info={info}
+          onDone={reload}
+        />
+      )}
+      {dialog === "createIndex" && table && (
+        <CreateIndexDialog
+          open
+          onOpenChange={() => setDialog(null)}
+          connId={conn.id}
+          schema={schema}
+          table={table}
+          detail={detail.data}
+          onDone={reload}
+        />
+      )}
+      {dialog === "renameTable" && table && (
+        <RenameDialog
+          open
+          onOpenChange={() => setDialog(null)}
+          connId={conn.id}
+          schema={schema}
+          table={table}
+          kind="table"
+          current={table}
+          onDone={() => {
+            setCount(null)
+            tables.refresh()
+          }}
+        />
+      )}
+      {dialog === "import" && table && (
+        <ImportDialog
+          open
+          onOpenChange={() => setDialog(null)}
+          connId={conn.id}
+          schema={schema}
+          table={table}
+          detail={detail.data}
+          confirm={confirm}
+          onDone={reload}
+        />
+      )}
+    </div>
+  )
+}
+
+function TableMenu({
+  canWrite,
+  canDDL,
+  counting,
+  onCount,
+  onExport,
+  onImport,
+  onAddColumn,
+  onCreateIndex,
+  onRename,
+  onTruncate,
+  onDrop,
+}: {
+  canWrite: boolean
+  canDDL: boolean
+  counting: boolean
+  onCount: () => void
+  onExport: (f: "csv" | "json") => void
+  onImport: () => void
+  onAddColumn: () => void
+  onCreateIndex: () => void
+  onRename: () => void
+  onTruncate: () => void
+  onDrop: () => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="ghost">
+          {counting ? <Spinner /> : <MoreHorizontal className="size-4" />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onClick={onCount}>
+          <Hash className="size-3.5" />
+          Count rows
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onExport("csv")}>
+          <Download className="size-3.5" />
+          Export CSV
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onExport("json")}>
+          <FileJson className="size-3.5" />
+          Export JSON
+        </DropdownMenuItem>
+        {canWrite && (
+          <DropdownMenuItem onClick={onImport}>
+            <Upload className="size-3.5" />
+            Import data…
+          </DropdownMenuItem>
+        )}
+        {canDDL && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onAddColumn}>
+              <Plus className="size-3.5" />
+              Add column…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onCreateIndex}>
+              <Plus className="size-3.5" />
+              Create index…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onRename}>Rename table…</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={onTruncate}>
+              <Trash2 className="size-3.5" />
+              Empty table…
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={onDrop}>
+              <Trash2 className="size-3.5" />
+              Drop table…
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function FilterRow({
+  filter,
+  columns,
+  ops,
+  onChange,
+  onRemove,
+}: {
+  filter: DbFilter
+  columns: string[]
+  ops: string[]
+  onChange: (patch: Partial<DbFilter>) => void
+  onRemove: () => void
+}) {
+  const needsValue = filter.op !== "is_null" && filter.op !== "not_null"
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select value={filter.column} onValueChange={(v) => onChange({ column: v })}>
+        <SelectTrigger size="sm" className="w-44">
+          <SelectValue placeholder="column" />
+        </SelectTrigger>
+        <SelectContent>
+          {columns.map((c) => (
+            <SelectItem key={c} value={c} className="font-mono text-xs">
+              {c}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={filter.op} onValueChange={(v) => onChange({ op: v })}>
+        <SelectTrigger size="sm" className="w-32">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ops.map((o) => (
+            <SelectItem key={o} value={o}>
+              {OP_LABELS[o] ?? o}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Input
+        value={filter.value}
+        onChange={(e) => onChange({ value: e.target.value })}
+        disabled={!needsValue}
+        className="h-8 max-w-xs font-mono text-xs"
+        placeholder={needsValue ? "value" : ""}
+      />
+      <Button size="icon" variant="ghost" className="size-7" onClick={onRemove}>
+        <X className="size-3.5" />
+      </Button>
     </div>
   )
 }
