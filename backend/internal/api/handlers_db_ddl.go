@@ -31,8 +31,14 @@ type ddlRequest struct {
 	Kind    string          `json:"kind"`
 }
 
-// ddlContext resolves the pool and decodes the request, which every handler
-// below needs in the same order.
+// ddlContext decodes the request and identifies the connection, without
+// opening a pool.
+//
+// The pool comes later, deliberately: a destructive handler must reach its
+// typed confirmation before it does any work, so a request arriving without the
+// phrase is refused rather than first dialling the database. It also keeps the
+// error the caller sees honest — "you did not confirm" rather than whatever the
+// connection attempt happened to say.
 func (s *Server) ddlContext(r *http.Request) (*ddlRequest, *dbConnection, error) {
 	id, err := parseID(r)
 	if err != nil {
@@ -45,9 +51,12 @@ func (s *Server) ddlContext(r *http.Request) (*ddlRequest, *dbConnection, error)
 	if strings.TrimSpace(req.Table) == "" {
 		return nil, nil, httpx.BadRequest("table is required")
 	}
-	_, conn, err := s.dbPool(r.Context(), id)
+	conn, _, err := s.dbConnRow(r.Context(), id)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !conn.Driver.IsSQL() {
+		return nil, nil, httpx.BadRequest("schema editing is for SQL engines; %s has its own surface", conn.Driver)
 	}
 	return &req, conn, nil
 }
@@ -57,7 +66,10 @@ func (s *Server) handleDDLCreateTable(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
 	stmt, err := dbx.CreateTable(ctx, pool, conn.Driver, req.Schema, req.Table, req.Columns)
@@ -75,7 +87,10 @@ func (s *Server) handleDDLAddColumn(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
 	stmt, err := dbx.AddColumn(ctx, pool, conn.Driver, req.Schema, req.Table, req.Column)
@@ -93,7 +108,10 @@ func (s *Server) handleDDLCreateIndex(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	// Building an index locks or rewrites a large table on several engines, so
 	// this gets the long timeout the dumps get rather than the short one the
 	// other DDL uses.
@@ -119,7 +137,10 @@ func (s *Server) handleDDLRename(w http.ResponseWriter, r *http.Request) error {
 	if strings.TrimSpace(req.To) == "" {
 		return httpx.BadRequest("a new name is required")
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
 
@@ -153,7 +174,10 @@ func (s *Server) handleDDLDropTable(w http.ResponseWriter, r *http.Request) erro
 	if err := httpx.RequireTypedConfirmation(w, r, req.Table); err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 5*time.Minute)
 	defer cancel()
 	stmt, err := dbx.DropTable(ctx, pool, conn.Driver, req.Schema, req.Table)
@@ -179,7 +203,10 @@ func (s *Server) handleDDLDropColumn(w http.ResponseWriter, r *http.Request) err
 	if err := httpx.RequireTypedConfirmation(w, r, req.Name); err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 5*time.Minute)
 	defer cancel()
 	stmt, err := dbx.DropColumn(ctx, pool, conn.Driver, req.Schema, req.Table, req.Name)
@@ -203,7 +230,10 @@ func (s *Server) handleDDLDropIndex(w http.ResponseWriter, r *http.Request) erro
 	if err := httpx.RequireTypedConfirmation(w, r, req.Name); err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 5*time.Minute)
 	defer cancel()
 	stmt, err := dbx.DropIndex(ctx, pool, conn.Driver, req.Schema, req.Table, req.Name)
@@ -224,7 +254,10 @@ func (s *Server) handleDDLTruncate(w http.ResponseWriter, r *http.Request) error
 	if err := httpx.RequireTypedConfirmation(w, r, req.Table); err != nil {
 		return err
 	}
-	pool, _, _ := s.dbPool(r.Context(), conn.ID)
+	pool, _, err := s.dbPool(r.Context(), conn.ID)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := timeoutCtx(r, 5*time.Minute)
 	defer cancel()
 	stmt, err := dbx.TruncateTable(ctx, pool, conn.Driver, req.Schema, req.Table)
