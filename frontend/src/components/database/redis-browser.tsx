@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { Clock, Copy, Database, KeyRound, Save, Search, Trash2 } from "lucide-react"
+import { Clock, Copy, Database, KeyRound, Pencil, Plus, Save, Search, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -32,6 +32,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 type ConfirmFn = ReturnType<typeof useConfirm>["confirm"]
 
@@ -352,45 +359,14 @@ function RedisValueView({
         </div>
       )}
 
-      {value.hash && (
-        <MemberTable
-          head={["Field", "Value"]}
-          rows={Object.entries(value.hash).map(([k, v]) => [k, v])}
-          onDelete={
-            canWrite
-              ? (field) =>
-                  confirm({
-                    title: "Delete hash field",
-                    phrase: field,
-                    confirmLabel: "Delete",
-                    description: (
-                      <p>
-                        Removes <span className="font-mono text-xs">{field}</span> from{" "}
-                        <b>{value.key}</b>.
-                      </p>
-                    ),
-                    action: async (c) => {
-                      await del(`/databases/${conn.id}/keys`, {
-                        body: { key: value.key, field },
-                        confirm: c,
-                        query: { db },
-                      })
-                      onChanged()
-                    },
-                  })
-              : undefined
-          }
-        />
-      )}
-      {value.list && <MemberTable head={["#", "Value"]} rows={value.list.map((v, i) => [String(i), v])} />}
-      {value.set && <MemberTable head={["Member"]} rows={value.set.map((v) => [v])} />}
-      {value.zset && (
-        <MemberTable head={["Member", "Score"]} rows={value.zset.map((z) => [z.member, String(z.score)])} />
-      )}
-      {value.stream && (
-        <MemberTable
-          head={["ID", "Fields"]}
-          rows={value.stream.map((e) => [e.id, JSON.stringify(e.values)])}
+      {value.type !== "string" && (
+        <MemberEditor
+          conn={conn}
+          db={db}
+          value={value}
+          canWrite={canWrite}
+          confirm={confirm}
+          onChanged={onChanged}
         />
       )}
 
@@ -399,60 +375,322 @@ function RedisValueView({
           Showing the first 500 entries. Use the Query tab of your Redis client for the rest.
         </p>
       )}
-      {value.type !== "string" && canWrite && (
+      {value.type === "stream" && (
         <p className="text-xs text-muted-foreground">
-          Collections are read-only here: editing one member from a form would quietly drop
-          everything the form did not show.
+          Streams are append-only structures with their own semantics; this shows their entries
+          but does not edit them.
         </p>
       )}
     </div>
   )
 }
 
-function MemberTable({
-  head,
-  rows,
-  onDelete,
+/**
+ * The collection editor.
+ *
+ * Every write here names one member. That is the whole rule: a view showing 500
+ * of a list's 10,000 entries must never be able to save "the list", because it
+ * would silently drop the 9,500 it never showed. So there is no Save-all button
+ * — there is add-a-member, edit-this-member and remove-this-member, each of
+ * which means exactly what it says however much of the collection is on screen.
+ */
+function MemberEditor({
+  conn,
+  db,
+  value,
+  canWrite,
+  confirm,
+  onChanged,
 }: {
-  head: string[]
-  rows: string[][]
-  onDelete?: (first: string) => void
+  conn: DbConnection
+  db: string
+  value: RedisValue
+  canWrite: boolean
+  confirm: ConfirmFn
+  onChanged: () => void
 }) {
+  const [editing, setEditing] = useState<{ field: string; value: string } | null>(null)
+  const [adding, setAdding] = useState(false)
+
+  const rows = memberRows(value)
+  const labels = memberLabels(value.type)
+
+  const write = async (field: string, member: string) => {
+    await post(
+      `/databases/${conn.id}/keys/value`,
+      { key: value.key, type: value.type, field, value: member },
+      { query: { db } },
+    )
+    toast.success("Saved")
+    setEditing(null)
+    setAdding(false)
+    onChanged()
+  }
+
+  const remove = (member: string, shown: string) =>
+    confirm({
+      title: `Remove ${value.type} member`,
+      phrase: member,
+      confirmLabel: "Remove",
+      description: (
+        <p>
+          Removes <span className="font-mono text-xs">{shown}</span> from{" "}
+          <b>{value.key}</b>. The rest of the {value.type} is left alone.
+        </p>
+      ),
+      action: async (c) => {
+        await del(`/databases/${conn.id}/keys`, {
+          body: { key: value.key, type: value.type, member },
+          confirm: c,
+          query: { db },
+        })
+        toast.success("Member removed")
+        onChanged()
+      },
+    })
+
+  const editable = value.type !== "stream"
+
   return (
-    <div className="overflow-hidden rounded-md border border-hairline">
-      <Table containerClassName="max-h-[26rem]">
-        <TableHeader>
-          <TableRow>
-            {head.map((h) => (
-              <TableHead key={h}>{h}</TableHead>
-            ))}
-            {onDelete && <TableHead className="w-10" />}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((r, i) => (
-            <TableRow key={i}>
-              {r.map((c, j) => (
-                <TableCell key={j} className="max-w-md truncate font-mono text-xs">
-                  {c}
-                </TableCell>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs">
+          {rows.length} {value.type} {rows.length === 1 ? "entry" : "entries"}
+        </Label>
+        {canWrite && editable && (
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+            <Plus className="size-3.5" />
+            Add
+          </Button>
+        )}
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-hairline">
+        <Table containerClassName="max-h-[26rem]">
+          <TableHeader>
+            <TableRow>
+              {labels.map((h) => (
+                <TableHead key={h}>{h}</TableHead>
               ))}
-              {onDelete && (
-                <TableCell className="w-10">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-6 text-destructive"
-                    onClick={() => onDelete(r[0])}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </TableCell>
-              )}
+              {canWrite && editable && <TableHead className="w-20" />}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.key} className="group">
+                <TableCell className="max-w-[14rem] truncate font-mono text-xs">{r.key}</TableCell>
+                <TableCell className="max-w-md truncate font-mono text-xs">{r.value}</TableCell>
+                {canWrite && editable && (
+                  <TableCell className="w-20">
+                    <div className="flex items-center gap-0.5 opacity-40 transition-opacity group-hover:opacity-100">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-6"
+                        title="Edit"
+                        onClick={() => setEditing({ field: r.field, value: r.editValue })}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-6 text-destructive"
+                        title="Remove"
+                        onClick={() => remove(r.member, r.key)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={3} className="text-xs text-muted-foreground">
+                  Nothing in this {value.type}.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {(editing || adding) && (
+        <MemberDialog
+          type={value.type}
+          initialField={editing?.field ?? ""}
+          initialValue={editing?.value ?? ""}
+          isNew={adding}
+          onClose={() => {
+            setEditing(null)
+            setAdding(false)
+          }}
+          onSave={write}
+        />
+      )}
     </div>
+  )
+}
+
+type MemberRow = {
+  /** What identifies the row on screen. */
+  key: string
+  value: string
+  /** What the write API takes in its `field` slot — an index, a hash field or a score. */
+  field: string
+  /** What the delete API takes as the member to remove. */
+  member: string
+  editValue: string
+}
+
+// memberRows flattens whichever collection this key holds into one shape, so the
+// table below renders once rather than four times.
+function memberRows(v: RedisValue): MemberRow[] {
+  if (v.hash)
+    return Object.entries(v.hash).map(([f, val]) => ({
+      key: f,
+      value: val,
+      field: f,
+      member: f,
+      editValue: val,
+    }))
+  if (v.list)
+    return v.list.map((val, i) => ({
+      key: String(i),
+      value: val,
+      field: String(i),
+      member: String(i),
+      editValue: val,
+    }))
+  if (v.set)
+    return v.set.map((val) => ({ key: val, value: val, field: "", member: val, editValue: val }))
+  if (v.zset)
+    return v.zset.map((z) => ({
+      key: String(z.score),
+      value: z.member,
+      field: String(z.score),
+      member: z.member,
+      editValue: z.member,
+    }))
+  if (v.stream)
+    return v.stream.map((e) => ({
+      key: e.id,
+      value: JSON.stringify(e.values),
+      field: e.id,
+      member: e.id,
+      editValue: "",
+    }))
+  return []
+}
+
+function memberLabels(type: string): string[] {
+  switch (type) {
+    case "hash":
+      return ["Field", "Value"]
+    case "list":
+      return ["#", "Value"]
+    case "zset":
+      return ["Score", "Member"]
+    case "stream":
+      return ["ID", "Fields"]
+    default:
+      return ["Member", "Value"]
+  }
+}
+
+/** The one form behind adding and editing a collection member. What the "field"
+ *  box means changes with the type, so it is labelled per type rather than
+ *  called something generic that is wrong for three of the four. */
+function MemberDialog({
+  type,
+  initialField,
+  initialValue,
+  isNew,
+  onClose,
+  onSave,
+}: {
+  type: string
+  initialField: string
+  initialValue: string
+  isNew: boolean
+  onClose: () => void
+  onSave: (field: string, value: string) => Promise<void>
+}) {
+  const [field, setField] = useState(initialField)
+  const [member, setMember] = useState(initialValue)
+  const [busy, setBusy] = useState(false)
+
+  const fieldLabel: Record<string, string> = {
+    hash: "Field name",
+    list: isNew ? "Position (blank to append)" : "Position",
+    zset: "Score",
+    set: "",
+  }
+  const label = fieldLabel[type] ?? ""
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await onSave(field, member)
+    } catch (err) {
+      toast.error("Could not save", { description: String(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const needsField = type === "hash" || type === "zset" || (type === "list" && !isNew)
+  const valid = member !== "" && (!needsField || field !== "")
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {isNew ? "Add" : "Edit"} {type} member
+          </DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3">
+          {label && (
+            <div className="space-y-1.5">
+              <Label>{label}</Label>
+              <Input
+                value={field}
+                onChange={(e) => setField(e.target.value)}
+                className="font-mono text-xs"
+                disabled={type === "list" && !isNew}
+                autoFocus={isNew}
+              />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label>Value</Label>
+            <Textarea
+              value={member}
+              onChange={(e) => setMember(e.target.value)}
+              className="min-h-24 font-mono text-xs"
+              autoFocus={!isNew}
+            />
+          </div>
+          {type === "set" && !isNew && (
+            <p className="text-xs text-muted-foreground">
+              A set has no positions, so editing a member adds the new value; remove the old one
+              if you meant to replace it.
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={!valid || busy}>
+            {busy && <Spinner />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

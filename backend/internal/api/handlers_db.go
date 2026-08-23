@@ -271,19 +271,30 @@ func (s *Server) handleDBPing(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if conn.Driver == dbx.DriverMongo {
+	// Every engine answers this, including the two that are not SQL. Falling
+	// through to the pool for them reported "this endpoint is for SQL engines"
+	// as though it were a connection failure, which left a healthy Redis
+	// connection showing a permanently red badge.
+	switch conn.Driver {
+	case dbx.DriverMongo:
 		client, err := dbx.MongoClient(r.Context(), dsn)
 		if err != nil {
 			httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 			return nil
 		}
 		defer client.Disconnect(context.Background())
-		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
-		return nil
-	}
-	if _, _, err := s.dbPool(r.Context(), id); err != nil {
-		httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
-		return nil
+	case dbx.DriverRedis:
+		client, err := dbx.RedisClient(r.Context(), dsn, 0)
+		if err != nil {
+			httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return nil
+		}
+		defer client.Close()
+	default:
+		if _, _, err := s.dbPool(r.Context(), id); err != nil {
+			httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return nil
+		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 	return nil
@@ -311,6 +322,19 @@ func (s *Server) handleDBStats(w http.ResponseWriter, r *http.Request) error {
 		httpx.JSON(w, http.StatusOK, map[string]any{"server": status})
 		return nil
 	}
+	if conn.Driver == dbx.DriverRedis {
+		client, err := dbx.RedisClient(r.Context(), dsn, 0)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "connect_failed", err.Error())
+		}
+		defer client.Close()
+		info, err := dbx.RedisInfo(r.Context(), client)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"server": info})
+		return nil
+	}
 	if _, _, err := s.dbPool(r.Context(), id); err != nil {
 		return err
 	}
@@ -334,6 +358,19 @@ func (s *Server) handleDBList(w http.ResponseWriter, r *http.Request) error {
 		}
 		defer client.Disconnect(context.Background())
 		dbs, err := dbx.MongoDatabases(r.Context(), client)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+		}
+		httpx.JSON(w, http.StatusOK, dbs)
+		return nil
+	}
+	if conn.Driver == dbx.DriverRedis {
+		client, err := dbx.RedisClient(r.Context(), dsn, 0)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "connect_failed", err.Error())
+		}
+		defer client.Close()
+		dbs, err := dbx.RedisDatabases(r.Context(), client)
 		if err != nil {
 			return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
 		}
@@ -762,7 +799,7 @@ func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) error {
 	if !format.Valid() {
 		format = dbx.ExportCSV
 	}
-	pool, conn, err := s.dbPool(r.Context(), id)
+	conn, dsn, err := s.dbConnRow(r.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -772,8 +809,37 @@ func (s *Server) handleDBExport(w http.ResponseWriter, r *http.Request) error {
 	filename := fmt.Sprintf("%s.%s", table, format.Extension())
 	w.Header().Set("Content-Type", format.ContentType())
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	count, truncated, err := dbx.ExportTable(ctx, pool, conn.Driver, q.Get("schema"), table, format, w,
-		atoiDefault(q.Get("limit"), 0))
+
+	var (
+		count     int
+		truncated bool
+	)
+	if conn.Driver == dbx.DriverMongo {
+		// A collection exports through its own path: the column set is the
+		// union of the documents' keys rather than a fixed result shape, and
+		// the filter is a document rather than a WHERE clause.
+		client, cerr := dbx.MongoClient(ctx, dsn)
+		if cerr != nil {
+			httpx.SetAudit(r, "database.export", conn.Name,
+				map[string]any{"table": table, "error": cerr.Error()})
+			return nil
+		}
+		defer client.Disconnect(context.Background())
+		database := q.Get("schema")
+		if database == "" {
+			database = conn.Database
+		}
+		count, truncated, err = dbx.MongoExport(ctx, client, database, table,
+			dbx.MongoFindOptions{Filter: q.Get("filter"), Sort: q.Get("sort")},
+			format, w, atoiDefault(q.Get("limit"), 0))
+	} else {
+		pool, _, perr := s.dbPool(r.Context(), id)
+		if perr != nil {
+			return perr
+		}
+		count, truncated, err = dbx.ExportTable(ctx, pool, conn.Driver, q.Get("schema"), table, format, w,
+			atoiDefault(q.Get("limit"), 0))
+	}
 	if err != nil {
 		// Headers are already sent, so the error cannot become a JSON body; it is
 		// recorded in the audit trail and the connection is dropped by the client

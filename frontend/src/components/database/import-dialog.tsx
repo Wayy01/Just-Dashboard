@@ -41,6 +41,7 @@ export function ImportDialog({
   table,
   detail,
   confirm,
+  documentStore,
   onDone,
 }: {
   open: boolean
@@ -50,9 +51,11 @@ export function ImportDialog({
   table: string
   detail?: DbTableDetail | null
   confirm: ConfirmFn
+  /** A document store cannot promise all-or-nothing, and says so. */
+  documentStore?: boolean
   onDone: () => void
 }) {
-  const [format, setFormat] = useState<"csv" | "json">("csv")
+  const [format, setFormat] = useState<"csv" | "json">(documentStore ? "json" : "csv")
   const [data, setData] = useState("")
   const [hasHeader, setHasHeader] = useState(true)
   const [truncate, setTruncate] = useState(false)
@@ -147,12 +150,14 @@ export function ImportDialog({
               placeholder={
                 format === "csv"
                   ? detail?.columns.map((c) => c.name).join(",") || "id,name"
-                  : '[{"id": 1, "name": "…"}]'
+                  : '[{"name": "…"}]'
               }
             />
             <p className="text-xs text-muted-foreground">
               Sent in one request, so this tops out around 4 MB. A larger load belongs in the
               engine&apos;s own bulk loader.
+              {documentStore &&
+                " JSON may be an array or one document per line, which is what mongoexport writes."}
             </p>
           </div>
 
@@ -185,6 +190,13 @@ export function ImportDialog({
               <Checkbox checked={truncate} onCheckedChange={(v) => setTruncate(Boolean(v))} />
               Replace existing contents
             </label>
+            {documentStore && (
+              <p className="col-span-full text-[11px] text-muted-foreground">
+                A standalone MongoDB server has no transaction to wrap this in, so a failure
+                partway leaves what already landed in place. The result below says exactly how
+                much that was.
+              </p>
+            )}
           </div>
 
           {result && (

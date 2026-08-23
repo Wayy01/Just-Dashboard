@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -323,7 +324,14 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) error {
 				"too many destructive imports, slow down")
 		}
 	}
-	pool, conn, err := s.dbPool(r.Context(), id)
+	conn, dsn, err := s.dbConnRow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	if conn.Driver == dbx.DriverMongo {
+		return s.importMongo(w, r, conn, dsn, &req)
+	}
+	pool, _, err := s.dbPool(r.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -348,6 +356,50 @@ func (s *Server) handleDBImport(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.SetAudit(r, "database.import", conn.Name, map[string]any{
 		"table": req.Table, "inserted": res.Inserted, "failed": res.Failed,
+		"truncated": req.Truncate,
+	})
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+// importMongo is the document-store half of the import route.
+//
+// It is a separate path rather than a branch inside the shared one because the
+// guarantees differ and the difference is worth being explicit about: the SQL
+// import wraps everything in a transaction and either commits or rolls back,
+// while a standalone Mongo server has no transaction to offer. Truncate here
+// means dropping the collection, which is why it demands the same confirmation
+// the SQL truncate does — that check has already run by the time we arrive.
+func (s *Server) importMongo(w http.ResponseWriter, r *http.Request, conn *dbConnection, dsn string, req *importRequest) error {
+	ctx, cancel := timeoutCtx(r, 15*time.Minute)
+	defer cancel()
+
+	client, err := dbx.MongoClient(ctx, dsn)
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "connect_failed", err.Error())
+	}
+	defer client.Disconnect(context.Background())
+
+	database := req.Schema
+	if database == "" {
+		database = conn.Database
+	}
+	if database == "" {
+		return httpx.BadRequest("a database is required")
+	}
+	if req.Truncate {
+		if err := dbx.MongoDropCollection(ctx, client, database, req.Table); err != nil {
+			return httpx.BadRequest("could not empty the collection first: %v", err)
+		}
+	}
+	res, err := dbx.MongoImport(ctx, client, database, req.Table, req.Format, req.Data, req.StopOnError)
+	if err != nil {
+		httpx.SetAudit(r, "database.import", conn.Name,
+			map[string]any{"collection": req.Table, "error": err.Error()})
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.import", conn.Name, map[string]any{
+		"collection": req.Table, "inserted": res.Inserted, "failed": res.Failed,
 		"truncated": req.Truncate,
 	})
 	httpx.JSON(w, http.StatusOK, res)

@@ -1,9 +1,9 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Braces, Database, FileJson, Play, Plus, Table2, Trash2 } from "lucide-react"
+import { Braces, Database, Download, FileJson, Play, Plus, Table2, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
-import { del, get, patch, post } from "@/lib/api"
+import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type {
@@ -45,6 +45,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ResultGrid } from "@/components/database/result-grid"
+import { ImportDialog } from "@/components/database/import-dialog"
 
 type ConfirmFn = ReturnType<typeof useConfirm>["confirm"]
 const PAGE = 100
@@ -71,6 +72,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   const [skip, setSkip] = useState(0)
   const [editing, setEditing] = useState<{ doc: string; id: unknown } | null>(null)
   const [inserting, setInserting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const databases = usePoll(
     (signal) => get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
@@ -124,6 +126,21 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   }
 
   const idFilter = (row: Record<string, unknown>) => JSON.stringify({ _id: row._id })
+
+  // Export honours the filter currently applied, so what downloads is what is
+  // on screen rather than the whole collection — which is almost never what
+  // somebody looking at a filtered view meant.
+  const exportDocs = (format: "csv" | "json") => {
+    if (!collection) return
+    const a = document.createElement("a")
+    a.href = downloadUrl(`/databases/${conn.id}/export`, {
+      schema: dbName,
+      table: collection,
+      filter: applied,
+      format,
+    })
+    a.click()
+  }
 
   const editDoc = (row: Record<string, unknown>) =>
     setEditing({ doc: JSON.stringify(row, null, 2), id: row._id })
@@ -284,6 +301,30 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
                       )}
                       <Button
                         size="sm"
+                        variant="ghost"
+                        title="Export the current filter as CSV"
+                        onClick={() => exportDocs("csv")}
+                      >
+                        <Download className="size-3.5" />
+                        CSV
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Export the current filter as JSON"
+                        onClick={() => exportDocs("json")}
+                      >
+                        <FileJson className="size-3.5" />
+                        JSON
+                      </Button>
+                      {canWrite && (
+                        <Button size="sm" variant="ghost" onClick={() => setImporting(true)}>
+                          <Upload className="size-3.5" />
+                          Import
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
                         variant="outline"
                         disabled={skip === 0}
                         onClick={() => setSkip((s) => Math.max(0, s - PAGE))}
@@ -406,6 +447,18 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           initial={editing.doc}
           onClose={() => setEditing(null)}
           onSave={(json) => saveDoc(json, editing.id)}
+        />
+      )}
+      {importing && collection && (
+        <ImportDialog
+          open
+          onOpenChange={(o) => !o && setImporting(false)}
+          connId={conn.id}
+          schema={dbName}
+          table={collection}
+          confirm={confirm}
+          documentStore
+          onDone={reload}
         />
       )}
       {inserting && (
