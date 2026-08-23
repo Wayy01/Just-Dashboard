@@ -141,6 +141,11 @@ func (s *Service) SSHDStatus(ctx context.Context) *SSHDConfig {
 	}
 	for _, def := range sshDirectives {
 		value := first(values[def.Key], def.Default)
+		if def.Kind == "list" {
+			// sshd accumulates these across every line that sets them, so the
+			// first value alone would silently hide the rest.
+			value = strings.Join(values[def.Key], " ")
+		}
 		cfg.Settings = append(cfg.Settings, SSHSetting{
 			Key: def.Key, Label: def.Label, Value: value,
 			Recommended: def.Recommended, Secure: def.secure(value),
@@ -171,17 +176,30 @@ type sshDirective struct {
 	// Accept lists every value that counts as secure. More than one because
 	// "prohibit-password" and "forced-commands-only" are both fine answers
 	// for root login and neither is "the" recommendation.
-	Accept  []string
-	Max     int // for numeric directives: the largest value still counted secure
-	Min     int
-	Detail  string
-	Risk    string
-	Options []string
-	Kind    string
+	Accept []string
+	// Max and Min are the *recommendation*: a MaxAuthTries of 6 is legal and
+	// not advised. LegalMax and LegalMin are what the value is refused
+	// outside. Conflating the two meant a port's range was treated as advice
+	// and never enforced.
+	Max      int
+	Min      int
+	LegalMax int
+	LegalMin int
+	Detail   string
+	Risk     string
+	Options  []string
+	Kind     string
+	// AlwaysAcceptable marks a directive with no better or worse value — a
+	// port, a list of accounts. Grading those would put a permanent amber
+	// dot next to a setting that is simply a choice.
+	AlwaysAcceptable bool
 }
 
 func (d sshDirective) secure(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
+	if d.AlwaysAcceptable {
+		return true
+	}
 	if d.Kind == "number" {
 		n, err := strconv.Atoi(value)
 		if err != nil {
@@ -260,6 +278,28 @@ var sshDirectives = []sshDirective{
 		Recommended: "300 seconds", Min: 1, Max: 900, Kind: "number",
 		Detail: "How often the server checks a quiet session is still there.",
 		Risk:   "At zero, a session whose client vanished stays open indefinitely.",
+	},
+	{
+		Key: "port", Label: "Port", Default: "22",
+		// Any port is as secure as any other. Moving off 22 removes the
+		// background noise of untargeted scanning and nothing else, which is
+		// worth saying rather than dressing up as hardening — so it is not
+		// graded, only bounded.
+		Recommended: "any", LegalMin: 1, LegalMax: 65535,
+		Kind: "number", AlwaysAcceptable: true,
+		Detail: "Where sshd listens. Moving off 22 quiets the logs; it does not make the server harder to break into.",
+		Risk:   "Change this and the firewall must already allow the new port, or the next connection has nowhere to land.",
+	},
+	{
+		Key: "allowusers", Label: "Only these accounts may log in", Default: "",
+		Recommended: "", Kind: "list", AlwaysAcceptable: true,
+		Detail: "A space-separated list. Leave empty to allow every account that is otherwise permitted.",
+		Risk:   "An account left off this list cannot log in at all, however good its key is.",
+	},
+	{
+		Key: "denyusers", Label: "These accounts may never log in", Default: "",
+		Recommended: "", Kind: "list", AlwaysAcceptable: true,
+		Detail: "A space-separated list, applied before the allow list.",
 	},
 }
 

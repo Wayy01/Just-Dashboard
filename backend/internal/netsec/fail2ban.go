@@ -221,25 +221,10 @@ var jailParams = map[string]struct{ min, max int }{
 	"maxretry": {1, 100},
 }
 
-// SetJailParam changes one of a jail's parameters on the running server.
-//
-// The change lives until fail2ban restarts, which is deliberate and is said so
-// in the UI: writing it into jail.local would mean parsing and rewriting a
-// file whose layout differs by distribution, and getting that wrong disables
-// intrusion prevention silently. Tightening a jail from here and then making
-// it permanent in the file is the honest workflow.
-func (s *Service) SetJailParam(ctx context.Context, jail, param string, value int) (string, error) {
-	if !jailNameRe.MatchString(jail) {
-		return "", fmt.Errorf("invalid jail name %q", jail)
-	}
-	bounds, ok := jailParams[strings.ToLower(param)]
-	if !ok {
-		return "", fmt.Errorf("%q is not a parameter this dashboard sets", param)
-	}
-	if value < bounds.min || value > bounds.max {
-		return "", fmt.Errorf("%s must be between %d and %d", param, bounds.min, bounds.max)
-	}
-	return run(ctx, "fail2ban-client", "set", jail, strings.ToLower(param), strconv.Itoa(value))
+// SetJailParam changes one parameter. It is the single-value shorthand for
+// SetJailParams, which is where the work is.
+func (s *Service) SetJailParam(ctx context.Context, jail, param string, value int) (*JailParamResult, error) {
+	return s.SetJailParams(ctx, jail, map[string]int{strings.ToLower(strings.TrimSpace(param)): value})
 }
 
 // There is deliberately no start/stop for a jail. fail2ban-client's status

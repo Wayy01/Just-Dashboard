@@ -3,6 +3,7 @@ package netsec
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,4 +126,41 @@ func sshdSessions(ctx context.Context) []sshdProc {
 		out = append(out, sshdProc{PID: p.Pid, User: user, Command: cmd})
 	}
 	return out
+}
+
+// Disconnect ends one interactive login.
+//
+// The guard is the whole feature: the PID is looked up in the session list
+// this package just built, and anything not on it is refused. Without that
+// this route is a "kill any process on the host" primitive wearing a sensible
+// name — the same reasoning that keeps client-supplied paths behind
+// files.Resolve.
+//
+// SIGHUP rather than SIGKILL, because a hangup is what a dropped connection
+// looks like to a shell: the session's children get the signal too and the
+// login is recorded as ended rather than as a process that vanished.
+func (s *Service) Disconnect(ctx context.Context, pid int32) (LoginSession, error) {
+	if pid <= 1 {
+		return LoginSession{}, fmt.Errorf("invalid process id")
+	}
+	sessions, err := s.Sessions(ctx)
+	if err != nil {
+		return LoginSession{}, err
+	}
+	var target LoginSession
+	for _, sess := range sessions {
+		if sess.PID == pid {
+			target = sess
+			break
+		}
+	}
+	if target.PID == 0 {
+		return LoginSession{}, fmt.Errorf("no interactive login is running as process %d", pid)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if out, err := hostexec.CommandOnHost(ctx, "kill", "-HUP", strconv.Itoa(int(pid))).CombinedOutput(); err != nil {
+		return target, fmt.Errorf("could not end the session: %s", strings.TrimSpace(string(out)))
+	}
+	return target, nil
 }

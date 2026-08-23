@@ -1,0 +1,205 @@
+package proxysvc
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// A wildcard certificate cannot be issued over HTTP.
+//
+// Let's Encrypt will only sign *.example.com against a DNS challenge, and a
+// domain behind Cloudflare's proxy cannot answer an HTTP challenge at all
+// because the request never reaches this host. Between them that is most of
+// the certificates people actually want and could not get from this page —
+// the single biggest gap in the certificate feature as it shipped.
+//
+// The mechanism is a certbot plugin plus a credentials file. The plugin is the
+// host's to install; what the dashboard adds is somewhere to put the
+// credentials, an argv that is correct for each provider, and the propagation
+// wait that is the commonest reason a DNS challenge fails on the first try.
+
+// DNSProvider is one certbot DNS plugin this dashboard knows how to drive.
+type DNSProvider struct {
+	Key string `json:"key"`
+	// Name is what the operator picks.
+	Name string `json:"name"`
+	// Plugin is the certbot argument, which is also the package name.
+	Plugin string `json:"plugin"`
+	// Installed reports whether the plugin is present on this host. Offering a
+	// provider that cannot run produces certbot's own error three screens
+	// later, which nobody reads as "install the plugin".
+	Installed bool `json:"installed"`
+	// Credentials describes what goes in the file, in the provider's own
+	// wording, because every one of them spells it differently.
+	Credentials string `json:"credentials"`
+	// DefaultWait is the propagation delay in seconds. The defaults are
+	// generous on purpose: a challenge that fails because the record had not
+	// spread yet looks exactly like a wrong API token.
+	DefaultWait int `json:"defaultWait"`
+}
+
+// dnsProviders is a closed set. Each entry is an argv this code is willing to
+// build, and certbot has dozens of plugins whose credential formats differ in
+// ways that cannot be guessed.
+var dnsProviders = []DNSProvider{
+	{
+		Key: "cloudflare", Name: "Cloudflare", Plugin: "dns-cloudflare", DefaultWait: 30,
+		Credentials: "dns_cloudflare_api_token = your-scoped-token\n\nCreate the token with Zone:DNS:Edit on the zone you are issuing for.",
+	},
+	{
+		Key: "route53", Name: "AWS Route 53", Plugin: "dns-route53", DefaultWait: 30,
+		Credentials: "aws_access_key_id = AKIA...\naws_secret_access_key = ...\n\nThe plugin also reads the machine's IAM role, in which case leave this empty.",
+	},
+	{
+		Key: "digitalocean", Name: "DigitalOcean", Plugin: "dns-digitalocean", DefaultWait: 30,
+		Credentials: "dns_digitalocean_token = your-personal-access-token",
+	},
+	{
+		Key: "google", Name: "Google Cloud DNS", Plugin: "dns-google", DefaultWait: 60,
+		Credentials: "Paste the service-account JSON key here.",
+	},
+	{
+		Key: "linode", Name: "Linode", Plugin: "dns-linode", DefaultWait: 120,
+		Credentials: "dns_linode_key = your-api-key\ndns_linode_version = 4",
+	},
+	{
+		Key: "ovh", Name: "OVH", Plugin: "dns-ovh", DefaultWait: 60,
+		Credentials: "dns_ovh_endpoint = ovh-eu\ndns_ovh_application_key = ...\ndns_ovh_application_secret = ...\ndns_ovh_consumer_key = ...",
+	},
+	{
+		Key: "gandi", Name: "Gandi", Plugin: "dns-gandi", DefaultWait: 30,
+		Credentials: "dns_gandi_token = your-personal-access-token",
+	},
+	{
+		Key: "rfc2136", Name: "RFC 2136 (BIND, Knot, PowerDNS)", Plugin: "dns-rfc2136", DefaultWait: 60,
+		Credentials: "dns_rfc2136_server = 192.0.2.1\ndns_rfc2136_port = 53\ndns_rfc2136_name = keyname.\ndns_rfc2136_secret = base64secret\ndns_rfc2136_algorithm = HMAC-SHA512",
+	},
+}
+
+// DNSProviderFor looks one up by key.
+func DNSProviderFor(key string) (DNSProvider, bool) {
+	for _, p := range dnsProviders {
+		if p.Key == key {
+			return p, true
+		}
+	}
+	return DNSProvider{}, false
+}
+
+// dnsCredentialsDir is where credential files are kept. Inside certbot's own
+// tree because that is the directory an operator already treats as secret and
+// already backs up with the certificates it protects.
+const dnsCredentialsDir = "/etc/letsencrypt/jd-dns"
+
+// credentialsPath is the file for one provider. One per provider rather than
+// one per certificate: the credentials belong to the DNS account, and a
+// certificate that later covers another domain in the same zone should not
+// need them pasted again.
+func credentialsPath(key string) string {
+	return filepath.Join(dnsCredentialsDir, key+".ini")
+}
+
+// WriteDNSCredentials stores a provider's credentials at 0600.
+//
+// certbot refuses to use a credentials file that is group- or world-readable,
+// which is the one piece of file hygiene it enforces and the one people get
+// wrong when they create the file by hand.
+func WriteDNSCredentials(key, content string) (string, error) {
+	provider, ok := DNSProviderFor(key)
+	if !ok {
+		return "", fmt.Errorf("%q is not a DNS provider this dashboard supports", key)
+	}
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("%s needs its credentials before it can answer a challenge", provider.Name)
+	}
+	if len(content) > 64*1024 {
+		return "", fmt.Errorf("credentials are unexpectedly large")
+	}
+	if err := os.MkdirAll(dnsCredentialsDir, 0o700); err != nil {
+		return "", err
+	}
+	path := credentialsPath(key)
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	// Written and then tightened, in case the file already existed with a
+	// wider mode — WriteFile does not chmod an existing file.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// HasDNSCredentials reports whether a provider is ready to use.
+func HasDNSCredentials(key string) bool {
+	st, err := os.Stat(credentialsPath(key))
+	return err == nil && st.Size() > 0
+}
+
+// ListDNSProviders reports the closed set with per-host detail filled in.
+func (s *Service) ListDNSProviders() []DNSProvider {
+	out := make([]DNSProvider, 0, len(dnsProviders))
+	for _, p := range dnsProviders {
+		p.Installed = certbotPluginInstalled(p.Plugin)
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// Installed first: the list is a choice, and the ones that will work
+		// are the ones worth reading.
+		if out[i].Installed != out[j].Installed {
+			return out[i].Installed
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// certbotPluginInstalled looks for the plugin's own directory rather than
+// asking certbot, which costs a subprocess per provider and would make the
+// list a second slow.
+func certbotPluginInstalled(plugin string) bool {
+	module := "certbot_" + strings.ReplaceAll(strings.TrimPrefix(plugin, "dns-"), "-", "_")
+	roots := []string{
+		"/usr/lib/python3/dist-packages", "/usr/lib/python3.11/site-packages",
+		"/usr/lib/python3.12/site-packages", "/snap/certbot/current/lib/python3.12/site-packages",
+		"/opt/certbot/lib/python3.11/site-packages", "/opt/certbot/lib/python3.12/site-packages",
+	}
+	for _, root := range roots {
+		for _, name := range []string{module, "certbot_dns_" + strings.TrimPrefix(plugin, "dns-")} {
+			if _, err := os.Stat(filepath.Join(root, name)); err == nil {
+				return true
+			}
+		}
+	}
+	// Snap installs plugins into the certbot snap's own tree, which globs.
+	matches, _ := filepath.Glob("/snap/certbot/current/lib/*/site-packages/certbot_dns_*")
+	suffix := strings.TrimPrefix(plugin, "dns-")
+	for _, m := range matches {
+		if strings.HasSuffix(m, suffix) || strings.HasSuffix(m, strings.ReplaceAll(suffix, "-", "_")) {
+			return true
+		}
+	}
+	return false
+}
+
+// dnsIssueArgs builds the plugin half of a certbot invocation.
+//
+// Each plugin names its own credentials and propagation arguments after
+// itself, and route53 has neither — it reads the environment or the instance
+// role. Getting this wrong is the difference between a certificate and an
+// error message about an unrecognised flag.
+func dnsIssueArgs(provider DNSProvider, wait int) []string {
+	args := []string{"--" + provider.Plugin}
+	if provider.Key == "route53" {
+		return args
+	}
+	args = append(args,
+		"--"+provider.Plugin+"-credentials", credentialsPath(provider.Key))
+	if wait > 0 {
+		args = append(args, "--"+provider.Plugin+"-propagation-seconds", fmt.Sprint(wait))
+	}
+	return args
+}

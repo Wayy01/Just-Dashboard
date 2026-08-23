@@ -19,6 +19,35 @@ import (
 // one place, the same way the Docker write surface lives in its own file but
 // is mounted from mountDockerRoutes.
 func (s *Server) mountSiteRoutes(r chi.Router) {
+	// Stream forwarding is a sibling of the site builder rather than part of
+	// it: nginx's stream block is a top-level context, not something a server
+	// file can reach, and pretending otherwise in the API would invite a
+	// stream to be written where nginx never reads it.
+	r.Route("/proxy/streams", func(r chi.Router) {
+		r.Method(http.MethodGet, "/", s.handle(s.handleStreamList))
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodPost, "/preview", s.handle(s.handleStreamPreview))
+			r.Method(http.MethodPost, "/", s.handle(s.handleStreamApply))
+			s.destructive(r, func(r chi.Router) {
+				r.Method(http.MethodDelete, "/{name}", s.handle(s.handleStreamDelete))
+			})
+		})
+	})
+
+	// Password files for the site form's basic-auth option. Behind
+	// system.admin throughout: the listing names who may reach a protected
+	// site, and setting one is handing out access to it.
+	r.Route("/proxy/auth-files", func(r chi.Router) {
+		r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+		r.Method(http.MethodGet, "/", s.handle(s.handleAuthFileList))
+		r.Method(http.MethodPost, "/", s.handle(s.handleAuthUserSet))
+		s.destructive(r, func(r chi.Router) {
+			r.Method(http.MethodDelete, "/{file}", s.handle(s.handleAuthFileDelete))
+			r.Method(http.MethodDelete, "/{file}/users/{user}", s.handle(s.handleAuthUserRemove))
+		})
+	})
+
 	r.Route("/proxy/sites", func(r chi.Router) {
 		r.Method(http.MethodGet, "/{name}", s.handle(s.handleSiteSpec))
 		r.Group(func(r chi.Router) {
@@ -227,5 +256,176 @@ func (s *Server) handleCertRevoke(w http.ResponseWriter, r *http.Request) error 
 	}
 	httpx.SetAudit(r, "certificates.revoke", req.Name, nil)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+func (s *Server) handleStreamList(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, http.StatusOK, s.modules.proxy.Streams(r.Context()))
+	return nil
+}
+
+type streamRequest struct {
+	Spec   proxysvc.StreamSpec `json:"spec"`
+	Reload bool                `json:"reload"`
+}
+
+func (s *Server) handleStreamPreview(w http.ResponseWriter, r *http.Request) error {
+	var req streamRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	content, err := proxysvc.RenderStream(&req.Spec)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"content": content})
+	return nil
+}
+
+func (s *Server) handleStreamApply(w http.ResponseWriter, r *http.Request) error {
+	var req streamRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+	res, err := s.modules.proxy.ApplyStream(ctx, &req.Spec, req.Reload)
+	if err != nil {
+		if errors.Is(err, proxysvc.ErrInvalidConf) {
+			httpx.SetAudit(r, "proxy.stream.apply", req.Spec.Name, map[string]any{"result": "rejected"})
+			return httpx.Err(http.StatusUnprocessableEntity, "invalid_config", res.Validation.Output)
+		}
+		return mapProxyError(err)
+	}
+	httpx.SetAudit(r, "proxy.stream.apply", req.Spec.Name, map[string]any{
+		"listen": req.Spec.Listen, "protocol": req.Spec.Protocol, "upstream": req.Spec.Upstream,
+	})
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+func (s *Server) handleStreamDelete(w http.ResponseWriter, r *http.Request) error {
+	name := chi.URLParam(r, "name")
+	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
+		return err
+	}
+	if err := s.modules.proxy.DeleteStream(r.Context(), name); err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	reload, reloadErr := s.modules.proxy.Reload(r.Context(), proxysvc.KindNginx)
+	httpx.SetAudit(r, "proxy.stream.delete", name, map[string]any{"reloaded": reloadErr == nil})
+	out := map[string]any{"name": name, "reload": reload}
+	if reloadErr != nil {
+		out["reloadError"] = reloadErr.Error()
+	}
+	httpx.JSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (s *Server) handleAuthFileList(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, http.StatusOK, proxysvc.ListAuthFiles())
+	return nil
+}
+
+type authUserRequest struct {
+	File     string `json:"file"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+}
+
+// handleAuthUserSet adds or replaces one entry. The password is hashed in
+// process and never becomes an argument to anything — /proc/*/cmdline is
+// world-readable, which is the same reason dbx keeps database passwords out of
+// argv.
+func (s *Server) handleAuthUserSet(w http.ResponseWriter, r *http.Request) error {
+	var req authUserRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	file, err := proxysvc.SetAuthUser(req.File, req.User, req.Password)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	// The password is deliberately absent from the audit detail.
+	httpx.SetAudit(r, "proxy.auth.set", req.File, map[string]any{"user": req.User})
+	httpx.JSON(w, http.StatusOK, file)
+	return nil
+}
+
+func (s *Server) handleAuthUserRemove(w http.ResponseWriter, r *http.Request) error {
+	file, user := chi.URLParam(r, "file"), chi.URLParam(r, "user")
+	updated, err := proxysvc.RemoveAuthUser(file, user)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "proxy.auth.remove", file, map[string]any{"user": user})
+	httpx.JSON(w, http.StatusOK, updated)
+	return nil
+}
+
+func (s *Server) handleAuthFileDelete(w http.ResponseWriter, r *http.Request) error {
+	file := chi.URLParam(r, "file")
+	if err := httpx.RequireTypedConfirmation(w, r, file); err != nil {
+		return err
+	}
+	if err := proxysvc.DeleteAuthFile(file); err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "proxy.auth.delete", file, nil)
+	httpx.NoContent(w)
+	return nil
+}
+
+func (s *Server) handleDNSProviders(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, http.StatusOK, s.modules.proxy.ListDNSProviders())
+	return nil
+}
+
+type dnsCredentialsRequest struct {
+	Provider    string `json:"provider"`
+	Credentials string `json:"credentials"`
+}
+
+// handleDNSCredentials stores an API token for a DNS plugin. The token is a
+// credential for somebody's whole DNS zone, so it is written 0600 into
+// certbot's own tree and never read back out — the UI shows whether one exists,
+// not what it is.
+func (s *Server) handleDNSCredentials(w http.ResponseWriter, r *http.Request) error {
+	var req dnsCredentialsRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	path, err := proxysvc.WriteDNSCredentials(req.Provider, req.Credentials)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "certificates.dns.credentials", req.Provider, map[string]any{"file": path})
+	httpx.JSON(w, http.StatusOK, map[string]any{"provider": req.Provider, "saved": true})
+	return nil
+}
+
+type importRequest struct {
+	Name        string `json:"name"`
+	Certificate string `json:"certificate"`
+	Key         string `json:"key"`
+}
+
+// handleCertImport takes a certificate somebody bought or was given.
+//
+// The key is checked against the certificate before either is written: a
+// mismatched pair is accepted by every text editor and refused by nginx at
+// reload, and finding that out on a live server is the expensive way.
+func (s *Server) handleCertImport(w http.ResponseWriter, r *http.Request) error {
+	var req importRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	res, err := proxysvc.ImportCertificate(req.Name, req.Certificate, req.Key)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "certificates.import", req.Name,
+		map[string]any{"domains": res.Cert.Domains, "expires": res.Cert.NotAfter})
+	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }

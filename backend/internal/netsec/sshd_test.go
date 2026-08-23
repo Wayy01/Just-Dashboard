@@ -272,3 +272,115 @@ func write(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// Moving sshd's port with no firewall rule for the new one is the same class
+// of mistake as turning off passwords with no key: it applies cleanly and the
+// next connection has nowhere to land.
+func TestGuardSSHPort(t *testing.T) {
+	denyAll := &FirewallStatus{
+		Available: true, Enabled: true,
+		Policy: DefaultPolicy{Incoming: "deny"},
+		Rules:  []Rule{{Action: "ALLOW", Port: "22", To: "22/tcp"}},
+	}
+	if err := guardSSHPort("2222", denyAll); err == nil {
+		t.Fatal("allowed a move to a port the firewall denies")
+	}
+	if err := guardSSHPort("22", denyAll); err != nil {
+		t.Fatalf("refused a port the firewall already allows: %v", err)
+	}
+
+	// A comma-separated rule covers several ports at once.
+	multi := &FirewallStatus{
+		Available: true, Enabled: true,
+		Policy: DefaultPolicy{Incoming: "deny"},
+		Rules:  []Rule{{Action: "ALLOW", Port: "22,2222", To: "22,2222/tcp"}},
+	}
+	if err := guardSSHPort("2222", multi); err != nil {
+		t.Errorf("a list rule should cover its ports: %v", err)
+	}
+
+	// Nothing to guard against when the firewall is off or lets everything in.
+	for _, fw := range []*FirewallStatus{
+		nil,
+		{Available: false},
+		{Available: true, Enabled: false},
+		{Available: true, Enabled: true, Policy: DefaultPolicy{Incoming: "allow"}},
+	} {
+		if err := guardSSHPort("2222", fw); err != nil {
+			t.Errorf("refused with no firewall in the way: %v", err)
+		}
+	}
+}
+
+// An allow list that names nobody who holds a key, with passwords already off,
+// is a lockout written as a whitelist.
+func TestGuardAllowUsers(t *testing.T) {
+	current := &SSHDConfig{KeyedAccounts: []KeyedAccount{{User: "deploy", Keys: 1}}}
+	if err := guardAllowUsers(current, "someone-else", true); err == nil {
+		t.Fatal("allowed a list excluding every keyed account")
+	}
+	if err := guardAllowUsers(current, "deploy admin", true); err != nil {
+		t.Fatalf("refused a list that includes the keyed account: %v", err)
+	}
+	// With passwords still on, the list is a restriction rather than the only
+	// way in, and refusing it would block a legitimate tightening.
+	if err := guardAllowUsers(current, "someone-else", false); err != nil {
+		t.Fatalf("refused with passwords still available: %v", err)
+	}
+	if err := guardAllowUsers(current, "", true); err != nil {
+		t.Fatalf("an empty list is no restriction at all: %v", err)
+	}
+}
+
+func TestValidateSSHListValues(t *testing.T) {
+	def, _ := sshDirectiveFor("allowusers")
+	if err := validateSSHValue(def, "deploy admin ci-runner"); err != nil {
+		t.Errorf("rejected ordinary account names: %v", err)
+	}
+	if err := validateSSHValue(def, ""); err != nil {
+		t.Errorf("an empty list means no restriction and must be allowed: %v", err)
+	}
+	for _, bad := range []string{"deploy; rm -rf /", "deploy\nPermitRootLogin yes", "a$b"} {
+		if err := validateSSHValue(def, bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+// A port is not better or worse, but it does have a legal range.
+func TestValidateSSHPort(t *testing.T) {
+	def, _ := sshDirectiveFor("port")
+	if err := validateSSHValue(def, "2222"); err != nil {
+		t.Errorf("rejected a valid port: %v", err)
+	}
+	for _, bad := range []string{"0", "70000", "-1"} {
+		if err := validateSSHValue(def, bad); err == nil {
+			t.Errorf("accepted port %q", bad)
+		}
+	}
+	if !def.secure("2222") {
+		t.Error("a port has no better or worse value and should not be graded")
+	}
+}
+
+// Writing a keyword with no argument stops sshd from starting, so an emptied
+// list has to be commented out instead.
+func TestApplyDirectivesRemovesAnEmptiedList(t *testing.T) {
+	got := applyDirectives("AllowUsers deploy\nPort 22\n", map[string]string{"allowusers": ""}, false)
+	if strings.Contains(got, "\nAllowUsers") {
+		t.Fatalf("left an active AllowUsers behind:\n%s", got)
+	}
+	if !strings.Contains(got, "# AllowUsers deploy") {
+		t.Fatalf("should be commented out rather than deleted:\n%s", got)
+	}
+	if !strings.Contains(got, "Port 22") {
+		t.Fatalf("unrelated line lost:\n%s", got)
+	}
+}
+
+func TestApplyDirectivesDoesNotAppendAnEmptyList(t *testing.T) {
+	got := applyDirectives("Port 22\n", map[string]string{"allowusers": ""}, false)
+	if strings.Contains(got, "AllowUsers") {
+		t.Fatalf("wrote a keyword with no argument:\n%s", got)
+	}
+}

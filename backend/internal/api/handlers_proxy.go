@@ -39,12 +39,15 @@ func (s *Server) mountProxyRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/scan", s.handle(s.handleTLSScan))
 		r.Method(http.MethodGet, "/dns", s.handle(s.handleDomainDNS))
 		r.Method(http.MethodGet, "/certbot", s.handle(s.handleCertbot))
+		r.Method(http.MethodGet, "/dns-providers", s.handle(s.handleDNSProviders))
 		r.Method(http.MethodGet, "/watched", s.handle(s.handleWatchedDomains))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/watched", s.handle(s.handleWatchDomain))
 			r.Method(http.MethodDelete, "/watched/{id}", s.handle(s.handleUnwatchDomain))
 			r.Method(http.MethodPost, "/issue", s.handle(s.handleCertIssue))
+			r.Method(http.MethodPost, "/import", s.handle(s.handleCertImport))
+			r.Method(http.MethodPost, "/dns-credentials", s.handle(s.handleDNSCredentials))
 			r.Method(http.MethodPost, "/renew", s.handle(s.handleCertRenew))
 			s.destructive(r, func(r chi.Router) {
 				// Revocation cannot be undone: the authority publishes that

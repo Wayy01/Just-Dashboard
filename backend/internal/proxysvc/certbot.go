@@ -162,9 +162,16 @@ func renewalScheduled(ctx context.Context) (bool, string) {
 type IssueRequest struct {
 	Domains []string `json:"domains"`
 	Email   string   `json:"email"`
-	// Method is how certbot proves control: nginx, webroot or standalone.
+	// Method is how certbot proves control: nginx, webroot, standalone or dns.
 	Method  string `json:"method"`
 	WebRoot string `json:"webRoot,omitempty"`
+	// DNSProvider names the certbot plugin for a DNS challenge. It is the
+	// only method that can issue a wildcard, and the only one that works for
+	// a domain behind a CDN — the request for an HTTP challenge never reaches
+	// this host at all.
+	DNSProvider string `json:"dnsProvider,omitempty"`
+	// DNSWait overrides the provider's default propagation delay.
+	DNSWait int `json:"dnsWait,omitempty"`
 	// Staging issues from Let's Encrypt's test authority, which is not
 	// trusted by browsers and is not rate-limited. It is the right first
 	// attempt for anybody who has not done this before, because the real
@@ -193,16 +200,28 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 	if len(req.Domains) > 100 {
 		return "", fmt.Errorf("a certificate may cover at most 100 domains")
 	}
+	wildcard := false
 	for _, d := range req.Domains {
 		if !certDomainRe.MatchString(d) {
 			return "", fmt.Errorf("%q is not a valid domain name", d)
 		}
+		if strings.HasPrefix(d, "*.") {
+			wildcard = true
+		}
+	}
+	// Saying this before the attempt rather than relaying certbot's version of
+	// it afterwards: "Wildcard domains are not supported by the HTTP-01
+	// challenge" is accurate and tells nobody what to do instead.
+	if wildcard && req.Method != "dns" {
+		return "", fmt.Errorf("a wildcard certificate can only be issued with a DNS challenge — Let's Encrypt will not sign one any other way")
 	}
 	if !emailRe.MatchString(req.Email) {
 		return "", fmt.Errorf("a contact email is required — it is where expiry warnings go")
 	}
 
 	args := []string{}
+	// A DNS challenge has no web server to install into; certonly is the only
+	// shape it takes.
 	if req.Install && req.Method == "nginx" {
 		args = append(args, "--nginx")
 	} else {
@@ -217,8 +236,27 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 			args = append(args, "--webroot", "-w", req.WebRoot)
 		case "standalone":
 			args = append(args, "--standalone")
+		case "dns":
+			provider, ok := DNSProviderFor(req.DNSProvider)
+			if !ok {
+				return "", fmt.Errorf("choose a DNS provider for the challenge")
+			}
+			if !provider.Installed && !certbotPluginInstalled(provider.Plugin) {
+				return "", fmt.Errorf("certbot's %s plugin is not installed on this host", provider.Plugin)
+			}
+			if provider.Key != "route53" && !HasDNSCredentials(provider.Key) {
+				return "", fmt.Errorf("%s has no credentials saved yet", provider.Name)
+			}
+			wait := req.DNSWait
+			if wait <= 0 {
+				wait = provider.DefaultWait
+			}
+			if wait > 3600 {
+				return "", fmt.Errorf("the propagation wait is too long")
+			}
+			args = append(args, dnsIssueArgs(provider, wait)...)
 		default:
-			return "", fmt.Errorf("method must be nginx, webroot or standalone")
+			return "", fmt.Errorf("method must be nginx, webroot, standalone or dns")
 		}
 	}
 	args = append(args, "--non-interactive", "--agree-tos", "-m", req.Email,

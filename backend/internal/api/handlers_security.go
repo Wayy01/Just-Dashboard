@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,16 @@ func (s *Server) mountSecurityRoutes(r chi.Router) {
 	r.Method(http.MethodGet, "/security/services", s.handle(s.handleServiceCatalogue))
 	r.Method(http.MethodGet, "/connections", s.handle(s.handleConnections))
 	r.Method(http.MethodGet, "/network", s.handle(s.handleNetworkInfo))
+
+	// Ending somebody's session is destructive and rare — a handful of times
+	// a year, not a dozen a day — so it takes a typed phrase by the same
+	// frequency test the terminal close routes fail.
+	r.Route("/ssh-sessions", func(r chi.Router) {
+		r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+		s.destructive(r, func(r chi.Router) {
+			r.Method(http.MethodPost, "/{pid}/disconnect", s.handle(s.handleDisconnectSession))
+		})
+	})
 
 	r.Route("/ssh", func(r chi.Router) {
 		// The SSH configuration names the accounts that hold keys, which is a
@@ -258,6 +269,29 @@ func (s *Server) handleSSHApply(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// handleDisconnectSession ends one interactive login.
+//
+// The PID is checked against the live session list inside netsec rather than
+// here, because that check is what stops this being a "kill any process"
+// route wearing a sensible name.
+func (s *Server) handleDisconnectSession(w http.ResponseWriter, r *http.Request) error {
+	pid, err := strconv.Atoi(chi.URLParam(r, "pid"))
+	if err != nil {
+		return httpx.BadRequest("invalid process id")
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, "disconnect "+strconv.Itoa(pid)); err != nil {
+		return err
+	}
+	session, err := s.modules.netsec.Disconnect(r.Context(), int32(pid))
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "ssh.session.disconnect", session.User,
+		map[string]any{"pid": pid, "tty": session.TTY, "from": session.From})
+	httpx.JSON(w, http.StatusOK, session)
+	return nil
+}
+
 func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) error {
 	conns, err := s.modules.netsec.Connections(r.Context())
 	if err != nil {
@@ -324,8 +358,15 @@ func (s *Server) handleJailConfig(w http.ResponseWriter, r *http.Request) error 
 }
 
 type jailParamRequest struct {
-	Param string `json:"param"`
-	Value int    `json:"value"`
+	// Params carries every parameter at once, because they are one policy —
+	// "this many failures inside this window earns this long a ban" — and
+	// applying them one request at a time leaves a jail half-tuned if the tab
+	// closes in between.
+	Params map[string]int `json:"params"`
+	// The single-parameter form the first version of this route took, kept so
+	// a scripted caller does not break.
+	Param string `json:"param,omitempty"`
+	Value int    `json:"value,omitempty"`
 }
 
 func (s *Server) handleJailParam(w http.ResponseWriter, r *http.Request) error {
@@ -333,13 +374,19 @@ func (s *Server) handleJailParam(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
+	params := req.Params
+	if len(params) == 0 && req.Param != "" {
+		params = map[string]int{req.Param: req.Value}
+	}
 	jail := chi.URLParam(r, "jail")
-	out, err := s.modules.netsec.SetJailParam(r.Context(), jail, req.Param, req.Value)
+	res, err := s.modules.netsec.SetJailParams(r.Context(), jail, params)
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "fail2ban.param", jail, map[string]any{"param": req.Param, "value": req.Value})
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	httpx.SetAudit(r, "fail2ban.param", jail, map[string]any{
+		"params": params, "persisted": res.Persisted,
+	})
+	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }
 

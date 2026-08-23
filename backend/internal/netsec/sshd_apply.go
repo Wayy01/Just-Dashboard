@@ -41,7 +41,13 @@ type SSHApplyResult struct {
 	Applied     []string `json:"applied"`
 }
 
-var sshValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/@,\-]{1,64}$`)
+var (
+	sshValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/@,\-]{1,64}$`)
+	// A list of accounts needs spaces, which the scalar pattern refuses on
+	// purpose. Usernames are checked individually rather than the whole line
+	// being loosened.
+	sshUserRe = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,32}$`)
+)
 
 // ApplySSHSettings writes a closed set of directives and reloads sshd.
 func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]string) (*SSHApplyResult, error) {
@@ -54,12 +60,20 @@ func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]strin
 		if !ok {
 			return nil, fmt.Errorf("%q is not a setting this dashboard manages", key)
 		}
-		value = strings.ToLower(strings.TrimSpace(value))
-		if !sshValueRe.MatchString(value) {
-			return nil, fmt.Errorf("invalid value for %s", def.Label)
+		value = strings.TrimSpace(value)
+		if def.Kind != "list" {
+			value = strings.ToLower(value)
+			if !sshValueRe.MatchString(value) {
+				return nil, fmt.Errorf("invalid value for %s", def.Label)
+			}
 		}
 		if err := validateSSHValue(def, value); err != nil {
 			return nil, err
+		}
+		if def.Kind == "list" {
+			// Collapsed to single spaces so the line written is exactly the
+			// tokens that were validated, and nothing between them.
+			value = strings.Join(strings.Fields(value), " ")
 		}
 		clean[def.Key] = value
 	}
@@ -70,6 +84,18 @@ func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]strin
 	}
 	if err := guardSSHLockout(current, clean); err != nil {
 		return nil, err
+	}
+	if port, ok := clean["port"]; ok && port != first(current.Ports, "22") {
+		// Moving the port with no firewall rule for the new one is the same
+		// class of mistake as turning off passwords with no key: the change
+		// applies, the daemon reloads, and the next connection has nowhere to
+		// land. The firewall is the only place that can answer, so it is asked.
+		fw, err := s.Status(ctx)
+		if err == nil {
+			if err := guardSSHPort(port, fw); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	target := current.ManagedFile
@@ -109,13 +135,42 @@ func sshDirectiveFor(key string) (sshDirective, bool) {
 // allowed, because refusing a legal setting because we would not have chosen
 // it is not this endpoint's job.
 func validateSSHValue(def sshDirective, value string) error {
+	if def.Kind == "list" {
+		// An empty list means "no restriction", which is expressed by removing
+		// the directive rather than by writing an empty one — sshd refuses a
+		// keyword with no argument.
+		if value == "" {
+			return nil
+		}
+		// A newline inside the value would put a directive of the caller's
+		// choosing into sshd_config on the line after this one. Fields would
+		// happily split on it, so it is refused explicitly rather than
+		// normalised away and forgotten.
+		if strings.ContainsAny(value, "\n\r") {
+			return fmt.Errorf("%s must be a single line", def.Label)
+		}
+		fields := strings.Fields(value)
+		if len(fields) > 64 {
+			return fmt.Errorf("%s: too many accounts", def.Label)
+		}
+		for _, name := range fields {
+			if !sshUserRe.MatchString(name) {
+				return fmt.Errorf("%q is not a valid account name", name)
+			}
+		}
+		return nil
+	}
 	if def.Kind == "number" {
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("%s must be a number", def.Label)
 		}
-		if n < 0 || n > 86400 {
-			return fmt.Errorf("%s is out of range", def.Label)
+		lo, hi := 0, 86400
+		if def.LegalMin > 0 || def.LegalMax > 0 {
+			lo, hi = def.LegalMin, def.LegalMax
+		}
+		if n < lo || n > hi {
+			return fmt.Errorf("%s must be between %d and %d", def.Label, lo, hi)
 		}
 		return nil
 	}
@@ -158,7 +213,61 @@ func guardSSHLockout(current *SSHDConfig, changes map[string]string) error {
 	if effective("permitrootlogin") == "no" && onlyRootIsKeyed(current.KeyedAccounts) && password == "no" {
 		return fmt.Errorf("%w: root is the only account with an authorized key, and passwords are off", ErrLockout)
 	}
+	if err := guardAllowUsers(current, effective("allowusers"), password == "no"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// guardSSHPort refuses a port move the firewall would not admit.
+//
+// Only the certain case, like every other guard here: a firewall that is off,
+// or one whose inbound default is allow, admits the new port already and the
+// move is safe. An active default-deny firewall with no rule for the port is a
+// lockout with a reload attached to it.
+func guardSSHPort(port string, fw *FirewallStatus) error {
+	if fw == nil || !fw.Available || !fw.Enabled {
+		return nil
+	}
+	if fw.Policy.Incoming == "" || fw.Policy.Incoming == "allow" {
+		return nil
+	}
+	for _, r := range fw.Rules {
+		if r.Action != "ALLOW" && r.Action != "LIMIT" {
+			continue
+		}
+		if r.Port == port || strings.HasPrefix(r.To, port+"/") || r.To == port {
+			return nil
+		}
+		// A comma-separated rule covers several ports at once.
+		for _, p := range strings.Split(r.Port, ",") {
+			if strings.TrimSpace(p) == port {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: the firewall denies inbound traffic by default and no rule allows port %s. Add that rule first, then move sshd onto it",
+		ErrLockout, port)
+}
+
+// guardAllowUsers refuses an allow list that would exclude everybody who could
+// actually get in.
+func guardAllowUsers(current *SSHDConfig, allow string, passwordsOff bool) error {
+	allow = strings.TrimSpace(allow)
+	if allow == "" || !passwordsOff {
+		return nil
+	}
+	permitted := map[string]bool{}
+	for _, name := range strings.Fields(allow) {
+		permitted[name] = true
+	}
+	for _, account := range current.KeyedAccounts {
+		if permitted[account.User] {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: none of the accounts holding an SSH key are on that list, and passwords are off",
+		ErrLockout)
 }
 
 func onlyRootIsKeyed(accounts []KeyedAccount) bool {
@@ -200,12 +309,19 @@ func applyDirectives(content string, changes map[string]string, header bool) str
 				continue
 			}
 			seen[key] = true
+			if value == "" {
+				out = append(out, "# "+line+"  # removed by Just Dashboard")
+				continue
+			}
 			out = append(out, canonicalDirective(key)+" "+value)
 		}
 	}
 	missing := []string{}
-	for key := range changes {
-		if !seen[key] {
+	for key, value := range changes {
+		// An empty value means "no restriction", and there was nothing there
+		// to comment out — writing the keyword with no argument would stop
+		// sshd from starting.
+		if !seen[key] && value != "" {
 			missing = append(missing, key)
 		}
 	}
@@ -235,7 +351,8 @@ func canonicalDirective(key string) string {
 	for _, name := range []string{
 		"PermitRootLogin", "PasswordAuthentication", "PubkeyAuthentication",
 		"PermitEmptyPasswords", "X11Forwarding", "MaxAuthTries", "LoginGraceTime",
-		"ClientAliveInterval", "ClientAliveCountMax", "Port",
+		"ClientAliveInterval", "ClientAliveCountMax", "Port", "AllowUsers", "DenyUsers",
+		"AllowGroups", "DenyGroups",
 	} {
 		if strings.EqualFold(name, key) {
 			return name
