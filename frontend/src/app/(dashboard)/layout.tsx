@@ -2,10 +2,10 @@
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Activity } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { MetricsStream } from "@/hooks/use-metrics"
 import { AppSidebar } from "@/components/app-sidebar"
+import { Logo } from "@/components/logo"
 import { TopBar } from "@/components/top-bar"
 import { CommandPaletteProvider } from "@/components/command-palette"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -45,19 +45,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 /**
  * What fills the window while the session probe is in flight.
  *
- * A bare spinner on an empty background reads as a broken page; the mark and
- * the product name say the app is starting, which is what is actually
- * happening — and it is one paint, not a layout that then reflows into the
- * shell.
+ * A bare spinner on an empty background reads as a broken page; the name says
+ * the app is starting, which is what is actually happening — and it is one
+ * paint, not a layout that then reflows into the shell.
  */
 function ShellSplash() {
   return (
     <div className="auth-backdrop flex min-h-svh flex-col items-center justify-center gap-4 bg-background">
-      <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-        <Activity className="size-5" />
-      </span>
-      <div className="flex flex-col items-center gap-1.5">
-        <p className="text-sm font-medium">Just Dashboard</p>
+      <div className="flex flex-col items-center gap-2.5">
+        <Logo size="lg" />
         <div className="h-0.5 w-24 overflow-hidden rounded-full bg-muted">
           <div className="h-full w-1/3 animate-[loading_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
         </div>

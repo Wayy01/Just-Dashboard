@@ -39,10 +39,10 @@ import {
   useSnippets,
   useTerminalSettings,
 } from "@/lib/terminal-settings"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import {
   DropdownMenu,
@@ -132,6 +132,8 @@ export function XtermPane({
   cwd,
   onOpenFiles,
   onCellClick,
+  onToggleFullscreen,
+  fullscreenActive,
 }: {
   path: string
   query?: Query
@@ -149,6 +151,15 @@ export function XtermPane({
    * can honestly report.
    */
   onCellClick?: (cell: { col: number; row: number }) => void
+  /**
+   * When set, the fullscreen button and shortcut hand off to the caller instead
+   * of fullscreening this pane alone. The terminal page uses it to take the
+   * *whole* workspace fullscreen — rail, strips and tools with it — which is
+   * the only way the file tree and git panel stay reachable while maximised.
+   * The compose runner leaves it unset and keeps the pane-only behaviour.
+   */
+  onToggleFullscreen?: () => void
+  fullscreenActive?: boolean
 }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -160,6 +171,18 @@ export function XtermPane({
   const [matches, setMatches] = useState<{ index: number; count: number }>({ index: -1, count: 0 })
   const [findOptions, setFindOptions] = useState({ caseSensitive: false, regex: false, word: false })
   const [atBottom, setAtBottom] = useState(true)
+  // Whether the wheel has taken this pane back through its history.
+  //
+  // It cannot be read from xterm. Under tmux the emulator's own scrollback
+  // stays empty — tmux holds the alternate screen and repaints the viewport
+  // rather than emitting lines — so the history belongs to tmux, and a wheel
+  // tick is forwarded to it. What tmux does with it is enter copy mode, which
+  // is a *mode*: keys become copy commands and the shell stops hearing them.
+  // Nobody reads that as a mode; they read it as the terminal having frozen.
+  // So the browser remembers that it scrolled, and the next keystroke asks the
+  // server to leave copy mode before it is delivered.
+  const [scrolledBack, setScrolledBack] = useState(false)
+  const scrolledBackRef = useRef(false)
   const [shortcuts, setShortcuts] = useState(false)
   // What a guarded paste is holding: the bytes to send if it is confirmed,
   // and the readable version to show. They differ whenever the shell has
@@ -205,6 +228,12 @@ export function XtermPane({
   }, [map])
   // The key handler is installed once, before toggleFullscreen is defined.
   const fullscreenRef = useRef<(() => Promise<void>) | null>(null)
+  // The caller's fullscreen override, mirrored into a ref for the same reason:
+  // the key handler closes over it once and must not go stale.
+  const onToggleFullscreenRef = useRef(onToggleFullscreen)
+  useEffect(() => {
+    onToggleFullscreenRef.current = onToggleFullscreen
+  }, [onToggleFullscreen])
 
   useEffect(() => {
     const host = hostRef.current
@@ -237,7 +266,22 @@ export function XtermPane({
         // possible answer to "am I about to type into the terminal or into the
         // page", which on a dashboard full of inputs is a real question.
         cursorInactiveStyle: "outline",
-        convertEol: true,
+        // `convertEol` is deliberately **off**, and turning it back on breaks
+        // the terminal in a way that takes a day to trace.
+        //
+        // It makes a bare LF also return the carriage — which is right for
+        // feeding a string of plain text into an emulator, and wrong for a
+        // PTY. The kernel's line discipline already turns a program's `\n`
+        // into `\r\n` (ONLCR), so nothing needs the help; what it does
+        // instead is corrupt every redraw that uses LF to step down a row
+        // while *keeping* the column, which is exactly how tmux paints the
+        // column of separators between two panes and the rows either side of
+        // it. With it on, each of those steps also snapped the cursor to
+        // column 1, so the next erase cleared the wrong span and the next
+        // write landed in the wrong place: a prompt with its first thirty
+        // characters missing, a line with its first letter eaten, residue that
+        // `clear` could not remove because it was outside the pane that ran
+        // it. Splitting a pane was reliably enough to produce it.
         scrollback: s.scrollback,
         // A right-click should offer the page's paste, not xterm's selection
         // handling, which is what makes copy/paste behave like a normal app.
@@ -324,11 +368,35 @@ export function XtermPane({
       // can only be about the past.
       let replaying = false
 
+      // The size the server was last told. A resize is sent when this stops
+      // being true and not otherwise: the observer fires for every frame of a
+      // drag, and most of those frames are the same number of cells.
+      let sent = { rows: 0, cols: 0 }
+
+      /**
+       * Tell the PTY how big the screen is — **immediately**, never on a
+       * timer.
+       *
+       * The temptation is to debounce this, since a drag produces a frame a
+       * millisecond. Doing so corrupts the screen, and this is the exact
+       * mechanism: splitting a pane brings up the pane bar, which takes two
+       * rows off this box, at the same moment tmux repaints for the split.
+       * Delay the resize and tmux paints those two rows into an emulator that
+       * no longer has them; the rows are lost, and tmux never sends them again
+       * because as far as it is concerned they arrived. What is left is a
+       * prompt stuck where it used to be that survives `clear`.
+       *
+       * So the size goes out the moment it changes, and the *repair* is on the
+       * server: it asks tmux to repaint the whole screen once the size stops
+       * changing (term.Manager.Redraw). Frequency is not what hurts here —
+       * tmux handles a dragged window all day — lag is.
+       */
       const sendResize = () => {
         fit.fit()
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }))
-        }
+        if (socket.readyState !== WebSocket.OPEN) return
+        if (term.rows === sent.rows && term.cols === sent.cols) return
+        sent = { rows: term.rows, cols: term.cols }
+        socket.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }))
       }
 
       socket.onopen = () => {
@@ -369,10 +437,31 @@ export function XtermPane({
       }
       socket.onerror = () => setState("closed")
 
+      /** Puts the pane back at the prompt before a keystroke is delivered. */
+      const leaveCopyMode = () => {
+        if (!scrolledBackRef.current) return
+        scrolledBackRef.current = false
+        setScrolledBack(false)
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "exit-copy" }))
+        }
+      }
+
       disposables.push(
         term.onData((data) => {
           if (socket.readyState !== WebSocket.OPEN) return
           if (replaying) return
+          // Typing is how everybody leaves a scrolled-back terminal — no
+          // other emulator asks you to scroll back down first — so the ask
+          // goes out ahead of the keystroke, on the same socket, which is
+          // what keeps the two in order.
+          //
+          // A mouse report is not typing. With tmux's mouse mode on, every
+          // wheel tick arrives here as a report sequence, so treating this
+          // callback as "the operator typed something" cancelled copy mode
+          // on the very tick that entered it — scrolling up moved the view
+          // and then snapped it straight back to the bottom.
+          if (!isMouseReport(data)) leaveCopyMode()
           // The guard has to live here and not only on the paste shortcut.
           // Ctrl+V, the right-click menu and the X11 middle click all reach
           // xterm as a browser paste event, which becomes one onData call
@@ -418,7 +507,8 @@ export function XtermPane({
             term.clear()
             break
           case "terminal.fullscreen":
-            void fullscreenRef.current?.()
+            if (onToggleFullscreenRef.current) onToggleFullscreenRef.current()
+            else void fullscreenRef.current?.()
             break
           case "terminal.fontIn":
             setTerminalSettings({ fontSize: Math.min(FONT_MAX, settingsRef.current.fontSize + 1) })
@@ -438,23 +528,38 @@ export function XtermPane({
 
       // Ctrl+scroll is the zoom gesture every browser and every terminal
       // agrees on. Without `passive: false` the browser has already started
-      // zooming the whole page by the time the handler runs.
+      // zooming the whole page by the time the handler runs, and without
+      // `capture` it never runs at all: xterm binds its own wheel handler to
+      // the viewport *inside* this element and stops the event there, so a
+      // listener on the host only sees the ticks xterm did not want.
       const onWheel = (event: WheelEvent) => {
-        if (!event.ctrlKey) return
-        event.preventDefault()
-        const step = event.deltaY > 0 ? -1 : 1
-        setTerminalSettings({
-          fontSize: Math.min(FONT_MAX, Math.max(FONT_MIN, settingsRef.current.fontSize + step)),
-        })
+        if (event.ctrlKey) {
+          event.preventDefault()
+          const step = event.deltaY > 0 ? -1 : 1
+          setTerminalSettings({
+            fontSize: Math.min(FONT_MAX, Math.max(FONT_MIN, settingsRef.current.fontSize + step)),
+          })
+          return
+        }
+        // The tick itself is xterm's to forward; this only records which way
+        // it went. Up means tmux is now in copy mode. Down does *not* clear
+        // the flag — tmux leaves copy mode only when the scroll reaches the
+        // very bottom, and the browser cannot tell how far back it is — so the
+        // flag is cleared by the server instead, which asks tmux whether there
+        // is a mode to leave before it cancels one.
+        if (event.deltaY < 0) {
+          scrolledBackRef.current = true
+          setScrolledBack(true)
+        }
       }
-      host.addEventListener("wheel", onWheel, { passive: false })
+      host.addEventListener("wheel", onWheel, { passive: false, capture: true })
 
-      const observer = new ResizeObserver(() => sendResize())
+      const observer = new ResizeObserver(sendResize)
       observer.observe(host)
 
       cleanup = () => {
         observer.disconnect()
-        host.removeEventListener("wheel", onWheel)
+        host.removeEventListener("wheel", onWheel, { capture: true })
         for (const d of disposables) d.dispose()
         socket.close()
         term.dispose()
@@ -471,6 +576,10 @@ export function XtermPane({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, generation, JSON.stringify(query ?? {})])
+
+  useEffect(() => {
+    scrolledBackRef.current = scrolledBack
+  }, [scrolledBack])
 
   useEffect(() => {
     modeRef.current = mode
@@ -721,26 +830,26 @@ export function XtermPane({
             </PaneButton>
 
             <PaneButton
-              label={fullscreen ? "Leave fullscreen (Esc)" : "Fullscreen"}
-              onClick={toggleFullscreen}
+              label={
+                (onToggleFullscreen ? fullscreenActive : fullscreen)
+                  ? "Leave fullscreen (Esc)"
+                  : "Fullscreen"
+              }
+              onClick={onToggleFullscreen ?? toggleFullscreen}
             >
-              {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              {(onToggleFullscreen ? fullscreenActive : fullscreen) ? (
+                <Minimize2 className="size-3.5" />
+              ) : (
+                <Maximize2 className="size-3.5" />
+              )}
             </PaneButton>
           </>
         )}
 
-        <Badge
-          variant={state === "open" ? "success" : "secondary"}
-          className="shrink-0 gap-1.5 text-[10px] font-normal"
-        >
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              state === "open" ? "bg-success" : "bg-muted-foreground",
-            )}
-          />
-          {state}
-        </Badge>
+        {/* No connection badge. A socket that is up is the unremarkable case
+            and said nothing worth a pill in a row of controls; the one state
+            worth knowing about announces itself — a dropped socket writes
+            "— disconnected —" into the pane and the error banner takes over. */}
       </div>
 
       {/*
@@ -802,13 +911,25 @@ export function XtermPane({
             }
           }}
         />
-        {!atBottom && (
+        {(!atBottom || scrolledBack) && (
           <Button
             size="xs"
             variant="secondary"
             className="absolute right-4 bottom-4 shadow-md"
             onClick={() => {
+              // Two scrollbacks can be behind this: the emulator's, when
+              // there is no tmux, and tmux's own. Ending both is what "the
+              // end" means, and the second one is also what gives the pane
+              // its keyboard back.
               termRef.current?.scrollToBottom()
+              if (scrolledBackRef.current) {
+                scrolledBackRef.current = false
+                setScrolledBack(false)
+                const socket = socketRef.current
+                if (socket?.readyState === WebSocket.OPEN) {
+                  socket.send(JSON.stringify({ type: "exit-copy" }))
+                }
+              }
               termRef.current?.focus()
             }}
           >
@@ -823,16 +944,19 @@ export function XtermPane({
           often than its author would like. */}
       <div className="flex flex-wrap items-center gap-1 border-t border-hairline bg-surface-header px-2 py-1">
         {CONTROL_KEYS.map((key) => (
-          <Button
-            key={key.label}
-            size="xs"
-            variant="ghost"
-            title={key.hint}
-            className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-            onClick={() => send(key.bytes)}
-          >
-            {key.label}
-          </Button>
+          <Tooltip key={key.label}>
+            <TooltipTrigger asChild>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                onClick={() => send(key.bytes)}
+              >
+                {key.label}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{key.hint}</TooltipContent>
+          </Tooltip>
         ))}
       </div>
 
@@ -861,17 +985,21 @@ function PaneButton({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      aria-label={label}
-      title={label}
-      className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -887,21 +1015,25 @@ function FindToggle({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      aria-label={label}
-      aria-pressed={on}
-      title={label}
-      className={cn(
-        "size-7 shrink-0 p-0",
-        on ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground",
-      )}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          aria-pressed={on}
+          className={cn(
+            "size-7 shrink-0 p-0",
+            on ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -915,18 +1047,22 @@ function SnippetMenu({
   if (snippets.length === 0) return null
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          aria-label="Send a saved command"
-          title="Send a saved command"
-          className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-        >
-          <Zap className="size-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label="Send a saved command"
+              className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            >
+              <Zap className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Send one of your saved commands to this shell</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel className="text-xs">Send a command</DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -949,18 +1085,22 @@ function SettingsMenu() {
   const settings = useTerminalSettings()
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          aria-label="Terminal settings"
-          title="Terminal settings"
-          className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-        >
-          <Settings2 className="size-3.5" />
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label="Terminal settings"
+              className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            >
+              <Settings2 className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Font, cursor, scrollback and behaviour</TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" className="w-72 space-y-3 text-xs">
         <p className="eyebrow">Appearance</p>
         <label className="flex items-center justify-between gap-2">
@@ -1134,6 +1274,20 @@ function PasteConfirmation({
  * it alongside something else. xterm normalises a pasted newline to \r, so
  * both endings count.
  */
+/**
+ * Whether a chunk from the emulator is the mouse reporting itself rather than
+ * the operator typing.
+ *
+ * Two encodings, because tmux asks for the newer one and falls back: SGR
+ * (`CSI < b ; x ; y M|m`, enabled by `?1006h`) and the original X10 form
+ * (`CSI M` followed by three bytes, which may be anything at all — hence the
+ * length check rather than a pattern).
+ */
+function isMouseReport(data: string): boolean {
+  if (/^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data)) return true
+  return data.startsWith("\x1b[M") && data.length === 6
+}
+
 function isMultilinePaste(data: string): boolean {
   if (data.length < 2) return false
   return /[\r\n]/.test(data.replace(/[\r\n]+$/, "")) || /[\r\n]/.test(stripBracketedPaste(data))

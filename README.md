@@ -6,9 +6,9 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.5** · Go backend · Next.js frontend · one `docker compose` stack
 
-[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Configuration](#configuration-reference) · [Licence](#licence)
+[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version) · [Configuration](#configuration-reference) · [Licence](#licence)
 
 </div>
 
@@ -213,6 +213,33 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 | **System users** | Host accounts, SSH keys, lock and unlock. |
 | **Audit log** | Every state-changing request, filterable by actor, action and outcome. |
 | **Appearance** | Twelve palettes, nine dark and three light, applied before the page paints so a light theme never flashes black. The choice belongs to the browser you are sitting at, not to the account. |
+
+---
+
+## Version
+
+This is **0.5**: the panel as a finished single-server product — every page in the tour above
+is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it stops.
+
+The number is on screen, beside the wordmark in the sidebar and on the sign-in page, because
+this is software you upgrade by pulling and rebuilding, and "which one is this machine
+running" is a question with consequences. The server says so at boot as well:
+
+```bash
+docker compose logs backend | grep listening
+```
+
+Moving to 0.6 when the next batch of features lands, or to 1.0 when the API settles, is two
+lines and nothing else:
+
+| File | Line |
+| --- | --- |
+| `backend/internal/version/version.go` | `const Version = "0.5"` |
+| `frontend/src/lib/version.ts` | `export const VERSION = "0.5"` |
+
+Every place that displays or logs a version reads one of those two constants, and
+`go test ./internal/version/` fails if they disagree — so a release cannot half-happen and
+leave a UI claiming a version the server has never heard of.
 
 ---
 

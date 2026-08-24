@@ -276,3 +276,76 @@ func target(tmuxName string, window int) string {
 func paneTarget(tmuxName string, window, pane int) string {
 	return target(tmuxName, window) + "." + strconv.Itoa(pane)
 }
+
+// Redraw makes tmux repaint the whole screen for the client attached to a
+// session.
+//
+// It exists because two things disagree about what is on screen and only one
+// of them can be corrected. tmux draws incrementally against its own idea of
+// the client's screen; the browser's emulator reflows its buffer whenever the
+// pane's box changes, which happens on every layout change the page makes —
+// splitting a pane brings up the pane bar, dragging the files panel moves the
+// edge, entering fullscreen changes both. After a reflow the two models differ
+// by a line or two, and tmux never sends those lines again because as far as
+// tmux is concerned they were already correct. What the operator sees is a
+// prompt stuck where it used to be, surviving `clear`, because `clear` only
+// touches the pane it runs in and the residue is outside it.
+//
+// So the size change is followed by "draw all of it again". It is one
+// subprocess after a resize settles, not one per frame — see the debounce on
+// the browser's side.
+//
+// A session's client is found rather than assumed: the dashboard attaches one
+// client per session, but an operator with a real tmux on the same host may be
+// attached to it too, and both need the repaint.
+//
+// Ownership is deliberately not re-checked here. Every caller already holds
+// the session — the name comes from the session record, never from the
+// request — and a second `owns` call would double the subprocesses on the one
+// path that runs while somebody is dragging an edge.
+func (m *Manager) Redraw(ctx context.Context, tmuxName string) error {
+	if !m.useTmux || tmuxName == "" {
+		return nil
+	}
+	out, err := hostexec.CommandOnHost(ctx, "tmux", "list-clients", "-t", tmuxName, "-F", "#{client_tty}").Output()
+	if err != nil {
+		return err
+	}
+	for _, tty := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		tty = strings.TrimSpace(tty)
+		if tty == "" {
+			continue
+		}
+		// One client failing to redraw is not a reason to skip the others: a
+		// client can go away between the listing and the refresh.
+		_ = hostexec.CommandOnHost(ctx, "tmux", "refresh-client", "-t", tty).Run()
+	}
+	return nil
+}
+
+// ExitCopyMode takes a session's active pane out of whatever mode it is in,
+// which in practice means copy mode after the operator scrolled up.
+//
+// tmux's copy mode is a mode in the vi sense: while it is on, keys are copy
+// commands rather than input, so a shell that scrolled up stops accepting
+// typing until it is scrolled back to the bottom. Nobody reads that as "you
+// are in a mode" — they read it as the terminal having frozen. Every other
+// terminal returns to the prompt when you type, so this is called on the way
+// in from the first keystroke after a scroll.
+//
+// It is `send-keys -X cancel` directly rather than an `if-shell` guarded on
+// `#{pane_in_mode}`, and the difference is not style: `if-shell` defers the
+// command it runs, so the cancel landed *after* the first few keystrokes that
+// followed it and copy mode ate them — `echo hello` ran as `hello: command not
+// found`. This form is applied by the tmux server before the command returns,
+// which is what puts it in front of the keystroke the browser sends next. A
+// cancel sent to a pane that is not in a mode is a no-op, so the guard bought
+// nothing anyway; the error it reports for that case is the one thing here
+// worth ignoring.
+func (m *Manager) ExitCopyMode(ctx context.Context, tmuxName string) error {
+	if !m.useTmux || tmuxName == "" {
+		return nil
+	}
+	_ = hostexec.CommandOnHost(ctx, "tmux", "send-keys", "-X", "-t", tmuxName, "cancel").Run()
+	return nil
+}

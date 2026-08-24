@@ -479,3 +479,30 @@
   --sidebar-border: oklch(0.42 0.012 265 / 14%);
   --sidebar-ring: oklch(0.42 0.03 265);
 }
+
+/* Git status on a light card.
+ *
+ * `:root[data-theme=…]` rather than the bare attribute every palette above
+ * uses, and the exception is worth the paragraph: the base values in
+ * globals.css are authored inside `:where(:root)`, but the bundler emits the
+ * tail of that block — the tag and git colours, which nothing in `@theme`
+ * references — as a plain `:root` rule, and one that lands *after* this file's
+ * contents because `@import` has to come first. At that point the base and a
+ * bare `[data-theme]` score the same and the later one wins, so the light
+ * palettes were quietly getting the dark values. The extra `:root` here
+ * outranks it outright and does not depend on which order anything is emitted
+ * in. Nothing else needs it: every other token in these palettes is one the
+ * bundler keeps inside `:where(:root)`.
+ *
+ * One rule for the three light palettes, because a status colour is decided by
+ * the lightness of the card and not by the hue of the theme. */
+:root[data-theme="daylight"],
+:root[data-theme="parchment"],
+:root[data-theme="porcelain"] {
+  --git-added: oklch(0.5 0.16 152);
+  --git-modified: oklch(0.53 0.13 70);
+  --git-deleted: oklch(0.52 0.21 25);
+  --git-untracked: oklch(0.5 0.11 200);
+  --git-renamed: oklch(0.49 0.17 265);
+  --git-conflict: oklch(0.51 0.22 8);
+}
