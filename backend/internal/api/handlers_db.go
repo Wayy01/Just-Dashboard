@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/dbx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/files"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
 )
@@ -144,6 +145,13 @@ func (s *Server) dbConnRow(ctx context.Context, id int64) (*dbConnection, string
 		ID: id, Name: name, Driver: dbx.Driver(driver),
 		CreatedAt: time.Unix(created, 0).UTC(),
 	}
+	// Contained again here rather than trusted from the store: the roots may
+	// have been narrowed since this row was written, and every caller that
+	// opens a pool comes through this function.
+	dsn, cerr := s.containDSN(conn.Driver, dsn)
+	if cerr != nil {
+		return nil, "", cerr
+	}
 	if info, err := dbx.ParseDSN(conn.Driver, dsn); err == nil {
 		conn.Host, conn.Port, conn.User, conn.Database = info.Host, info.Port, info.User, info.Database
 	}
@@ -205,13 +213,54 @@ type createDBConnRequest struct {
 	DSN    string     `json:"dsn"`
 }
 
+// containDSN puts a SQLite connection's path through the same check every
+// other client-supplied path goes through.
+//
+// A SQLite DSN *is* a filesystem path, which makes it exactly the case
+// invariant 6 names: a path that does not look like a file operation. Without
+// this the connection form opens — and, because SQLite creates what is not
+// there, writes — a file anywhere the backend can reach, which in the shipped
+// container is the host's whole filesystem mounted at its real names. The
+// Files panel already refuses those paths with `outside_root`; the two must
+// not disagree about where the dashboard may write.
+//
+// It runs on the way in (create, update, test) so a bad path is refused where
+// the operator can see why, and again on the way out of the store, so a
+// connection saved before the roots were narrowed cannot keep using the path
+// they used to allow.
+func (s *Server) containDSN(driver dbx.Driver, dsn string) (string, error) {
+	if driver != dbx.DriverSQLite {
+		return dsn, nil
+	}
+	if s.modules.files == nil {
+		return "", httpx.Err(http.StatusServiceUnavailable, "unavailable",
+			"file roots are not configured, so a SQLite path cannot be contained")
+	}
+	path, _ := dbx.SQLiteDSNPath(dsn)
+	if strings.TrimSpace(path) == "" {
+		return "", httpx.BadRequest("a SQLite connection needs a file path")
+	}
+	resolved, err := s.modules.files.Resolve(path)
+	if errors.Is(err, files.ErrOutsideRoot) {
+		// Rendered the way the Files panel renders it. The bare error would
+		// come back as "internal error", which tells the operator their path
+		// was refused but not that JD_FILE_ROOTS is the reason — and that is
+		// the one thing they need in order to fix it.
+		return "", httpx.Err(http.StatusForbidden, "outside_root", err.Error())
+	}
+	if err != nil {
+		return "", err
+	}
+	return dbx.SQLiteDSNWithPath(dsn, resolved), nil
+}
+
 func (s *Server) handleDBConnCreate(w http.ResponseWriter, r *http.Request) error {
 	var req createDBConnRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
 	if !req.Driver.Valid() {
-		return httpx.BadRequest("driver must be one of postgres, mysql, mongodb, sqlite")
+		return httpx.BadRequest("driver must be one of %s", driverNames())
 	}
 	if req.Name == "" || req.DSN == "" {
 		return httpx.BadRequest("name and dsn are required")
@@ -222,7 +271,11 @@ func (s *Server) handleDBConnCreate(w http.ResponseWriter, r *http.Request) erro
 	if !connNameRe.MatchString(req.Name) {
 		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
 	}
-	sealed, err := s.Sealer.Seal(req.DSN)
+	dsn, err := s.containDSN(req.Driver, req.DSN)
+	if err != nil {
+		return err
+	}
+	sealed, err := s.Sealer.Seal(dsn)
 	if err != nil {
 		return httpx.Internal(err)
 	}
@@ -696,10 +749,13 @@ func (s *Server) handleDBConnTest(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	if !req.Driver.Valid() {
-		return httpx.BadRequest("driver must be one of postgres, mysql, mongodb, sqlite")
+		return httpx.BadRequest("driver must be one of %s", driverNames())
 	}
 	if req.DSN == "" {
 		return httpx.BadRequest("dsn is required")
+	}
+	if _, err := s.containDSN(req.Driver, req.DSN); err != nil {
+		return err
 	}
 	httpx.SkipAudit(r)
 	ctx, cancel := timeoutCtx(r, 15*time.Second)
@@ -714,7 +770,11 @@ func (s *Server) handleDBConnTest(w http.ResponseWriter, r *http.Request) error 
 		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 		return nil
 	}
-	version, err := dbx.Probe(ctx, req.Driver, req.DSN)
+	probeDSN, err := s.containDSN(req.Driver, req.DSN)
+	if err != nil {
+		return err
+	}
+	version, err := dbx.Probe(ctx, req.Driver, probeDSN)
 	if err != nil {
 		httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return nil
@@ -754,7 +814,11 @@ func (s *Server) handleDBConnUpdate(w http.ResponseWriter, r *http.Request) erro
 		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
 	}
 	if req.DSN != "" {
-		sealed, err := s.Sealer.Seal(req.DSN)
+		dsn, err := s.containDSN(conn.Driver, req.DSN)
+		if err != nil {
+			return err
+		}
+		sealed, err := s.Sealer.Seal(dsn)
 		if err != nil {
 			return httpx.Internal(err)
 		}
@@ -1579,4 +1643,15 @@ func (s *Server) handleDBRowSQL(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"sql": out})
 	return nil
+}
+
+// driverNames renders the supported engines for a refusal message. Derived
+// from dbx.Drivers() rather than written out, because the hand-written list
+// this replaces still named four engines long after there were eight.
+func driverNames() string {
+	names := make([]string, 0, len(dbx.Drivers()))
+	for _, d := range dbx.Drivers() {
+		names = append(names, string(d))
+	}
+	return strings.Join(names, ", ")
 }

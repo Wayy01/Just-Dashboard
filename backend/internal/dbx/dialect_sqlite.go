@@ -320,3 +320,30 @@ func (d sqliteDialect) TableSizes(ctx context.Context, db *sql.DB, _ string) ([]
 	}
 	return out, nil
 }
+
+// SQLiteDSNPath splits a SQLite DSN into the filesystem path it names and
+// everything else, and SQLiteDSNWithPath puts one back together with the path
+// replaced.
+//
+// They exist so the layer above can put that path through the same containment
+// check every other client-supplied path goes through. A SQLite DSN *is* a
+// path, which makes it precisely the case invariant 6 is about: one that does
+// not look like a file operation. The three forms an operator may write are
+// a bare path, a path with driver parameters, and the `file:` URI the driver
+// also accepts — all three have to be recognised, because a check that missed
+// one would be a check with a documented way round it.
+func SQLiteDSNPath(dsn string) (path, rest string) {
+	path = strings.TrimPrefix(dsn, "file:")
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path, rest = path[:i], path[i:]
+	}
+	return path, rest
+}
+
+func SQLiteDSNWithPath(dsn, path string) string {
+	_, rest := SQLiteDSNPath(dsn)
+	if strings.HasPrefix(dsn, "file:") {
+		return "file:" + path + rest
+	}
+	return path + rest
+}

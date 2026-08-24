@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -45,10 +46,14 @@ func dbTestRouter(t *testing.T) (*Server, http.Handler) {
 	s.mountDatabaseRoutes(r)
 
 	// A connection has to exist for a handler to reach its confirmation check.
-	// The DSN points nowhere on purpose: if a handler ever dials before
-	// confirming, the failure it produces will not mention a confirmation and
-	// the assertion below catches the reordering.
-	sealed, err := s.Sealer.Seal("/nonexistent/never-opened.db")
+	// The DSN names a file that is never created, on purpose: if a handler ever
+	// dials before confirming, the failure it produces will not mention a
+	// confirmation and the assertion below catches the reordering. It sits
+	// *inside* the file roots because containment is checked before the
+	// confirmation is — a connection the operator may not open is refused
+	// rather than confirmed — so a path outside them would fail one step too
+	// early to prove anything about the phrase.
+	sealed, err := s.Sealer.Seal(filepath.Join(s.Cfg.FileRoots[0], "never-opened.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +227,53 @@ func TestSearchRequiresANeedle(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("search with no q = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSQLiteConnectionsAreContainedByFileRoots is invariant 6 for the one
+// client-supplied path in this feature that does not look like a path.
+//
+// A SQLite DSN *is* a filesystem location, and SQLite creates what is not
+// there, so a connection form that took it verbatim was a way to write a file
+// anywhere the backend can reach — which, in the shipped container, is the
+// host's whole filesystem mounted at its real names. The Files panel refuses
+// the same path; these two must not disagree.
+func TestSQLiteConnectionsAreContainedByFileRoots(t *testing.T) {
+	s := testServer(t)
+	t.Cleanup(s.Shutdown)
+	root := s.Cfg.FileRoots[0]
+
+	outside := filepath.Join(filepath.Dir(root), "escaped.db")
+	inside := filepath.Join(root, "kept.db")
+
+	// Every form the driver accepts, because a check that missed one would be
+	// a check with a documented way round it.
+	for _, dsn := range []string{
+		outside,
+		"file:" + outside,
+		outside + "?mode=rwc",
+		filepath.Join(root, "..", "escaped.db"),
+	} {
+		if _, err := s.containDSN(dbx.DriverSQLite, dsn); err == nil {
+			t.Errorf("containDSN admitted a path outside the roots: %q", dsn)
+		}
+	}
+
+	got, err := s.containDSN(dbx.DriverSQLite, inside)
+	if err != nil {
+		t.Fatalf("containDSN refused a path inside the roots: %v", err)
+	}
+	if got != inside {
+		t.Errorf("containDSN rewrote an acceptable path: %q -> %q", inside, got)
+	}
+
+	// A server DSN is not a path and must pass through untouched — including
+	// one whose password happens to contain something path-shaped.
+	for _, d := range []dbx.Driver{dbx.DriverPostgres, dbx.DriverMongo, dbx.DriverRedis} {
+		dsn := string(d) + "://user:p/../../ass@127.0.0.1:1234/db"
+		got, err := s.containDSN(d, dsn)
+		if err != nil || got != dsn {
+			t.Errorf("containDSN touched a %s DSN: %q -> %q, %v", d, dsn, got, err)
+		}
 	}
 }
