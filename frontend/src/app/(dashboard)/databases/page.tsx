@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Database, DownloadCloud, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, get, post } from "@/lib/api"
-import { bytes } from "@/lib/format"
+import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, DbDriverInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { BrowseTab, type TableSelection } from "@/components/database/browse-tab"
-import { DetectedPanel } from "@/components/database/detected-panel"
+import { NewDatabaseDialog } from "@/components/database/new-database-dialog"
 import { StructureTab } from "@/components/database/structure-tab"
 import { QueryTab } from "@/components/database/query-tab"
 import { OrmTab } from "@/components/database/orm-tab"
@@ -43,6 +43,10 @@ export default function DatabasesPage() {
   // simply not this connection's and is treated as none.
   const [selection, setSelection] = useState<(TableSelection & { connId: number }) | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  const [newOpen, setNewOpen] = useState(false)
+  // A database that was just created is not in the connection list yet, so its
+  // name is held until a refresh brings it in and then selected.
+  const [pendingSelect, setPendingSelect] = useState<string | null>(null)
   const [editConn, setEditConn] = useState<DbConnection | null>(null)
 
   const connections = usePoll(
@@ -57,8 +61,43 @@ export default function DatabasesPage() {
     0,
   )
 
-  const active = connections.data?.find((c) => c.id === selectedId) ?? connections.data?.[0] ?? null
-  const setActive = (conn: DbConnection | null) => setSelectedId(conn?.id ?? null)
+  // A database that was just created is selected by name rather than by id,
+  // because it has no id here until the refresh that follows brings it in.
+  // Derived rather than synchronised in an effect: the name is simply preferred
+  // while it is set, and choosing anything else clears it.
+  const active =
+    (pendingSelect && connections.data?.find((c) => c.name === pendingSelect)) ||
+    connections.data?.find((c) => c.id === selectedId) ||
+    connections.data?.[0] ||
+    null
+  const setActive = (conn: DbConnection | null) => {
+    setPendingSelect(null)
+    setSelectedId(conn?.id ?? null)
+  }
+
+  // Databases running on this server connect themselves.
+  //
+  // Everything a connection needs is readable from the container, so a list of
+  // them with a Connect button each was a question with one sensible answer,
+  // occupying the top of the page until it was answered. This asks the server
+  // to reconcile once per mount: it is idempotent, skips by address, and stays
+  // out of the audit log when it adds nothing.
+  const synced = useRef(false)
+  useEffect(() => {
+    if (synced.current || !can("system.admin")) return
+    synced.current = true
+    post<{ added: string[] }>("/databases/sync", {})
+      .then((res) => {
+        if (res.added.length === 0) return
+        connections.refresh()
+        toast.success(`Connected ${plural(res.added.length, "database")} on this server`, {
+          description: res.added.join(", "),
+        })
+      })
+      // A host with no Docker socket has nothing to reconcile, which is not
+      // worth saying on every page load.
+      .catch(() => undefined)
+  }, [can, connections])
 
   const activeSelection = selection && selection.connId === active?.id ? selection : null
   const info = drivers.data?.find((d) => d.id === active?.driver)
@@ -67,16 +106,20 @@ export default function DatabasesPage() {
   const isMongo = active?.driver === "mongodb"
 
   return (
-    <Page>
+    // fill, so the page is exactly the space the shell handed it and the
+    // scrolling happens inside the panel that owns the content. A grid that
+    // grew past the bottom took the header and the connection picker with it,
+    // which is what made choosing a table feel like losing your place.
+    <Page fill>
       <PageHeader
         eyebrow="Access"
         title="Databases"
         description="Browse and edit data, reshape schemas, run queries, and generate ORM models"
         actions={
           can("system.admin") && (
-            <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Button size="sm" onClick={() => setNewOpen(true)}>
               <Plus className="size-4" />
-              Add connection
+              New database
             </Button>
           )
         }
@@ -85,21 +128,16 @@ export default function DatabasesPage() {
       {connections.loading && <LoadingPanel />}
       {connections.error && <ErrorState error={connections.error} />}
 
-      {/* Above the connections rather than below: on a fresh install this is
-          the whole page, and it is the answer to "I have no connection string"
-          — which is where somebody who has just arrived actually is. */}
-      <DetectedPanel onConnected={connections.refresh} />
-
       {connections.data?.length === 0 && (
         <EmptyState
           icon={Database}
-          title="No connections configured"
-          description="Connect a database running on this server from the panel above, or add one anywhere else by its connection string. PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis are supported, and connection strings are encrypted at rest and never sent back to the browser."
+          title="No databases yet"
+          description="Anything running on this server is connected automatically. Use New database to start one — it takes a free port, generates its own password and connects itself — or, from the same dialog, point the dashboard at a database somewhere else."
         />
       )}
 
       {connections.data && connections.data.length > 0 && (
-        <>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
           <Toolbar>
             <Select
               value={active?.id.toString() ?? ""}
@@ -159,7 +197,11 @@ export default function DatabasesPage() {
           </Toolbar>
 
           {active && (
-            <Tabs defaultValue="browse" key={active.id} className="min-w-0 gap-4">
+            <Tabs
+              defaultValue="browse"
+              key={active.id}
+              className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+            >
               <TabsList>
                 <TabsTrigger value="browse">
                   {isRedis ? "Keys" : isMongo ? "Collections" : "Browse"}
@@ -172,7 +214,7 @@ export default function DatabasesPage() {
                 {isSQL && <TabsTrigger value="orm">Generate</TabsTrigger>}
               </TabsList>
 
-              <TabsContent value="browse" className="min-w-0">
+              <TabsContent value="browse" className="min-w-0 flex-1 overflow-y-auto">
                 {isRedis ? (
                   <RedisBrowser conn={active} confirm={confirm} />
                 ) : isMongo ? (
@@ -189,7 +231,7 @@ export default function DatabasesPage() {
               </TabsContent>
 
               {isSQL && (
-                <TabsContent value="structure" className="min-w-0">
+                <TabsContent value="structure" className="min-w-0 flex-1 overflow-y-auto">
                   <StructureTab
                     conn={active}
                     info={info}
@@ -200,17 +242,17 @@ export default function DatabasesPage() {
                 </TabsContent>
               )}
               {isSQL && (
-                <TabsContent value="diagram" className="min-w-0">
+                <TabsContent value="diagram" className="min-w-0 flex-1 overflow-y-auto">
                   <ErDiagram conn={active} schema={activeSelection?.schema ?? ""} />
                 </TabsContent>
               )}
               {isSQL && (
-                <TabsContent value="query" className="min-w-0">
+                <TabsContent value="query" className="min-w-0 flex-1 overflow-y-auto">
                   <QueryTab conn={active} confirm={confirm} />
                 </TabsContent>
               )}
               {isSQL && (
-                <TabsContent value="search" className="min-w-0">
+                <TabsContent value="search" className="min-w-0 flex-1 overflow-y-auto">
                   <SearchTab
                     conn={active}
                     schema={activeSelection?.schema ?? ""}
@@ -221,7 +263,7 @@ export default function DatabasesPage() {
                 </TabsContent>
               )}
               {isSQL && (
-                <TabsContent value="monitor" className="min-w-0">
+                <TabsContent value="monitor" className="min-w-0 flex-1 overflow-y-auto">
                   <MonitorTab
                     conn={active}
                     schema={activeSelection?.schema ?? ""}
@@ -230,17 +272,31 @@ export default function DatabasesPage() {
                 </TabsContent>
               )}
               {isSQL && (
-                <TabsContent value="orm" className="min-w-0">
+                <TabsContent value="orm" className="min-w-0 flex-1 overflow-y-auto">
                   <OrmTab conn={active} schema={activeSelection?.schema ?? ""} />
                 </TabsContent>
               )}
             </Tabs>
           )}
-        </>
+        </div>
       )}
 
       {can("system.admin") && (
-        <ConnectionDialog open={addOpen} onOpenChange={setAddOpen} onDone={connections.refresh} />
+        <>
+          <NewDatabaseDialog
+            open={newOpen}
+            onOpenChange={setNewOpen}
+            onCreated={(name) => {
+              // Both halves matter: the refresh brings the new row in, and the
+              // name is what selects it once it arrives. Without the refresh
+              // the pending name matches nothing until the next slow poll.
+              connections.refresh()
+              setPendingSelect(name)
+            }}
+            onConnectManually={() => setAddOpen(true)}
+          />
+          <ConnectionDialog open={addOpen} onOpenChange={setAddOpen} onDone={connections.refresh} />
+        </>
       )}
       {editConn && (
         <ConnectionDialog

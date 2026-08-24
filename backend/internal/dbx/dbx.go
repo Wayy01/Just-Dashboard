@@ -122,6 +122,11 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	// And a much shorter idle life on top of it. A dashboard's pool sits unused
+	// between page loads, which is exactly when the server on the other end
+	// gets restarted; a connection idle for longer than this is cheaper to
+	// re-dial than to discover is dead in the middle of somebody's query.
+	db.SetConnMaxIdleTime(2 * time.Minute)
 	// Then whatever the engine needs on top — SQLite's single writer, say.
 	d.TunePool(db)
 

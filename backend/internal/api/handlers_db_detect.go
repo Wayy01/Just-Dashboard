@@ -181,6 +181,25 @@ func (s *Server) handleDBAdopt(w http.ResponseWriter, r *http.Request) error {
 		return httpx.BadRequest("no connection string could be built for %s", cand.Driver)
 	}
 
+	// Adopting the same container twice is not an error, it is the same
+	// request arriving again — which it does, because the caller that creates a
+	// server retries this until the engine inside it is actually answering, and
+	// the first attempt is the one that creates the row. Returning what is
+	// already there beats a UNIQUE violation on the name.
+	existing, err := s.existingDSNs(r.Context())
+	if err != nil {
+		return err
+	}
+	if have, ok := existing[addressKey(cand.Host, cand.Port)]; ok {
+		conn, err := s.connectionByName(r.Context(), have)
+		if err != nil {
+			return err
+		}
+		httpx.SkipAudit(r)
+		httpx.JSON(w, http.StatusOK, conn)
+		return nil
+	}
+
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = cand.Container
@@ -188,6 +207,7 @@ func (s *Server) handleDBAdopt(w http.ResponseWriter, r *http.Request) error {
 	if !connNameRe.MatchString(name) {
 		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
 	}
+	name = uniqueConnectionName(name, existing)
 	return s.saveConnection(w, r, name, cand.Driver, dsn, "database.connection.adopt",
 		map[string]any{"container": cand.Container, "image": cand.Image})
 }
@@ -248,6 +268,108 @@ func (s *Server) saveConnection(
 	httpx.SetAudit(r, action, name, detail)
 	httpx.JSON(w, http.StatusCreated, conn)
 	return nil
+}
+
+// handleDBSync connects everything found running here that is not connected
+// already, and reports what it added.
+//
+// The list-with-a-Connect-button this replaces was a step that had exactly one
+// sensible answer. A database running on the operator's own server, which this
+// process can already read the credentials of, is one they want to work with;
+// asking them to confirm that once per container was ceremony, and it left a
+// panel of buttons occupying the top of the page for as long as they ignored it.
+//
+// It is a POST, and it audits, because it writes: a GET that quietly created
+// connection rows would be both a lie about the verb and a hole in invariant 5.
+// Adopting is idempotent — a server already covered by a connection is skipped
+// by address, so calling this on every page load converges rather than
+// accumulating duplicates.
+func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
+	if s.modules.docker == nil {
+		return httpx.Err(http.StatusServiceUnavailable, "docker_unavailable",
+			"this host has no Docker socket, so there is nothing to connect")
+	}
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+
+	containers, err := s.modules.docker.ListContainers(ctx, false)
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
+	}
+	existing, err := s.existingDSNs(ctx)
+	if err != nil {
+		return err
+	}
+
+	added, skipped := []string{}, []string{}
+	for _, c := range containers {
+		if cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports)); cand == nil {
+			continue
+		}
+		detail, err := s.modules.docker.Inspect(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports))
+		if cand == nil || !cand.Connectable() {
+			continue
+		}
+		if name, ok := existing[addressKey(cand.Host, cand.Port)]; ok {
+			skipped = append(skipped, name)
+			continue
+		}
+		dsn := dbx.BuildDSN(*cand, password)
+		if dsn == "" {
+			continue
+		}
+		name := uniqueConnectionName(cand.Container, existing)
+		contained, err := s.containDSN(cand.Driver, dsn)
+		if err != nil {
+			continue
+		}
+		sealed, err := s.Sealer.Seal(contained)
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		if _, err := s.Store.DB.ExecContext(ctx,
+			`INSERT INTO db_connections(name, driver, dsn_enc, created_at) VALUES(?,?,?,?)`,
+			name, string(cand.Driver), sealed, time.Now().Unix()); err != nil {
+			continue
+		}
+		existing[addressKey(cand.Host, cand.Port)] = name
+		added = append(added, name)
+	}
+
+	if len(added) == 0 {
+		// Nothing happened, so nothing is worth a line in the audit log. The
+		// alternative is an entry every time somebody opens the page.
+		httpx.SkipAudit(r)
+	} else {
+		httpx.SetAudit(r, "database.connection.sync", strings.Join(added, ", "),
+			map[string]any{"added": added})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"added": added, "already": skipped})
+	return nil
+}
+
+// uniqueConnectionName keeps a second container whose name collides with an
+// existing connection from being rejected by the insert. The address is what
+// identifies a server, not the name, so a suffix is enough.
+func uniqueConnectionName(base string, existing map[string]string) string {
+	taken := map[string]bool{}
+	for _, name := range existing {
+		taken[name] = true
+	}
+	if !taken[base] {
+		return base
+	}
+	for n := 2; n < 100; n++ {
+		candidate := base + "-" + strconv.Itoa(n)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+	return base + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 // --- provisioning -----------------------------------------------------------
@@ -464,4 +586,16 @@ func generatePassword() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// connectionByName resolves the row a previous adopt created, so a repeat can
+// be answered with it rather than with a constraint violation.
+func (s *Server) connectionByName(ctx context.Context, name string) (*dbConnection, error) {
+	var id int64
+	if err := s.Store.DB.QueryRowContext(ctx,
+		`SELECT id FROM db_connections WHERE name = ?`, name).Scan(&id); err != nil {
+		return nil, httpx.Internal(err)
+	}
+	conn, _, err := s.dbConnRow(ctx, id)
+	return conn, err
 }
