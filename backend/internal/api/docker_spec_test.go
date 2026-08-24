@@ -113,7 +113,7 @@ func TestAuthoriseSpecConfinesAdminBindMountsToFileRoots(t *testing.T) {
 
 // The compose actions that interrupt a running service must be the same set on
 // the POST routes and on the streaming socket, or the socket becomes a way to
-// skip the typed confirmation.
+// skip the capability check and the tighter budget.
 func TestComposeDestructiveSet(t *testing.T) {
 	destructive := []dockerx.ComposeAction{
 		dockerx.ComposeDown, dockerx.ComposeStop, dockerx.ComposeRestart,
@@ -121,12 +121,34 @@ func TestComposeDestructiveSet(t *testing.T) {
 	}
 	for _, a := range destructive {
 		if !composeIsDestructive(a) {
-			t.Errorf("%q interrupts running services and must require confirmation", a)
+			t.Errorf("%q interrupts running services and must be gated as destructive", a)
 		}
 	}
 	for _, a := range []dockerx.ComposeAction{dockerx.ComposeUp, dockerx.ComposeStart, dockerx.ComposePull, dockerx.ComposeBuild} {
 		if composeIsDestructive(a) {
-			t.Errorf("%q starts or fetches things and should not demand a typed phrase", a)
+			t.Errorf("%q starts or fetches things and should not be gated as destructive", a)
+		}
+	}
+}
+
+// Of those five, only `down` asks for the stack's name to be typed: it is the
+// only one that removes the containers. The other four are the ordinary
+// redeploy cycle, run several times in an afternoon, and a phrase in front of
+// them is typed rather than read.
+//
+// This pins the narrowing in both directions, because it is the kind of line
+// that drifts one defensible route at a time.
+func TestOnlyComposeDownAsksForAPhrase(t *testing.T) {
+	if !composeNeedsPhrase(dockerx.ComposeDown) {
+		t.Error("compose down removes the containers and must be typed for")
+	}
+	for _, a := range []dockerx.ComposeAction{
+		dockerx.ComposeStop, dockerx.ComposeRestart, dockerx.ComposeUpdate,
+		dockerx.ComposeRecreate, dockerx.ComposeUp, dockerx.ComposeStart,
+		dockerx.ComposePull, dockerx.ComposeBuild,
+	} {
+		if composeNeedsPhrase(a) {
+			t.Errorf("%q is part of the redeploy cycle and must not demand a typed phrase", a)
 		}
 	}
 }

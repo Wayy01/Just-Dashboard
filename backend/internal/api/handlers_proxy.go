@@ -139,13 +139,9 @@ func (s *Server) handleVHostToggle(w http.ResponseWriter, r *http.Request) error
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	// Disabling a vhost takes a site offline, so it is confirmed by name the
-	// same way a container stop is.
-	if !req.Enabled {
-		if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-			return err
-		}
-	}
+	// No typed phrase: this is a toggle, and the same switch turns the site
+	// back on. Nothing is written that cannot be unwritten by clicking it
+	// again.
 	if err := s.modules.proxy.SetVHostEnabled(r.Context(), name, req.Enabled); err != nil {
 		return mapProxyError(err)
 	}

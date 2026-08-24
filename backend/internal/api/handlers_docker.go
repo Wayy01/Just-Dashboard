@@ -506,13 +506,11 @@ func (s *Server) containerLifecycle(action dockerx.LifecycleAction) httpx.Handle
 		if err != nil {
 			return s.dockerErr(err)
 		}
-		// Confirmation is keyed on the container's name, so a mis-clicked row
-		// cannot be confirmed by muscle memory from the previous dialog.
-		if action == dockerx.ActionStop || action == dockerx.ActionRestart || action == dockerx.ActionKill {
-			if err := httpx.RequireTypedConfirmation(w, r, detail.Name); err != nil {
-				return err
-			}
-		}
+		// No typed phrase on stop, restart or kill. They are the three most
+		// pressed buttons in a Docker panel and every one of them is undone by
+		// pressing start, so a typing exercise in front of them bought nothing
+		// and cost the phrase its meaning everywhere else. The dialog still
+		// names the container, which is what stops the mis-clicked row.
 		var timeout *int
 		if v := r.URL.Query().Get("timeout"); v != "" {
 			t := atoiDefault(v, 10)
@@ -534,9 +532,11 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return s.dockerErr(err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, detail.Name); err != nil {
-		return err
-	}
+	// No typed phrase: a container is a process plus a spec, and this panel can
+	// render both back as a docker run line or a compose service. What would
+	// not survive is data written inside the container rather than to a volume
+	// — which is a finding Diagnose already raises, on the container, before
+	// anybody reaches this button.
 	force := r.URL.Query().Get("force") == "true"
 	volumes := r.URL.Query().Get("volumes") == "true"
 	if err := s.modules.docker.RemoveContainer(r.Context(), id, force, volumes); err != nil {
@@ -690,19 +690,20 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) error {
 	id := chi.URLParam(r, "id")
-	// Keyed on the image's own tag, for the reason containerLifecycle gives:
-	// a fixed phrase like "delete image" carries no information about which
-	// image, so deleting several in a row is exactly the muscle-memory case
-	// the typed confirmation exists to prevent.
-	if err := httpx.RequireTypedConfirmation(w, r, s.imageName(r.Context(), id)); err != nil {
-		return err
-	}
+	// No typed phrase: an image is reproducible — it came from a registry or a
+	// Dockerfile this dashboard can rebuild. Pruning many at once still asks,
+	// because that is the sweep nobody can enumerate in advance.
+	//
+	// The tag is resolved before the removal rather than after, because after
+	// it there is nothing left to resolve it from — and a trail saying which
+	// image went is worth more than one holding a bare digest.
+	name := s.imageName(r.Context(), id)
 	res, err := s.modules.docker.RemoveImage(r.Context(), id,
 		r.URL.Query().Get("force") == "true", true)
 	if err != nil {
 		return s.dockerErr(err)
 	}
-	httpx.SetAudit(r, "docker.image.remove", id, map[string]any{"result": res})
+	httpx.SetAudit(r, "docker.image.remove", name, map[string]any{"id": id, "result": res})
 	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }
@@ -751,6 +752,9 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) err
 
 func (s *Server) handleVolumeRemove(w http.ResponseWriter, r *http.Request) error {
 	name := chi.URLParam(r, "name")
+	// Typed, unlike the container, image and network beside it: a volume is the
+	// one Docker object that *is* the data. Everything else on this page can be
+	// rebuilt from a registry or a spec; this cannot be rebuilt from anything.
 	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
 		return err
 	}
@@ -803,20 +807,22 @@ func (s *Server) handleNetworkRemove(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return s.dockerErr(err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, n.Name); err != nil {
-		return err
-	}
+	// No typed phrase: a network holds no data and Docker refuses to remove one
+	// that still has containers attached, so the mistake this would guard
+	// against is one the daemon already refuses.
 	if err := s.modules.docker.RemoveNetwork(r.Context(), id); err != nil {
 		return s.dockerErr(err)
 	}
-	httpx.SetAudit(r, "docker.network.remove", id, nil)
+	// The name is worth more than the id in an audit trail, and it is the only
+	// reason this handler still inspects before removing.
+	httpx.SetAudit(r, "docker.network.remove", n.Name, map[string]any{"id": id})
 	httpx.NoContent(w)
 	return nil
 }
 
-// imageName is the phrase an operator types to confirm removing an image: its
-// first tag, or a short id for one that was never tagged. It falls back to the
-// id it was given rather than failing, so a confirmation is always possible.
+// imageName is an image's first tag, or a short id for one that was never
+// tagged. It falls back to the id it was given rather than failing, so a caller
+// always has something readable to name the image with.
 func (s *Server) imageName(ctx context.Context, id string) string {
 	images, err := s.modules.docker.ListImages(ctx, true)
 	if err != nil {
@@ -887,7 +893,7 @@ func (s *Server) stackAction(action dockerx.ComposeAction) httpx.Handler {
 		// One answer to "which of these interrupts a running service", shared
 		// with the streaming runner so the socket cannot become a way around
 		// the confirmation the POST demands.
-		if composeIsDestructive(action) {
+		if composeNeedsPhrase(action) {
 			if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
 				return err
 			}

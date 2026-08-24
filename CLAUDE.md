@@ -32,9 +32,18 @@ fail on a network-restricted machine. Check `go version` before blaming the code
 Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
 `httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
 hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
-to run on every change. The two exceptions are `term` and the terminal half of `api`, which
-drive the machine's real tmux and skip when it is absent: the bugs they exist to catch live in
-the gap between this process and that one — what tmux has been told, what it has got round to
+to run on every change. There are two exceptions, and both take the same shape: they drive a
+real thing outside this process and *skip* when it is absent, so the suite stays green on a
+bare machine and gets stricter on an equipped one.
+
+The first is the live database tests (`dbx/live*_test.go`, `api/handlers_db_live_test.go`),
+which take each engine's DSN from an environment variable defaulting to a local instance. A
+catalogue query naming a column the server does not have is string-matched identically by a
+unit test; only the server rejects it. Bring the engines up and re-run with `-count=1` — the
+test cache will otherwise serve you yesterday's skips.
+
+The second is `term` and the terminal half of `api`, which drive the machine's real tmux.
+The bugs they exist to catch live in the gap between this process and that one — what tmux has been told, what it has got round to
 storing, and what it reports half a second later — and a fake tmux would answer instantly and
 pass every one of them while the product stayed broken. Both packages give themselves a
 private tmux server in `TestMain` (`TMUX_TMPDIR`), so a test run never lists or outlives the
@@ -116,17 +125,19 @@ conversion to `http.Handler` — it adds no behaviour. Return `httpx.Err/BadRequ
 keeps internal error strings off the wire. Decode bodies with `httpx.DecodeJSON` (4 MB cap,
 unknown fields rejected).
 
-Irreversible actions require the caller to echo a phrase in the **`X-Confirm`** header via
+`s.destructive(r, ...)` is the marker for "destructive" and adds the capability check and the
+tighter `destrLim` budget — it does *not* enforce confirmation. The **rare and unrecoverable**
+subset additionally requires the caller to echo a phrase in the **`X-Confirm`** header via
 `httpx.RequireTypedConfirmation(w, r, phrase)`, called **inside the handler** where the
 expected phrase is known; the phrase comes back to the client as `error.phrase`, not parsed
-out of the message. `s.destructive(r, ...)` is the marker for "irreversible" and adds the
-capability check and the tighter `destrLim` budget — it does *not* enforce confirmation.
-Adding a destructive route means doing both. It is nested inside stricter groups too
-(`system.admin` routes that delete something), because admin holds every capability, so
-"which routes are irreversible?" has one answer. The single exception is
-`POST /databases/{id}/query`, where the answer depends on the SQL: `dbx.Classify` decides,
-fails closed on anything it does not recognise, and the handler applies the same capability
-check and budget by hand.
+out of the message. Which routes are in that subset, and why the test is frequency rather than
+severity, is invariant 3 — read it before adding one.
+
+`s.destructive` is nested inside stricter groups too (`system.admin` routes that delete
+something), because admin holds every capability, so "which routes are destructive?" has one
+answer. The single exception is `POST /databases/{id}/query`, where the answer depends on the
+SQL: `dbx.Classify` decides, fails closed on anything it does not recognise, and the handler
+applies the same capability check and budget by hand.
 
 Two routes carry a check on the *content* of the request rather than on its path, for the
 same reason: the route cannot know. `POST /docker/containers` gates on `service.control`,
@@ -550,6 +561,65 @@ restores the browser's selection, which is the convention every terminal
 emulator uses, and the shortcut sheet lists it because it is exactly the sort
 of thing discovered by finding it broken.
 
+### Databases: eight engines behind one shape
+
+`internal/dbx` drives PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle,
+MongoDB and Redis, all on pure-Go drivers so the image still needs no CGO.
+
+**`Dialect` is the whole abstraction.** Everything one SQL engine does differently — its
+`database/sql` name, its quote character, its bind marker, its pagination tail, its
+catalogue queries, its DDL keywords, its session list, its size query — is one method on
+one interface with six implementations. The earlier shape was a `switch driver` inside each
+of a dozen functions; it worked for three engines and stopped working at seven, because a
+new engine meant finding and extending eleven separate switches and a missed one failed at
+runtime rather than at compile time. Adding an engine now is one file the compiler checks.
+
+**Identifiers are quoted, values are bound, always.** `validateIdent` refuses only what
+quoting cannot make safe (a NUL, a control character) rather than a conservative character
+class — a table called `user-profiles` was listed and then refused to open under the old
+rule — and `quoteWith` doubles the engine's own quote character. Every row edit is scoped by
+the primary key and refused outright without one, because an UPDATE the caller believes
+touches one row would otherwise touch all of them.
+
+`rowsql.go` is the one deliberate exception, and it does not generalise: it renders a row as
+an INSERT *for the clipboard*. Nothing executes what it produces — the statement is text the
+operator pastes somewhere else, having read it — and no code path may call it and then run
+the result. `TestLiveRowInsertSQLQuoting` hands a value containing `'); DROP TABLE …` back
+to every live engine and checks the table is still standing.
+
+**Reading is separated from running, on purpose.** `dbx.Classify` decides whether a
+statement is destructive, fails closed on anything it does not recognise, and the handler
+applies the capability check and the tighter budget by hand — the route cannot know. Every
+dialect's `ExplainPlan` must describe a statement *without executing it*; that is asserted in
+the interface and proved by `TestLiveExplainDoesNotExecute`, which asks each engine to
+explain a DELETE and then counts the rows.
+
+**The diagnostic surface is what a data browser usually lacks.** `activity.go` lists what
+the server is running now — with the blocking session named where the engine reports it,
+which is what turns twenty "slow" sessions into one culprit — and stops one. The list
+includes the dashboard's own connections, marked `self`: hiding them meant a server with
+nothing else connected reported an empty table, which reads as a broken query rather than an
+idle server. `size.go` is the per-table disk breakdown for when the alert fires and nobody
+knows which table grew; row counts there are the engine's own estimate, because counting
+forty tables exactly is a full scan of the database to answer a question about relative
+size. `search.go` finds which table a value lives in, bounded in three directions at once
+(tables visited, columns compared, matches per table) — those bounds are not tuning knobs,
+they are what makes the feature safe to point at a production server.
+
+**Testing is against real servers, and skips rather than fails.** `live_test.go`,
+`live_nosql_test.go`, `live_devx_test.go` and `api/handlers_db_live_test.go` take each
+engine's DSN from an environment variable defaulting to a local instance, and skip with a
+message naming the variable when it is unreachable — so `go test ./...` stays green on a
+machine with nothing installed and gets stricter on one with the servers up. A suite that
+fails for want of a database teaches people to ignore it. These are the tests that matter
+here: a catalogue query naming a column the server does not have is string-matched
+identically by a unit test and rejected by the engine. Every bug this feature has shipped
+was of that kind — SQL Server rejecting `ADD COLUMN`, a size query summing every index_id
+and reporting a table at four times its size, Postgres's `now()` being the *transaction*
+timestamp and so reporting the asking session a negative age. Oracle is the one engine with
+no live coverage: its installer cannot be driven headlessly, which CONTRIBUTING says
+plainly rather than pretending otherwise.
+
 ### Streaming
 
 `internal/wsx` wraps gorilla/websocket: origin check on upgrade (a WS handshake is not
@@ -950,24 +1020,49 @@ A change that weakens any of these has to say so explicitly:
 
 1. The network allowlist runs **before** authentication.
 2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
-3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. There are
-   two relaxations, both deliberate and both narrow.
+3. Every destructive action is behind `s.destructive` — the `destructive` capability, the
+   tighter `destrLim` budget and an audit entry — and pauses the operator with a confirmation
+   dialog. A **subset** of those additionally requires the typed `X-Confirm` phrase, enforced
+   server-side inside the handler where the expected phrase is known.
 
-   `httpx.RequireTypedConfirmationWS` also accepts the phrase as a query parameter — used only
-   by WebSocket routes, where a browser cannot set a header at all, and where `wsx`'s origin
-   check supplies what the header was protecting against. Do not reach for it from an ordinary
-   handler.
+   **The test for the phrase is frequency, not severity.** A phrase in front of something done
+   a dozen times a day is not read, it is typed — and the operator who has learned to type one
+   table name without looking types the next one the same way. That habit is precisely what the
+   phrase is protecting on the routes that keep it, so every route added to the typed set makes
+   the typed set weaker. The question to ask is not "is this dangerous" (they all are, that is
+   what `s.destructive` marks) but "how often does somebody do this, and can they get it back".
 
-   The three terminal close routes — a session, a window, a pane — are destructive and carry
-   **no phrase at all**. They stay inside `s.destructive`, so the capability check, the tighter
-   budget and the audit entry all still apply; only the typing is gone. The phrase exists so an
-   irreversible action cannot be a mis-click, and that holds for the things somebody deletes a
-   handful of times a year. Closing a shell is an everyday act — a dozen a day for anyone using
-   the panel as intended — and a phrase in front of an everyday act is not read, it is typed.
-   Training the operator to type "close terminal" without looking is worse than no guard,
-   because it is the exact habit the confirmation is protecting every *other* route with. This
-   is the reasoning to apply before adding a fourth exception; frequency is the test, not
-   severity.
+   Typed, because they are rare and there is no way back: `DROP TABLE`, `DROP COLUMN`,
+   `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a Mongo pipeline
+   with `$out`/`$merge`, a `critical` statement in the query runner, restoring a database or a
+   backup over live data, `compose down`, removing a Docker volume, any prune, deleting a
+   dashboard or Linux account, a recursive directory delete, `git discard` and `git reset
+   --hard`, toggling the firewall, applying package updates.
+
+   Not typed, because they are routine or recoverable or both: deleting rows and documents and
+   Redis keys, dropping an index, forgetting a connection, stopping a database session,
+   stopping/restarting/killing/removing/recreating a container, removing an image or a network,
+   deleting one file, signalling a process, stopping or restarting a service, revoking a token
+   or an SSH key, deleting a backup job or a deploy project, rolling back a deploy, disabling a
+   vhost, deleting a firewall rule, and closing a terminal session, window or pane.
+
+   Several routes decide by content rather than by path, and the narrowing lives at the call
+   site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
+   `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`, and
+   `composeNeedsPhrase` only for `down` — with `requireComposePhraseWS` applying the same
+   narrowing on the socket so the two entry points cannot disagree. The frontend mirrors each
+   with a conditional `phrase`, and the server re-decides regardless.
+
+   One relaxation on top of all this: `httpx.RequireTypedConfirmationWS` also accepts the
+   phrase as a query parameter — used only by WebSocket routes, where a browser cannot set a
+   header at all, and where `wsx`'s origin check supplies what the header was protecting
+   against. Do not reach for it from an ordinary handler.
+
+   `api/handlers_db_test.go` pins both directions for the database surface —
+   `TestIrreversibleDatabaseRoutesDemandAPhrase` and
+   `TestRoutineDatabaseRoutesDoNotAskForAPhrase` — because the line has two failure modes and
+   the second one (a phrase creeping back onto routine work, one defensible route at a time) is
+   the quieter of the two.
 4. Capability checks live on the route, never in the UI alone. Where the answer depends on
    what is *in* the request rather than which route it hit, the handler checks by hand and
    fails closed: `dbx.Classify` for SQL, `api.authoriseSpec` for a container spec that is

@@ -83,3 +83,17 @@ export function truncateMiddle(value: string, max = 48): string {
   const half = Math.floor((max - 1) / 2)
   return `${value.slice(0, half)}…${value.slice(value.length - half)}`
 }
+
+/**
+ * A number and its noun, agreeing.
+ *
+ * Written out at each site this was right about half the time — "3 matches
+ * across 2 tables" next to "Delete 1 rows" in a confirmation dialog, which is
+ * the worst place in the product to look careless. The plural is the regular
+ * one unless a second form is given, because the irregulars here are few
+ * ("index", "matches") and naming them at the call site is clearer than a
+ * table of exceptions.
+ */
+export function plural(n: number, singular: string, many?: string): string {
+  return `${n.toLocaleString()} ${n === 1 ? singular : (many ?? singular + "s")}`
+}

@@ -361,6 +361,9 @@ export default function TerminalPage() {
    * shell is an everyday act, and a phrase in front of an everyday act does
    * not get read — it gets typed. The server dropped the phrase for the same
    * reason and still records the close in the audit log.
+   *
+   * This was the first route to make that argument and it is now the rule the
+   * whole product follows — see ConfirmRequest.phrase.
    */
   const closeSession = async (session: TerminalWorkspace) => {
     try {

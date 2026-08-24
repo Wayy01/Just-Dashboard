@@ -184,7 +184,6 @@ function PM2Tab() {
                             onClick={() =>
                               confirm({
                                 title: "Restart application",
-                                phrase: proc.name,
                                 confirmLabel: "Restart",
                                 description: (
                                   <p>
@@ -202,7 +201,6 @@ function PM2Tab() {
                             onClick={() =>
                               confirm({
                                 title: "Stop application",
-                                phrase: proc.name,
                                 confirmLabel: "Stop",
                                 description: (
                                   <p>
@@ -221,7 +219,6 @@ function PM2Tab() {
                             onClick={() =>
                               confirm({
                                 title: "Delete from PM2",
-                                phrase: proc.name,
                                 confirmLabel: "Delete",
                                 description: (
                                   <p>
@@ -384,7 +381,6 @@ function SystemdTab() {
                             onClick={() =>
                               confirm({
                                 title: "Restart unit",
-                                phrase: unit.name,
                                 confirmLabel: "Restart",
                                 description: (
                                   <p>
@@ -403,7 +399,6 @@ function SystemdTab() {
                               onClick={() =>
                                 confirm({
                                   title: "Stop unit",
-                                  phrase: unit.name,
                                   confirmLabel: "Stop",
                                   description: (
                                     <p>
@@ -599,7 +594,6 @@ function ProcessTableTab() {
                         onClick={() =>
                           confirm({
                             title: "Signal process",
-                            phrase: String(proc.pid),
                             confirmLabel: "Send SIGTERM",
                             description: (
                               <>
@@ -762,7 +756,6 @@ function CronTab() {
                   onClick={() =>
                     confirm({
                       title: "Replace crontab",
-                      phrase: user,
                       confirmLabel: "Save",
                       description: (
                         <p>

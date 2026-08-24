@@ -250,7 +250,6 @@ function FirewallTab() {
                           onClick={() =>
                             confirm({
                               title: "Delete firewall rule",
-                              phrase: `delete rule ${rule.number}`,
                               confirmLabel: "Delete",
                               description: <p className="font-mono text-xs">{rule.raw}</p>,
                               action: async (c) => {

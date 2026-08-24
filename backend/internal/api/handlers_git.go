@@ -343,12 +343,13 @@ func (s *Server) handleGitReset(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	phrase := "reset branch"
+	// Only a hard reset is typed for. A soft or mixed reset moves the branch
+	// pointer and leaves the working tree alone, so the work is still on disk;
+	// --hard is the one that overwrites it with the commit and leaves no copy.
 	if req.Hard {
-		phrase = "reset hard"
-	}
-	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
-		return err
+		if err := httpx.RequireTypedConfirmation(w, r, "reset hard"); err != nil {
+			return err
+		}
 	}
 	return s.gitAction(w, r, "reset", func(p string) (*gitx.Result, error) {
 		return s.modules.git.Reset(r.Context(), p, req.Ref, req.Hard)

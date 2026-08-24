@@ -106,7 +106,6 @@ function VHostsTab() {
     if (!enabled) {
       confirm({
         title: "Disable virtual host",
-        phrase: vhost.name,
         confirmLabel: "Disable and reload",
         description: (
           <p>

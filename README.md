@@ -61,8 +61,12 @@ It is built to sit behind a VPN or an SSH tunnel, and that is enforced rather th
   handler at all, let alone guess at it.
 - Two-factor is **mandatory**. A correct password on its own yields a session that every
   route rejects except the 2FA ones.
-- Irreversible actions require a **typed confirmation phrase**, checked on the server, so it
-  cannot be skipped by calling the API directly.
+- Destructive actions pause for a confirmation, and the rare, unrecoverable ones — dropping a
+  table, removing a volume, deleting an account, restoring over live data — additionally
+  require a **typed confirmation phrase**, checked on the server, so it cannot be skipped by
+  calling the API directly. The line is drawn by *frequency*: a phrase in front of something
+  done a dozen times a day gets typed rather than read, which is exactly how it stops working
+  on the routes that need it.
 - Every state-changing request lands in an **audit log**: who, what, when, from where, and
   whether it worked.
 
@@ -148,7 +152,7 @@ A real PTY over a WebSocket, running `su -l` into a host account, not a shell in
 container. Your dotfiles, your PATH, your installed tools.
 
 Backed by tmux, so closing the tab, leaving the page and restarting the dashboard all leave
-the session running. Only closing one stops it, and that takes a typed confirmation. The
+the session running. Only closing one stops it, and that asks first. The
 title, the folder and the favourite flag live on the tmux session itself, which is why a
 session picked up after a restart is still called what you called it.
 
@@ -201,7 +205,7 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 | **Processes** | PM2 apps with merged output tailing, systemd units with journal streaming, and an htop-style table sortable by CPU **or** memory, because a leaking service sits at 0% CPU holding gigabytes. Kill is guarded. Crontab editor included. |
 | **Logs** | One viewer over files, container output, PM2 and the journal. Grep and level filters are applied on the server, before the lines are sent. |
 | **Proxy & TLS** | nginx and Caddy config editing, validated with the server's own test binary before writing or reloading. Vhost toggles, certificate inventory with expiry, listening ports joined to the processes that own them. |
-| **Databases** | Postgres, MySQL and MongoDB. Schema browsing, a paged table browser, a query runner that classifies a statement as destructive before it runs, plus dumps and restores. Passwords never appear in argv. |
+| **Databases** | Eight engines: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis — all on pure-Go drivers, so the image still needs no CGO. A data grid that edits rows through forms (always scoped to a primary key), server-side sort and filtering, schema editing with the statement shown before it runs, CSV/JSON import inside one transaction, a structure view and an entity diagram, a query runner that classifies a statement as destructive before it runs with schema-aware completion, history and saved snippets, CSV/JSON export, one-click Prisma, Drizzle, TypeScript or Zod generation from the live database, and a value search that finds which table an id lives in without knowing where to look. A Monitor tab lists what the server is running right now — with the blocking session named — and stops a stuck query, next to a per-table size breakdown for when the disk alert fires. Any row copies out as JSON or as a runnable INSERT in that engine's own syntax, or duplicates into a pre-filled form. MongoDB gets document editing, an aggregation runner, and its own export and import; Redis gets a SCAN-based key browser with full collection editing. Plus dumps and restores. Passwords never appear in argv. Everything but Oracle is covered by tests that run against the real engines. |
 | **Security** | How the dashboard is exposed and what to do about it, firewall rules, fail2ban jails and what they have actually banned, active SSH sessions, and the host's own login record: who got in, who tried and failed, and when the machine restarted. |
 | **Updates** | What is behind, which of it is security, and whether a reboot is due. Upgrades only. It never installs or removes packages. |
 | **Deployments** | Git pull plus `compose up -d --build`, by hand or by signed webhook, with history and rollback. Encrypted per-project environment rendered into `.env` at deploy time. |
@@ -430,7 +434,8 @@ Every request passes the same chain:
 network allowlist → rate limit → authenticate → capability → handler
 ```
 
-Destructive routes additionally require a typed confirmation and get a tighter rate budget.
+Destructive routes get a tighter rate budget, and the rare irreversible ones also require a
+typed confirmation phrase.
 
 **On privileges.** The compose file grants the backend `privileged: true`, `pid: host` and
 the Docker socket. That is what makes "restart this unit" and "kill this process" mean

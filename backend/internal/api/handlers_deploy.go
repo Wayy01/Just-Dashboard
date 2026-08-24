@@ -157,9 +157,8 @@ func (s *Server) handleDeployDelete(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return mapDeployError(err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, project.Name); err != nil {
-		return err
-	}
+	// No typed phrase: this removes a hook and its history, and the checkout on
+	// disk is deliberately left where it is — the running site does not notice.
 	if err := s.modules.deployStore.Delete(r.Context(), id); err != nil {
 		return httpx.Internal(err)
 	}
@@ -235,11 +234,9 @@ func (s *Server) handleDeployRollback(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapDeployError(err)
 	}
-	// Rolling back replaces what is currently serving traffic, so the
-	// operator types the project name to confirm which one they mean.
-	if err := httpx.RequireTypedConfirmation(w, r, project.Name); err != nil {
-		return err
-	}
+	// No typed phrase: a rollback is itself the recovery action, reached under
+	// exactly the pressure that makes a typing exercise harmful, and it is
+	// undone by deploying forward again.
 	if s.modules.deployer.IsRunning(id) {
 		return httpx.Err(http.StatusConflict, "already_running", deploy.ErrAlreadyDeploying.Error())
 	}

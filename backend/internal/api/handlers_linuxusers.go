@@ -164,6 +164,9 @@ func (s *Server) handleSysUserUpdate(w http.ResponseWriter, r *http.Request) err
 
 func (s *Server) handleSysUserDelete(w http.ResponseWriter, r *http.Request) error {
 	name := chi.URLParam(r, "name")
+	// Typed: an account is an identity, deleting one can take its home
+	// directory with it, and nobody does this often enough for the typing to
+	// become reflex.
 	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
 		return err
 	}
@@ -211,9 +214,9 @@ func (s *Server) handleSSHKeyRemove(w http.ResponseWriter, r *http.Request) erro
 	if fingerprint == "" {
 		return httpx.BadRequest("fingerprint query parameter is required")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-		return err
-	}
+	// No typed phrase: an authorised key is a public key, and putting one back
+	// is a paste. Deleting the account it belongs to is the route above, and
+	// that still asks.
 	if err := s.modules.linuxUsers.RemoveKey(name, fingerprint); err != nil {
 		return mapLinuxUserError(err)
 	}

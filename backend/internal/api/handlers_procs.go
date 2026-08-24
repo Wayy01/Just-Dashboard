@@ -102,11 +102,9 @@ func (s *Server) handlePM2List(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) pm2Action(action procs.PM2Action) httpx.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		name := chi.URLParam(r, "name")
-		if action == procs.PM2Stop || action == procs.PM2Restart || action == procs.PM2Delete {
-			if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-				return err
-			}
-		}
+		// No typed phrase: starting, stopping and restarting a process is what
+		// a process manager is for, and pm2 delete removes it from pm2's list
+		// rather than from disk. The dialog names the process.
 		res, err := s.modules.pm2.Control(r.Context(), name, action)
 		if err != nil {
 			return mapProcsError(err)
@@ -237,11 +235,9 @@ func (s *Server) handleUnitShow(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) unitAction(action procs.UnitAction) httpx.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		name := chi.URLParam(r, "name")
-		if action == procs.UnitStop || action == procs.UnitRestart {
-			if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-				return err
-			}
-		}
+		// No typed phrase, for the reason pm2Action gives: restarting a unit is
+		// the ordinary operation of a service manager and `systemctl start`
+		// undoes it.
 		res, err := s.modules.systemd.Control(r.Context(), name, action)
 		if err != nil {
 			return mapProcsError(err)
@@ -421,11 +417,9 @@ func (s *Server) handleProcessSignal(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return httpx.ErrNotFound
 	}
-	// Confirming on the PID rather than the name makes the operator look at
-	// the row they actually selected.
-	if err := httpx.RequireTypedConfirmation(w, r, strconv.Itoa(int(pid))); err != nil {
-		return err
-	}
+	// No typed phrase: signalling a process is the process table's whole
+	// purpose, and a supervised one comes straight back. The dialog carries the
+	// pid and the command line, which is what identifies the right row.
 	if err := s.modules.table.Signal(r.Context(), pid, req.Signal); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
@@ -475,9 +469,9 @@ func (s *Server) handleCronUserPut(w http.ResponseWriter, r *http.Request) error
 	if err := procs.ValidateCrontab(req.Content); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, user); err != nil {
-		return err
-	}
+	// No typed phrase: this is the Save button of an editor whose contents are
+	// on screen, and a Save that asks you to type the account name is a Save
+	// nobody reads either.
 	if err := s.modules.cron.SetUserCrontab(r.Context(), user, req.Content); err != nil {
 		return mapProcsError(err)
 	}

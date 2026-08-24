@@ -898,10 +898,38 @@ export type Listener = {
   exposed: boolean
 }
 
+export type DbDriver =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse"
+  | "oracle"
+  | "mongodb"
+  | "redis"
+
+/**
+ * What one engine can do, as the server reports it.
+ *
+ * The frontend deliberately keeps no table of its own: a tab that would 400 on
+ * every request should not be offered, and the only thing that actually knows
+ * which those are is the dialect registry on the server.
+ */
+export type DbDriverInfo = {
+  id: DbDriver
+  label: string
+  kind: "sql" | "document" | "keyvalue"
+  placeholder: string
+  sql: boolean
+  ddl: boolean
+  columnTypes?: string[]
+  filterOps?: string[]
+}
+
 export type DbConnection = {
   id: number
   name: string
-  driver: "postgres" | "mysql" | "mongodb"
+  driver: DbDriver
   host: string
   port: string
   user: string
@@ -943,6 +971,206 @@ export type QueryRisk = {
   destructive: boolean
   level: "read" | "medium" | "high" | "critical"
   reasons: string[]
+}
+
+/** One index on a table, with the columns it covers in order. */
+export type DbIndex = {
+  name: string
+  columns: string[]
+  unique: boolean
+  primary: boolean
+}
+
+/** One outgoing foreign key. Composite keys keep columns paired in order. */
+export type DbForeignKey = {
+  name: string
+  columns: string[]
+  refSchema?: string
+  refTable: string
+  refColumns: string[]
+  onUpdate?: string
+  onDelete?: string
+}
+
+/** Everything the Structure tab shows and everything row editing needs. */
+export type DbTableDetail = {
+  schema: string
+  name: string
+  columns: DbColumn[]
+  primaryKey: string[]
+  indexes: DbIndex[]
+  foreignKeys: DbForeignKey[]
+  createSql?: string
+}
+
+/** A named SQL snippet kept against a connection. */
+export type DbSavedQuery = {
+  id: number
+  name: string
+  sql: string
+  createdAt: string
+}
+
+/** One entry in a connection's recent-statement history. */
+export type DbHistoryEntry = {
+  id: number
+  sql: string
+  risk: string
+  success: boolean
+  durationMs: number
+  rowCount: number
+  ranAt: string
+}
+
+export type OrmTarget = "prisma" | "drizzle" | "typescript" | "zod"
+
+/** A generator the server offers, with the filename its download will use. */
+export type OrmTargetInfo = {
+  id: OrmTarget
+  label: string
+  filename: string
+  description: string
+}
+
+/** One session the database server is currently running. */
+export type DbActivity = {
+  pid: string
+  user?: string
+  database?: string
+  state?: string
+  seconds: number
+  query?: string
+  client?: string
+  wait?: string
+  blockedBy?: string
+  /** True for the connection that answered this request — never offer to kill it. */
+  self?: boolean
+}
+
+export type DbActivityResponse = {
+  sessions: DbActivity[]
+  /** False on an engine with no server-side session list, e.g. SQLite. */
+  supported: boolean
+  reason?: string
+}
+
+/** One row found by the schema-wide value search. */
+export type DbSearchMatch = {
+  schema: string
+  table: string
+  column: string
+  value: string
+  row: Record<string, unknown>
+}
+
+export type DbSearchResult = {
+  matches: DbSearchMatch[]
+  tablesScanned: number
+  tablesSkipped?: string[]
+  truncated: boolean
+}
+
+/** What one table costs on disk. Row counts are the engine's estimate. */
+export type DbTableSize = {
+  schema: string
+  table: string
+  rows: number
+  bytes: number
+  dataBytes: number
+  indexBytes: number
+}
+
+export type DbPoolStats = {
+  open: number
+  inUse: number
+  idle: number
+  waitCount: number
+  waitDuration: string
+  maxOpen: number
+  maxIdleClosed: number
+  maxLifetimeClosed: number
+}
+
+export type DbOverview = {
+  schema: string
+  tables: DbTableSize[]
+  totalBytes: number
+  totalRows: number
+  tableCount: number
+  /** False where the engine cannot report bytes — show rows and say so. */
+  sizesKnown: boolean
+  pool: DbPoolStats
+}
+
+/** One condition in the data grid's filter row. */
+export type DbFilter = {
+  column: string
+  op: string
+  value: string
+}
+
+/** A column being created or added, as the DDL form describes it. */
+export type DbNewColumn = {
+  name: string
+  type: string
+  notNull?: boolean
+  primaryKey?: boolean
+  default?: string
+}
+
+export type DbImportResult = {
+  inserted: number
+  failed: number
+  errors: string[]
+  errorsTruncated: boolean
+  statement: string
+}
+
+/** Table name to column names, for editor completion. */
+export type DbOutline = {
+  schema: string
+  tables: Record<string, string[]>
+}
+
+/** table -> its outgoing foreign keys, for the entity diagram. */
+export type DbRelations = Record<string, DbForeignKey[]>
+
+// --- Redis ---------------------------------------------------------------
+
+export type RedisKeyInfo = {
+  key: string
+  type: string
+  /** Seconds; -1 means no expiry, -2 means the key is gone. */
+  ttl: number
+  size: number
+}
+
+export type RedisPage = {
+  keys: RedisKeyInfo[]
+  cursor: number
+  done: boolean
+}
+
+export type RedisZMember = { member: string; score: number }
+
+export type RedisValue = {
+  key: string
+  type: string
+  ttl: number
+  string?: string
+  list?: string[]
+  set?: string[]
+  hash?: Record<string, string>
+  zset?: RedisZMember[]
+  stream?: { id: string; values: Record<string, unknown> }[]
+  truncated: boolean
+}
+
+// --- MongoDB -------------------------------------------------------------
+
+export type MongoCollectionInfo = {
+  indexes: DbIndex[]
+  stats?: Record<string, unknown>
 }
 
 export type SystemUser = {

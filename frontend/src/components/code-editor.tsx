@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef } from "react"
 import dynamic from "next/dynamic"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -7,14 +8,36 @@ import { useTheme } from "@/hooks/use-theme"
 
 // Monaco pulls in a large worker bundle and touches `window`, so it is loaded
 // only when an editor is actually opened.
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center">
-      <Loader2 className="size-5 animate-spin text-muted-foreground" />
-    </div>
-  ),
-})
+//
+// Where it is loaded *from* is the part that matters here. @monaco-editor/react
+// resolves the editor at runtime and its default source is a CDN, which made
+// the SQL editor the one thing in this product that needed the operator's
+// browser to reach the public internet — in a dashboard whose entire security
+// story is a closed network perimeter, and which is normally reached down a
+// Tailscale or SSH tunnel. With the CDN unreachable the Query tab sat at
+// "Loading…" for ever: no error, no fallback, and no way to type a statement,
+// while Run happily executed a value nobody could see. It also told a third
+// party, on every page open, that this dashboard exists.
+//
+// `scripts/sync-monaco.mjs` copies the runtime into public/monaco at build
+// time and this points the loader at it, so the editor comes from the same
+// origin as everything else the dashboard serves.
+const MonacoEditor = dynamic(
+  () =>
+    import("@monaco-editor/react").then(async (mod) => {
+      const { loader } = await import("@monaco-editor/react")
+      loader.config({ paths: { vs: `${window.location.origin}/monaco/vs` } })
+      return mod
+    }),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    ),
+  },
+)
 
 /**
  * Monaco, wired to the dashboard's palette.
@@ -33,6 +56,7 @@ export function CodeEditor({
   readOnly,
   className,
   minHeight,
+  completions,
 }: {
   value: string
   onChange?: (value: string) => void
@@ -40,8 +64,21 @@ export function CodeEditor({
   readOnly?: boolean
   className?: string
   minHeight?: string
+  /**
+   * Names to offer as completions, as a parent-to-children map — tables to
+   * their columns for SQL. Kept as a plain map rather than a Monaco type so
+   * this component does not drag the editor's types into every caller.
+   */
+  completions?: Record<string, string[]>
 }) {
   const { mode } = useTheme()
+  // Held in a ref so the provider registered on mount always reads the current
+  // schema. Re-registering on every change would stack providers and offer each
+  // table name once per registration.
+  const completionsRef = useRef(completions)
+  useEffect(() => {
+    completionsRef.current = completions
+  }, [completions])
 
   return (
     <div className={cn("monaco-host min-h-0", className)} style={{ minHeight }}>
@@ -51,6 +88,10 @@ export function CodeEditor({
         language={language}
         value={value}
         onChange={(v) => onChange?.(v ?? "")}
+        onMount={(_editor, monaco) => {
+          if (!completions || !language) return
+          registerSchemaCompletions(monaco, language, completionsRef)
+        }}
         options={{
           readOnly,
           minimap: { enabled: false },
@@ -68,4 +109,81 @@ export function CodeEditor({
       />
     </div>
   )
+}
+
+/**
+ * Registers a schema-aware completion provider once per language.
+ *
+ * Monaco's providers are global to the language rather than scoped to an editor
+ * instance, so registering one per mount would leave every previous editor's
+ * provider attached and offer each table name once per editor ever opened. One
+ * registration reading from a module-level slot is what keeps the list to one
+ * copy, and writing the current editor's schema into that slot on mount is what
+ * makes the suggestions follow the connection being looked at.
+ */
+const activeSchema: Record<string, () => Record<string, string[]> | undefined> = {}
+
+function registerSchemaCompletions(
+  monaco: typeof import("monaco-editor"),
+  language: string,
+  ref: { current?: Record<string, string[]> },
+) {
+  const first = !(language in activeSchema)
+  activeSchema[language] = () => ref.current
+  if (!first) return
+
+  monaco.languages.registerCompletionItemProvider(language, {
+    provideCompletionItems(model, position) {
+      const tables = activeSchema[language]?.()
+      if (!tables) return { suggestions: [] }
+      const word = model.getWordUntilPosition(position)
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn,
+      }
+      const line = model.getValueInRange({
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: 1,
+        endColumn: position.column,
+      })
+
+      // After `table.` only that table's columns make sense. Offering the whole
+      // schema there is what makes most SQL completion useless.
+      const qualified = /([A-Za-z_][\w$]*)\.\w*$/.exec(line)
+      if (qualified) {
+        const cols = tables[qualified[1]] ?? []
+        return {
+          suggestions: cols.map((c) => ({
+            label: c,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: c,
+            range,
+          })),
+        }
+      }
+
+      return {
+        suggestions: [
+          ...Object.keys(tables).map((t) => ({
+            label: t,
+            kind: monaco.languages.CompletionItemKind.Struct,
+            insertText: t,
+            detail: `${(tables[t] ?? []).length} columns`,
+            range,
+          })),
+          // Unqualified column names, de-duplicated across tables: that is what
+          // people actually type in a single-table query.
+          ...[...new Set(Object.values(tables).flat())].map((c) => ({
+            label: c,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: c,
+            range,
+          })),
+        ],
+      }
+    },
+  })
 }
