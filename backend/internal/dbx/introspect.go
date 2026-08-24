@@ -217,3 +217,144 @@ func Outline(ctx context.Context, db *sql.DB, driver Driver, schema string) (*Sc
 	}
 	return out, nil
 }
+
+// SchemaGraph is a whole schema in the shape a diagram needs: every table with
+// its columns, which of them are keys, and the references between them.
+//
+// It exists because drawing the schema from the routes that already existed
+// meant one request for the table list, one for the relations, and then one
+// per table for the columns — forty round trips to render one picture, each
+// one a chance for the diagram to be half-drawn. Introspecting once on the
+// server and sending the finished shape is both faster and atomic: what
+// arrives is one schema at one moment rather than forty answers from forty.
+type SchemaGraph struct {
+	Schema string       `json:"schema"`
+	Tables []GraphTable `json:"tables"`
+	Edges  []GraphEdge  `json:"edges"`
+	// Truncated says the schema was larger than the cap and only part of it is
+	// here. A diagram of nine hundred tables is not a diagram, but silently
+	// drawing a third of one is worse than saying so.
+	Truncated bool `json:"truncated"`
+}
+
+type GraphTable struct {
+	Schema  string        `json:"schema"`
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	Rows    int64         `json:"rows"`
+	Columns []GraphColumn `json:"columns"`
+}
+
+type GraphColumn struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Nullable   bool   `json:"nullable"`
+	PrimaryKey bool   `json:"primaryKey"`
+	// ForeignKey names the table this column points at, so a column can be
+	// drawn as a reference without the caller re-deriving it from the edges.
+	ForeignKey string `json:"foreignKey,omitempty"`
+	Unique     bool   `json:"unique,omitempty"`
+}
+
+// GraphEdge is one foreign key, anchored to the columns at both ends so the
+// line can be drawn between the rows it actually relates rather than between
+// two boxes.
+type GraphEdge struct {
+	Name       string `json:"name"`
+	FromTable  string `json:"fromTable"`
+	FromColumn string `json:"fromColumn"`
+	ToTable    string `json:"toTable"`
+	ToColumn   string `json:"toColumn"`
+	OnDelete   string `json:"onDelete,omitempty"`
+	// Cardinality is "many-to-one" unless the referencing column is itself
+	// unique, which makes it one-to-one — the distinction a reader of the
+	// diagram is actually looking for.
+	Cardinality string `json:"cardinality"`
+}
+
+// maxGraphTables bounds the work and the picture. Past this a diagram is a
+// wall, and the introspection behind it is thousands of catalogue queries.
+const maxGraphTables = 120
+
+func BuildSchemaGraph(ctx context.Context, db *sql.DB, driver Driver, schema string) (*SchemaGraph, error) {
+	d, err := DialectFor(driver)
+	if err != nil {
+		return nil, err
+	}
+	tables, err := d.Tables(ctx, db, schema)
+	if err != nil {
+		return nil, err
+	}
+	out := &SchemaGraph{Schema: schema, Tables: []GraphTable{}, Edges: []GraphEdge{}}
+	if len(tables) > maxGraphTables {
+		tables, out.Truncated = tables[:maxGraphTables], true
+	}
+
+	// Which columns are unique decides whether a reference is one-to-one or
+	// many-to-one, and it is read from the indexes that are being fetched
+	// anyway rather than from a second pass.
+	uniqueCols := map[string]map[string]bool{}
+
+	for _, t := range tables {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		gt := GraphTable{Schema: t.Schema, Name: t.Name, Type: t.Type, Rows: t.Rows, Columns: []GraphColumn{}}
+		cols, err := d.Columns(ctx, db, t.Schema, t.Name)
+		if err != nil {
+			// A table whose columns will not read is still part of the shape:
+			// dropping it would silently delete a box other tables point at.
+			out.Tables = append(out.Tables, gt)
+			continue
+		}
+		pk, _ := d.PrimaryKey(ctx, db, t.Schema, t.Name)
+		isPK := map[string]bool{}
+		for _, c := range pk {
+			isPK[c] = true
+		}
+		uniq := map[string]bool{}
+		if indexes, err := d.Indexes(ctx, db, t.Schema, t.Name); err == nil {
+			for _, ix := range indexes {
+				if ix.Unique && len(ix.Columns) == 1 {
+					uniq[ix.Columns[0]] = true
+				}
+			}
+		}
+		uniqueCols[t.Name] = uniq
+
+		fkOf := map[string]string{}
+		if fks, err := d.ForeignKeys(ctx, db, t.Schema, t.Name); err == nil {
+			for _, fk := range fks {
+				for i, col := range fk.Columns {
+					refCol := ""
+					if i < len(fk.RefColumns) {
+						refCol = fk.RefColumns[i]
+					}
+					fkOf[col] = fk.RefTable
+					out.Edges = append(out.Edges, GraphEdge{
+						Name: fk.Name, FromTable: t.Name, FromColumn: col,
+						ToTable: fk.RefTable, ToColumn: refCol, OnDelete: fk.OnDelete,
+					})
+				}
+			}
+		}
+		for _, c := range cols {
+			gt.Columns = append(gt.Columns, GraphColumn{
+				Name: c.Name, Type: c.Type, Nullable: c.Nullable,
+				PrimaryKey: isPK[c.Name], ForeignKey: fkOf[c.Name], Unique: uniq[c.Name],
+			})
+		}
+		out.Tables = append(out.Tables, gt)
+	}
+
+	// Cardinality is decided after every table is known, because it depends on
+	// the referencing column's uniqueness rather than the referenced one's.
+	for i, e := range out.Edges {
+		if uniqueCols[e.FromTable][e.FromColumn] {
+			out.Edges[i].Cardinality = "one-to-one"
+		} else {
+			out.Edges[i].Cardinality = "many-to-one"
+		}
+	}
+	return out, nil
+}

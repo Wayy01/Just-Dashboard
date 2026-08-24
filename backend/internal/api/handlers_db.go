@@ -71,6 +71,7 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{id}/count", s.handle(s.handleDBCount))
 		r.Method(http.MethodGet, "/{id}/outline", s.handle(s.handleDBOutline))
 		r.Method(http.MethodGet, "/{id}/relations", s.handle(s.handleDBRelations))
+		r.Method(http.MethodGet, "/{id}/graph", s.handle(s.handleDBGraph))
 		r.Method(http.MethodGet, "/{id}/activity", s.handle(s.handleDBActivity))
 		r.Method(http.MethodGet, "/{id}/search", s.handle(s.handleDBSearch))
 		r.Method(http.MethodGet, "/{id}/overview", s.handle(s.handleDBOverview))
@@ -1685,4 +1686,32 @@ func driverNames() string {
 		names = append(names, string(d))
 	}
 	return strings.Join(names, ", ")
+}
+
+// handleDBGraph returns the whole schema in the shape a diagram needs.
+//
+// One request rather than the forty the diagram used to make — the table list,
+// the relations, and then the columns of each table one at a time. Beyond being
+// slow, that was not atomic: what it drew was forty answers from forty moments,
+// and a table created halfway through appeared with no columns.
+func (s *Server) handleDBGraph(w http.ResponseWriter, r *http.Request) error {
+	httpx.SkipAudit(r)
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	// Introspecting a large schema is many catalogue queries, so it gets a
+	// longer budget than a page of rows and a bound on how much it will do.
+	ctx, cancel := timeoutCtx(r, 90*time.Second)
+	defer cancel()
+	graph, err := dbx.BuildSchemaGraph(ctx, pool, conn.Driver, r.URL.Query().Get("schema"))
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.JSON(w, http.StatusOK, graph)
+	return nil
 }

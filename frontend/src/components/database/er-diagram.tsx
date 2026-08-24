@@ -1,263 +1,358 @@
 "use client"
 
-import { useMemo } from "react"
-import { Network } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  Background,
+  BackgroundVariant,
+  ReactFlow,
+  ReactFlowProvider,
+  MiniMap,
+  MarkerType,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Edge,
+  type Node,
+} from "@xyflow/react"
+import "@xyflow/react/dist/style.css"
+import {
+  Columns3,
+  Crosshair,
+  Fingerprint,
+  KeyRound,
+  Link2,
+  Maximize2,
+  Minus,
+  MoveHorizontal,
+  MoveVertical,
+  Network,
+  Plus,
+  RotateCcw,
+} from "lucide-react"
 import { get } from "@/lib/api"
-import { plural } from "@/lib/format"
-import type { DbConnection, DbForeignKey, DbRelations, DbTable } from "@/lib/types"
+import type { DbConnection, DbGraphEdge, DbSchemaGraph } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { Panel, PanelBody, PanelHeader } from "@/components/panel"
-import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
+import { Panel, PanelHeader } from "@/components/panel"
+import { SearchInput } from "@/components/page"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { TableNode, type TableNodeData } from "@/components/database/diagram/table-node"
+import { RelationEdge } from "@/components/database/diagram/relation-edge"
+import { layoutGraph } from "@/components/database/diagram/layout"
 
-const BOX_W = 190
-const BOX_H = 44
-const GAP_X = 90
-const GAP_Y = 26
-const PAD = 24
-
-type Node = { name: string; x: number; y: number; layer: number }
-type Edge = { from: Node; to: Node; label: string }
+const nodeTypes = { table: TableNode }
+const edgeTypes = { relation: RelationEdge }
 
 /**
- * The foreign-key graph, drawn.
+ * The schema, as a diagram you can actually work in.
  *
- * Every panel in this class lists foreign keys in a table and stops there,
- * which answers "what does this column reference" and never answers "what does
- * this schema look like" — the question somebody arriving at an unfamiliar
- * database actually has.
+ * What this replaces drew a box per table with the name in it and a line
+ * between boxes, which answers "are these two related" and nothing else. The
+ * questions somebody opening a schema diagram actually has are which column is
+ * the key, which column points where, and what shape the whole thing is — so
+ * the tables are their columns, the edges land on the rows they relate, and the
+ * canvas pans, zooms and drags.
  *
- * The layout is deterministic rather than force-directed: tables are layered by
- * how deep their references go, so the things nothing depends on sit on the
- * left and the leaves on the right. A physics simulation would look livelier
- * and would put the same schema somewhere different every time you opened it,
- * which is the opposite of what a reference diagram is for. Fixed box sizes are
- * what let the positions be computed without measuring the DOM.
+ * Layout is dagre and therefore deterministic: the same schema is the same
+ * picture every time it is opened, which is what makes one worth learning.
+ * Dragging a table moves it for the session; Reset lays it out again.
+ *
+ * Focus is the feature that makes a large schema readable, and it is why the
+ * node and edge components take `dimmed`: clicking a table leaves it, what it
+ * references and what references it at full strength and drops everything else
+ * back, so a forty-table schema can be read one neighbourhood at a time.
  */
-export function ErDiagram({ conn, schema }: { conn: DbConnection; schema: string }) {
-  const relations = usePoll(
-    (signal) => get<DbRelations>(`/databases/${conn.id}/relations`, { schema }, signal),
-    0,
-    [conn.id, schema],
-  )
-  const tables = usePoll(
-    (signal) => get<DbTable[]>(`/databases/${conn.id}/tables`, { schema }, signal),
+export function ErDiagram({
+  conn,
+  schema,
+  onOpenTable,
+}: {
+  conn: DbConnection
+  schema: string
+  onOpenTable?: (schema: string, table: string) => void
+}) {
+  const graph = usePoll(
+    (signal) => get<DbSchemaGraph>(`/databases/${conn.id}/graph`, { schema }, signal),
     0,
     [conn.id, schema],
   )
 
-  const { nodes, edges, width, height, isolated } = useMemo(
-    () => layout(relations.data ?? {}, tables.data ?? []),
-    [relations.data, tables.data],
-  )
-
-  if (relations.loading || tables.loading) return <LoadingPanel />
-  if (relations.error) return <ErrorState error={relations.error} />
+  if (graph.loading) return <LoadingPanel />
+  if (graph.error) return <ErrorState error={graph.error} />
+  if (!graph.data) return null
+  if (graph.data.tables.length === 0) {
+    return (
+      <Panel className="min-h-0 flex-1">
+        <PanelHeader icon={Network} title="Schema" description="Nothing to draw" />
+        <EmptyState icon={Network} title="No tables in this schema" />
+      </Panel>
+    )
+  }
 
   return (
-    <Panel>
+    <ReactFlowProvider>
+      <Canvas graph={graph.data} onOpenTable={onOpenTable} />
+    </ReactFlowProvider>
+  )
+}
+
+function Canvas({
+  graph,
+  onOpenTable,
+}: {
+  graph: DbSchemaGraph
+  onOpenTable?: (schema: string, table: string) => void
+}) {
+  const flow = useReactFlow()
+  const [keysOnly, setKeysOnly] = useState(false)
+  const [direction, setDirection] = useState<"LR" | "TB">("LR")
+  const [focus, setFocus] = useState<string | null>(null)
+  const [query, setQuery] = useState("")
+
+  const laid = useMemo(
+    () => layoutGraph(graph, { keysOnly, direction }),
+    [graph, keysOnly, direction],
+  )
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(laid.nodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(laid.edges)
+
+  // Re-laying out is a deliberate act — changing the direction or hiding the
+  // non-key columns — not something that happens under a drag. Positions the
+  // operator set by hand survive everything else.
+  useEffect(() => {
+    setNodes(laid.nodes)
+    setEdges(laid.edges)
+    window.setTimeout(() => flow.fitView({ padding: 0.15, duration: 300 }), 0)
+  }, [laid, setNodes, setEdges, flow])
+
+  /** Everything one table touches, in both directions. */
+  const neighbourhood = useMemo(() => {
+    if (!focus) return null
+    const near = new Set<string>([focus])
+    for (const e of graph.edges) {
+      if (e.fromTable === focus) near.add(e.toTable)
+      if (e.toTable === focus) near.add(e.fromTable)
+    }
+    return near
+  }, [focus, graph.edges])
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return null
+    return new Set(
+      graph.tables
+        .filter(
+          (t) =>
+            t.name.toLowerCase().includes(q) ||
+            t.columns.some((c) => c.name.toLowerCase().includes(q)),
+        )
+        .map((t) => t.name),
+    )
+  }, [query, graph.tables])
+
+  const open = useCallback((s: string, t: string) => onOpenTable?.(s, t), [onOpenTable])
+
+  // The dimming is applied to the rendered nodes rather than baked into the
+  // layout, so focusing and searching never move anything.
+  const shown = useMemo(() => {
+    const active = matches ?? neighbourhood
+    return nodes.map((n) => ({
+      ...n,
+      data: {
+        ...(n.data as object),
+        dimmed: active ? !active.has(n.id) : false,
+        focused: focus === n.id,
+        keysOnly,
+        onOpen: open,
+      } as TableNodeData,
+    }))
+  }, [nodes, matches, neighbourhood, focus, keysOnly, open])
+
+  const shownEdges = useMemo(() => {
+    const active = matches ?? neighbourhood
+    return edges.map((e) => {
+      const rel = (e.data as { relation: DbGraphEdge }).relation
+      const involved = active ? active.has(rel.fromTable) && active.has(rel.toTable) : false
+      return {
+        ...e,
+        data: { ...e.data, active: involved, dimmed: active ? !involved : false },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 16,
+          height: 16,
+          color: involved ? "var(--color-primary)" : "var(--color-muted-foreground)",
+        },
+      }
+    })
+  }, [edges, matches, neighbourhood])
+
+  const relayout = () => {
+    const next = layoutGraph(graph, { keysOnly, direction })
+    setNodes(next.nodes)
+    setEdges(next.edges)
+    window.setTimeout(() => flow.fitView({ padding: 0.15, duration: 300 }), 0)
+  }
+
+  return (
+    <Panel className="min-h-0 flex-1">
       <PanelHeader
         icon={Network}
-        title="Relationships"
-        description={
-          edges.length
-            ? `${plural(nodes.length, "table")} · ${plural(edges.length, "foreign key")}`
-            : "No foreign keys in this schema"
+        title="Schema"
+        description={`${graph.tables.length} ${graph.tables.length === 1 ? "table" : "tables"} · ${graph.edges.length} ${graph.edges.length === 1 ? "relationship" : "relationships"}`}
+        actions={
+          <>
+            <SearchInput
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find a table or column…"
+              containerClassName="w-56"
+            />
+            <Button
+              size="sm"
+              variant={keysOnly ? "default" : "outline"}
+              onClick={() => setKeysOnly((v) => !v)}
+              title="Show only primary, foreign and unique key columns"
+            >
+              <Columns3 className="size-3.5" />
+              Keys only
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDirection((d) => (d === "LR" ? "TB" : "LR"))}
+              title={direction === "LR" ? "Lay out top to bottom" : "Lay out left to right"}
+            >
+              {direction === "LR" ? (
+                <MoveHorizontal className="size-3.5" />
+              ) : (
+                <MoveVertical className="size-3.5" />
+              )}
+            </Button>
+            <Button size="sm" variant="outline" onClick={relayout} title="Lay out again">
+              <RotateCcw className="size-3.5" />
+            </Button>
+          </>
         }
       />
-      <PanelBody flush>
-        {edges.length === 0 ? (
-          <EmptyState
-            icon={Network}
-            title="Nothing to draw"
-            description={
-              isolated > 0
-                ? `${plural(isolated, "table")}, none of them referencing another. Either this schema keeps its relationships in application code, or the constraints were never declared.`
-                : "No tables in this schema."
-            }
+
+      {graph.truncated && (
+        <Notice className="mx-4 mt-3" title={`Showing the first ${graph.tables.length} tables`}>
+          This schema has more tables than a diagram can usefully show.
+        </Notice>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+        <ReactFlow
+          nodes={shown}
+          edges={shownEdges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeClick={(_, n) => setFocus((f) => (f === n.id ? null : n.id))}
+          onPaneClick={() => setFocus(null)}
+          fitView
+          fitViewOptions={{ padding: 0.15 }}
+          minZoom={0.1}
+          maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+          nodesConnectable={false}
+          elementsSelectable
+          className="[&_.react-flow\_\_handle]:!border-0"
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            className="[&_circle]:fill-border"
           />
-        ) : (
-          <div className="overflow-auto p-4">
-            <svg
-              width={width}
-              height={height}
-              viewBox={`0 0 ${width} ${height}`}
-              className="max-w-none"
-              role="img"
-              aria-label="Entity relationship diagram"
-            >
-              <defs>
-                <marker
-                  id="er-arrow"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" className="fill-muted-foreground/70" />
-                </marker>
-              </defs>
+          <MiniMap
+            pannable
+            zoomable
+            className="!bottom-3 !right-3 !h-24 !w-40 overflow-hidden !rounded-md !border !bg-card"
+            maskColor="color-mix(in oklab, var(--color-background) 70%, transparent)"
+            nodeColor="var(--color-primary)"
+            nodeStrokeWidth={0}
+          />
+        </ReactFlow>
 
-              {edges.map((e, i) => (
-                <g key={i}>
-                  <path
-                    d={edgePath(e)}
-                    fill="none"
-                    className="stroke-muted-foreground/40"
-                    strokeWidth={1.25}
-                    markerEnd="url(#er-arrow)"
-                  />
-                </g>
-              ))}
-
-              {nodes.map((n) => (
-                <g key={n.name}>
-                  <rect
-                    x={n.x}
-                    y={n.y}
-                    width={BOX_W}
-                    height={BOX_H}
-                    rx={6}
-                    className="fill-card stroke-border"
-                    strokeWidth={1}
-                  />
-                  <rect
-                    x={n.x}
-                    y={n.y}
-                    width={4}
-                    height={BOX_H}
-                    className="fill-primary/60"
-                    rx={2}
-                  />
-                  <text
-                    x={n.x + 14}
-                    y={n.y + BOX_H / 2 + 4}
-                    className="fill-foreground font-mono"
-                    fontSize={12}
-                  >
-                    {truncate(n.name, 22)}
-                  </text>
-                </g>
-              ))}
-            </svg>
-          </div>
-        )}
-      </PanelBody>
+        <Toolbar focus={focus} onClear={() => setFocus(null)} />
+        <Legend />
+      </div>
     </Panel>
   )
 }
 
-function truncate(s: string, n: number) {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s
-}
-
-// edgePath draws a horizontal bezier between two boxes, leaving one box by the
-// side that faces the other and arriving at the facing side of that one. A
-// straight line between box centres would run through the boxes themselves.
-//
-// Which side that is has to be decided per edge rather than fixed. An edge runs
-// from the table holding the foreign key to the table it references, and the
-// layout puts a referencing table to the *right* of what it references — so
-// almost every edge runs right to left. Leaving the source's right edge
-// unconditionally drew all of them backwards: out of the right of the box,
-// around the outside of the diagram, and into the left of a target already to
-// its left, with the control points flinging the curve further out still. The
-// result was clipped by the viewBox, which is why it read as two stubs pointing
-// at nothing rather than as a line going the wrong way.
-function edgePath(e: Edge) {
-  const forward = e.to.x >= e.from.x
-  const x1 = forward ? e.from.x + BOX_W : e.from.x
-  const x2 = forward ? e.to.x : e.to.x + BOX_W
-  const y1 = e.from.y + BOX_H / 2
-  const y2 = e.to.y + BOX_H / 2
-  const dx = Math.max(40, Math.abs(x2 - x1) / 2)
-  return `M ${x1} ${y1} C ${forward ? x1 + dx : x1 - dx} ${y1}, ${
-    forward ? x2 - dx : x2 + dx
-  } ${y2}, ${x2} ${y2}`
-}
-
 /**
- * layout assigns each table a layer from how far its references reach, then
- * lays the layers out left to right.
- *
- * The depth walk carries a visited set because schemas contain reference
- * cycles — a pair of tables pointing at each other is unusual but legal, and
- * without the guard it is an infinite recursion rather than a diagram.
+ * Zoom controls of our own rather than React Flow's, which ship their own
+ * borders, shadows and icon set and look like a different product dropped onto
+ * the page.
  */
-function layout(relations: DbRelations, tables: DbTable[]) {
-  const names = new Set<string>()
-  for (const t of tables) if (!/view/i.test(t.type)) names.add(t.name)
-  for (const k of Object.keys(relations)) names.add(k)
-
-  const outgoing = new Map<string, DbForeignKey[]>()
-  for (const [table, fks] of Object.entries(relations)) outgoing.set(table, fks)
-
-  const connected = new Set<string>()
-  for (const [table, fks] of outgoing) {
-    for (const fk of fks) {
-      if (!fk.refTable) continue
-      connected.add(table)
-      connected.add(fk.refTable)
-      names.add(fk.refTable)
-    }
-  }
-
-  const depth = new Map<string, number>()
-  const compute = (name: string, seen: Set<string>): number => {
-    if (depth.has(name)) return depth.get(name)!
-    if (seen.has(name)) return 0
-    seen.add(name)
-    let d = 0
-    for (const fk of outgoing.get(name) ?? []) {
-      if (!fk.refTable || fk.refTable === name) continue
-      d = Math.max(d, compute(fk.refTable, seen) + 1)
-    }
-    seen.delete(name)
-    depth.set(name, d)
-    return d
-  }
-  for (const n of connected) compute(n, new Set())
-
-  const byLayer = new Map<number, string[]>()
-  for (const n of [...connected].sort()) {
-    const d = depth.get(n) ?? 0
-    byLayer.set(d, [...(byLayer.get(d) ?? []), n])
-  }
-
-  const nodes: Node[] = []
-  const index = new Map<string, Node>()
-  for (const [layer, members] of [...byLayer.entries()].sort((a, b) => a[0] - b[0])) {
-    members.forEach((name, i) => {
-      const node: Node = {
-        name,
-        layer,
-        x: PAD + layer * (BOX_W + GAP_X),
-        y: PAD + i * (BOX_H + GAP_Y),
-      }
-      nodes.push(node)
-      index.set(name, node)
-    })
-  }
-
-  const edges: Edge[] = []
-  for (const [table, fks] of outgoing) {
-    const from = index.get(table)
-    if (!from) continue
-    for (const fk of fks) {
-      const to = index.get(fk.refTable)
-      if (!to || to === from) continue
-      edges.push({ from, to, label: fk.columns.join(", ") })
-    }
-  }
-
-  const width = Math.max(
-    320,
-    PAD * 2 + (Math.max(0, ...nodes.map((n) => n.layer)) + 1) * (BOX_W + GAP_X) - GAP_X,
+function Toolbar({ focus, onClear }: { focus: string | null; onClear: () => void }) {
+  const flow = useReactFlow()
+  return (
+    <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2">
+      <div className="pointer-events-auto flex items-center gap-0.5 rounded-md border bg-card p-0.5 shadow-sm">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          onClick={() => flow.zoomIn({ duration: 150 })}
+          title="Zoom in"
+        >
+          <Plus className="size-3.5" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          onClick={() => flow.zoomOut({ duration: 150 })}
+          title="Zoom out"
+        >
+          <Minus className="size-3.5" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          onClick={() => flow.fitView({ padding: 0.15, duration: 300 })}
+          title="Fit to view"
+        >
+          <Maximize2 className="size-3.5" />
+        </Button>
+      </div>
+      {focus && (
+        <Badge
+          variant="secondary"
+          className="pointer-events-auto cursor-pointer gap-1 font-normal"
+          onClick={onClear}
+          title="Show the whole schema again"
+        >
+          <Crosshair className="size-3" />
+          {focus}
+          <span className="text-muted-foreground">· clear</span>
+        </Badge>
+      )}
+    </div>
   )
-  const height = Math.max(
-    160,
-    PAD * 2 + Math.max(1, ...[...byLayer.values()].map((m) => m.length)) * (BOX_H + GAP_Y) - GAP_Y,
+}
+
+function Legend() {
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-md border bg-card/90 px-2.5 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
+      <span className="flex items-center gap-1">
+        <KeyRound className="size-3 text-amber-500" /> primary
+      </span>
+      <span className="flex items-center gap-1">
+        <Link2 className="size-3 text-sky-500" /> foreign
+      </span>
+      <span className="flex items-center gap-1">
+        <Fingerprint className="size-3" /> unique
+      </span>
+      <span className="flex items-center gap-1">
+        <span className="text-destructive/70">*</span> not null
+      </span>
+    </div>
   )
-  return { nodes, edges, width, height, isolated: names.size - connected.size }
 }

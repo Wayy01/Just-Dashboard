@@ -241,9 +241,19 @@ export default function DatabasesPage() {
                   />
                 </TabsContent>
               )}
+              {/* The diagram is a canvas: it takes the space and pans inside
+                  itself rather than scrolling the page. */}
               {isSQL && (
-                <TabsContent value="diagram" className="min-w-0 flex-1 overflow-y-auto">
-                  <ErDiagram conn={active} schema={activeSelection?.schema ?? ""} />
+                <TabsContent value="diagram" className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <ErDiagram
+                    conn={active}
+                    schema={activeSelection?.schema ?? ""}
+                    // Clicking a table in the diagram lands on it in Browse,
+                    // which is the whole reason to look at a schema map.
+                    onOpenTable={(schema, table) =>
+                      setSelection({ schema, table, connId: active.id })
+                    }
+                  />
                 </TabsContent>
               )}
               {isSQL && (
@@ -268,6 +278,9 @@ export default function DatabasesPage() {
                     conn={active}
                     schema={activeSelection?.schema ?? ""}
                     confirm={confirm}
+                    onOpenTable={(schema, table) =>
+                      setSelection({ schema, table, connId: active.id })
+                    }
                   />
                 </TabsContent>
               )}

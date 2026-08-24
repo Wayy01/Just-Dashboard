@@ -1,9 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Trash2 } from "lucide-react"
+import { Asterisk, KeyRound, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { errorMessage, post } from "@/lib/api"
+import { plural } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { DbDriverInfo, DbNewColumn, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,19 +14,20 @@ import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/state"
 import { Well } from "@/components/panel"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 
 /**
  * The schema-editing forms.
@@ -92,11 +95,15 @@ export function CreateTableDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Create table</DialogTitle>
+          <DialogDescription>
+            In <span className="font-mono text-xs">{schema || "the default schema"}</span>. The
+            statement this builds is shown below before anything runs.
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="grid gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="ddl-table">Table name</Label>
             <Input
@@ -109,15 +116,40 @@ export function CreateTableDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Columns</Label>
-            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+            <div className="flex items-center justify-between">
+              <Label>Columns</Label>
+              <span className="text-[11px] text-muted-foreground">
+                {plural(columns.filter((c) => c.name && c.type).length, "column")} defined
+              </span>
+            </div>
+
+            {/* A header row, because four unlabelled fields in a line is a
+                puzzle. The widths are shared with the rows below through the
+                same grid template, so they stay aligned as the dialog resizes. */}
+            <div className={cn(COLUMN_GRID, "px-1 pb-0.5")}>
+              <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                Name
+              </span>
+              <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                Type
+              </span>
+              <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                Default
+              </span>
+              <span className="text-center text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                Key
+              </span>
+              {/* No header over the remove button: a column of one icon needs
+                  no title, and giving it one made "Key" look like it belonged
+                  to the wrong pair of controls. */}
+              <span className="w-8" />
+            </div>
+
+            <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
               {columns.map((c, i) => (
-                <div
-                  key={i}
-                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
-                >
+                <div key={i} className={COLUMN_GRID}>
                   <Input
-                    placeholder="name"
+                    placeholder="id"
                     value={c.name}
                     onChange={(e) => setCol(i, { name: e.target.value })}
                     className="h-8 font-mono text-xs"
@@ -127,31 +159,44 @@ export function CreateTableDialog({
                     value={c.type}
                     onChange={(v) => setCol(i, { type: v })}
                   />
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <Checkbox
-                        checked={c.primaryKey}
-                        onCheckedChange={(v) => setCol(i, { primaryKey: Boolean(v) })}
-                      />
-                      pk
-                    </label>
-                    <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <Checkbox
-                        checked={c.notNull}
-                        onCheckedChange={(v) => setCol(i, { notNull: Boolean(v) })}
-                      />
-                      req
-                    </label>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-7 text-destructive"
-                      disabled={columns.length === 1}
-                      onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}
+                  <Input
+                    placeholder="—"
+                    value={c.default ?? ""}
+                    onChange={(e) => setCol(i, { default: e.target.value })}
+                    className="h-8 font-mono text-xs"
+                    title="A SQL expression, quoted if it is a string: 'none', 0, now()"
+                  />
+                  {/* Toggles rather than checkboxes with two-letter labels:
+                      "pk" and "req" are abbreviations of abbreviations, and at
+                      this size the box and its word were two targets to hit. */}
+                  <div className="flex items-center gap-1">
+                    <FlagToggle
+                      on={Boolean(c.primaryKey)}
+                      onClick={() => setCol(i, { primaryKey: !c.primaryKey })}
+                      title="Primary key"
                     >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                      <KeyRound className="size-3" />
+                      PK
+                    </FlagToggle>
+                    <FlagToggle
+                      on={Boolean(c.notNull)}
+                      onClick={() => setCol(i, { notNull: !c.notNull })}
+                      title="Not null — every row must have a value"
+                    >
+                      <Asterisk className="size-3" />
+                      Req
+                    </FlagToggle>
                   </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 text-muted-foreground hover:text-destructive"
+                    disabled={columns.length === 1}
+                    onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}
+                    title={columns.length === 1 ? "A table needs a column" : "Remove this column"}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 </div>
               ))}
             </div>
@@ -165,14 +210,22 @@ export function CreateTableDialog({
             </Button>
           </div>
 
-          {valid && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Statement</Label>
-              <Well className="max-h-32 font-mono text-[11px]">
-                {previewCreate(schema, table, columns)}
-              </Well>
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label className="text-[11px] tracking-wide text-muted-foreground uppercase">
+              Statement
+            </Label>
+            {/* whitespace-pre-wrap, because the statement's shape — one column
+                per line — is most of what makes it readable at a glance. */}
+            <Well className="max-h-32 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+              {valid ? (
+                previewCreate(schema, table, columns)
+              ) : (
+                <span className="text-muted-foreground italic">
+                  Name the table and give at least one column a name and a type.
+                </span>
+              )}
+            </Well>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
@@ -203,20 +256,28 @@ function TypePicker({
   value: string
   onChange: (v: string) => void
 }) {
+  // One control rather than two: the picker used to be a text box with a bare
+  // dropdown arrow beside it, which read as two unrelated fields and put a
+  // second thing to aim at in a row that is already five things wide. The
+  // chevron now sits inside the field it fills.
   return (
-    <div className="flex min-w-0 items-center gap-1">
+    <div className="relative flex min-w-0 items-center">
       <Input
-        placeholder="type"
+        placeholder="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 min-w-0 font-mono text-xs"
+        className="h-8 min-w-0 pr-7 font-mono text-xs"
       />
       {types.length > 0 && (
         <Select value="" onValueChange={onChange}>
-          <SelectTrigger size="sm" className="h-8 w-8 shrink-0 px-0 [&>svg]:mx-auto">
+          <SelectTrigger
+            size="sm"
+            aria-label="Choose a type"
+            className="absolute right-0 h-8 w-7 justify-center border-0 bg-transparent px-0 shadow-none hover:bg-accent/60 focus-visible:ring-0 [&>span]:hidden"
+          >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-64">
             {types.map((t) => (
               <SelectItem key={t} value={t} className="font-mono text-xs">
                 {t}
@@ -525,5 +586,42 @@ export function RenameDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * The shared grid for the column editor's header and its rows, so the two stay
+ * aligned as the dialog resizes rather than drifting apart at some width
+ * nobody tested.
+ */
+const COLUMN_GRID =
+  "grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_auto_auto] items-center gap-2"
+
+function FlagToggle({
+  on,
+  onClick,
+  title,
+  children,
+}: {
+  on: boolean
+  onClick: () => void
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={on}
+      className={cn(
+        "inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[10px] font-medium tracking-wide uppercase transition-colors",
+        on
+          ? "border-primary bg-primary/15 text-primary"
+          : "border-border text-muted-foreground hover:bg-accent",
+      )}
+    >
+      {children}
+    </button>
   )
 }

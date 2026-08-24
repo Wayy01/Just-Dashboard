@@ -1590,3 +1590,39 @@ export type DbProvisionOption = {
   image: string
   driver: string
 }
+
+// --- schema graph (the diagram) -------------------------------------------
+
+export type DbGraphColumn = {
+  name: string
+  type: string
+  nullable: boolean
+  primaryKey: boolean
+  foreignKey?: string
+  unique?: boolean
+}
+
+export type DbGraphTable = {
+  schema: string
+  name: string
+  type: string
+  rows: number
+  columns: DbGraphColumn[]
+}
+
+export type DbGraphEdge = {
+  name: string
+  fromTable: string
+  fromColumn: string
+  toTable: string
+  toColumn: string
+  onDelete?: string
+  cardinality: "one-to-one" | "many-to-one"
+}
+
+export type DbSchemaGraph = {
+  schema: string
+  tables: DbGraphTable[]
+  edges: DbGraphEdge[]
+  truncated: boolean
+}
