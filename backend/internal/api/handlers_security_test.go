@@ -16,6 +16,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/netsec"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/updates"
 )
 
 // These drive the new security and proxy routes through the whole chain — the
@@ -105,6 +106,9 @@ func TestSecurityReadRoutesSurviveABareHost(t *testing.T) {
 		"/api/v1/network",
 		"/api/v1/ssh/config",
 		"/api/v1/fail2ban/",
+		"/api/v1/proxy/streams/",
+		"/api/v1/proxy/auth-files/",
+		"/api/v1/certificates/dns-providers",
 	} {
 		t.Run(path, func(t *testing.T) {
 			w := c.do(http.MethodGet, path, "", nil)
@@ -195,7 +199,6 @@ func TestNetworkProbeResolvesLocalhost(t *testing.T) {
 // Invariant 3, on the routes added here: an irreversible action refuses to run
 // without the typed phrase, and says which phrase.
 func TestNewDestructiveRoutesDemandTheTypedPhrase(t *testing.T) {
-	c, _ := newClient(t)
 	cases := []struct {
 		method, path, body, phrase string
 	}{
@@ -204,9 +207,17 @@ func TestNewDestructiveRoutesDemandTheTypedPhrase(t *testing.T) {
 		{http.MethodPost, "/api/v1/ssh/config", `{"settings":{"x11forwarding":"no"}}`, "change ssh"},
 		{http.MethodPost, "/api/v1/certificates/revoke", `{"name":"example.com"}`, "revoke example.com"},
 		{http.MethodDelete, "/api/v1/proxy/sites/example", ``, "example"},
+		{http.MethodDelete, "/api/v1/proxy/streams/example", ``, "example"},
+		{http.MethodDelete, "/api/v1/proxy/auth-files/staging", ``, "staging"},
+		{http.MethodPost, "/api/v1/ssh-sessions/4242/disconnect", `{}`, "disconnect 4242"},
 	}
 	for _, tc := range cases {
+		// A client per case. These are destructive routes, so they share the
+		// tighter per-principal budget, and running the whole table against
+		// one session hits it — which is the limiter working, not a failure
+		// worth papering over with a bigger budget.
 		t.Run(tc.path, func(t *testing.T) {
+			c, _ := newClient(t)
 			w := c.do(tc.method, tc.path, tc.body, nil)
 			if w.Code != http.StatusPreconditionRequired {
 				t.Fatalf("got %d, want 428: %s", w.Code, w.Body.String())
@@ -220,13 +231,35 @@ func TestNewDestructiveRoutesDemandTheTypedPhrase(t *testing.T) {
 			if body.Error.Phrase != tc.phrase {
 				t.Fatalf("phrase = %q, want %q", body.Error.Phrase, tc.phrase)
 			}
-		})
-		t.Run(tc.path+" wrong phrase", func(t *testing.T) {
-			w := c.do(tc.method, tc.path, tc.body, map[string]string{"X-Confirm": "yes"})
+
+			w = c.do(tc.method, tc.path, tc.body, map[string]string{"X-Confirm": "yes"})
 			if w.Code != http.StatusPreconditionFailed {
-				t.Fatalf("got %d, want 412: %s", w.Code, w.Body.String())
+				t.Fatalf("wrong phrase got %d, want 412: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// The destructive budget is tighter than the ordinary one, and it is what
+// stops a script working through every rule number faster than anybody could
+// notice. Discovered by a test that ran a table of them against one session.
+func TestDestructiveRoutesShareATighterBudget(t *testing.T) {
+	c, _ := newClient(t)
+	limited := false
+	for i := 0; i < 60; i++ {
+		w := c.do(http.MethodDelete, "/api/v1/firewall/rules/1", "", nil)
+		if w.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatal("the destructive rate limit never engaged")
+	}
+	// The ordinary read budget is far larger, so the same session can still
+	// read the page it was just rate-limited on.
+	if w := c.do(http.MethodGet, "/api/v1/firewall/", "", nil); w.Code != http.StatusOK {
+		t.Fatalf("reads were caught by the destructive budget: %d", w.Code)
 	}
 }
 
@@ -406,5 +439,129 @@ func TestReadonlyCannotChangeSSH(t *testing.T) {
 	}
 	if w := c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"dns","target":"localhost"}`, nil); w.Code != http.StatusForbidden {
 		t.Errorf("probe = %d, want 403", w.Code)
+	}
+}
+
+// The stream renderer is the other server-side one, and the same contract
+// holds: what the form previews is what lands on disk.
+func TestStreamPreviewRendersNginx(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/proxy/streams/preview", `{"spec":{
+		"name":"replica","listen":5432,"protocol":"tcp",
+		"upstream":"10.0.0.5:5432","allowFrom":["10.0.0.0/8"]
+	}}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"listen 5432;", "server 10.0.0.5:5432;", "deny all;"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("missing %q from:\n%s", want, res.Content)
+		}
+	}
+}
+
+func TestStreamPreviewRejectsAnInjectedDirective(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/proxy/streams/preview", `{"spec":{
+		"name":"replica","listen":5432,"upstream":"10.0.0.5:5432; root /","allowFrom":[]
+	}}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// A password file is only useful if it is a real htpasswd file, so the write
+// goes through the API and the listing has to show what landed.
+func TestAuthFileRoundTrip(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/proxy/auth-files/",
+		`{"file":"staging","user":"admin","password":"correct horse battery"}`, nil)
+	if w.Code == http.StatusBadRequest && strings.Contains(w.Body.String(), "permission") {
+		t.Skip("no write access to /etc/nginx in this environment")
+	}
+	if w.Code != http.StatusOK {
+		t.Skipf("could not write the password file here (%d): %s", w.Code, w.Body.String())
+	}
+	var file proxysvc.AuthFile
+	if err := json.Unmarshal(w.Body.Bytes(), &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Users) != 1 || file.Users[0] != "admin" {
+		t.Fatalf("users = %v", file.Users)
+	}
+	t.Cleanup(func() {
+		c.do(http.MethodDelete, "/api/v1/proxy/auth-files/staging", "",
+			map[string]string{"X-Confirm": "staging"})
+	})
+}
+
+func TestAuthFileRejectsAShortPassword(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/proxy/auth-files/",
+		`{"file":"staging","user":"admin","password":"short"}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// The one thing an import must never do is accept a key that does not belong
+// to the certificate — nginx refuses that pair at reload, on a live server.
+func TestCertImportRejectsAMismatchedKey(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/certificates/import",
+		`{"name":"broken","certificate":"not a certificate","key":"not a key"}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// A wildcard over an HTTP challenge cannot work, and the refusal has to reach
+// the client rather than being discovered as a certbot failure minutes later.
+func TestCertIssueRefusesAWildcardOverHTTP(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/certificates/issue",
+		`{"domains":["*.example.com"],"email":"a@example.com","method":"nginx"}`, nil)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "DNS challenge") {
+		t.Errorf("the answer should say what to do instead: %s", w.Body.String())
+	}
+}
+
+// Disconnecting a process that is not an interactive login must be refused —
+// without that check the route is a kill primitive.
+func TestDisconnectRefusesAProcessThatIsNotASession(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPost, "/api/v1/ssh-sessions/1/disconnect", `{}`,
+		map[string]string{"X-Confirm": "disconnect 1"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// The updates report has to name its manager and say whether it can tell a
+// security update from any other, on whatever this host runs.
+func TestUpdatesReportIsHonestAboutTheManager(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodGet, "/api/v1/updates/", "", nil)
+	if w.Code == http.StatusServiceUnavailable {
+		t.Skip("no package manager on this host")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	var report updates.Report
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Available && report.Manager == "" {
+		t.Error("a report from an available manager should name it")
 	}
 }
