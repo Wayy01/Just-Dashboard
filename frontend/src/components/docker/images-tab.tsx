@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import type { DockerImage, ImageDetail, ImageUpdateStatus } from "@/lib/types"
@@ -104,9 +104,9 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
     try {
       await get("/docker/images/updates", { refresh: true })
       updates.refresh()
-      toast.success("Checked with the registries")
+      notify.success("Checked with the registries")
     } catch (err) {
-      toast.error("Could not check for updates", { description: String(err) })
+      notify.error("Could not check for updates", err)
     } finally {
       setChecking(false)
     }
@@ -131,7 +131,10 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
   return (
     <div className="space-y-4">
       {outdated.length > 0 && (
-        <Notice title={`${outdated.length} running image${outdated.length === 1 ? " has" : "s have"} a newer version`} icon={ArrowDownToLine}>
+        <Notice
+          title={`${outdated.length} running image${outdated.length === 1 ? " has" : "s have"} a newer version`}
+          icon={ArrowDownToLine}
+        >
           <p>
             {outdated.map((u) => u.ref).join(", ")} — the tag now points somewhere else in the
             registry. Pulling moves this server to it; the containers using it keep running the old
@@ -190,7 +193,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                           undefined,
                           { confirm: c },
                         )
-                        toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
+                        notify.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                         refresh()
                       },
                     })
@@ -264,10 +267,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                     <TableCell>
                       <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                         {can("service.control") && tag && (
-                          <IconAction
-                            label={`Pull a fresh ${tag}`}
-                            onClick={() => setPulling(tag)}
-                          >
+                          <IconAction label={`Pull a fresh ${tag}`} onClick={() => setPulling(tag)}>
                             <Download />
                           </IconAction>
                         )}
@@ -478,7 +478,10 @@ function ImageDetailPanel({
                 {data.usedBy.map((c) => (
                   <div key={c.id} className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate">{c.name}</span>
-                    <Badge variant={c.state === "running" ? "success" : "secondary"} className="font-normal">
+                    <Badge
+                      variant={c.state === "running" ? "success" : "secondary"}
+                      className="font-normal"
+                    >
                       {c.state}
                     </Badge>
                   </div>
@@ -504,7 +507,9 @@ function ImageDetailPanel({
                   <span className="w-16 shrink-0 text-right text-muted-foreground">
                     {layer.size > 0 ? bytes(layer.size, 0) : "—"}
                   </span>
-                  <span className="min-w-0 flex-1 break-all">{layer.createdBy || layer.comment}</span>
+                  <span className="min-w-0 flex-1 break-all">
+                    {layer.createdBy || layer.comment}
+                  </span>
                 </div>
               ))}
             </div>
@@ -556,10 +561,10 @@ function PullDialog({
   const start = async () => {
     const ok = await pull.pull(ref)
     if (ok) {
-      toast.success(`${ref} pulled`)
+      notify.success(`${ref} pulled`)
       onDone()
     } else {
-      toast.error(`Could not pull ${ref}`)
+      notify.error(`Could not pull ${ref}`)
     }
   }
 
@@ -610,7 +615,11 @@ function PullDialog({
             Close
           </Button>
           <Button onClick={start} disabled={!ref.trim() || pull.active}>
-            {pull.active ? <Loader2 className="size-4 animate-spin" /> : <HardDrive className="size-4" />}
+            {pull.active ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <HardDrive className="size-4" />
+            )}
             Pull
           </Button>
         </DialogFooter>

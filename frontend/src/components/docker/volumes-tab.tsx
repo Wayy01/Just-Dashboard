@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { FolderTree, HardDrive, Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, truncateMiddle } from "@/lib/format"
 import type { VolumeDetail } from "@/lib/types"
@@ -111,7 +111,7 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                           undefined,
                           { confirm: c },
                         )
-                        toast.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
+                        notify.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                         refresh()
                       },
                     })
@@ -303,8 +303,8 @@ function VolumeDetailPanel({
             <p className="eyebrow">Used by</p>
             {data.usedBy.length === 0 ? (
               <Hint>
-                Nothing mounts this volume. It is safe to delete only if you know what was in it —
-                a volume outlives the container that created it, so this is often the data from
+                Nothing mounts this volume. It is safe to delete only if you know what was in it — a
+                volume outlives the container that created it, so this is often the data from
                 something that was removed and rebuilt.
               </Hint>
             ) : (
@@ -360,12 +360,12 @@ function NewVolumeDialog({
     setBusy(true)
     try {
       await post("/docker/volumes/", { name })
-      toast.success(`${name} created`)
+      notify.success(`${name} created`)
       onCreated()
       onOpenChange(false)
       setName("")
     } catch (err) {
-      toast.error("Could not create the volume", { description: String(err) })
+      notify.error("Could not create the volume", err)
     } finally {
       setBusy(false)
     }

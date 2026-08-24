@@ -11,7 +11,7 @@ import {
   Save,
   X,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -177,12 +177,7 @@ export function WorkspaceTools({
           // on its own (the panel owns those requests), so the one out of
           // sight costs a render and nothing else.
           <>
-            <div
-              className={cn(
-                "flex min-h-0 flex-1 flex-col",
-                tab !== "files" && "hidden",
-              )}
-            >
+            <div className={cn("flex min-h-0 flex-1 flex-col", tab !== "files" && "hidden")}>
               <FileTree
                 key={treeRoot}
                 root={treeRoot}
@@ -196,9 +191,7 @@ export function WorkspaceTools({
                 onOpenInFiles={onOpenInFiles}
               />
             </div>
-            <div
-              className={cn("flex min-h-0 flex-1 flex-col", tab !== "git" && "hidden")}
-            >
+            <div className={cn("flex min-h-0 flex-1 flex-col", tab !== "git" && "hidden")}>
               <GitTools
                 dir={dir ?? ""}
                 detect={detect.data}
@@ -239,9 +232,7 @@ export function WorkspaceTools({
         )}
       </div>
 
-      {confirm && (
-        <InlineConfirm request={confirm} onClose={() => setConfirm(null)} />
-      )}
+      {confirm && <InlineConfirm request={confirm} onClose={() => setConfirm(null)} />}
     </div>
   )
 }
@@ -364,12 +355,12 @@ function InlineFile({
     setSaving(true)
     try {
       await put("/files/write", { path, content: draft })
-      toast.success("Saved", { description: path })
+      notify.success("Saved", { description: path })
       setFile((f) => (f ? { ...f, content: draft } : f))
       setSaves((n) => n + 1)
       onSaved()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     } finally {
       setSaving(false)
     }
@@ -554,7 +545,7 @@ function InlineConfirm({ request, onClose }: { request: ConfirmRequest; onClose:
       await request.run()
       onClose()
     } catch (err) {
-      toast.error("That did not go through", { description: String(err) })
+      notify.error("That did not go through", err)
       setBusy(false)
     }
   }

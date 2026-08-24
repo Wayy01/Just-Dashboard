@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { PackageCheck, RefreshCw, RotateCcw, ShieldAlert } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { UpdateReport } from "@/lib/types"
@@ -69,7 +69,7 @@ export default function UpdatesPage() {
             query: { security: securityOnly },
           })
           const tail = res.output.trim().split("\n").slice(-3).join("\n")
-          toast.success("Updates applied", { description: tail })
+          notify.success("Updates applied", { description: tail })
           report.refresh()
         } finally {
           setApplying(false)

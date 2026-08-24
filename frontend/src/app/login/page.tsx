@@ -15,7 +15,7 @@ import {
   ScrollText,
   ShieldCheck,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { ApiError, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
@@ -72,9 +72,7 @@ export default function LoginPage() {
       else if (next.needsTotp) setStep("totp")
       else if (next.needsEnrollment) setStep("enroll")
     } catch (err) {
-      toast.error("Sign in failed", {
-        description: err instanceof ApiError ? err.message : String(err),
-      })
+      notify.error("Sign in failed", err instanceof ApiError ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -85,9 +83,7 @@ export default function LoginPage() {
     try {
       setEnrollment(await post<{ secret: string; otpauthUrl: string }>("/auth/2fa/setup"))
     } catch (err) {
-      toast.error("Could not start enrolment", {
-        description: err instanceof ApiError ? err.message : String(err),
-      })
+      notify.error("Could not start enrolment", err instanceof ApiError ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -101,9 +97,7 @@ export default function LoginPage() {
       setRecoveryCodes(res.recoveryCodes)
       setCode("")
     } catch (err) {
-      toast.error("Code rejected", {
-        description: err instanceof ApiError ? err.message : String(err),
-      })
+      notify.error("Code rejected", err instanceof ApiError ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -116,9 +110,7 @@ export default function LoginPage() {
       const next = await verifyTotp(code)
       if (next.authenticated) router.replace("/")
     } catch (err) {
-      toast.error("Code rejected", {
-        description: err instanceof ApiError ? err.message : String(err),
-      })
+      notify.error("Code rejected", err instanceof ApiError ? err.message : String(err))
       setCode("")
     } finally {
       setBusy(false)
@@ -133,7 +125,9 @@ export default function LoginPage() {
     setStep("credentials")
     setPassword("")
     await refresh().catch(() => undefined)
-    toast.success("Two-factor enabled", { description: "Sign in again with a code from your app." })
+    notify.success("Two-factor enabled", {
+      description: "Sign in again with a code from your app.",
+    })
   }
 
   return (
@@ -413,7 +407,7 @@ function SecretBlock({ secret, otpauthUrl }: { secret: string; otpauthUrl: strin
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     } catch {
-      toast.error("Could not copy", { description: "Select the text and copy it by hand." })
+      notify.error("Could not copy", "Select the text and copy it by hand.")
     }
   }
 
@@ -452,7 +446,7 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     } catch {
-      toast.error("Could not copy", { description: "Select the codes and copy them by hand." })
+      notify.error("Could not copy", "Select the codes and copy them by hand.")
     }
   }
 

@@ -14,7 +14,7 @@ import {
   RotateCcw,
   Undo2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -88,14 +88,14 @@ export function GitTools({
       setBusy(label)
       try {
         const res = await fn()
-        toast.success(label, {
+        notify.success(label, {
           description: res.output?.split("\n").slice(0, 3).join("\n"),
         })
         status.refresh()
         onChanged()
         return res
       } catch (err) {
-        toast.error(`${label} failed`, { description: String(err) })
+        notify.error(`${label} failed`, err)
         throw err
       } finally {
         setBusy(undefined)
@@ -127,7 +127,12 @@ export function GitTools({
 
   if (detect && detect.root && !detect.inRoots) {
     return (
-      <Notice className="m-3" tone="warning" title="Outside the configured git roots" icon={GitBranchIcon}>
+      <Notice
+        className="m-3"
+        tone="warning"
+        title="Outside the configured git roots"
+        icon={GitBranchIcon}
+      >
         This is a checkout at <span className="font-mono break-all">{detect.root}</span>, but it
         falls outside <code className="font-mono">JD_GIT_ROOTS</code>, so the dashboard will not act
         on it. Add its parent to that setting to enable git here.
@@ -229,7 +234,9 @@ function RepoHeader({
         busy={busy === "Fetched"}
         disabled={!!busy}
         onClick={() =>
-          run("Fetched", () => post<GitResult>("/git/fetch", undefined, { query: { ...q, prune: true } }))
+          run("Fetched", () =>
+            post<GitResult>("/git/fetch", undefined, { query: { ...q, prune: true } }),
+          )
         }
       >
         <RefreshCw className="size-3.5" />
@@ -240,7 +247,9 @@ function RepoHeader({
             label="Pull (fast-forward only)"
             busy={busy === "Pulled"}
             disabled={!!busy}
-            onClick={() => run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))}
+            onClick={() =>
+              run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))
+            }
           >
             <ArrowDownToLine className="size-3.5" />
           </GitButton>
@@ -248,7 +257,9 @@ function RepoHeader({
             label="Push the current branch"
             busy={busy === "Pushed"}
             disabled={!!busy}
-            onClick={() => run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))}
+            onClick={() =>
+              run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))
+            }
           >
             <ArrowUpFromLine className="size-3.5" />
           </GitButton>
@@ -266,7 +277,9 @@ function RepoHeader({
               busy={busy === "Stash popped"}
               disabled={!!busy}
               onClick={() =>
-                run("Stash popped", () => post<GitResult>("/git/stash/pop", undefined, { query: q }))
+                run("Stash popped", () =>
+                  post<GitResult>("/git/stash/pop", undefined, { query: q }),
+                )
               }
             >
               <RotateCcw className="size-3.5" />
@@ -315,7 +328,7 @@ function ChangesTab({
         singleFile: true,
       })
     } catch (err) {
-      toast.error("Could not read the diff", { description: String(err) })
+      notify.error("Could not read the diff", err)
     }
   }
 
@@ -327,7 +340,7 @@ function ChangesTab({
   const commit = async (thenPush: boolean) => {
     const msg = message.trim()
     if (!msg && !amend) {
-      toast.error("A commit message is required")
+      notify.error("A commit message is required")
       return
     }
     try {
@@ -355,7 +368,7 @@ function ChangesTab({
       ),
       run: async () => {
         await post("/git/discard", { file: file.path }, { confirm: "discard changes", query: q })
-        toast.success("Discarded", { description: file.path })
+        notify.success("Discarded", { description: file.path })
         status.refresh()
       },
     })
@@ -438,7 +451,7 @@ function ChangesTab({
                                 { ref: "HEAD", hard: true },
                                 { confirm: "reset hard", query: q },
                               )
-                              toast.success("Discarded all changes")
+                              notify.success("Discarded all changes")
                               status.refresh()
                             },
                           })
@@ -595,25 +608,25 @@ function HistoryTab({
       {log.data.map((c) => (
         <Tooltip key={c.sha}>
           <TooltipTrigger asChild>
-        <button
-          onClick={() => show(c)}
-          className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--row-hover)]"
-        >
-          <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[12px]">{c.subject}</p>
-            <p className="truncate text-[10px] text-muted-foreground">
-              <span className="font-mono">{c.short}</span> · {c.author} · {relativeTime(c.at)}
-              {c.isMerge ? " · merge" : ""}
-            </p>
-          </div>
-          {(c.insertions > 0 || c.deletions > 0) && (
-            <span className="numeric shrink-0 font-mono text-[10px]">
-              <span className="text-(--git-added)">+{c.insertions}</span>{" "}
-              <span className="text-(--git-deleted)">−{c.deletions}</span>
-            </span>
-          )}
-        </button>
+            <button
+              onClick={() => show(c)}
+              className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--row-hover)]"
+            >
+              <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12px]">{c.subject}</p>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  <span className="font-mono">{c.short}</span> · {c.author} · {relativeTime(c.at)}
+                  {c.isMerge ? " · merge" : ""}
+                </p>
+              </div>
+              {(c.insertions > 0 || c.deletions > 0) && (
+                <span className="numeric shrink-0 font-mono text-[10px]">
+                  <span className="text-(--git-added)">+{c.insertions}</span>{" "}
+                  <span className="text-(--git-deleted)">−{c.deletions}</span>
+                </span>
+              )}
+            </button>
           </TooltipTrigger>
           <TooltipContent>{`${c.short} · ${timestamp(c.at)} — click to see this commit's diff`}</TooltipContent>
         </Tooltip>
@@ -689,15 +702,22 @@ function BranchesTab({
             className="group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--row-hover)]"
           >
             <GitBranchIcon
-              className={cn("size-3.5 shrink-0", b.current ? "text-success" : "text-muted-foreground")}
+              className={cn(
+                "size-3.5 shrink-0",
+                b.current ? "text-success" : "text-muted-foreground",
+              )}
             />
             <div className="min-w-0 flex-1">
               <p className="truncate font-mono text-[12px]">
                 {b.name}
                 {b.current && <span className="ml-1.5 text-[10px] text-success">current</span>}
-                {b.remote && <span className="ml-1.5 text-[10px] text-muted-foreground">remote</span>}
+                {b.remote && (
+                  <span className="ml-1.5 text-[10px] text-muted-foreground">remote</span>
+                )}
               </p>
-              {b.subject && <p className="truncate text-[10px] text-muted-foreground">{b.subject}</p>}
+              {b.subject && (
+                <p className="truncate text-[10px] text-muted-foreground">{b.subject}</p>
+              )}
             </div>
             <AheadBehind ahead={b.ahead} behind={b.behind} />
             {canControl && !b.current && !b.remote && (
@@ -776,10 +796,7 @@ function FileGroup({
     <div>
       <div className="sticky top-0 z-10 flex items-center gap-2 bg-surface-header/95 px-2 py-1 backdrop-blur">
         <span
-          className={cn(
-            "size-1.5 rounded-full",
-            tone === "success" ? "bg-success" : "bg-warning",
-          )}
+          className={cn("size-1.5 rounded-full", tone === "success" ? "bg-success" : "bg-warning")}
         />
         <span className="text-[11px] font-medium">{label}</span>
         <span className="numeric text-[10px] text-muted-foreground">{count}</span>

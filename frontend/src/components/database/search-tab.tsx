@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { ArrowRight, ScanSearch, Search } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
-import { errorMessage, get } from "@/lib/api"
+import { get } from "@/lib/api"
 import type { DbConnection, DbSearchResult } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -55,7 +55,7 @@ export function SearchTab({
       setResult(res)
       setRan(q)
     } catch (err) {
-      toast.error("Search failed", { description: errorMessage(err) })
+      notify.error("Search failed", err)
     } finally {
       setBusy(false)
     }

@@ -12,8 +12,8 @@ import {
   Trash2,
   Upload,
 } from "lucide-react"
-import { toast } from "sonner"
-import { del, downloadUrl, errorMessage, get, patch, post } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, DbTable, MongoCollectionInfo, QueryResult } from "@/lib/types"
@@ -158,7 +158,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       filter: JSON.stringify({ _id: id }),
       document: json,
     })
-    toast.success("Document saved")
+    notify.success("Document saved")
     setEditing(null)
     reload()
   }
@@ -169,7 +169,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       collection,
       document: json,
     })
-    toast.success("Document inserted")
+    notify.success("Document inserted")
     setInserting(false)
     reload()
   }
@@ -189,7 +189,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           body: { database: dbName, collection, filter: idFilter(row) },
           confirm: c,
         })
-        toast.success("Document deleted")
+        notify.success("Document deleted")
         reload()
       },
     })
@@ -209,7 +209,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           body: { database: dbName, collection },
           confirm: c,
         })
-        toast.success(`Dropped ${collection}`)
+        notify.success(`Dropped ${collection}`)
         setCollection(undefined)
         collections.refresh()
       },
@@ -518,7 +518,7 @@ function DocumentDialog({
     try {
       await onSave(json)
     } catch (err) {
-      toast.error("Could not save", { description: errorMessage(err) })
+      notify.error("Could not save", err)
     } finally {
       setBusy(false)
     }
@@ -588,10 +588,10 @@ function AggregateTab({
         { confirm: confirmText },
       )
       setResult(res.result)
-      toast.success(`${plural(res.result.rowCount, "document")} in ${res.result.duration}`)
+      notify.success(`${plural(res.result.rowCount, "document")} in ${res.result.duration}`)
       if (writes) onWrote()
     } catch (err) {
-      toast.error("Pipeline failed", { description: errorMessage(err) })
+      notify.error("Pipeline failed", err)
       throw err
     } finally {
       setBusy(false)

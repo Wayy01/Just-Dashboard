@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Database, Link2, Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { errorMessage, get, post } from "@/lib/api"
 import type { DbConnection, DbProvisionOption } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -89,15 +89,16 @@ export function NewDatabaseDialog({
           // ready" true.
           const alive = await get<{ ok: boolean }>(`/databases/${conn.id}/ping`)
           if (!alive.ok) throw new Error("not accepting connections yet")
-          toast.success(`${selected.label} is ready`, { description: `Connected as ${conn.name}` })
+          notify.success(`${selected.label} is ready`, { description: `Connected as ${conn.name}` })
           onCreated(conn.name)
           onOpenChange(false)
           return
         } catch (err) {
           if (Date.now() > deadline) {
-            toast.error(`${selected.label} started but did not become reachable`, {
-              description: errorMessage(err),
-            })
+            notify.error(
+              `${selected.label} started but did not become reachable`,
+              errorMessage(err),
+            )
             onOpenChange(false)
             return
           }
@@ -105,7 +106,7 @@ export function NewDatabaseDialog({
         }
       }
     } catch (err) {
-      toast.error("Could not create the database", { description: errorMessage(err) })
+      notify.error("Could not create the database", err)
     } finally {
       setBusy(null)
     }

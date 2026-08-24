@@ -25,7 +25,7 @@ import {
   X,
   Zap,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { wsUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/hooks/use-theme"
@@ -169,7 +169,11 @@ export function XtermPane({
   const [searching, setSearching] = useState(false)
   const [needle, setNeedle] = useState("")
   const [matches, setMatches] = useState<{ index: number; count: number }>({ index: -1, count: 0 })
-  const [findOptions, setFindOptions] = useState({ caseSensitive: false, regex: false, word: false })
+  const [findOptions, setFindOptions] = useState({
+    caseSensitive: false,
+    regex: false,
+    word: false,
+  })
   const [atBottom, setAtBottom] = useState(true)
   // Whether the wheel has taken this pane back through its history.
   //
@@ -621,7 +625,7 @@ export function XtermPane({
       if (document.fullscreenElement === frame) await document.exitFullscreen()
       else await frame.requestFullscreen()
     } catch {
-      toast.error("Fullscreen was refused by the browser")
+      notify.error("Fullscreen was refused by the browser")
     }
     // The pane's box changes after the transition, and the ResizeObserver
     // fires before the browser has finished laying it out.
@@ -668,7 +672,7 @@ export function XtermPane({
   const send = useCallback((data: string) => {
     const socket = socketRef.current
     if (socket?.readyState !== WebSocket.OPEN) {
-      toast.error("Not connected")
+      notify.error("Not connected")
       return
     }
     socket.send(data)
@@ -880,10 +884,7 @@ export function XtermPane({
       <div className="relative min-h-0 flex-1">
         <div
           ref={hostRef}
-          className={cn(
-            "h-full p-2 transition-colors duration-150",
-            bell && "bg-warning/25",
-          )}
+          className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
           style={bell ? undefined : { backgroundColor: TERMINAL_THEMES[mode].background }}
           // Clicking inside a pane focuses it, which is what clicking inside
           // anything does. tmux composes every pane into one screen before the
@@ -1306,14 +1307,14 @@ function readablePaste(data: string): string {
 async function copySelection(term: Terminal) {
   const selection = term.getSelection()
   if (!selection) {
-    toast.info("Nothing is selected")
+    notify.info("Nothing is selected")
     return
   }
   try {
     await navigator.clipboard.writeText(selection)
-    toast.success("Copied")
+    notify.success("Copied")
   } catch {
-    toast.error("The browser refused clipboard access")
+    notify.error("The browser refused clipboard access")
   }
 }
 
@@ -1337,9 +1338,10 @@ async function requestPaste(
     }
     socket.send(text)
   } catch {
-    toast.error("The browser refused clipboard access", {
-      description: "Ctrl+V pastes into the shell directly if the page has no permission.",
-    })
+    notify.error(
+      "The browser refused clipboard access",
+      "Ctrl+V pastes into the shell directly if the page has no permission.",
+    )
   }
 }
 
@@ -1359,7 +1361,7 @@ function downloadScrollback(term: Terminal) {
   }
   while (lines.length && lines[lines.length - 1].trim() === "") lines.pop()
   if (lines.length === 0) {
-    toast.info("There is nothing in the scrollback yet")
+    notify.info("There is nothing in the scrollback yet")
     return
   }
   const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" })
@@ -1369,5 +1371,5 @@ function downloadScrollback(term: Terminal) {
   anchor.download = `terminal-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`
   anchor.click()
   URL.revokeObjectURL(url)
-  toast.success(`Saved ${lines.length.toLocaleString()} lines`)
+  notify.success(`Saved ${lines.length.toLocaleString()} lines`)
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { CheckCircle2, Plug, XCircle } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { errorMessage, get, post, put } from "@/lib/api"
 import { usePoll } from "@/hooks/use-poll"
 import type { DbConnection, DbDriver, DbDriverInfo } from "@/lib/types"
@@ -85,17 +85,18 @@ export function ConnectionDialog({
     try {
       if (editing) {
         await put(`/databases/${existing!.id}`, { name, dsn })
-        toast.success(`Updated ${name}`)
+        notify.success(`Updated ${name}`)
       } else {
         await post("/databases/", { name, driver, dsn })
-        toast.success(`Added ${name}`)
+        notify.success(`Added ${name}`)
       }
       onOpenChange(false)
       onDone()
     } catch (err) {
-      toast.error(editing ? "Could not update connection" : "Could not add connection", {
-        description: errorMessage(err),
-      })
+      notify.error(
+        editing ? "Could not update connection" : "Could not add connection",
+        errorMessage(err),
+      )
     } finally {
       setSaving(false)
     }

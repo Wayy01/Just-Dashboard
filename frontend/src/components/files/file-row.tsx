@@ -15,7 +15,7 @@ import {
   Shield,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { downloadUrl } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -86,8 +86,8 @@ export function FileRow({
   const copyPath = () =>
     navigator.clipboard
       ?.writeText(entry.path)
-      .then(() => toast.success("Path copied"))
-      .catch(() => toast.error("The browser refused clipboard access"))
+      .then(() => notify.success("Path copied"))
+      .catch(() => notify.error("The browser refused clipboard access"))
 
   const archive = !entry.isDir && isArchive(entry.name)
 
@@ -139,7 +139,9 @@ export function FileRow({
       <TableCell className="numeric text-right font-mono text-xs text-muted-foreground">
         {entry.isDir ? "—" : bytes(entry.size)}
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground">{relativeTime(entry.modified)}</TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {relativeTime(entry.modified)}
+      </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {entry.owner}:{entry.group}
       </TableCell>

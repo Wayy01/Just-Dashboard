@@ -1,17 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import {
-  Ban,
-  History,
-  Plus,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Trash2,
-  Users,
-} from "lucide-react"
-import { toast } from "sonner"
+import { Ban, History, Plus, Shield, ShieldAlert, ShieldCheck, Trash2, Users } from "lucide-react"
+import { notify } from "@/lib/toast"
 import { del, get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type {
@@ -293,14 +284,14 @@ function AddRuleDialog({ onDone }: { onDone: () => void }) {
   const submit = async () => {
     try {
       await post("/firewall/rules", { action, direction: "in", port, protocol, from, comment })
-      toast.success("Rule added")
+      notify.success("Rule added")
       setOpen(false)
       setPort("")
       setFrom("")
       setComment("")
       onDone()
     } catch (err) {
-      toast.error("Rule rejected", { description: String(err) })
+      notify.error("Rule rejected", err)
     }
   }
 
@@ -406,10 +397,10 @@ function Fail2banTab() {
   const unban = async (jail: string, ip: string) => {
     try {
       await post(`/fail2ban/${encodeURIComponent(jail)}/unban`, { ip })
-      toast.success(`${ip} unbanned from ${jail}`)
+      notify.success(`${ip} unbanned from ${jail}`)
       refresh()
     } catch (err) {
-      toast.error("Could not unban", { description: String(err) })
+      notify.error("Could not unban", err)
     }
   }
 

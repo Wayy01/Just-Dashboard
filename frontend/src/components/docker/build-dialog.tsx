@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Hammer, Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import type { GitRepo } from "@/lib/types"
 import { RunConsole, useRunConsole } from "@/components/docker/run-console"
@@ -70,10 +70,10 @@ export function BuildDialog({
       pull: pull ? "true" : undefined,
     })
     if (code === 0) {
-      toast.success(`${tag} built`)
+      notify.success(`${tag} built`)
       onBuilt?.()
     } else {
-      toast.error("The build failed", { description: "The output above says where." })
+      notify.error("The build failed", "The output above says where.")
     }
   }
 
@@ -163,7 +163,11 @@ export function BuildDialog({
               Fetch newer base images first
             </label>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-              <Switch checked={noCache} onCheckedChange={setNoCache} aria-label="Ignore the cache" />
+              <Switch
+                checked={noCache}
+                onCheckedChange={setNoCache}
+                aria-label="Ignore the cache"
+              />
               Ignore the build cache
             </label>
           </div>

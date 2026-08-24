@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { Upload } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
-import { errorMessage, post } from "@/lib/api"
+import { post } from "@/lib/api"
 import type { DbImportResult, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -86,12 +86,12 @@ export function ImportDialog({
         { confirm: confirmText },
       )
       setResult(res)
-      toast.success(`Imported ${plural(res.inserted, "row")}`, {
+      notify.success(`Imported ${plural(res.inserted, "row")}`, {
         description: res.failed ? `${plural(res.failed, "row")} failed` : undefined,
       })
       onDone()
     } catch (err) {
-      toast.error("Import failed", { description: errorMessage(err) })
+      notify.error("Import failed", err)
       throw err
     } finally {
       setBusy(false)

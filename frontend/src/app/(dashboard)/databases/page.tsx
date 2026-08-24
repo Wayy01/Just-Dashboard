@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Database, DownloadCloud, Pencil, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -90,7 +90,7 @@ export default function DatabasesPage() {
       .then((res) => {
         if (res.added.length === 0) return
         connections.refresh()
-        toast.success(`Connected ${plural(res.added.length, "database")} on this server`, {
+        notify.success(`Connected ${plural(res.added.length, "database")} on this server`, {
           description: res.added.join(", "),
         })
       })
@@ -349,11 +349,11 @@ function BackupButton({ conn }: { conn: DbConnection }) {
         `/databases/${conn.id}/backup`,
         { database: conn.database },
       )
-      toast.success("Dump complete", {
+      notify.success("Dump complete", {
         description: `${bytes(res.size)} in ${res.duration} → ${res.path}`,
       })
     } catch (err) {
-      toast.error("Dump failed", { description: String(err) })
+      notify.error("Dump failed", err)
     } finally {
       setBusy(false)
     }

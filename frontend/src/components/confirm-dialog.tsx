@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,7 +66,11 @@ export function ConfirmDialog({
   // Keyed on the phrase so a second dialog never opens pre-filled with what
   // was typed into the previous one — which would defeat the whole point.
   return (
-    <ConfirmBody key={request.phrase ?? request.title} request={request} onOpenChange={onOpenChange} />
+    <ConfirmBody
+      key={request.phrase ?? request.title}
+      request={request}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
@@ -86,12 +90,12 @@ function ConfirmBody({
     setBusy(true)
     try {
       await request.action(typed)
-      toast.success(`${request.title} completed`)
+      notify.success(`${request.title} completed`)
       onOpenChange(false)
       request.onDone?.()
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err)
-      toast.error(`${request.title} failed`, { description: message })
+      notify.error(`${request.title} failed`, message)
     } finally {
       setBusy(false)
     }

@@ -19,8 +19,8 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react"
-import { toast } from "sonner"
-import { get, post, ApiError } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { get, post } from "@/lib/api"
 import { parseDockerRun, suggestName } from "@/lib/docker-run"
 import { TEMPLATES, TEMPLATE_CATEGORIES, type Template } from "@/lib/docker-templates"
 import type {
@@ -135,7 +135,10 @@ function CreateContainerBody({
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useState("setup")
 
-  const patch = useCallback((next: Partial<ContainerSpec>) => setSpec((s) => ({ ...s, ...next })), [])
+  const patch = useCallback(
+    (next: Partial<ContainerSpec>) => setSpec((s) => ({ ...s, ...next })),
+    [],
+  )
 
   const start = (next: ContainerSpec, warnings: string[] = []) => {
     setSpec(next)
@@ -146,7 +149,7 @@ function CreateContainerBody({
 
   const create = async () => {
     if (!spec.image.trim()) {
-      toast.error("An image is required")
+      notify.error("An image is required")
       setTab("setup")
       return
     }
@@ -154,18 +157,20 @@ function CreateContainerBody({
     try {
       const result = await post<CreateResult>("/docker/containers/", spec)
       if (result.warnings.length > 0) {
-        toast.warning(`${result.name} created, with ${result.warnings.length} thing(s) worth knowing`, {
-          description: result.warnings[0],
-          duration: 10000,
-        })
+        notify.warning(
+          `${result.name} created, with ${result.warnings.length} thing(s) worth knowing`,
+          {
+            description: result.warnings[0],
+            duration: 10000,
+          },
+        )
       } else {
-        toast.success(`${result.name} is ${result.started ? "running" : "created"}`)
+        notify.success(`${result.name} is ${result.started ? "running" : "created"}`)
       }
       onCreated?.(result)
       onOpenChange(false)
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err)
-      toast.error("Could not create the container", { description: message, duration: 12000 })
+      notify.error("Could not create the container", err, { duration: 12000 })
     } finally {
       setBusy(false)
     }
@@ -252,9 +257,10 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
   const convert = () => {
     const { spec, warnings } = parseDockerRun(pasted)
     if (!spec.image) {
-      toast.error("That does not look like a docker run command", {
-        description: warnings[0] ?? "It should end with an image name.",
-      })
+      notify.error(
+        "That does not look like a docker run command",
+        warnings[0] ?? "It should end with an image name.",
+      )
       return
     }
     // A pasted command usually has no restart policy because it was written
@@ -281,7 +287,9 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
           spellCheck={false}
           rows={4}
           className="font-mono text-xs"
-          placeholder={"docker run -d \\\n  --name uptime-kuma \\\n  -p 3001:3001 \\\n  -v uptime-kuma:/app/data \\\n  louislam/uptime-kuma:1"}
+          placeholder={
+            "docker run -d \\\n  --name uptime-kuma \\\n  -p 3001:3001 \\\n  -v uptime-kuma:/app/data \\\n  louislam/uptime-kuma:1"
+          }
         />
         <Button size="sm" onClick={convert} disabled={!pasted.trim()}>
           <Wand2 className="size-4" />
@@ -544,7 +552,10 @@ function PortEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
           </div>
           <div className="w-20">
             <Label className="text-[10px] text-muted-foreground">Protocol</Label>
-            <Select value={port.protocol || "tcp"} onValueChange={(v) => update(i, { protocol: v })}>
+            <Select
+              value={port.protocol || "tcp"}
+              onValueChange={(v) => update(i, { protocol: v })}
+            >
               <SelectTrigger className="h-8 w-full text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -567,9 +578,9 @@ function PortEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
       ))}
       {ports.some((p) => p.hostPort > 0 && !p.hostIp) && (
         <Notice title="Published on every interface" icon={ShieldAlert} tone="warning">
-          Docker publishes ports with NAT rules that are consulted before the firewall&apos;s own, so
-          this will be reachable from anywhere that can route to this server — even if the firewall
-          appears to deny it.
+          Docker publishes ports with NAT rules that are consulted before the firewall&apos;s own,
+          so this will be reachable from anywhere that can route to this server — even if the
+          firewall appears to deny it.
         </Notice>
       )}
     </section>
@@ -601,7 +612,9 @@ function MountEditor({
           <Button
             size="xs"
             variant="outline"
-            onClick={() => patch({ mounts: [...mounts, { type: "volume", source: "", target: "" }] })}
+            onClick={() =>
+              patch({ mounts: [...mounts, { type: "volume", source: "", target: "" }] })
+            }
           >
             <Plus className="size-3" />
             Add
@@ -778,7 +791,9 @@ function EnvEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
                 value={row.name}
                 placeholder="NAME"
                 onChange={(e) =>
-                  patch({ env: env.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)) })
+                  patch({
+                    env: env.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)),
+                  })
                 }
               />
               <Input
@@ -904,7 +919,10 @@ function AdvancedFields({
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2">
-        <Field label="Run as user" hint="Leave empty to use whatever the image says. `1000:1000` is common.">
+        <Field
+          label="Run as user"
+          hint="Leave empty to use whatever the image says. `1000:1000` is common."
+        >
           <Input
             value={spec.user ?? ""}
             spellCheck={false}
@@ -988,7 +1006,9 @@ function ToggleRow({
     <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-hairline p-2.5">
       <Switch checked={checked} onCheckedChange={onChange} aria-label={label} className="mt-0.5" />
       <span className="min-w-0">
-        <span className={`block text-xs font-medium ${danger && checked ? "text-destructive" : ""}`}>
+        <span
+          className={`block text-xs font-medium ${danger && checked ? "text-destructive" : ""}`}
+        >
           {label}
         </span>
         <Hint>{hint}</Hint>
@@ -1034,8 +1054,8 @@ function CommandPreview({ spec }: { spec: ContainerSpec }) {
 
   const copy = (text: string, what: string) => {
     navigator.clipboard.writeText(text).then(
-      () => toast.success(`${what} copied`),
-      () => toast.error("Could not copy"),
+      () => notify.success(`${what} copied`),
+      () => notify.error("Could not copy"),
     )
   }
 
@@ -1065,7 +1085,8 @@ function CommandPreview({ spec }: { spec: ContainerSpec }) {
       <div className="space-y-2">
         <SectionHeading icon={Layers} title="The same thing as compose" term="compose">
           A container created here exists only in Docker&apos;s memory. The same container as a file
-          can be committed to git, backed up and redeployed — paste this into a new stack to keep it.
+          can be committed to git, backed up and redeployed — paste this into a new stack to keep
+          it.
         </SectionHeading>
         <div className="relative">
           <Well className="max-h-80 whitespace-pre-wrap">{preview?.compose ?? "…"}</Well>
