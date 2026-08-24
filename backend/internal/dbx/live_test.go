@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,64 @@ func sqlFixtures() []engineFixture {
 					id INT PRIMARY KEY,
 					title NVARCHAR(255) NOT NULL,
 					author_id INT NOT NULL CONSTRAINT jd_posts_author_fk REFERENCES jd_users(id)
+				)`,
+				`CREATE INDEX jd_posts_author_idx ON jd_posts(author_id)`,
+				`INSERT INTO jd_users(id,email,name) VALUES (1,'a@x.io','Ann'),(2,'b@x.io',NULL)`,
+				`INSERT INTO jd_posts(id,title,author_id) VALUES (1,'Hello',1),(2,'World',2)`,
+			},
+		},
+		{
+			// Oracle folds an unquoted identifier to upper case, so the fixture
+			// quotes its names: that is also how the dashboard addresses them
+			// (quoteDouble), so a fixture spelled the engine's way would test a
+			// path no user ever takes.
+			driver: DriverOracle, env: "JD_TEST_ORACLE_DSN",
+			dsn:    "oracle://jdtest:jdtest@127.0.0.1:1521/FREEPDB1",
+			schema: "JDTEST", relational: true,
+			teardown: []string{
+				`DROP TABLE "jd_posts" CASCADE CONSTRAINTS`,
+				`DROP TABLE "jd_users" CASCADE CONSTRAINTS`,
+				`DROP TABLE "jd_widgets" CASCADE CONSTRAINTS`,
+			},
+			seed: []string{
+				`CREATE TABLE "jd_users" (
+					"id" NUMBER(10) PRIMARY KEY,
+					"email" VARCHAR2(255) NOT NULL UNIQUE,
+					"name" VARCHAR2(4000)
+				)`,
+				`CREATE TABLE "jd_posts" (
+					"id" NUMBER(10) PRIMARY KEY,
+					"title" VARCHAR2(255) NOT NULL,
+					"author_id" NUMBER(10) NOT NULL,
+					CONSTRAINT "jd_posts_author_fk" FOREIGN KEY ("author_id")
+						REFERENCES "jd_users"("id") ON DELETE CASCADE
+				)`,
+				`CREATE INDEX "jd_posts_author_idx" ON "jd_posts"("author_id")`,
+				// Oracle has no multi-row VALUES clause.
+				`INSERT INTO "jd_users"("id","email","name") VALUES (1,'a@x.io','Ann')`,
+				`INSERT INTO "jd_users"("id","email","name") VALUES (2,'b@x.io',NULL)`,
+				`INSERT INTO "jd_posts"("id","title","author_id") VALUES (1,'Hello',1)`,
+				`INSERT INTO "jd_posts"("id","title","author_id") VALUES (2,'World',2)`,
+			},
+		},
+		{
+			// SQLite needs no server, so unlike the others it is always
+			// reachable and never skips. Its DSN is a file, kept in the test's
+			// own temp directory so a run leaves nothing behind.
+			driver: DriverSQLite, env: "JD_TEST_SQLITE_DSN",
+			dsn:    sqliteFixtureFile(),
+			schema: "", relational: true,
+			teardown: []string{`DROP TABLE IF EXISTS jd_posts`, `DROP TABLE IF EXISTS jd_users`},
+			seed: []string{
+				`CREATE TABLE jd_users (
+					id INTEGER PRIMARY KEY,
+					email TEXT NOT NULL UNIQUE,
+					name TEXT
+				)`,
+				`CREATE TABLE jd_posts (
+					id INTEGER PRIMARY KEY,
+					title TEXT NOT NULL,
+					author_id INTEGER NOT NULL REFERENCES jd_users(id) ON DELETE CASCADE
 				)`,
 				`CREATE INDEX jd_posts_author_idx ON jd_posts(author_id)`,
 				`INSERT INTO jd_users(id,email,name) VALUES (1,'a@x.io','Ann'),(2,'b@x.io',NULL)`,
@@ -367,10 +426,14 @@ func TestLiveSQLEngines(t *testing.T) {
 					t.Fatalf("UpdateRow: %v", err)
 				}
 				var name string
-				rel, _ := qualify(mustDialect(t, f.driver), f.schema, "jd_users")
 				d := mustDialect(t, f.driver)
+				rel, _ := qualify(d, f.schema, "jd_users")
+				// Quoted, as the product quotes them: unquoted `id` is folded
+				// to ID on Oracle and does not match a column created as "id".
+				qName, _ := d.QuoteIdent("name")
+				qID, _ := d.QuoteIdent("id")
 				if err := db.QueryRowContext(ctx,
-					"SELECT name FROM "+rel+" WHERE id = "+d.Placeholder(1), 3).Scan(&name); err != nil {
+					"SELECT "+qName+" FROM "+rel+" WHERE "+qID+" = "+d.Placeholder(1), 3).Scan(&name); err != nil {
 					t.Fatalf("read back: %v", err)
 				}
 				if name != "Cyrus" {
@@ -453,12 +516,23 @@ func TestLiveSQLEngines(t *testing.T) {
 	}
 }
 
+// sqliteFixtureFile is the one fixture DSN that is a path rather than a
+// server. It lives beside the other test artefacts and is recreated by the
+// seed on every run, so a stale file from a failed run cannot skew a later one.
+func sqliteFixtureFile() string {
+	return filepath.Join(os.TempDir(), "jd-live-fixture.db")
+}
+
 func ddlIntType(d Driver) string {
 	switch d {
 	case DriverPostgres:
 		return "integer"
 	case DriverMSSQL:
 		return "int"
+	case DriverOracle:
+		return "NUMBER(10)"
+	case DriverSQLite:
+		return "INTEGER"
 	default:
 		return "INT"
 	}
@@ -470,6 +544,10 @@ func ddlTextType(d Driver) string {
 		return "nvarchar(255)"
 	case DriverPostgres:
 		return "text"
+	case DriverOracle:
+		return "VARCHAR2(255)"
+	case DriverSQLite:
+		return "TEXT"
 	default:
 		return "varchar(255)"
 	}
@@ -537,4 +615,27 @@ func TestLiveExplainDoesNotExecute(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fixtureRel and fixtureCol spell a fixture's table and column the way the
+// product spells them — qualified and quoted. A test's own verification SQL
+// has to, or it tests a name the dashboard never uses: Oracle folds an
+// unquoted identifier to upper case, so a bare `jd_users` is ORA-00942 against
+// a table the fixture created as "jd_users".
+func fixtureRel(t *testing.T, f engineFixture, table string) string {
+	t.Helper()
+	rel, err := qualify(mustDialect(t, f.driver), f.schema, table)
+	if err != nil {
+		t.Fatalf("qualify(%s): %v", table, err)
+	}
+	return rel
+}
+
+func fixtureCol(t *testing.T, f engineFixture, col string) string {
+	t.Helper()
+	q, err := mustDialect(t, f.driver).QuoteIdent(col)
+	if err != nil {
+		t.Fatalf("QuoteIdent(%s): %v", col, err)
+	}
+	return q
 }

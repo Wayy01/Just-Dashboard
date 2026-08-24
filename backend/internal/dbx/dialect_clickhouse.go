@@ -40,13 +40,23 @@ func (clickhouseDialect) ColumnTypes() []string {
 }
 
 func (clickhouseDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, error) {
+	// The size comes from a joined aggregate rather than a correlated
+	// subquery: ClickHouse's analyzer — the default since 24.3 — refuses to
+	// resolve an outer column inside a subquery ("Resolve identifier 'd.name'
+	// from parent scope only supported for constants and CTE"), so the obvious
+	// form parses on an older server and fails outright on a current one. The
+	// LEFT JOIN also keeps a database with no parts yet, which is every
+	// freshly created one.
 	rows, err := db.QueryContext(ctx, `
 	  SELECT d.name,
-	         toInt64(ifNull((SELECT sum(bytes_on_disk) FROM system.parts p
-	                          WHERE p.database = d.name AND p.active), 0)),
+	         toInt64(ifNull(s.bytes, 0)),
 	         ifNull(d.engine, ''),
 	         ''
 	  FROM system.databases d
+	  LEFT JOIN (
+	    SELECT database, sum(bytes_on_disk) AS bytes
+	    FROM system.parts WHERE active GROUP BY database
+	  ) s ON s.database = d.name
 	  ORDER BY d.name`)
 	if err != nil {
 		return nil, err

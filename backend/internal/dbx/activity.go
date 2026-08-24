@@ -61,8 +61,9 @@ func scanActivity(rows *sql.Rows) ([]Activity, error) {
 		// through database/sql's bool conversion depends on each driver's
 		// choice of Go type for a one-bit column.
 		var self int
-		if err := rows.Scan(&a.PID, &a.User, &a.Database, &a.State,
-			&a.Seconds, &a.Query, &a.Client, &a.Wait, &a.BlockedBy, &self); err != nil {
+		if err := rows.Scan(&a.PID, nullText{&a.User}, nullText{&a.Database}, nullText{&a.State},
+			&a.Seconds, nullText{&a.Query}, nullText{&a.Client}, nullText{&a.Wait},
+			nullText{&a.BlockedBy}, &self); err != nil {
 			return nil, err
 		}
 		a.Self = self != 0

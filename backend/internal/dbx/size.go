@@ -96,7 +96,7 @@ func scanSizes(rows *sql.Rows, schema string) ([]TableSize, error) {
 	out := []TableSize{}
 	for rows.Next() {
 		var t TableSize
-		if err := rows.Scan(&t.Schema, &t.Table, &t.Rows, &t.Bytes, &t.DataBytes, &t.IndexBytes); err != nil {
+		if err := rows.Scan(nullText{&t.Schema}, &t.Table, &t.Rows, &t.Bytes, &t.DataBytes, &t.IndexBytes); err != nil {
 			return nil, err
 		}
 		if t.Schema == "" {

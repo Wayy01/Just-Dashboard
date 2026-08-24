@@ -52,7 +52,7 @@ func (oracleDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, err
 	  SELECT u.username,
 	         NVL((SELECT SUM(s.bytes) FROM dba_segments s WHERE s.owner = u.username), 0),
 	         u.username,
-	         ''
+	         NULL
 	  FROM all_users u
 	  WHERE u.oracle_maintained = 'N'
 	  ORDER BY u.username`)
@@ -60,7 +60,12 @@ func (oracleDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, err
 		// dba_segments and oracle_maintained both need grants a plain
 		// application account will not have. Falling back to the bare user list
 		// keeps the picker populated instead of failing the page outright.
-		rows, err = db.QueryContext(ctx, `SELECT username, 0, username, '' FROM all_users ORDER BY username`)
+		// Aliased, and ordered by position: `SELECT username, 0, username`
+		// with an `ORDER BY username` is ORA-00960 "ambiguous column naming
+		// in select list", because the sort cannot tell the two apart.
+		rows, err = db.QueryContext(ctx, `
+		  SELECT u.username AS db_name, 0 AS db_size, u.username AS db_owner, NULL AS db_enc
+		  FROM all_users u ORDER BY 1`)
 		if err != nil {
 			return nil, err
 		}
@@ -70,12 +75,12 @@ func (oracleDialect) Databases(ctx context.Context, db *sql.DB) ([]Database, err
 
 func (oracleDialect) Tables(ctx context.Context, db *sql.DB, schema string) ([]Table, error) {
 	rows, err := db.QueryContext(ctx, `
-	  SELECT owner, table_name, 'table', NVL(num_rows, 0), 0, ''
+	  SELECT owner, table_name, 'table', NVL(num_rows, 0), 0, NULL
 	  FROM all_tables
 	  WHERE (:1 IS NULL OR owner = :1)
 	    AND owner NOT IN ('SYS','SYSTEM','OUTLN','XDB','MDSYS','CTXSYS','DBSNMP')
 	  UNION ALL
-	  SELECT owner, view_name, 'view', 0, 0, ''
+	  SELECT owner, view_name, 'view', 0, 0, NULL
 	  FROM all_views
 	  WHERE (:1 IS NULL OR owner = :1)
 	    AND owner NOT IN ('SYS','SYSTEM','OUTLN','XDB','MDSYS','CTXSYS','DBSNMP')
@@ -105,7 +110,12 @@ func (oracleDialect) Columns(ctx context.Context, db *sql.DB, schema, table stri
 	                WHEN data_type = 'NUMBER' AND data_precision IS NOT NULL
 	                THEN '(' || data_precision || ',' || NVL(data_scale,0) || ')'
 	                ELSE '' END,
-	         nullable, NVL(TO_CHAR(data_default), ''), column_id
+	         nullable,
+	         -- data_default is a LONG. Wrapping it in TO_CHAR or NVL to
+	         -- normalise the NULL is ORA-00932 "expression is of data type
+	         -- LONG, which is incompatible with expected data type CHAR", so
+	         -- it is selected raw and the NULL is absorbed by nullText.
+	         data_default, column_id
 	  FROM all_tab_columns
 	  WHERE owner = NVL(:1, SYS_CONTEXT('USERENV','CURRENT_SCHEMA')) AND table_name = :2
 	  ORDER BY column_id`, oracleSchemaArg(schema), table)
@@ -117,7 +127,7 @@ func (oracleDialect) Columns(ctx context.Context, db *sql.DB, schema, table stri
 	for rows.Next() {
 		var c Column
 		var nullable string
-		if err := rows.Scan(&c.Name, &c.Type, &nullable, &c.Default, &c.Position); err != nil {
+		if err := rows.Scan(&c.Name, &c.Type, &nullable, nullText{&c.Default}, &c.Position); err != nil {
 			return nil, err
 		}
 		// Oracle spells nullability 'Y'/'N', not the standard 'YES'/'NO'.
@@ -179,7 +189,7 @@ func (oracleDialect) Indexes(ctx context.Context, db *sql.DB, schema, table stri
 func (oracleDialect) ForeignKeys(ctx context.Context, db *sql.DB, schema, table string) ([]ForeignKey, error) {
 	rows, err := db.QueryContext(ctx, `
 	  SELECT c.constraint_name, cc.column_name, rc.owner, rc.table_name, rcc.column_name,
-	         NVL(c.delete_rule, '')
+	         c.delete_rule
 	  FROM all_constraints c
 	  JOIN all_cons_columns cc
 	    ON cc.constraint_name = c.constraint_name AND cc.owner = c.owner
@@ -199,7 +209,7 @@ func (oracleDialect) ForeignKeys(ctx context.Context, db *sql.DB, schema, table 
 	acc := newFKAcc()
 	for rows.Next() {
 		var name, col, refSchema, refTable, refCol, del string
-		if err := rows.Scan(&name, &col, &refSchema, &refTable, &refCol, &del); err != nil {
+		if err := rows.Scan(&name, &col, &refSchema, &refTable, &refCol, nullText{&del}); err != nil {
 			return nil, err
 		}
 		fk := acc.get(name)
@@ -260,14 +270,16 @@ func (oracleDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) 
 func (oracleDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
 	rows, err := db.QueryContext(ctx, `
 	  SELECT TO_CHAR(s.sid) || ',' || TO_CHAR(s.serial#),
-	         NVL(s.username, ''),
-	         NVL(SYS_CONTEXT('USERENV','DB_NAME'), ''),
-	         NVL(s.status, ''),
+	         -- No NVL(x, '') on the text columns: Oracle has no empty string,
+	         -- so that guard returns NULL unchanged. nullText absorbs it.
+	         s.username,
+	         SYS_CONTEXT('USERENV','DB_NAME'),
+	         s.status,
 	         NVL(s.last_call_et, 0),
-	         NVL(SUBSTR(q.sql_text, 1, 4000), ''),
-	         NVL(s.machine, ''),
-	         NVL(s.event, ''),
-	         NVL(TO_CHAR(s.blocking_session), ''),
+	         SUBSTR(q.sql_text, 1, 4000),
+	         s.machine,
+	         s.event,
+	         TO_CHAR(s.blocking_session),
 	         CASE WHEN s.sid = SYS_CONTEXT('USERENV','SID') THEN 1 ELSE 0 END
 	  FROM v$session s
 	  LEFT JOIN v$sql q ON q.sql_id = s.sql_id
@@ -310,7 +322,8 @@ func (oracleDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) 
 		           FROM user_indexes ui JOIN user_segments us ON us.segment_name = ui.index_name
 		           GROUP BY ui.table_name) i
 		  ON i.table_name = t.table_name
-		WHERE t.owner = :1`, schema)
+		WHERE t.owner = NVL(:1, SYS_CONTEXT('USERENV','CURRENT_SCHEMA'))`,
+		oracleSchemaArg(schema))
 	if err != nil {
 		return nil, err
 	}

@@ -340,7 +340,8 @@ func TestLiveRowInsertSQL(t *testing.T) {
 			}
 			var n int
 			if err := db.QueryRowContext(ctx,
-				"SELECT COUNT(*) FROM jd_users WHERE email = "+quoteLiteral("copied@x.io")).Scan(&n); err != nil {
+				"SELECT COUNT(*) FROM "+fixtureRel(t, f, "jd_users")+
+					" WHERE "+fixtureCol(t, f, "email")+" = "+quoteLiteral("copied@x.io")).Scan(&n); err != nil {
 				t.Fatalf("verify: %v", err)
 			}
 			if n != 1 {
@@ -371,7 +372,8 @@ func TestLiveRowInsertSQLQuoting(t *testing.T) {
 			}
 			var got string
 			if err := db.QueryRowContext(ctx,
-				"SELECT name FROM jd_users WHERE email = "+quoteLiteral("quote@x.io")).Scan(&got); err != nil {
+				"SELECT "+fixtureCol(t, f, "name")+" FROM "+fixtureRel(t, f, "jd_users")+
+					" WHERE "+fixtureCol(t, f, "email")+" = "+quoteLiteral("quote@x.io")).Scan(&got); err != nil {
 				t.Fatalf("read back: %v", err)
 			}
 			if got != nasty {
@@ -379,7 +381,8 @@ func TestLiveRowInsertSQLQuoting(t *testing.T) {
 			}
 			// And the table the injected fragment named is still standing.
 			var n int
-			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM jd_users").Scan(&n); err != nil {
+			if err := db.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM "+fixtureRel(t, f, "jd_users")).Scan(&n); err != nil {
 				t.Fatalf("jd_users is gone: %v", err)
 			}
 		})

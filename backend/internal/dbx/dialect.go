@@ -257,12 +257,38 @@ func infoSchemaPrimaryKey(ctx context.Context, db *sql.DB, d Dialect, schema, ta
 
 // scanTables is the common row loop for a catalogue query returning the six
 // Table fields in order.
+// nullText scans a possibly-NULL text column into a plain string, NULL
+// becoming "".
+//
+// Oracle makes this unavoidable rather than merely tidy: it has no empty
+// string — ” *is* NULL there — so the usual `NVL(col, ”)` guard is a no-op
+// and every optional text column in its catalogue comes back NULL, which
+// database/sql refuses to scan into a string. The other engines want it too:
+// a comment nobody wrote, an owner the catalogue does not record and a
+// referential action that is the default are all legitimately NULL on all of
+// them, and the alternative is an engine-shaped COALESCE in every query.
+type nullText struct{ dst *string }
+
+func (n nullText) Scan(v any) error {
+	switch x := v.(type) {
+	case nil:
+		*n.dst = ""
+	case string:
+		*n.dst = x
+	case []byte:
+		*n.dst = string(x)
+	default:
+		*n.dst = fmt.Sprint(x)
+	}
+	return nil
+}
+
 func scanTables(rows *sql.Rows) ([]Table, error) {
 	defer rows.Close()
 	out := []Table{}
 	for rows.Next() {
 		var t Table
-		if err := rows.Scan(&t.Schema, &t.Name, &t.Type, &t.Rows, &t.Size, &t.Comment); err != nil {
+		if err := rows.Scan(&t.Schema, &t.Name, &t.Type, &t.Rows, &t.Size, nullText{&t.Comment}); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -276,7 +302,7 @@ func scanDatabases(rows *sql.Rows) ([]Database, error) {
 	out := []Database{}
 	for rows.Next() {
 		var d Database
-		if err := rows.Scan(&d.Name, &d.Size, &d.Owner, &d.Encoding); err != nil {
+		if err := rows.Scan(&d.Name, &d.Size, nullText{&d.Owner}, nullText{&d.Encoding}); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
