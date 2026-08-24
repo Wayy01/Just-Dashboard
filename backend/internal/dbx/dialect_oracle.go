@@ -254,3 +254,65 @@ func (oracleDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) 
 	defer rows.Close()
 	return collectRows(rows, 500, query)
 }
+
+// Activity reads v$session, which needs a grant a plain application account may
+// not have; the handler surfaces that refusal rather than hiding it.
+func (oracleDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT TO_CHAR(s.sid) || ',' || TO_CHAR(s.serial#),
+	         NVL(s.username, ''),
+	         NVL(SYS_CONTEXT('USERENV','DB_NAME'), ''),
+	         NVL(s.status, ''),
+	         NVL(s.last_call_et, 0),
+	         NVL(SUBSTR(q.sql_text, 1, 4000), ''),
+	         NVL(s.machine, ''),
+	         NVL(s.event, ''),
+	         NVL(TO_CHAR(s.blocking_session), ''),
+	         CASE WHEN s.sid = SYS_CONTEXT('USERENV','SID') THEN 1 ELSE 0 END
+	  FROM v$session s
+	  LEFT JOIN v$sql q ON q.sql_id = s.sql_id
+	  WHERE s.type = 'USER'
+	  ORDER BY s.last_call_et DESC`)
+	if err != nil {
+		return nil, err
+	}
+	return scanActivity(rows)
+}
+
+// Kill takes the "sid,serial#" pair Activity reported, which is why the pid
+// validator admits a comma-free hex/digit string and this splits it back out.
+func (oracleDialect) Kill(ctx context.Context, db *sql.DB, pid string) error {
+	for _, part := range strings.Split(pid, ",") {
+		if err := validatePID(part); err != nil {
+			return err
+		}
+	}
+	_, err := db.ExecContext(ctx, "ALTER SYSTEM KILL SESSION '"+pid+"' IMMEDIATE")
+	return err
+}
+
+func (oracleDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error) {
+	// user_segments rather than dba_segments: the dashboard connects as an
+	// ordinary account far more often than as one with the DBA role, and a
+	// storage panel that errors for everyone but a DBA is worse than one that
+	// reports the schema the connection is already in.
+	rows, err := db.QueryContext(ctx, `
+		SELECT t.owner, t.table_name,
+		       NVL(t.num_rows, 0),
+		       NVL(s.bytes, 0),
+		       NVL(s.bytes, 0),
+		       NVL(i.bytes, 0)
+		FROM all_tables t
+		LEFT JOIN (SELECT segment_name, SUM(bytes) bytes FROM user_segments
+		           WHERE segment_type = 'TABLE' GROUP BY segment_name) s
+		  ON s.segment_name = t.table_name
+		LEFT JOIN (SELECT ui.table_name, SUM(us.bytes) bytes
+		           FROM user_indexes ui JOIN user_segments us ON us.segment_name = ui.index_name
+		           GROUP BY ui.table_name) i
+		  ON i.table_name = t.table_name
+		WHERE t.owner = :1`, schema)
+	if err != nil {
+		return nil, err
+	}
+	return scanSizes(rows, schema)
+}

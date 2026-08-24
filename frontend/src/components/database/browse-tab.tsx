@@ -5,6 +5,7 @@ import {
   Database,
   Download,
   FileJson,
+  ClipboardCopy,
   Filter as FilterIcon,
   Hash,
   MoreHorizontal,
@@ -254,6 +255,54 @@ export function BrowseTab({
     })
   }
 
+  /**
+   * Copying rows out as INSERT statements is the small thing a developer does
+   * constantly and no panel offers: reproducing a production record locally to
+   * debug against, seeding a fixture, attaching the offending row to a bug
+   * report. The rendering is done on the server so the quoting is this engine's
+   * own — a second implementation here would get the apostrophe wrong on the
+   * day it mattered.
+   */
+  const copyAsInsert = async (recs: Record<string, unknown>[]) => {
+    if (!table || recs.length === 0) return
+    try {
+      const res = await post<{ sql: string }>(`/databases/${conn.id}/rows/sql`, {
+        schema,
+        table,
+        rows: recs,
+      })
+      await navigator.clipboard.writeText(res.sql)
+      toast.success(`Copied ${recs.length} row${recs.length === 1 ? "" : "s"} as SQL`)
+    } catch (err) {
+      toast.error("Could not copy", { description: String(err) })
+    }
+  }
+
+  const copySelectedAsInsert = () => {
+    if (!rows.data || selected.size === 0) return
+    copyAsInsert(
+      [...selected].map((i) => {
+        const rec: Record<string, unknown> = {}
+        rows.data!.columns.forEach((c, j) => {
+          rec[c] = rows.data!.rows[i][j]
+        })
+        return rec
+      }),
+    )
+  }
+
+  /**
+   * Duplicating opens the insert form pre-filled from the row, with the primary
+   * key cleared. Carrying the key over would produce a form that can only fail
+   * on a unique constraint — and clearing it is what the operator was going to
+   * do first anyway.
+   */
+  const duplicateRow = (row: Record<string, unknown>) => {
+    const copy = { ...row }
+    for (const c of pk) delete copy[c]
+    setEditor({ mode: "insert", initial: copy })
+  }
+
   const toggleSort = (column: string) => {
     setOffset(0)
     setSort((s) => (s?.column === column ? (s.desc ? null : { column, desc: true }) : { column, desc: false }))
@@ -440,6 +489,12 @@ export function BrowseTab({
                     Insert
                   </Button>
                 )}
+                {selected.size > 0 && (
+                  <Button size="sm" variant="outline" onClick={copySelectedAsInsert}>
+                    <ClipboardCopy className="size-3.5" />
+                    Copy {selected.size} as SQL
+                  </Button>
+                )}
                 {canEditRows && selected.size > 0 && (
                   <Button size="sm" variant="destructive" onClick={deleteSelected}>
                     <Trash2 className="size-3.5" />
@@ -560,6 +615,8 @@ export function BrowseTab({
                 onSelectionChange={canEditRows ? setSelected : undefined}
                 onEdit={canEditRows ? (row) => setEditor({ mode: "edit", initial: row }) : undefined}
                 onDelete={canEditRows ? deleteRow : undefined}
+                onDuplicate={canWrite ? duplicateRow : undefined}
+                onCopySQL={copyAsInsert}
               />
             </>
           )}

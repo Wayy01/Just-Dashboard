@@ -1,33 +1,45 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, Download, Sparkles } from "lucide-react"
+import { Copy, Database, Download, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { post } from "@/lib/api"
-import type { DbConnection, OrmTarget } from "@/lib/types"
+import { get, post } from "@/lib/api"
+import type { DbConnection, OrmTarget, OrmTargetInfo } from "@/lib/types"
+import { usePoll } from "@/hooks/use-poll"
 import { CodeEditor } from "@/components/code-editor"
 import { Button } from "@/components/ui/button"
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/panel"
 import { EmptyState, Notice, Spinner } from "@/components/state"
-import { Database } from "lucide-react"
 
 /**
- * ORM support, done the way a server panel honestly can: introspect the live
- * database and generate the schema file a developer would otherwise get from
+ * Code generation, done the way a server panel honestly can: introspect the
+ * live database and produce the file a developer would otherwise get from
  * `prisma db pull` or `drizzle-kit pull`, with no Node toolchain on the box.
  * The result is a reviewed starting point, which the generated header and the
- * notice here both say plainly.
+ * footer here both say plainly.
+ *
+ * The list of generators comes from the server rather than being written out
+ * here. It was two hardcoded buttons, and adding a generator meant editing this
+ * file to match — which is exactly the second list that drifts.
  */
 export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string }) {
   const [target, setTarget] = useState<OrmTarget>("prisma")
   const [output, setOutput] = useState<{ schema: string; filename: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const targets = usePoll(
+    (signal) =>
+      get<{ targets: OrmTargetInfo[] }>("/databases/orm/targets", undefined, signal).then(
+        (r) => r.targets,
+      ),
+    0,
+  )
+
   if (conn.driver === "mongodb") {
     return (
       <Notice tone="default" title="Not available for MongoDB">
-        ORM schema generation introspects a relational catalogue. Use your driver&apos;s native
-        tooling for a document database.
+        Schema generation introspects a relational catalogue. Use your driver&apos;s native tooling
+        for a document database.
       </Notice>
     )
   }
@@ -59,32 +71,29 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
     URL.revokeObjectURL(url)
   }
 
+  const current = targets.data?.find((t) => t.id === target)
+
   return (
     <Panel>
       <PanelHeader
         icon={Sparkles}
-        title="Generate ORM schema"
-        description="Introspect this database into a Prisma or Drizzle schema"
+        title="Generate from this schema"
+        description={current?.description ?? "Introspect this database into a ready-to-review file"}
         actions={
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant={target === "prisma" ? "default" : "outline"}
-              onClick={() => generate("prisma")}
-              disabled={busy}
-            >
-              {busy && target === "prisma" ? <Spinner /> : null}
-              Prisma
-            </Button>
-            <Button
-              size="sm"
-              variant={target === "drizzle" ? "default" : "outline"}
-              onClick={() => generate("drizzle")}
-              disabled={busy}
-            >
-              {busy && target === "drizzle" ? <Spinner /> : null}
-              Drizzle
-            </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {targets.data?.map((t) => (
+              <Button
+                key={t.id}
+                size="sm"
+                variant={target === t.id ? "default" : "outline"}
+                onClick={() => generate(t.id)}
+                disabled={busy}
+                title={t.description}
+              >
+                {busy && target === t.id ? <Spinner /> : null}
+                {t.label}
+              </Button>
+            ))}
           </div>
         }
       />
@@ -93,7 +102,7 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
           <EmptyState
             icon={Database}
             title="Nothing generated yet"
-            description="Choose Prisma or Drizzle above to introspect the current schema into a ready-to-review file."
+            description="Pick a generator above to introspect the current schema. Prisma and Drizzle produce an ORM schema; TypeScript gives you plain interfaces with no runtime dependency; Zod gives you validators you can parse API input with."
           />
         )}
         {busy && !output && (
@@ -104,7 +113,7 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
         {output && (
           <CodeEditor
             className="h-[calc(100svh-24rem)]"
-            language={output.filename.endsWith(".ts") ? "typescript" : "prisma"}
+            language={output.filename.endsWith(".prisma") ? "prisma" : "typescript"}
             value={output.schema}
             readOnly
           />

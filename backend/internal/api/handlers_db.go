@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -61,6 +62,11 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{id}/count", s.handle(s.handleDBCount))
 		r.Method(http.MethodGet, "/{id}/outline", s.handle(s.handleDBOutline))
 		r.Method(http.MethodGet, "/{id}/relations", s.handle(s.handleDBRelations))
+		r.Method(http.MethodGet, "/{id}/activity", s.handle(s.handleDBActivity))
+		r.Method(http.MethodGet, "/{id}/search", s.handle(s.handleDBSearch))
+		r.Method(http.MethodGet, "/{id}/overview", s.handle(s.handleDBOverview))
+		r.Method(http.MethodGet, "/orm/targets", s.handle(s.handleDBTargets))
+		r.Method(http.MethodPost, "/{id}/rows/sql", s.handle(s.handleDBRowSQL))
 		// Redis and Mongo reads. They are separate paths rather than a
 		// pretence that a key or a document is a row: the vocabulary is part of
 		// what makes each engine legible.
@@ -96,6 +102,10 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		// table — the same treatment DROP/TRUNCATE get through the query path.
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}/rows", s.handle(s.handleDBRowDelete))
+			// Killing a session stops work in flight and rolls it back, so it
+			// sits here with the row delete rather than with the read-side
+			// activity list it is launched from.
+			r.Method(http.MethodPost, "/{id}/activity/kill", s.handle(s.handleDBKill))
 			r.Method(http.MethodPost, "/{id}/restore", s.handle(s.handleDBRestore))
 			// Schema changes that destroy. Each demands a typed confirmation
 			// naming what it removes, so this group is the whole answer to
@@ -872,7 +882,11 @@ func (s *Server) handleDBGenerateORM(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	if !req.Target.Valid() {
-		return httpx.BadRequest("target must be prisma or drizzle")
+		names := make([]string, 0, len(dbx.ORMTargets()))
+		for _, t := range dbx.ORMTargets() {
+			names = append(names, string(t))
+		}
+		return httpx.BadRequest("target must be one of %s", strings.Join(names, ", "))
 	}
 	pool, conn, err := s.dbPool(r.Context(), id)
 	if err != nil {
@@ -896,10 +910,7 @@ func (s *Server) handleDBGenerateORM(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
-	filename := "schema.prisma"
-	if req.Target == dbx.ORMDrizzle {
-		filename = "schema.ts"
-	}
+	filename := ormFilename(req.Target)
 	httpx.SetAudit(r, "database.orm.generate", conn.Name, map[string]any{"target": string(req.Target)})
 	httpx.JSON(w, http.StatusOK, map[string]any{"schema": schema, "filename": filename})
 	return nil
@@ -1316,5 +1327,246 @@ func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.SetAudit(r, "database.explain", conn.Name, map[string]any{"statement": req.Query})
 	httpx.JSON(w, http.StatusOK, map[string]any{"result": res})
+	return nil
+}
+
+// ormFilename is the name the generated file should be saved under. It lives
+// here rather than in dbx because it is a download-header concern, not a
+// property of the schema — but it stays in one place so a new generator cannot
+// be added without deciding what its file is called.
+func ormFilename(t dbx.ORMTarget) string {
+	switch t {
+	case dbx.ORMPrisma:
+		return "schema.prisma"
+	case dbx.ORMDrizzle:
+		return "schema.ts"
+	case dbx.ORMTypeScript:
+		return "types.ts"
+	case dbx.ORMZod:
+		return "schemas.ts"
+	default:
+		return "schema.txt"
+	}
+}
+
+// handleDBTargets lists the code generators this build offers, so the ORM tab
+// is populated from the server rather than from a second list in TypeScript
+// that drifts the first time a generator is added.
+func (s *Server) handleDBTargets(w http.ResponseWriter, r *http.Request) error {
+	httpx.SkipAudit(r)
+	out := make([]map[string]string, 0, len(dbx.ORMTargets()))
+	for _, t := range dbx.ORMTargets() {
+		out = append(out, map[string]string{
+			"id": string(t), "label": ormTargetLabel(t), "filename": ormFilename(t),
+			"description": ormTargetBlurb(t),
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"targets": out})
+	return nil
+}
+
+func ormTargetLabel(t dbx.ORMTarget) string {
+	switch t {
+	case dbx.ORMPrisma:
+		return "Prisma"
+	case dbx.ORMDrizzle:
+		return "Drizzle"
+	case dbx.ORMTypeScript:
+		return "TypeScript types"
+	case dbx.ORMZod:
+		return "Zod schemas"
+	}
+	return string(t)
+}
+
+func ormTargetBlurb(t dbx.ORMTarget) string {
+	switch t {
+	case dbx.ORMPrisma:
+		return "A schema.prisma to drop into an existing Prisma project."
+	case dbx.ORMDrizzle:
+		return "Drizzle ORM table definitions."
+	case dbx.ORMTypeScript:
+		return "Plain interfaces — no runtime dependency, useful with any client."
+	case dbx.ORMZod:
+		return "Runtime validators, plus an insert variant with defaults optional."
+	}
+	return ""
+}
+
+// --- activity -------------------------------------------------------------
+
+// handleDBActivity lists what the server is currently running.
+//
+// It is on the read side: seeing which query is stuck is diagnosis, and an
+// operator who can browse the data can already see everything the query text
+// would reveal. Killing one is not — that route is below, in the destructive
+// group.
+func (s *Server) handleDBActivity(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.SkipAudit(r)
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	list, err := dbx.ListActivity(ctx, pool, conn.Driver)
+	if err != nil {
+		// An engine with no session list is not a broken connection. Saying so
+		// in the body lets the UI render an explanation where the table would
+		// be, which is the ErrorState convention for a module a host lacks.
+		if errors.Is(err, dbx.ErrNoActivityView) {
+			httpx.JSON(w, http.StatusOK, map[string]any{
+				"sessions": []dbx.Activity{}, "supported": false,
+				"reason": err.Error(),
+			})
+			return nil
+		}
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"sessions": list, "supported": true})
+	return nil
+}
+
+type killRequest struct {
+	PID string `json:"pid"`
+}
+
+// handleDBKill terminates a session on the database server.
+//
+// Destructive: whatever the session had done rolls back, and an application
+// holding that connection sees it drop. The typed confirmation is the session
+// id itself rather than a fixed phrase, because the mistake this is guarding
+// against is not "meant to press nothing" — it is killing the wrong row in a
+// list of forty near-identical ones.
+func (s *Server) handleDBKill(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req killRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.PID) == "" {
+		return httpx.BadRequest("a session id is required")
+	}
+	if err := httpx.RequireTypedConfirmation(w, r, req.PID); err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	if err := dbx.KillQuery(ctx, pool, conn.Driver, req.PID); err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.session.kill", conn.Name, map[string]any{"pid": req.PID})
+	httpx.JSON(w, http.StatusOK, map[string]any{"killed": req.PID})
+	return nil
+}
+
+// --- global search --------------------------------------------------------
+
+// handleDBSearch looks for a value across every table in a schema.
+//
+// The work is bounded inside dbx rather than by a caller-supplied limit: the
+// bounds are what make the feature safe to offer against a production server,
+// and a request parameter that could raise them would be the first thing
+// somebody raised.
+func (s *Server) handleDBSearch(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	needle := q.Get("q")
+	if strings.TrimSpace(needle) == "" {
+		return httpx.BadRequest("q is required")
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	// A search reads the whole schema, so it is worth an audit entry even
+	// though it changes nothing: it is the one read that touches every table.
+	httpx.SetAudit(r, "database.search", conn.Name, map[string]any{"schema": q.Get("schema")})
+	ctx, cancel := timeoutCtx(r, 120*time.Second)
+	defer cancel()
+	res, err := dbx.Search(ctx, pool, conn.Driver, q.Get("schema"), needle)
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+// --- storage overview -----------------------------------------------------
+
+// handleDBOverview reports per-table size and the pool's state.
+func (s *Server) handleDBOverview(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.SkipAudit(r)
+	ctx, cancel := timeoutCtx(r, 120*time.Second)
+	defer cancel()
+	res, err := dbx.StorageOverview(ctx, pool, conn.Driver, r.URL.Query().Get("schema"))
+	if err != nil {
+		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
+	}
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+// --- copy a row as SQL ----------------------------------------------------
+
+type rowSQLRequest struct {
+	Schema string           `json:"schema"`
+	Table  string           `json:"table"`
+	Rows   []map[string]any `json:"rows"`
+}
+
+// handleDBRowSQL renders selected rows as INSERT statements.
+//
+// Rendered on the server for the reason the docker run line is: there is one
+// implementation of "what does this row mean in this engine's syntax", and a
+// second one in TypeScript would quote a value differently on the day it
+// mattered. Nothing here executes the statement — it is text for a clipboard.
+func (s *Server) handleDBRowSQL(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req rowSQLRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Table == "" {
+		return httpx.BadRequest("table is required")
+	}
+	if len(req.Rows) == 0 {
+		return httpx.BadRequest("at least one row is required")
+	}
+	conn, _, err := s.dbConnRow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	httpx.SkipAudit(r)
+	out, err := dbx.RowsInsertSQL(conn.Driver, req.Schema, req.Table, req.Rows)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"sql": out})
 	return nil
 }

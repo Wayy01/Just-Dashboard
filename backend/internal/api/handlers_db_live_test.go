@@ -337,3 +337,194 @@ func TestLiveAPIPostgres(t *testing.T) {
 		}
 	})
 }
+
+// TestLiveAPIDeveloperSurface drives the activity, search, storage and
+// copy-as-SQL routes over HTTP against a real server.
+//
+// Each has a way of failing that only appears here rather than in dbx: search
+// takes its needle from a query parameter, kill takes its confirmation from a
+// header, and the SQL renderer must answer without ever opening the pool.
+func TestLiveAPIDeveloperSurface(t *testing.T) {
+	dsn := envOr("JD_TEST_POSTGRES_DSN", "postgres://jdtest:jdtest@127.0.0.1:5432/jdtest?sslmode=disable")
+	_, r, id := liveAPIRouter(t, dbx.DriverPostgres, dsn)
+	const table = "jd_api_devx"
+
+	drop := func() {
+		req := httptest.NewRequest(http.MethodDelete, pathf("/databases/%d/ddl/table", id),
+			strings.NewReader(`{"schema":"public","table":"`+table+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Confirm", table)
+		r.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	drop()
+	t.Cleanup(drop)
+
+	if rec := do(t, r, http.MethodPost, pathf("/databases/%d/ddl/table", id),
+		`{"schema":"public","table":"`+table+`","columns":[
+			{"name":"id","type":"integer","primaryKey":true,"notNull":true},
+			{"name":"label","type":"text"}]}`); rec.Code != http.StatusOK {
+		t.Fatalf("create table: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(t, r, http.MethodPost, pathf("/databases/%d/rows", id),
+		`{"schema":"public","table":"`+table+`","values":{"id":1,"label":"needle-xyz"}}`); rec.Code != http.StatusOK {
+		t.Fatalf("insert row: %d %s", rec.Code, rec.Body.String())
+	}
+
+	t.Run("activity_lists_this_connection", func(t *testing.T) {
+		rec := do(t, r, http.MethodGet, pathf("/databases/%d/activity", id), "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("activity: %d %s", rec.Code, rec.Body.String())
+		}
+		var res struct {
+			Sessions []struct {
+				PID  string `json:"pid"`
+				Self bool   `json:"self"`
+			} `json:"sessions"`
+			Supported bool `json:"supported"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !res.Supported {
+			t.Fatalf("postgres reported no session list: %s", rec.Body.String())
+		}
+		// Exactly one row must be marked self, and the request that asked is
+		// necessarily in the list — an empty one means the query matched
+		// nothing at all.
+		selves := 0
+		for _, s := range res.Sessions {
+			if s.Self {
+				selves++
+			}
+		}
+		if selves != 1 {
+			t.Errorf("sessions marked self = %d, want 1: %s", selves, rec.Body.String())
+		}
+	})
+
+	t.Run("kill_demands_the_pid_as_its_phrase", func(t *testing.T) {
+		// No header at all.
+		rec := do(t, r, http.MethodPost, pathf("/databases/%d/activity/kill", id), `{"pid":"99999"}`)
+		if !strings.Contains(rec.Body.String(), "confirmation") {
+			t.Errorf("kill without X-Confirm was not refused: %d %s", rec.Code, rec.Body.String())
+		}
+		// The wrong phrase — a plausible near-miss, which is the mistake the
+		// pid-as-phrase choice is guarding against.
+		req := httptest.NewRequest(http.MethodPost, pathf("/databases/%d/activity/kill", id),
+			strings.NewReader(`{"pid":"99999"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Confirm", "99998")
+		rec2 := httptest.NewRecorder()
+		r.ServeHTTP(rec2, req)
+		if rec2.Code == http.StatusOK {
+			t.Errorf("kill with the wrong phrase succeeded: %s", rec2.Body.String())
+		}
+	})
+
+	t.Run("search_finds_the_seeded_value", func(t *testing.T) {
+		rec := do(t, r, http.MethodGet,
+			pathf("/databases/%d/search", id)+"?schema=public&q=needle-xyz", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("search: %d %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, table) || !strings.Contains(body, "label") {
+			t.Errorf("search did not name the table and column: %s", body)
+		}
+	})
+
+	t.Run("overview_reports_the_table", func(t *testing.T) {
+		rec := do(t, r, http.MethodGet, pathf("/databases/%d/overview", id)+"?schema=public", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("overview: %d %s", rec.Code, rec.Body.String())
+		}
+		var res struct {
+			Tables []struct {
+				Table string `json:"table"`
+				Bytes int64  `json:"bytes"`
+			} `json:"tables"`
+			Pool struct {
+				Open int `json:"open"`
+			} `json:"pool"`
+			SizesKnown bool `json:"sizesKnown"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		found := false
+		for _, tb := range res.Tables {
+			if tb.Table == table {
+				found = true
+				if tb.Bytes <= 0 {
+					t.Errorf("%s reported %d bytes", table, tb.Bytes)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("overview missing %s: %s", table, rec.Body.String())
+		}
+		if !res.SizesKnown {
+			t.Error("postgres reported sizes as unknown")
+		}
+		if res.Pool.Open == 0 {
+			t.Error("pool reports no connections while serving this request")
+		}
+	})
+
+	t.Run("rows_render_as_a_runnable_insert", func(t *testing.T) {
+		rec := do(t, r, http.MethodPost, pathf("/databases/%d/rows/sql", id),
+			`{"schema":"public","table":"`+table+`","rows":[{"id":42,"label":"it's fine"}]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("rows/sql: %d %s", rec.Code, rec.Body.String())
+		}
+		var res struct {
+			SQL string `json:"sql"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !strings.Contains(res.SQL, "'it''s fine'") {
+			t.Errorf("apostrophe not doubled: %s", res.SQL)
+		}
+		// Hand it straight back to the server through the query route, which is
+		// what the operator will do with it.
+		run := do(t, r, http.MethodPost, pathf("/databases/%d/query", id),
+			`{"query":`+jsonString(res.SQL)+`}`)
+		if run.Code != http.StatusOK {
+			t.Fatalf("the rendered INSERT was rejected: %d %s\n%s", run.Code, run.Body.String(), res.SQL)
+		}
+	})
+
+	t.Run("generators_all_answer", func(t *testing.T) {
+		rec := do(t, r, http.MethodGet, "/databases/orm/targets", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("targets: %d %s", rec.Code, rec.Body.String())
+		}
+		for _, tg := range dbx.ORMTargets() {
+			out := do(t, r, http.MethodPost, pathf("/databases/%d/orm", id),
+				`{"target":"`+string(tg)+`","schema":"public"}`)
+			if out.Code != http.StatusOK {
+				t.Errorf("generate %s: %d %s", tg, out.Code, out.Body.String())
+				continue
+			}
+			var res struct {
+				Schema   string `json:"schema"`
+				Filename string `json:"filename"`
+			}
+			_ = json.Unmarshal(out.Body.Bytes(), &res)
+			if res.Schema == "" {
+				t.Errorf("generate %s produced nothing", tg)
+			}
+			if res.Filename == "" || res.Filename == "schema.txt" {
+				t.Errorf("generate %s has no filename of its own: %q", tg, res.Filename)
+			}
+		}
+	})
+}
+
+// jsonString quotes a string for embedding in a request body. The rendered SQL
+// contains quotes and newlines, so it cannot be concatenated in raw.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

@@ -32,9 +32,18 @@ fail on a network-restricted machine. Check `go version` before blaming the code
 Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
 `httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
 hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
-to run on every change. The two exceptions are `term` and the terminal half of `api`, which
-drive the machine's real tmux and skip when it is absent: the bugs they exist to catch live in
-the gap between this process and that one — what tmux has been told, what it has got round to
+to run on every change. There are two exceptions, and both take the same shape: they drive a
+real thing outside this process and *skip* when it is absent, so the suite stays green on a
+bare machine and gets stricter on an equipped one.
+
+The first is the live database tests (`dbx/live*_test.go`, `api/handlers_db_live_test.go`),
+which take each engine's DSN from an environment variable defaulting to a local instance. A
+catalogue query naming a column the server does not have is string-matched identically by a
+unit test; only the server rejects it. Bring the engines up and re-run with `-count=1` — the
+test cache will otherwise serve you yesterday's skips.
+
+The second is `term` and the terminal half of `api`, which drive the machine's real tmux.
+The bugs they exist to catch live in the gap between this process and that one — what tmux has been told, what it has got round to
 storing, and what it reports half a second later — and a fake tmux would answer instantly and
 pass every one of them while the product stayed broken. Both packages give themselves a
 private tmux server in `TestMain` (`TMUX_TMPDIR`), so a test run never lists or outlives the
@@ -549,6 +558,65 @@ drag selects into tmux's copy buffer instead of the browser's; **Shift+drag**
 restores the browser's selection, which is the convention every terminal
 emulator uses, and the shortcut sheet lists it because it is exactly the sort
 of thing discovered by finding it broken.
+
+### Databases: eight engines behind one shape
+
+`internal/dbx` drives PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle,
+MongoDB and Redis, all on pure-Go drivers so the image still needs no CGO.
+
+**`Dialect` is the whole abstraction.** Everything one SQL engine does differently — its
+`database/sql` name, its quote character, its bind marker, its pagination tail, its
+catalogue queries, its DDL keywords, its session list, its size query — is one method on
+one interface with six implementations. The earlier shape was a `switch driver` inside each
+of a dozen functions; it worked for three engines and stopped working at seven, because a
+new engine meant finding and extending eleven separate switches and a missed one failed at
+runtime rather than at compile time. Adding an engine now is one file the compiler checks.
+
+**Identifiers are quoted, values are bound, always.** `validateIdent` refuses only what
+quoting cannot make safe (a NUL, a control character) rather than a conservative character
+class — a table called `user-profiles` was listed and then refused to open under the old
+rule — and `quoteWith` doubles the engine's own quote character. Every row edit is scoped by
+the primary key and refused outright without one, because an UPDATE the caller believes
+touches one row would otherwise touch all of them.
+
+`rowsql.go` is the one deliberate exception, and it does not generalise: it renders a row as
+an INSERT *for the clipboard*. Nothing executes what it produces — the statement is text the
+operator pastes somewhere else, having read it — and no code path may call it and then run
+the result. `TestLiveRowInsertSQLQuoting` hands a value containing `'); DROP TABLE …` back
+to every live engine and checks the table is still standing.
+
+**Reading is separated from running, on purpose.** `dbx.Classify` decides whether a
+statement is destructive, fails closed on anything it does not recognise, and the handler
+applies the capability check and the tighter budget by hand — the route cannot know. Every
+dialect's `ExplainPlan` must describe a statement *without executing it*; that is asserted in
+the interface and proved by `TestLiveExplainDoesNotExecute`, which asks each engine to
+explain a DELETE and then counts the rows.
+
+**The diagnostic surface is what a data browser usually lacks.** `activity.go` lists what
+the server is running now — with the blocking session named where the engine reports it,
+which is what turns twenty "slow" sessions into one culprit — and stops one. The list
+includes the dashboard's own connections, marked `self`: hiding them meant a server with
+nothing else connected reported an empty table, which reads as a broken query rather than an
+idle server. `size.go` is the per-table disk breakdown for when the alert fires and nobody
+knows which table grew; row counts there are the engine's own estimate, because counting
+forty tables exactly is a full scan of the database to answer a question about relative
+size. `search.go` finds which table a value lives in, bounded in three directions at once
+(tables visited, columns compared, matches per table) — those bounds are not tuning knobs,
+they are what makes the feature safe to point at a production server.
+
+**Testing is against real servers, and skips rather than fails.** `live_test.go`,
+`live_nosql_test.go`, `live_devx_test.go` and `api/handlers_db_live_test.go` take each
+engine's DSN from an environment variable defaulting to a local instance, and skip with a
+message naming the variable when it is unreachable — so `go test ./...` stays green on a
+machine with nothing installed and gets stricter on one with the servers up. A suite that
+fails for want of a database teaches people to ignore it. These are the tests that matter
+here: a catalogue query naming a column the server does not have is string-matched
+identically by a unit test and rejected by the engine. Every bug this feature has shipped
+was of that kind — SQL Server rejecting `ADD COLUMN`, a size query summing every index_id
+and reporting a table at four times its size, Postgres's `now()` being the *transaction*
+timestamp and so reporting the asking session a negative age. Oracle is the one engine with
+no live coverage: its installer cannot be driven headlessly, which CONTRIBUTING says
+plainly rather than pretending otherwise.
 
 ### Streaming
 

@@ -264,3 +264,59 @@ func (sqliteDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) 
 	// Bare EXPLAIN in SQLite dumps bytecode; QUERY PLAN is the readable form.
 	return RunQuery(ctx, db, "EXPLAIN QUERY PLAN "+query, 500)
 }
+
+// SQLite is a library, not a server: there are no other sessions to list.
+func (sqliteDialect) Activity(context.Context, *sql.DB) ([]Activity, error) {
+	return nil, ErrNoActivityView
+}
+
+func (sqliteDialect) Kill(context.Context, *sql.DB, string) error {
+	return ErrNoActivityView
+}
+
+func (d sqliteDialect) TableSizes(ctx context.Context, db *sql.DB, _ string) ([]TableSize, error) {
+	tables, err := d.Tables(ctx, db, "")
+	if err != nil {
+		return nil, err
+	}
+	// dbstat is a virtual table that only exists when SQLite was built with
+	// SQLITE_ENABLE_DBSTAT_VTAB, which is a build flag and not a guarantee. It
+	// is tried once and the whole feature degrades to row counts if it is
+	// missing, rather than being probed per table.
+	pages := map[string]int64{}
+	if rows, err := db.QueryContext(ctx, `SELECT name, SUM(pgsize) FROM dbstat GROUP BY name`); err == nil {
+		for rows.Next() {
+			var name string
+			var size int64
+			if rows.Scan(&name, &size) == nil {
+				pages[name] = size
+			}
+		}
+		rows.Close()
+	}
+
+	out := make([]TableSize, 0, len(tables))
+	for _, t := range tables {
+		if strings.EqualFold(t.Type, "view") {
+			continue
+		}
+		// COUNT(*) is exact here where every other engine's is an estimate.
+		// SQLite has no stored row count to read, and the alternative is
+		// reporting nothing — on a file-backed database a full count of a table
+		// worth showing in a size list is cheap enough to be the right trade.
+		q, err := d.QuoteIdent(t.Name)
+		if err != nil {
+			continue
+		}
+		var n int64
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+q).Scan(&n); err != nil {
+			continue
+		}
+		size := pages[t.Name]
+		out = append(out, TableSize{
+			Schema: "", Table: t.Name, Rows: n,
+			Bytes: size, DataBytes: size, IndexBytes: 0,
+		})
+	}
+	return out, nil
+}

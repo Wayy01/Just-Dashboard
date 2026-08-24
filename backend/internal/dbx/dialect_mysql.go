@@ -174,3 +174,61 @@ func (mysqlDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, s
 func (mysqlDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
 	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
 }
+
+// Activity reads the process list. MySQL reports no blocking graph here — that
+// lives in performance_schema and is off by default on plenty of servers — so
+// BlockedBy stays empty rather than being guessed at.
+func (mysqlDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT CAST(ID AS CHAR),
+	         COALESCE(USER, ''),
+	         COALESCE(DB, ''),
+	         COALESCE(COMMAND, ''),
+	         COALESCE(TIME, 0),
+	         COALESCE(INFO, ''),
+	         COALESCE(HOST, ''),
+	         COALESCE(STATE, ''),
+	         '',
+	         CASE WHEN ID = CONNECTION_ID() THEN 1 ELSE 0 END
+	  FROM information_schema.PROCESSLIST
+	  ORDER BY TIME DESC`)
+	if err != nil {
+		return nil, err
+	}
+	return scanActivity(rows)
+}
+
+func (mysqlDialect) Kill(ctx context.Context, db *sql.DB, pid string) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
+	// KILL takes no parameter marker on any MySQL version, which is why the id
+	// is validated as digits above rather than bound.
+	_, err := db.ExecContext(ctx, "KILL "+pid)
+	return err
+}
+
+func (mysqlDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error) {
+	// TABLE_ROWS is InnoDB's estimate from the same statistics the optimiser
+	// uses, and DATA_FREE is excluded: it is space the table has claimed and is
+	// not using, which belongs in a "reclaim this" conversation and not in a
+	// comparison of which table is biggest.
+	q := `SELECT TABLE_SCHEMA, TABLE_NAME,
+	             COALESCE(TABLE_ROWS, 0),
+	             COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0),
+	             COALESCE(DATA_LENGTH, 0),
+	             COALESCE(INDEX_LENGTH, 0)
+	      FROM information_schema.TABLES
+	      WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = `
+	var rows *sql.Rows
+	var err error
+	if schema == "" {
+		rows, err = db.QueryContext(ctx, q+"DATABASE()")
+	} else {
+		rows, err = db.QueryContext(ctx, q+"?", schema)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return scanSizes(rows, schema)
+}

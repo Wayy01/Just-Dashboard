@@ -254,3 +254,63 @@ func (mssqlDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (
 	}
 	return res, err
 }
+
+// Activity joins the request and session views, and reports blocking_session_id
+// directly — SQL Server is the one engine here that hands the blocking graph
+// over without a recursive query.
+func (mssqlDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT CAST(r.session_id AS NVARCHAR(16)),
+	         ISNULL(s.login_name, ''),
+	         ISNULL(DB_NAME(r.database_id), ''),
+	         ISNULL(r.status, ''),
+	         CAST(ISNULL(r.total_elapsed_time, 0) / 1000.0 AS FLOAT),
+	         ISNULL(SUBSTRING(t.text, 1, 4000), ''),
+	         ISNULL(s.host_name, ''),
+	         ISNULL(r.wait_type, ''),
+	         CASE WHEN ISNULL(r.blocking_session_id, 0) = 0 THEN ''
+	              ELSE CAST(r.blocking_session_id AS NVARCHAR(16)) END,
+	         CASE WHEN r.session_id = @@SPID THEN 1 ELSE 0 END
+	  FROM sys.dm_exec_requests r
+	  LEFT JOIN sys.dm_exec_sessions s ON s.session_id = r.session_id
+	  OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+	  WHERE r.session_id > 50
+	  ORDER BY r.total_elapsed_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	return scanActivity(rows)
+}
+
+func (mssqlDialect) Kill(ctx context.Context, db *sql.DB, pid string) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "KILL "+pid)
+	return err
+}
+
+func (mssqlDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error) {
+	if schema == "" {
+		schema = "dbo"
+	}
+	// index_id < 2 is the heap or the clustered index — the one partition set
+	// that holds the rows. Summing every index_id would count each row once per
+	// nonclustered index and report a table with four indexes as four times its
+	// size.
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.name, t.name,
+		       SUM(CASE WHEN p.index_id < 2 THEN p.row_count ELSE 0 END),
+		       SUM(p.reserved_page_count) * 8192,
+		       SUM(p.in_row_data_page_count + p.lob_used_page_count + p.row_overflow_used_page_count) * 8192,
+		       (SUM(p.used_page_count) - SUM(p.in_row_data_page_count + p.lob_used_page_count + p.row_overflow_used_page_count)) * 8192
+		FROM sys.dm_db_partition_stats p
+		JOIN sys.tables t ON t.object_id = p.object_id
+		JOIN sys.schemas s ON s.schema_id = t.schema_id
+		WHERE s.name = @p1
+		GROUP BY s.name, t.name`, schema)
+	if err != nil {
+		return nil, err
+	}
+	return scanSizes(rows, schema)
+}

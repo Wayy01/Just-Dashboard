@@ -26,6 +26,8 @@ import { BrowseTab, type TableSelection } from "@/components/database/browse-tab
 import { StructureTab } from "@/components/database/structure-tab"
 import { QueryTab } from "@/components/database/query-tab"
 import { OrmTab } from "@/components/database/orm-tab"
+import { MonitorTab } from "@/components/database/monitor-tab"
+import { SearchTab } from "@/components/database/search-tab"
 import { ErDiagram } from "@/components/database/er-diagram"
 import { RedisBrowser } from "@/components/database/redis-browser"
 import { MongoBrowser } from "@/components/database/mongo-browser"
@@ -156,7 +158,9 @@ export default function DatabasesPage() {
                 {isSQL && <TabsTrigger value="structure">Structure</TabsTrigger>}
                 {isSQL && <TabsTrigger value="diagram">Diagram</TabsTrigger>}
                 {isSQL && <TabsTrigger value="query">Query</TabsTrigger>}
-                {isSQL && <TabsTrigger value="orm">ORM</TabsTrigger>}
+                {isSQL && <TabsTrigger value="search">Find</TabsTrigger>}
+                {isSQL && <TabsTrigger value="monitor">Monitor</TabsTrigger>}
+                {isSQL && <TabsTrigger value="orm">Generate</TabsTrigger>}
               </TabsList>
 
               <TabsContent value="browse" className="min-w-0">
@@ -197,8 +201,28 @@ export default function DatabasesPage() {
                 </TabsContent>
               )}
               {isSQL && (
+                <TabsContent value="search" className="min-w-0">
+                  <SearchTab
+                    conn={active}
+                    schema={activeSelection?.schema ?? ""}
+                    onOpenTable={(schema, table) =>
+                      setSelection({ schema, table, connId: active.id })
+                    }
+                  />
+                </TabsContent>
+              )}
+              {isSQL && (
+                <TabsContent value="monitor" className="min-w-0">
+                  <MonitorTab
+                    conn={active}
+                    schema={activeSelection?.schema ?? ""}
+                    confirm={confirm}
+                  />
+                </TabsContent>
+              )}
+              {isSQL && (
                 <TabsContent value="orm" className="min-w-0">
-                  <OrmTab conn={active} schema="" />
+                  <OrmTab conn={active} schema={activeSelection?.schema ?? ""} />
                 </TabsContent>
               )}
             </Tabs>

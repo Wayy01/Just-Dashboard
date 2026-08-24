@@ -1022,7 +1022,85 @@ export type DbHistoryEntry = {
   ranAt: string
 }
 
-export type OrmTarget = "prisma" | "drizzle"
+export type OrmTarget = "prisma" | "drizzle" | "typescript" | "zod"
+
+/** A generator the server offers, with the filename its download will use. */
+export type OrmTargetInfo = {
+  id: OrmTarget
+  label: string
+  filename: string
+  description: string
+}
+
+/** One session the database server is currently running. */
+export type DbActivity = {
+  pid: string
+  user?: string
+  database?: string
+  state?: string
+  seconds: number
+  query?: string
+  client?: string
+  wait?: string
+  blockedBy?: string
+  /** True for the connection that answered this request — never offer to kill it. */
+  self?: boolean
+}
+
+export type DbActivityResponse = {
+  sessions: DbActivity[]
+  /** False on an engine with no server-side session list, e.g. SQLite. */
+  supported: boolean
+  reason?: string
+}
+
+/** One row found by the schema-wide value search. */
+export type DbSearchMatch = {
+  schema: string
+  table: string
+  column: string
+  value: string
+  row: Record<string, unknown>
+}
+
+export type DbSearchResult = {
+  matches: DbSearchMatch[]
+  tablesScanned: number
+  tablesSkipped?: string[]
+  truncated: boolean
+}
+
+/** What one table costs on disk. Row counts are the engine's estimate. */
+export type DbTableSize = {
+  schema: string
+  table: string
+  rows: number
+  bytes: number
+  dataBytes: number
+  indexBytes: number
+}
+
+export type DbPoolStats = {
+  open: number
+  inUse: number
+  idle: number
+  waitCount: number
+  waitDuration: string
+  maxOpen: number
+  maxIdleClosed: number
+  maxLifetimeClosed: number
+}
+
+export type DbOverview = {
+  schema: string
+  tables: DbTableSize[]
+  totalBytes: number
+  totalRows: number
+  tableCount: number
+  /** False where the engine cannot report bytes — show rows and say so. */
+  sizesKnown: boolean
+  pool: DbPoolStats
+}
 
 /** One condition in the data grid's filter row. */
 export type DbFilter = {

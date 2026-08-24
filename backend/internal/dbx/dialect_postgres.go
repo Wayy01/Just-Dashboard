@@ -176,3 +176,66 @@ func (postgresDialect) BeforeDropColumn(context.Context, *sql.DB, string, string
 func (postgresDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
 	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
 }
+
+// Activity reads pg_stat_activity, joined to itself through pg_blocking_pids so
+// a blocked session names the one holding it. That join is the whole value:
+// twenty sessions waiting and one culprit is a readable picture, twenty
+// sessions "waiting" is not.
+// clock_timestamp() rather than now(): now() is the *transaction* timestamp,
+// which for the statement asking this question is a fraction of a millisecond
+// before its own query_start — so the session doing the asking reported a
+// negative age. Wall-clock time is what "how long has this been running" means.
+func (postgresDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT a.pid::text,
+	         COALESCE(a.usename, ''),
+	         COALESCE(a.datname, ''),
+	         COALESCE(a.state, ''),
+	         GREATEST(COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - a.query_start)), 0), 0)::float8,
+	         COALESCE(a.query, ''),
+	         COALESCE(host(a.client_addr), ''),
+	         COALESCE(a.wait_event_type || ':' || a.wait_event, ''),
+	         COALESCE((SELECT string_agg(b::text, ',') FROM unnest(pg_blocking_pids(a.pid)) b), ''),
+	         CASE WHEN a.pid = pg_backend_pid() THEN 1 ELSE 0 END
+	  FROM pg_stat_activity a
+	  WHERE a.backend_type = 'client backend'
+	  ORDER BY a.query_start NULLS LAST`)
+	if err != nil {
+		return nil, err
+	}
+	return scanActivity(rows)
+}
+
+// Kill asks the backend to terminate. pg_terminate_backend rather than
+// pg_cancel_backend: cancelling only stops the current statement and leaves an
+// idle-in-transaction session still holding its locks, which is usually the
+// thing the operator is actually trying to clear.
+func (postgresDialect) Kill(ctx context.Context, db *sql.DB, pid string) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "SELECT pg_terminate_backend($1::int)", pid)
+	return err
+}
+
+func (postgresDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error) {
+	if schema == "" {
+		schema = "public"
+	}
+	// reltuples is the planner's estimate, refreshed by ANALYZE. A table never
+	// analysed reports -1, which would render as a negative row count, so it is
+	// floored here rather than in the UI.
+	rows, err := db.QueryContext(ctx, `
+		SELECT n.nspname, c.relname,
+		       GREATEST(c.reltuples, 0)::bigint,
+		       pg_total_relation_size(c.oid),
+		       pg_table_size(c.oid),
+		       pg_indexes_size(c.oid)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('r', 'p') AND n.nspname = $1`, schema)
+	if err != nil {
+		return nil, err
+	}
+	return scanSizes(rows, schema)
+}

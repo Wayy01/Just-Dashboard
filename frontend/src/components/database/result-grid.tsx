@@ -1,7 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowDown, ArrowUp, ChevronsUpDown, Copy, ExternalLink, Pencil, Trash2 } from "lucide-react"
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+  Copy,
+  CopyPlus,
+  ExternalLink,
+  FileJson,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+} from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import type { DbForeignKey, QueryResult } from "@/lib/types"
@@ -22,6 +33,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 /**
  * The one result grid every database view renders through, so a query result, a
@@ -35,6 +53,8 @@ export function ResultGrid({
   result,
   onEdit,
   onDelete,
+  onDuplicate,
+  onCopySQL,
   sort,
   onSort,
   foreignKeys,
@@ -47,6 +67,14 @@ export function ResultGrid({
   result: QueryResult
   onEdit?: (row: Record<string, unknown>) => void
   onDelete?: (row: Record<string, unknown>) => void
+  /**
+   * Open the insert form pre-filled from this row. The commonest way anybody
+   * creates a record by hand is "the same as that one but different", and
+   * retyping eleven columns to change two is how a typo gets into the copy.
+   */
+  onDuplicate?: (row: Record<string, unknown>) => void
+  /** Render rows as INSERT statements for this engine, server-side. */
+  onCopySQL?: (rows: Record<string, unknown>[]) => void
   /** The column the server is ordering by, when the caller supports sorting. */
   sort?: { column: string; desc: boolean } | null
   onSort?: (column: string) => void
@@ -60,7 +88,7 @@ export function ResultGrid({
   maxHeightClass?: string
 }) {
   const [detail, setDetail] = useState<{ column: string; value: unknown } | null>(null)
-  const hasActions = Boolean(onEdit || onDelete)
+  const hasActions = Boolean(onEdit || onDelete || onDuplicate || onCopySQL)
   const selectable = Boolean(selection && onSelectionChange)
 
   // Single-column foreign keys become links. A composite key is deliberately
@@ -167,17 +195,43 @@ export function ResultGrid({
                         <Pencil className="size-3.5" />
                       </Button>
                     )}
-                    {onDelete && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-6 text-destructive"
-                        title="Delete row"
-                        onClick={() => onDelete(rowRecord(row))}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon" variant="ghost" className="size-6" title="More">
+                          <MoreHorizontal className="size-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-52">
+                        <DropdownMenuItem onClick={() => copyJSON(rowRecord(row))}>
+                          <FileJson className="size-3.5" />
+                          Copy as JSON
+                        </DropdownMenuItem>
+                        {onCopySQL && (
+                          <DropdownMenuItem onClick={() => onCopySQL([rowRecord(row)])}>
+                            <Copy className="size-3.5" />
+                            Copy as INSERT
+                          </DropdownMenuItem>
+                        )}
+                        {onDuplicate && (
+                          <DropdownMenuItem onClick={() => onDuplicate(rowRecord(row))}>
+                            <CopyPlus className="size-3.5" />
+                            Duplicate row…
+                          </DropdownMenuItem>
+                        )}
+                        {onDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => onDelete(rowRecord(row))}
+                            >
+                              <Trash2 className="size-3.5" />
+                              Delete row…
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </TableCell>
               )}
@@ -280,4 +334,18 @@ function CellDetail({ value }: { value: unknown }) {
       )}
     </div>
   )
+}
+
+/**
+ * Copying a row as JSON is done here rather than on the server: it is a
+ * transformation of what is already on the screen, with no engine-specific
+ * quoting to get right. Copying it as an INSERT is the opposite case and goes
+ * through the server, where the one implementation of each engine's syntax
+ * lives.
+ */
+function copyJSON(row: Record<string, unknown>) {
+  navigator.clipboard
+    .writeText(JSON.stringify(row, null, 2))
+    .then(() => toast.success("Copied row as JSON"))
+    .catch(() => toast.error("Could not copy"))
 }

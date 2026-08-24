@@ -66,6 +66,7 @@ func TestDestructiveDatabaseRoutesDemandConfirmation(t *testing.T) {
 		{http.MethodDelete, "/databases/1/rows", `{"table":"t","key":{"id":1}}`},
 		{http.MethodDelete, "/databases/1", `{}`},
 		{http.MethodDelete, "/databases/1/keys", `{"key":"k"}`},
+		{http.MethodPost, "/databases/1/activity/kill", `{"pid":"42"}`},
 	}
 
 	for _, c := range cases {
@@ -127,5 +128,61 @@ func TestDriverCatalogueCoversEveryEngine(t *testing.T) {
 		if !strings.Contains(body, `"id":"`+string(d)+`"`) {
 			t.Errorf("driver %q missing from the catalogue: %s", d, body)
 		}
+	}
+}
+
+// The generator catalogue is the other list the frontend used to keep its own
+// copy of. Every target the package can generate must appear, with the filename
+// the download will use — a target with no filename is a download called
+// "undefined".
+func TestORMTargetCatalogueCoversEveryGenerator(t *testing.T) {
+	_, router := dbTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/databases/orm/targets", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /databases/orm/targets = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, tg := range dbx.ORMTargets() {
+		if !strings.Contains(body, `"id":"`+string(tg)+`"`) {
+			t.Errorf("target %q missing from the catalogue: %s", tg, body)
+		}
+		if f := ormFilename(tg); f == "schema.txt" {
+			t.Errorf("target %q has no filename of its own", tg)
+		}
+	}
+}
+
+// Rendering a row as SQL must never reach the database. It is a pure
+// transformation, and the connection in this harness points at a path that does
+// not exist — so a handler that opened a pool first would fail here.
+func TestRowSQLDoesNotTouchTheDatabase(t *testing.T) {
+	_, router := dbTestRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/databases/1/rows/sql",
+		strings.NewReader(`{"table":"users","rows":[{"id":1,"email":"a@x.io"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /databases/1/rows/sql = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INSERT INTO") {
+		t.Errorf("no statement rendered: %s", rec.Body.String())
+	}
+}
+
+// Search is a read, but it reads every table in the schema, so it is the one
+// read that is worth an audit entry. This pins that it asks for a needle rather
+// than defaulting to "match everything".
+func TestSearchRequiresANeedle(t *testing.T) {
+	_, router := dbTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/databases/1/search", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("search with no q = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -190,3 +190,57 @@ func (clickhouseDialect) BeforeDropColumn(context.Context, *sql.DB, string, stri
 func (clickhouseDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
 	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
 }
+
+// Activity reads system.processes. ClickHouse identifies a running query by a
+// UUID rather than a connection id, which is why the pid field is a string.
+func (clickhouseDialect) Activity(ctx context.Context, db *sql.DB) ([]Activity, error) {
+	rows, err := db.QueryContext(ctx, `
+	  SELECT toString(query_id),
+	         ifNull(user, ''),
+	         ifNull(current_database, ''),
+	         'running',
+	         toFloat64(elapsed),
+	         ifNull(query, ''),
+	         ifNull(toString(address), ''),
+	         '',
+	         '',
+	         CASE WHEN query_id = queryID() THEN 1 ELSE 0 END
+	  FROM system.processes
+	  ORDER BY elapsed DESC`)
+	if err != nil {
+		return nil, err
+	}
+	return scanActivity(rows)
+}
+
+func (clickhouseDialect) Kill(ctx context.Context, db *sql.DB, pid string) error {
+	if err := validatePID(pid); err != nil {
+		return err
+	}
+	// The query id is a UUID, and KILL QUERY does take a bound parameter here.
+	_, err := db.ExecContext(ctx, "KILL QUERY WHERE query_id = ? SYNC", pid)
+	return err
+}
+
+func (clickhouseDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error) {
+	if schema == "" {
+		schema = "default"
+	}
+	// system.parts holds one row per data part, and only the active ones are
+	// real: a merge leaves the inputs listed until they are cleaned up, so
+	// summing everything double-counts a table that was recently written to.
+	// Sizes are compressed bytes, which is what the disk actually holds.
+	rows, err := db.QueryContext(ctx, `
+		SELECT database, table,
+		       toInt64(sum(rows)),
+		       toInt64(sum(bytes_on_disk)),
+		       toInt64(sum(data_compressed_bytes)),
+		       toInt64(sum(marks_bytes))
+		FROM system.parts
+		WHERE active AND database = ?
+		GROUP BY database, table`, schema)
+	if err != nil {
+		return nil, err
+	}
+	return scanSizes(rows, schema)
+}

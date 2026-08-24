@@ -84,6 +84,11 @@ type Dialect interface {
 	// — a difference invisible until a real server parses the statement, which
 	// is exactly how it was found.
 	AddColumnKeyword() string
+	// Activity lists what the server is currently running. Engines with no
+	// server-side session concept return ErrNoActivityView.
+	Activity(ctx context.Context, db *sql.DB) ([]Activity, error)
+	// Kill terminates a session or statement by the handle Activity reported.
+	Kill(ctx context.Context, db *sql.DB, pid string) error
 	// ExplainPlan returns the engine's execution plan for a statement.
 	//
 	// Every implementation must describe the statement without running it. That
@@ -95,6 +100,10 @@ type Dialect interface {
 	// BeforeDropColumn clears anything the engine requires gone before a column
 	// can be dropped. Most engines require nothing and return nil.
 	BeforeDropColumn(ctx context.Context, db *sql.DB, schema, table, column string) error
+	// TableSizes reports what each table in a schema costs on disk. Engines
+	// that cannot say return zero bytes with the row estimates they do have,
+	// rather than an error — a missing size is information, not a failure.
+	TableSizes(ctx context.Context, db *sql.DB, schema string) ([]TableSize, error)
 	// SupportsDDL reports whether this engine accepts the generated DDL at all.
 	// ClickHouse's CREATE TABLE needs an engine and a sorting key, so it opts
 	// out rather than emitting statements that will not run.
