@@ -46,6 +46,7 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			// connection by hand rather than on the read surface beside them.
 			r.Method(http.MethodGet, "/detected", s.handle(s.handleDBDetected))
 			r.Method(http.MethodPost, "/adopt", s.handle(s.handleDBAdopt))
+			r.Method(http.MethodPost, "/sync", s.handle(s.handleDBSync))
 			r.Method(http.MethodGet, "/provision/options", s.handle(s.handleDBProvisionOptions))
 			r.Method(http.MethodPost, "/provision", s.handle(s.handleDBProvision))
 			r.Method(http.MethodPut, "/{id}", s.handle(s.handleDBConnUpdate))
@@ -362,7 +363,22 @@ func (s *Server) handleDBPing(w http.ResponseWriter, r *http.Request) error {
 		}
 		defer client.Close()
 	default:
-		if _, _, err := s.dbPool(r.Context(), id); err != nil {
+		pool, _, err := s.dbPool(r.Context(), id)
+		if err == nil {
+			// The pool is cached, so having one says the connection worked at
+			// some point in the past, not that it works now. It has to be
+			// dialled: a server restarted underneath the dashboard — which is
+			// every MySQL during its own first-boot initialisation, and every
+			// database anybody ever upgrades — leaves a pool of connections
+			// that are open and dead, and this reported them healthy while
+			// every query returned "invalid connection".
+			err = pool.PingContext(r.Context())
+		}
+		if err != nil {
+			// Dropped rather than left to expire with the pool's lifetime, so
+			// the next request dials again instead of failing the same way for
+			// half an hour.
+			s.modules.dbs.Close(id)
 			httpx.JSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 			return nil
 		}
