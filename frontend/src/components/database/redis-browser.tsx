@@ -64,15 +64,22 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   const [cursor, setCursor] = useState(0)
   const [history, setHistory] = useState<number[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
 
   const databases = usePoll(
-    (signal) => get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
+    (signal) =>
+      get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
     0,
     [conn.id],
   )
   const page = usePoll(
     (signal) =>
-      get<RedisPage>(`/databases/${conn.id}/keys`, { db, pattern: applied, cursor, count: 100 }, signal),
+      get<RedisPage>(
+        `/databases/${conn.id}/keys`,
+        { db, pattern: applied, cursor, count: 100 },
+        signal,
+      ),
     0,
     [conn.id, db, applied, cursor],
   )
@@ -109,6 +116,27 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
     value.refresh()
   }, [page, value])
 
+  const renameKey = async (from: string, to: string) => {
+    await post(`/databases/${conn.id}/keys/rename`, { key: from, to }, { query: { db } })
+    toast.success(`Renamed to ${to}`)
+    setRenaming(null)
+    // Follow the key rather than keeping a name the server no longer has.
+    setSelected(to)
+    page.refresh()
+  }
+
+  const createKey = async (key: string, type: string, field: string, val: string, ttl: number) => {
+    await post(
+      `/databases/${conn.id}/keys/value`,
+      { key, type, field, value: val, ttl, create: true },
+      { query: { db } },
+    )
+    toast.success(`Created ${key}`)
+    setCreating(false)
+    setSelected(key)
+    page.refresh()
+  }
+
   const deleteKey = (key: string) =>
     confirm({
       title: "Delete key",
@@ -134,29 +162,40 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           title="Keys"
           description={`${page.data?.keys.length ?? 0} on this page`}
           actions={
-            databases.data && databases.data.length > 1 ? (
-              <Select
-                value={db}
-                onValueChange={(v) => {
-                  setDb(v)
-                  setCursor(0)
-                  setHistory([])
-                  setSelected(null)
-                }}
-              >
-                <SelectTrigger size="sm" className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {databases.data.map((d) => (
-                    <SelectItem key={d.name} value={d.name}>
-                      db{d.name}
-                      {d.size > 0 && ` · ${d.size}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : undefined
+            <>
+              {canWrite && (
+                <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+                  <Plus className="size-3.5" />
+                  New key
+                </Button>
+              )}
+              {databases.data && databases.data.length > 1 ? (
+                <Select
+                  value={db}
+                  onValueChange={(v) => {
+                    setDb(v)
+                    setCursor(0)
+                    setHistory([])
+                    setSelected(null)
+                  }}
+                >
+                  {/* Wide enough for "db15 · 12345": at w-24 the count was
+                    clipped mid-digit, which reads as a rendering fault rather
+                    than as a number that did not fit. */}
+                  <SelectTrigger size="sm" className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {databases.data.map((d) => (
+                      <SelectItem key={d.name} value={d.name}>
+                        db{d.name}
+                        {d.size > 0 && ` · ${d.size}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+            </>
           }
         />
         <PanelBody className="space-y-3">
@@ -208,7 +247,9 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           <Button size="sm" variant="outline" disabled={page.data?.done} onClick={next}>
             Next
           </Button>
-          {page.data?.done && <span className="text-[11px] text-muted-foreground">End of scan</span>}
+          {page.data?.done && (
+            <span className="text-[11px] text-muted-foreground">End of scan</span>
+          )}
         </PanelFooter>
       </Panel>
 
@@ -216,14 +257,29 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
         <PanelHeader
           icon={KeyRound}
           title={selected ?? "Pick a key"}
-          description={value.data ? `${value.data.type}${value.data.truncated ? " · truncated" : ""}` : undefined}
+          description={
+            value.data
+              ? `${value.data.type}${value.data.truncated ? " · truncated" : ""}`
+              : undefined
+          }
           actions={
             selected &&
             canWrite && (
-              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteKey(selected)}>
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
+              <>
+                <Button size="sm" variant="ghost" onClick={() => setRenaming(selected)}>
+                  <Pencil className="size-3.5" />
+                  Rename
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive"
+                  onClick={() => deleteKey(selected)}
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete
+                </Button>
+              </>
             )
           }
         />
@@ -251,7 +307,192 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           )}
         </PanelBody>
       </Panel>
+
+      {creating && <NewKeyDialog onClose={() => setCreating(false)} onCreate={createKey} />}
+      {renaming && (
+        <RenameKeyDialog
+          from={renaming}
+          onClose={() => setRenaming(null)}
+          onRename={(to) => renameKey(renaming, to)}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Creating a key, and renaming one.
+ *
+ * Both are things the server has always been able to do — `create: true` on the
+ * set route and the rename route beside it, each with live coverage — and
+ * neither had any way to be asked for from here. A browser that can only edit
+ * keys something else created is not a browser you can keep a database in.
+ *
+ * A new key needs its type up front because Redis has no untyped key: the type
+ * is fixed by the command that creates it, which is why this is a dialog rather
+ * than an empty row in the list.
+ */
+function NewKeyDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void
+  onCreate: (key: string, type: string, field: string, value: string, ttl: number) => Promise<void>
+}) {
+  const [key, setKey] = useState("")
+  const [type, setType] = useState("string")
+  const [field, setField] = useState("")
+  const [value, setValue] = useState("")
+  const [ttl, setTtl] = useState("-1")
+  const [busy, setBusy] = useState(false)
+  // A hash needs a field name and a sorted set needs a score; the others take
+  // the value alone. Asking for the right thing beats one box labelled "value"
+  // that means something different per type.
+  const needsField = type === "hash" || type === "zset"
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await onCreate(key.trim(), type, field.trim(), value, Number(ttl) || -1)
+    } catch (err) {
+      toast.error("Could not create the key", { description: String(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New key</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="redis-new-key">Key</Label>
+            <Input
+              id="redis-new-key"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              className="font-mono text-xs"
+              placeholder="app:session:1"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Type</Label>
+              <Select value={type} onValueChange={setType}>
+                <SelectTrigger size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["string", "list", "set", "zset", "hash"].map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="redis-new-ttl">TTL seconds</Label>
+              <Input
+                id="redis-new-ttl"
+                value={ttl}
+                onChange={(e) => setTtl(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+          {needsField && (
+            <div className="space-y-1.5">
+              <Label htmlFor="redis-new-field">{type === "zset" ? "Score" : "Field"}</Label>
+              <Input
+                id="redis-new-field"
+                value={field}
+                onChange={(e) => setField(e.target.value)}
+                className="font-mono text-xs"
+                placeholder={type === "zset" ? "100" : "name"}
+              />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="redis-new-value">{type === "zset" ? "Member" : "Value"}</Label>
+            <Textarea
+              id="redis-new-value"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="min-h-24 font-mono text-xs"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!key.trim() || busy} onClick={submit}>
+            {busy ? <Spinner /> : <Plus className="size-3.5" />}
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RenameKeyDialog({
+  from,
+  onClose,
+  onRename,
+}: {
+  from: string
+  onClose: () => void
+  onRename: (to: string) => Promise<void>
+}) {
+  const [to, setTo] = useState(from)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await onRename(to.trim())
+    } catch (err) {
+      toast.error("Could not rename the key", { description: String(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename key</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="redis-rename">New name</Label>
+          <Input
+            id="redis-rename"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && to.trim() && to !== from && submit()}
+            className="font-mono text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Redis renames in place. An existing key of that name is overwritten.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!to.trim() || to === from || busy} onClick={submit}>
+            {busy ? <Spinner /> : <Save className="size-3.5" />}
+            Rename
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -277,9 +518,13 @@ function RedisValueView({
   const save = async () => {
     setBusy(true)
     try {
-      await post(`/databases/${conn.id}/keys/value`, { key: value.key, type: "string", value: draft }, {
-        query: { db },
-      })
+      await post(
+        `/databases/${conn.id}/keys/value`,
+        { key: value.key, type: "string", value: draft },
+        {
+          query: { db },
+        },
+      )
       toast.success("Value saved")
       onChanged()
     } catch (err) {
@@ -292,9 +537,13 @@ function RedisValueView({
   const saveTtl = async () => {
     setBusy(true)
     try {
-      await post(`/databases/${conn.id}/keys/expire`, { key: value.key, ttl: Number(ttl) || -1 }, {
-        query: { db },
-      })
+      await post(
+        `/databases/${conn.id}/keys/expire`,
+        { key: value.key, ttl: Number(ttl) || -1 },
+        {
+          query: { db },
+        },
+      )
       toast.success(Number(ttl) > 0 ? `Expires in ${ttl}s` : "Expiry cleared")
       onChanged()
     } catch (err) {
@@ -376,8 +625,8 @@ function RedisValueView({
       )}
       {value.type === "stream" && (
         <p className="text-xs text-muted-foreground">
-          Streams are append-only structures with their own semantics; this shows their entries
-          but does not edit them.
+          Streams are append-only structures with their own semantics; this shows their entries but
+          does not edit them.
         </p>
       )}
     </div>
@@ -432,8 +681,8 @@ function MemberEditor({
       confirmLabel: "Remove",
       description: (
         <p>
-          Removes <span className="font-mono text-xs">{shown}</span> from{" "}
-          <b>{value.key}</b>. The rest of the {value.type} is left alone.
+          Removes <span className="font-mono text-xs">{shown}</span> from <b>{value.key}</b>. The
+          rest of the {value.type} is left alone.
         </p>
       ),
       action: async (c) => {
@@ -674,8 +923,8 @@ function MemberDialog({
           </div>
           {type === "set" && !isNew && (
             <p className="text-xs text-muted-foreground">
-              A set has no positions, so editing a member adds the new value; remove the old one
-              if you meant to replace it.
+              A set has no positions, so editing a member adds the new value; remove the old one if
+              you meant to replace it.
             </p>
           )}
         </div>

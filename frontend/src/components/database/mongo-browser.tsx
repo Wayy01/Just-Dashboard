@@ -469,7 +469,11 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       {inserting && (
         <DocumentDialog
           title="Insert document"
-          initial="{\n  \n}"
+          // Braced, not a bare string attribute: JSX does not process escapes
+          // in one, so `initial="{\n  \n}"` handed the editor the literal
+          // characters backslash-n — the Insert dialog opened on invalid JSON,
+          // showing a parse error and a disabled Save before anybody had typed.
+          initial={"{\n  \n}"}
           onClose={() => setInserting(false)}
           onSave={insertDoc}
         />
