@@ -22,6 +22,7 @@ import type {
   DbConnection,
   DbDriverInfo,
   DbFilter,
+  DbForeignKey,
   DbTable,
   DbTableDetail,
   QueryResult,
@@ -107,6 +108,7 @@ export function BrowseTab({
   const [showFilters, setShowFilters] = useState(false)
   const [count, setCount] = useState<number | null>(null)
   const [counting, setCounting] = useState(false)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
   const [editor, setEditor] = useState<{ mode: "insert" | "edit"; initial?: Record<string, unknown> } | null>(null)
   const [dialog, setDialog] = useState<
     null | "createTable" | "addColumn" | "createIndex" | "renameTable" | "import"
@@ -178,7 +180,21 @@ export function BrowseTab({
     setSort(null)
     setFilters([])
     setCount(null)
+    setSelected(new Set())
     onSelect({ schema: t.schema, table: t.name })
+  }
+
+  // Following a foreign key opens the parent table filtered to the referenced
+  // row. It is the same navigation the rail does, plus a filter — which is why
+  // it reuses onSelect rather than inventing a second way to be somewhere.
+  const followForeignKey = (fk: DbForeignKey, value: unknown) => {
+    setOffset(0)
+    setSort(null)
+    setSelected(new Set())
+    setFilters([{ column: fk.refColumns[0], op: "eq", value: String(value) }])
+    setShowFilters(true)
+    setCount(null)
+    onSelect({ schema: fk.refSchema || schema, table: fk.refTable })
   }
 
   const pk = detail.data?.primaryKey ?? []
@@ -193,6 +209,49 @@ export function BrowseTab({
     tables.refresh()
     detail.refresh()
     setCount(null)
+    setSelected(new Set())
+  }
+
+  // Bulk delete is one confirmation for the whole set rather than one per row.
+  // Asking somebody to type the table name eight times is how you teach them to
+  // type it without reading, which is the habit the phrase exists to prevent.
+  const deleteSelected = () => {
+    if (!rows.data || selected.size === 0) return
+    const keys = [...selected].map((i) => {
+      const key: Record<string, unknown> = {}
+      for (const c of pk) key[c] = rows.data!.rows[i][rows.data!.columns.indexOf(c)]
+      return key
+    })
+    confirm({
+      title: `Delete ${keys.length} rows`,
+      phrase: table,
+      confirmLabel: `Delete ${keys.length} rows`,
+      description: (
+        <p className="text-sm">
+          Permanently deletes <b>{keys.length}</b> rows from <b>{table}</b>. This cannot be
+          undone.
+        </p>
+      ),
+      action: async (c) => {
+        // Sent one at a time so a row that cannot be deleted — a foreign key
+        // still pointing at it — names itself, rather than failing the batch
+        // with one message about none of them in particular.
+        let failed = 0
+        for (const key of keys) {
+          try {
+            await del(`/databases/${conn.id}/rows`, { body: { schema, table, key }, confirm: c })
+          } catch {
+            failed++
+          }
+        }
+        if (failed) {
+          toast.warning(`Deleted ${keys.length - failed}, ${failed} could not be removed`)
+        } else {
+          toast.success(`Deleted ${keys.length} rows`)
+        }
+        reload()
+      },
+    })
   }
 
   const toggleSort = (column: string) => {
@@ -381,6 +440,12 @@ export function BrowseTab({
                     Insert
                   </Button>
                 )}
+                {canEditRows && selected.size > 0 && (
+                  <Button size="sm" variant="destructive" onClick={deleteSelected}>
+                    <Trash2 className="size-3.5" />
+                    Delete {selected.size}
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant={showFilters ? "default" : "ghost"}
@@ -390,14 +455,28 @@ export function BrowseTab({
                   Filter
                   {activeFilters.length > 0 && ` (${activeFilters.length})`}
                 </Button>
-                <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - PAGE))}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={offset === 0}
+                  onClick={() => {
+                    // Selection is by row index within the page, so it cannot
+                    // survive a page turn — carrying it would delete whatever
+                    // now sits at those positions.
+                    setSelected(new Set())
+                    setOffset((o) => Math.max(0, o - PAGE))
+                  }}
+                >
                   Previous
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={rows.data ? rows.data.rowCount < PAGE : true}
-                  onClick={() => setOffset((o) => o + PAGE)}
+                  onClick={() => {
+                    setSelected(new Set())
+                    setOffset((o) => o + PAGE)
+                  }}
                 >
                   Next
                 </Button>
@@ -475,6 +554,10 @@ export function BrowseTab({
                 result={rows.data}
                 sort={sort}
                 onSort={toggleSort}
+                foreignKeys={detail.data?.foreignKeys}
+                onFollow={followForeignKey}
+                selection={canEditRows ? selected : undefined}
+                onSelectionChange={canEditRows ? setSelected : undefined}
                 onEdit={canEditRows ? (row) => setEditor({ mode: "edit", initial: row }) : undefined}
                 onDelete={canEditRows ? deleteRow : undefined}
               />

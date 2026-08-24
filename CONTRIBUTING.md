@@ -95,6 +95,9 @@ docker run -d -p 6379:6379 redis:7
 Then `go test ./internal/dbx/ ./internal/api/ -run Live -v` and watch which
 engines report rather than skip. SQLite needs nothing — it is embedded.
 
-Oracle has a dialect but no test coverage: there is no redistributable server
-image to point a CI job at. Treat changes to `dialect_oracle.go` as unverified
-and say so in the pull request.
+Oracle has a dialect but no test coverage. Its server is a 1.4 GB download
+behind a click-through licence whose installer prompts interactively for a
+password and cannot be driven headlessly from a script, so there is nothing a
+CI job can point at. Treat changes to `dialect_oracle.go` as unverified and say
+so in the pull request; if you have an instance, set `JD_TEST_ORACLE_DSN` and
+add a fixture alongside the others.

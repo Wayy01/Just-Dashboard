@@ -170,3 +170,7 @@ func (mysqlDialect) AddColumnKeyword() string { return "ADD COLUMN" }
 func (mysqlDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
 	return nil
 }
+
+func (mysqlDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
+}

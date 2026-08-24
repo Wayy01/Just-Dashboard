@@ -171,3 +171,8 @@ func (postgresDialect) AddColumnKeyword() string { return "ADD COLUMN" }
 func (postgresDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
 	return nil
 }
+
+// EXPLAIN without ANALYZE plans the statement and does not run it.
+func (postgresDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
+}

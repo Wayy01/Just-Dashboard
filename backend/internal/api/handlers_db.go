@@ -54,6 +54,7 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{id}/browse", s.handle(s.handleDBBrowse))
 		r.Method(http.MethodGet, "/{id}/export", s.handle(s.handleDBExport))
 		r.Method(http.MethodPost, "/{id}/classify", s.handle(s.handleDBClassify))
+		r.Method(http.MethodPost, "/{id}/explain", s.handle(s.handleDBExplain))
 		r.Method(http.MethodPost, "/{id}/orm", s.handle(s.handleDBGenerateORM))
 		r.Method(http.MethodGet, "/{id}/queries", s.handle(s.handleDBSavedList))
 		r.Method(http.MethodGet, "/{id}/history", s.handle(s.handleDBHistory))
@@ -1276,5 +1277,44 @@ func (s *Server) handleDBRelations(w http.ResponseWriter, r *http.Request) error
 		return httpx.Err(http.StatusBadGateway, "query_failed", err.Error())
 	}
 	httpx.JSON(w, http.StatusOK, rels)
+	return nil
+}
+
+// handleDBExplain returns the engine's plan for a statement.
+//
+// It is on the read side of the route map, with no capability beyond browsing,
+// because planning is not running: every dialect's implementation describes the
+// statement without executing it. That is the property the whole feature rests
+// on — a "show me the plan" button that quietly executed a DELETE would be the
+// worst control in the product — so it is asserted in the dialect contract and
+// tested against every live engine rather than assumed here.
+func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	var req queryRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		return httpx.BadRequest("query is required")
+	}
+	pool, conn, err := s.dbPool(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	d, err := dbx.DialectFor(conn.Driver)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	ctx, cancel := timeoutCtx(r, 60*time.Second)
+	defer cancel()
+	res, err := d.ExplainPlan(ctx, pool, req.Query)
+	if err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "database.explain", conn.Name, map[string]any{"statement": req.Query})
+	httpx.JSON(w, http.StatusOK, map[string]any{"result": res})
 	return nil
 }

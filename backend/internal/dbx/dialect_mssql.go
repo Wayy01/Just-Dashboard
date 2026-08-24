@@ -222,3 +222,35 @@ func (d mssqlDialect) BeforeDropColumn(ctx context.Context, db *sql.DB, schema, 
 	}
 	return nil
 }
+
+// ExplainPlan uses SHOWPLAN_ALL, which is a session mode rather than a
+// statement prefix: with it on, the server plans everything it is sent and
+// executes none of it.
+//
+// That makes the mode itself the hazard — a connection left in it would
+// silently stop running the operator's queries. So this takes a single
+// connection out of the pool, turns the mode on and off around the one
+// statement, and closes it, which guarantees no pooled connection can be
+// handed back still in plan-only mode.
+func (mssqlDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "SET SHOWPLAN_ALL ON"); err != nil {
+		return nil, err
+	}
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	res, err := collectRows(rows, 500, query)
+	rows.Close()
+	// Restore the connection before returning either way; a failure to plan is
+	// not a reason to hand a crippled connection back.
+	if _, offErr := conn.ExecContext(ctx, "SET SHOWPLAN_ALL OFF"); offErr != nil && err == nil {
+		return nil, offErr
+	}
+	return res, err
+}

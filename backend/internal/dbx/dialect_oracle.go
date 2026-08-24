@@ -233,3 +233,24 @@ func (oracleDialect) AddColumnKeyword() string { return "ADD" }
 func (oracleDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
 	return nil
 }
+
+// ExplainPlan writes the plan to Oracle's plan table and then formats it, which
+// is the only way Oracle exposes one. EXPLAIN PLAN FOR does not execute the
+// statement it describes.
+func (oracleDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "EXPLAIN PLAN FOR "+query); err != nil {
+		return nil, err
+	}
+	rows, err := conn.QueryContext(ctx,
+		"SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY())")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectRows(rows, 500, query)
+}

@@ -186,3 +186,7 @@ func (clickhouseDialect) AddColumnKeyword() string { return "ADD COLUMN" }
 func (clickhouseDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
 	return nil
 }
+
+func (clickhouseDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	return RunQuery(ctx, db, "EXPLAIN "+query, 500)
+}

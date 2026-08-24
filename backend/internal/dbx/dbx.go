@@ -316,7 +316,19 @@ func RunQuery(ctx context.Context, db *sql.DB, query string, maxRows int, args .
 		return nil, err
 	}
 	defer rows.Close()
+	res, err = collectRows(rows, maxRows, query)
+	if err != nil {
+		return nil, err
+	}
+	res.Duration = time.Since(start).Round(time.Microsecond).String()
+	return res, nil
+}
 
+// collectRows materialises a result set. It is separate from RunQuery because
+// the plan commands on SQL Server and Oracle have to run on a connection they
+// hold themselves, and would otherwise duplicate this loop.
+func collectRows(rows *sql.Rows, maxRows int, statement string) (*QueryResult, error) {
+	res := &QueryResult{Columns: []string{}, Types: []string{}, Rows: [][]any{}, Statement: statement}
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
@@ -350,7 +362,6 @@ func RunQuery(ctx context.Context, db *sql.DB, query string, maxRows int, args .
 		return nil, err
 	}
 	res.RowCount = len(res.Rows)
-	res.Duration = time.Since(start).Round(time.Microsecond).String()
 	return res, nil
 }
 

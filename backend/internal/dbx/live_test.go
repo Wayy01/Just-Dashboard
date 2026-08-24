@@ -482,3 +482,59 @@ func names(tables []Table) []string {
 	}
 	return out
 }
+
+// TestLiveExplainDoesNotExecute is the assertion the plan feature rests on.
+//
+// Every dialect must describe a statement without running it. A plan button
+// that executed what it was asked to explain would be the worst control in the
+// product, so this asks each live engine to explain a DELETE and then checks
+// the rows are still there.
+func TestLiveExplainDoesNotExecute(t *testing.T) {
+	for _, f := range sqlFixtures() {
+		t.Run(string(f.driver), func(t *testing.T) {
+			db := liveSQL(t, f.driver, f.env, f.dsn)
+			setupFixture(t, db, f)
+			ctx := context.Background()
+			d := mustDialect(t, f.driver)
+
+			before, err := Count(ctx, db, f.driver, BrowseOptions{Schema: f.schema, Table: "jd_users"})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rel, err := qualify(d, f.schema, "jd_users")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// A plain SELECT plan first: it must come back with rows describing
+			// the plan rather than the data.
+			plan, err := d.ExplainPlan(ctx, db, "SELECT * FROM "+rel)
+			if err != nil {
+				t.Fatalf("ExplainPlan(select): %v", err)
+			}
+			if plan.RowCount == 0 {
+				t.Errorf("plan came back empty for %s", f.driver)
+			}
+
+			// ClickHouse's DELETE is a mutation with different syntax, and it
+			// has no rows to protect in the same sense; the SELECT plan above is
+			// the meaningful check there.
+			if !f.relational {
+				return
+			}
+			if _, err := d.ExplainPlan(ctx, db, "DELETE FROM "+rel); err != nil {
+				// Some engines refuse to plan a bare DELETE; that is acceptable.
+				t.Logf("%s declined to plan a DELETE: %v", f.driver, err)
+			}
+			after, err := Count(ctx, db, f.driver, BrowseOptions{Schema: f.schema, Table: "jd_users"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after != before {
+				t.Fatalf("EXPLAIN executed the statement on %s: %d rows became %d",
+					f.driver, before, after)
+			}
+		})
+	}
+}

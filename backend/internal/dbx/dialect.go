@@ -84,6 +84,14 @@ type Dialect interface {
 	// — a difference invisible until a real server parses the statement, which
 	// is exactly how it was found.
 	AddColumnKeyword() string
+	// ExplainPlan returns the engine's execution plan for a statement.
+	//
+	// Every implementation must describe the statement without running it. That
+	// is not a nicety: the Query tab offers this next to a Run button, and a
+	// "show me the plan" that quietly executed a DELETE would be the worst
+	// button in the product. Where an engine's plan command has an executing
+	// variant (Postgres's EXPLAIN ANALYZE, say), it is deliberately not used.
+	ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error)
 	// BeforeDropColumn clears anything the engine requires gone before a column
 	// can be dropped. Most engines require nothing and return nil.
 	BeforeDropColumn(ctx context.Context, db *sql.DB, schema, table, column string) error

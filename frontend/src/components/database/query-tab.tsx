@@ -6,6 +6,7 @@ import {
   Download,
   FileJson,
   Play,
+  ListTree,
   Save,
   ShieldAlert,
   Star,
@@ -52,6 +53,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
   const [sql, setSql] = useState("SELECT 1;")
   const [risk, setRisk] = useState<QueryRisk | null>(null)
   const [result, setResult] = useState<QueryResult | null>(null)
+  const [plan, setPlan] = useState<QueryResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
 
@@ -94,6 +96,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
         { confirm: confirmText },
       )
       setResult(res.result)
+      setPlan(null)
       history.refresh()
       toast.success(
         res.result.columns.length
@@ -126,6 +129,21 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       return
     }
     execute().catch(() => undefined)
+  }
+
+  // Planning is not running: every dialect describes the statement without
+  // executing it, which is why this needs no confirmation even for a DELETE.
+  const explain = async () => {
+    setBusy(true)
+    try {
+      const res = await post<{ result: QueryResult }>(`/databases/${conn.id}/explain`, { query: sql })
+      setPlan(res.result)
+      setResult(null)
+    } catch (err) {
+      toast.error("Could not plan the statement", { description: String(err) })
+    } finally {
+      setBusy(false)
+    }
   }
 
   const saveSnippet = async (name: string) => {
@@ -183,6 +201,10 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
             <Button size="sm" onClick={run} disabled={busy || !can("service.control")}>
               {busy ? <Spinner /> : <Play className="size-3.5" />}
               Run
+            </Button>
+            <Button size="sm" variant="outline" onClick={explain} disabled={busy || !sql.trim()}>
+              <ListTree className="size-3.5" />
+              Explain
             </Button>
             <Button
               size="sm"
@@ -279,6 +301,19 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
         </Panel>
       </div>
 
+      {plan && (
+        <Panel>
+          <PanelHeader
+            icon={ListTree}
+            title="Query plan"
+            description="How the engine intends to run this — nothing was executed"
+          />
+          <PanelBody flush>
+            <ResultGrid result={plan} />
+          </PanelBody>
+        </Panel>
+      )}
+
       {result && (
         <Panel>
           <PanelHeader
@@ -305,7 +340,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
           </PanelBody>
         </Panel>
       )}
-      {!result && <EmptyState icon={Table2} title="Run a statement to see results" />}
+      {!result && !plan && <EmptyState icon={Table2} title="Run a statement to see results" />}
 
       <SaveDialog open={saveOpen} onOpenChange={setSaveOpen} onSave={saveSnippet} />
     </div>

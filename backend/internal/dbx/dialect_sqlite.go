@@ -259,3 +259,8 @@ func (sqliteDialect) AddColumnKeyword() string { return "ADD COLUMN" }
 func (sqliteDialect) BeforeDropColumn(context.Context, *sql.DB, string, string, string) error {
 	return nil
 }
+
+func (sqliteDialect) ExplainPlan(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	// Bare EXPLAIN in SQLite dumps bytecode; QUERY PLAN is the readable form.
+	return RunQuery(ctx, db, "EXPLAIN QUERY PLAN "+query, 500)
+}
