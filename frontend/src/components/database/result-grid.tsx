@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
+import { plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbForeignKey, QueryResult } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -27,12 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -118,7 +114,7 @@ export function ResultGrid({
   if (result.columns.length === 0) {
     return (
       <p className="p-4 text-[13px] text-muted-foreground">
-        {result.rowsAffected} row(s) affected in {result.duration}.
+        {plural(result.rowsAffected, "row")} affected in {result.duration}.
       </p>
     )
   }
@@ -288,15 +284,18 @@ function SortIcon({ active, desc }: { active: boolean; desc: boolean }) {
     return (
       <ChevronsUpDown className="size-3 opacity-0 transition-opacity group-hover/sort:opacity-50" />
     )
-  return desc ? <ArrowDown className="size-3 text-primary" /> : <ArrowUp className="size-3 text-primary" />
+  return desc ? (
+    <ArrowDown className="size-3 text-primary" />
+  ) : (
+    <ArrowUp className="size-3 text-primary" />
+  )
 }
 
 function CellValue({ value }: { value: unknown }) {
   if (value === null || value === undefined)
     return <span className="text-muted-foreground italic">null</span>
   if (typeof value === "object") return <>{JSON.stringify(value)}</>
-  if (typeof value === "boolean")
-    return <span className="text-primary">{String(value)}</span>
+  if (typeof value === "boolean") return <span className="text-primary">{String(value)}</span>
   return <>{String(value)}</>
 }
 

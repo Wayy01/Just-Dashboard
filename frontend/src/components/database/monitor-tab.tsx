@@ -12,7 +12,7 @@ import {
   OctagonX,
 } from "lucide-react"
 import { get, post } from "@/lib/api"
-import { bytes, duration } from "@/lib/format"
+import { bytes, duration, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbActivityResponse, DbConnection, DbOverview } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -70,8 +70,7 @@ function ActivityPanel({
   // Five seconds: fast enough that a query you are watching does not vanish
   // between refreshes, slow enough that the panel is not itself a load.
   const activity = usePoll(
-    (signal) =>
-      get<DbActivityResponse>(`/databases/${conn.id}/activity`, undefined, signal),
+    (signal) => get<DbActivityResponse>(`/databases/${conn.id}/activity`, undefined, signal),
     5000,
     [conn.id],
   )
@@ -201,8 +200,8 @@ function ActivityPanel({
                               description: (
                                 <>
                                   <p>
-                                    Terminates session <b>{s.pid}</b> on the server. Whatever it
-                                    has done so far rolls back, and the application holding that
+                                    Terminates session <b>{s.pid}</b> on the server. Whatever it has
+                                    done so far rolls back, and the application holding that
                                     connection will see it drop.
                                   </p>
                                   {s.query && (
@@ -265,11 +264,15 @@ function StoragePanel({ conn, schema }: { conn: DbConnection; schema: string }) 
         title="Storage"
         description={
           o.sizesKnown
-            ? `${bytes(o.totalBytes)} across ${o.tableCount} table${o.tableCount === 1 ? "" : "s"} in ${o.schema}`
-            : `${o.tableCount} table${o.tableCount === 1 ? "" : "s"} in ${o.schema}`
+            ? `${bytes(o.totalBytes)} across ${plural(o.tableCount, "table")} in ${o.schema}`
+            : `${plural(o.tableCount, "table")} in ${o.schema}`
         }
         actions={
-          <Badge variant="outline" className="font-normal" title="The dashboard's own connection pool">
+          <Badge
+            variant="outline"
+            className="font-normal"
+            title="The dashboard's own connection pool"
+          >
             <Gauge className="size-3" />
             pool {pool.inUse}/{pool.open}
             {pool.waitCount > 0 ? ` · ${pool.waitCount} waits` : ""}
@@ -336,7 +339,7 @@ function StoragePanel({ conn, schema }: { conn: DbConnection; schema: string }) 
             {o.tables.length > 10 && (
               <div className="border-t border-hairline p-2 text-center">
                 <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>
-                  {expanded ? "Show top 10" : `Show all ${o.tables.length} tables`}
+                  {expanded ? "Show top 10" : `Show all ${plural(o.tables.length, "table")}`}
                 </Button>
               </div>
             )}

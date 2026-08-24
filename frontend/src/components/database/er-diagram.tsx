@@ -3,6 +3,7 @@
 import { useMemo } from "react"
 import { Network } from "lucide-react"
 import { get } from "@/lib/api"
+import { plural } from "@/lib/format"
 import type { DbConnection, DbForeignKey, DbRelations, DbTable } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
@@ -59,7 +60,7 @@ export function ErDiagram({ conn, schema }: { conn: DbConnection; schema: string
         title="Relationships"
         description={
           edges.length
-            ? `${nodes.length} tables · ${plural(edges.length, "foreign key")}`
+            ? `${plural(nodes.length, "table")} · ${plural(edges.length, "foreign key")}`
             : "No foreign keys in this schema"
         }
       />
@@ -149,10 +150,6 @@ export function ErDiagram({ conn, schema }: { conn: DbConnection; schema: string
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + "…" : s
-}
-
-function plural(n: number, word: string) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`
 }
 
 // edgePath draws a horizontal bezier between two boxes, leaving one box by the

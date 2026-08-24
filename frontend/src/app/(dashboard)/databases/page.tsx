@@ -51,7 +51,10 @@ export default function DatabasesPage() {
   // The engine catalogue decides which tabs exist. Keeping that on the server
   // means a newly registered dialect shows up here with no frontend change, and
   // a tab that would fail on every request is never offered.
-  const drivers = usePoll((signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal), 0)
+  const drivers = usePoll(
+    (signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal),
+    0,
+  )
 
   const active = connections.data?.find((c) => c.id === selectedId) ?? connections.data?.[0] ?? null
   const setActive = (conn: DbConnection | null) => setSelectedId(conn?.id ?? null)
@@ -104,7 +107,8 @@ export default function DatabasesPage() {
               <SelectContent>
                 {connections.data.map((conn) => (
                   <SelectItem key={conn.id} value={conn.id.toString()}>
-                    {conn.name} · {drivers.data?.find((d) => d.id === conn.driver)?.label ?? conn.driver}
+                    {conn.name} ·{" "}
+                    {drivers.data?.find((d) => d.id === conn.driver)?.label ?? conn.driver}
                     {conn.host ? ` · ${conn.host}` : ""}
                   </SelectItem>
                 ))}
@@ -129,8 +133,8 @@ export default function DatabasesPage() {
                       confirmLabel: "Remove",
                       description: (
                         <p>
-                          Removes <b>{active.name}</b> from the dashboard. The database itself is not
-                          touched.
+                          Removes <b>{active.name}</b> from the dashboard. The database itself is
+                          not touched.
                         </p>
                       ),
                       action: async (c) => {
@@ -173,7 +177,7 @@ export default function DatabasesPage() {
                     info={info}
                     confirm={confirm}
                     selection={activeSelection}
-                    onSelect={(sel) => setSelection({ ...sel, connId: active.id })}
+                    onSelect={(sel) => setSelection(sel && { ...sel, connId: active.id })}
                   />
                 )}
               </TabsContent>

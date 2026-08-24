@@ -37,7 +37,13 @@ import {
  * where they cannot be exact.
  */
 
-const EMPTY_COLUMN: DbNewColumn = { name: "", type: "", notNull: false, primaryKey: false, default: "" }
+const EMPTY_COLUMN: DbNewColumn = {
+  name: "",
+  type: "",
+  notNull: false,
+  primaryKey: false,
+  default: "",
+}
 
 export function CreateTableDialog({
   open,
@@ -106,7 +112,10 @@ export function CreateTableDialog({
             <Label>Columns</Label>
             <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
               {columns.map((c, i) => (
-                <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+                <div
+                  key={i}
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2"
+                >
                   <Input
                     placeholder="name"
                     value={c.name}
@@ -408,7 +417,10 @@ export function CreateIndexDialog({
                   key={c.name}
                   className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent"
                 >
-                  <Checkbox checked={fields.includes(c.name)} onCheckedChange={() => toggle(c.name)} />
+                  <Checkbox
+                    checked={fields.includes(c.name)}
+                    onCheckedChange={() => toggle(c.name)}
+                  />
                   <span className="font-mono">{c.name}</span>
                   <span className="text-muted-foreground">{c.type.toLowerCase()}</span>
                   {fields.includes(c.name) && (
@@ -460,7 +472,9 @@ export function RenameDialog({
   table: string
   kind: "table" | "column"
   current: string
-  onDone: () => void
+  // Handed the new name: a caller holding a selection has to follow the
+  // rename, or it goes on asking the server for a table that no longer exists.
+  onDone: (to: string) => void
 }) {
   const [to, setTo] = useState(current)
   const [busy, setBusy] = useState(false)
@@ -477,7 +491,7 @@ export function RenameDialog({
       })
       toast.success(`Renamed to ${to}`)
       onOpenChange(false)
-      onDone()
+      onDone(to)
     } catch (err) {
       toast.error("Could not rename", { description: String(err) })
     } finally {

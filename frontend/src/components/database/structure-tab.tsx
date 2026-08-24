@@ -2,6 +2,7 @@
 
 import { Copy, KeyRound, Link2, ListTree, Pencil, Table2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
+import { plural } from "@/lib/format"
 import { del, get } from "@/lib/api"
 import type { DbConnection, DbDriverInfo, DbTableDetail } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -105,7 +106,7 @@ export function StructureTab({
         <PanelHeader
           icon={ListTree}
           title="Columns"
-          description={`${d.columns.length} columns`}
+          description={plural(d.columns.length, "column")}
         />
         <PanelBody flush>
           <Table>
@@ -280,7 +281,9 @@ export function StructureTab({
           <PanelHeader
             icon={Table2}
             title="Definition"
-            description={conn.driver === "postgres" ? "generated from structure" : "as reported by the engine"}
+            description={
+              conn.driver === "postgres" ? "generated from structure" : "as reported by the engine"
+            }
             actions={
               <Button
                 size="sm"

@@ -1,17 +1,22 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Braces, Database, Download, FileJson, Play, Plus, Table2, Trash2, Upload } from "lucide-react"
+import {
+  Braces,
+  Database,
+  Download,
+  FileJson,
+  Play,
+  Plus,
+  Table2,
+  Trash2,
+  Upload,
+} from "lucide-react"
 import { toast } from "sonner"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
-import { bytes } from "@/lib/format"
+import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type {
-  DbConnection,
-  DbTable,
-  MongoCollectionInfo,
-  QueryResult,
-} from "@/lib/types"
+import type { DbConnection, DbTable, MongoCollectionInfo, QueryResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import type { useConfirm } from "@/components/confirm-dialog"
@@ -75,7 +80,8 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   const [importing, setImporting] = useState(false)
 
   const databases = usePoll(
-    (signal) => get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
+    (signal) =>
+      get<{ name: string; size: number }[]>(`/databases/${conn.id}/schemas`, undefined, signal),
     0,
     [conn.id],
   )
@@ -286,7 +292,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
                 title={collection ?? "Pick a collection"}
                 description={
                   docs.data
-                    ? `${docs.data.rowCount} documents in ${docs.data.duration}`
+                    ? `${plural(docs.data.rowCount, "document")} in ${docs.data.duration}`
                     : undefined
                 }
                 actions={
@@ -566,7 +572,7 @@ function AggregateTab({
         { confirm: confirmText },
       )
       setResult(res.result)
-      toast.success(`${res.result.rowCount} documents in ${res.result.duration}`)
+      toast.success(`${plural(res.result.rowCount, "document")} in ${res.result.duration}`)
     } catch (err) {
       toast.error("Pipeline failed", { description: String(err) })
       throw err

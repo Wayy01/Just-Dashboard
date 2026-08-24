@@ -17,7 +17,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
-import { bytes } from "@/lib/format"
+import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type {
   DbConnection,
@@ -98,7 +98,10 @@ export function BrowseTab({
   info?: DbDriverInfo
   confirm: ConfirmFn
   selection: TableSelection | null
-  onSelect: (sel: TableSelection) => void
+  // Nullable, because the selected table can stop existing: dropping it has to
+  // leave the grid empty rather than showing rows read from a table that is
+  // gone, with an Insert button that can only fail.
+  onSelect: (sel: TableSelection | null) => void
 }) {
   const { can } = useAuth()
   const [textFilter, setTextFilter] = useState("")
@@ -110,7 +113,10 @@ export function BrowseTab({
   const [count, setCount] = useState<number | null>(null)
   const [counting, setCounting] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [editor, setEditor] = useState<{ mode: "insert" | "edit"; initial?: Record<string, unknown> } | null>(null)
+  const [editor, setEditor] = useState<{
+    mode: "insert" | "edit"
+    initial?: Record<string, unknown>
+  } | null>(null)
   const [dialog, setDialog] = useState<
     null | "createTable" | "addColumn" | "createIndex" | "renameTable" | "import"
   >(null)
@@ -136,7 +142,10 @@ export function BrowseTab({
   // Only filters with a value (or one of the two null tests) are sent, so a
   // half-typed filter row does not blank the grid while it is being written.
   const activeFilters = useMemo(
-    () => filters.filter((f) => f.column && (f.value !== "" || f.op === "is_null" || f.op === "not_null")),
+    () =>
+      filters.filter(
+        (f) => f.column && (f.value !== "" || f.op === "is_null" || f.op === "not_null"),
+      ),
     [filters],
   )
   const filterParam = activeFilters.length ? JSON.stringify(activeFilters) : undefined
@@ -224,12 +233,12 @@ export function BrowseTab({
       return key
     })
     confirm({
-      title: `Delete ${keys.length} rows`,
-      confirmLabel: `Delete ${keys.length} rows`,
+      title: `Delete ${plural(keys.length, "row")}`,
+      confirmLabel: `Delete ${plural(keys.length, "row")}`,
       description: (
         <p className="text-sm">
-          Permanently deletes <b>{keys.length}</b> rows from <b>{table}</b>. This cannot be
-          undone.
+          Permanently deletes <b>{plural(keys.length, "row")}</b> from <b>{table}</b>. This cannot
+          be undone.
         </p>
       ),
       action: async (c) => {
@@ -247,7 +256,7 @@ export function BrowseTab({
         if (failed) {
           toast.warning(`Deleted ${keys.length - failed}, ${failed} could not be removed`)
         } else {
-          toast.success(`Deleted ${keys.length} rows`)
+          toast.success(`Deleted ${plural(keys.length, "row")}`)
         }
         reload()
       },
@@ -271,7 +280,7 @@ export function BrowseTab({
         rows: recs,
       })
       await navigator.clipboard.writeText(res.sql)
-      toast.success(`Copied ${recs.length} row${recs.length === 1 ? "" : "s"} as SQL`)
+      toast.success(`Copied ${plural(recs.length, "row")} as SQL`)
     } catch (err) {
       toast.error("Could not copy", { description: String(err) })
     }
@@ -304,7 +313,9 @@ export function BrowseTab({
 
   const toggleSort = (column: string) => {
     setOffset(0)
-    setSort((s) => (s?.column === column ? (s.desc ? null : { column, desc: true }) : { column, desc: false }))
+    setSort((s) =>
+      s?.column === column ? (s.desc ? null : { column, desc: true }) : { column, desc: false },
+    )
   }
 
   const fetchCount = async () => {
@@ -312,7 +323,9 @@ export function BrowseTab({
     setCounting(true)
     try {
       const res = await get<{ count: number }>(`/databases/${conn.id}/count`, {
-        schema, table, filters: filterParam,
+        schema,
+        table,
+        filters: filterParam,
       })
       setCount(res.count)
     } catch (err) {
@@ -376,6 +389,10 @@ export function BrowseTab({
         await del(`/databases/${conn.id}/ddl/table`, { body: { schema, table }, confirm: c })
         toast.success(`Dropped ${table}`)
         setCount(null)
+        // Deselected before the list is refreshed: the table is gone, and
+        // leaving it selected left the grid showing its last rows under a live
+        // Insert button while the list beside it had already dropped the name.
+        onSelect(null)
         tables.refresh()
       },
     })
@@ -451,7 +468,7 @@ export function BrowseTab({
                 <span className="truncate text-[11px] text-muted-foreground">
                   {schemaNames.length > 1 ? `${t.schema} · ` : ""}
                   {t.type}
-                  {t.estimatedRows > 0 && ` · ${t.estimatedRows.toLocaleString()} rows`}
+                  {t.estimatedRows > 0 && ` · ${plural(t.estimatedRows, "row")}`}
                   {t.size ? ` · ${bytes(t.size)}` : ""}
                 </span>
               </button>
@@ -473,7 +490,7 @@ export function BrowseTab({
           title={table ?? "Pick a table"}
           description={
             rows.data
-              ? `${rows.data.rowCount} rows in ${rows.data.duration}${
+              ? `${plural(rows.data.rowCount, "row")} in ${rows.data.duration}${
                   count !== null ? ` · ${count.toLocaleString()} total` : ""
                 }`
               : undefined
@@ -599,8 +616,8 @@ export function BrowseTab({
             <>
               {canWrite && pk.length === 0 && detail.data && (
                 <p className="border-b border-hairline bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground">
-                  This table has no primary key, so rows cannot be edited individually. Use the Query
-                  tab with an explicit WHERE clause.
+                  This table has no primary key, so rows cannot be edited individually. Use the
+                  Query tab with an explicit WHERE clause.
                 </p>
               )}
               <ResultGrid
@@ -611,7 +628,9 @@ export function BrowseTab({
                 onFollow={followForeignKey}
                 selection={canEditRows ? selected : undefined}
                 onSelectionChange={canEditRows ? setSelected : undefined}
-                onEdit={canEditRows ? (row) => setEditor({ mode: "edit", initial: row }) : undefined}
+                onEdit={
+                  canEditRows ? (row) => setEditor({ mode: "edit", initial: row }) : undefined
+                }
                 onDelete={canEditRows ? deleteRow : undefined}
                 onDuplicate={canWrite ? duplicateRow : undefined}
                 onCopySQL={copyAsInsert}
@@ -674,8 +693,11 @@ export function BrowseTab({
           table={table}
           kind="table"
           current={table}
-          onDone={() => {
+          onDone={(to) => {
             setCount(null)
+            // Follow the rename rather than holding the old name, which the
+            // next poll would ask the server for and be told does not exist.
+            onSelect({ schema, table: to })
             tables.refresh()
           }}
         />

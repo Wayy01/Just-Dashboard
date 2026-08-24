@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
+import { plural } from "@/lib/format"
 import { del, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
@@ -100,8 +101,8 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       history.refresh()
       toast.success(
         res.result.columns.length
-          ? `${res.result.rowCount} rows in ${res.result.duration}`
-          : `${res.result.rowsAffected} rows affected`,
+          ? `${plural(res.result.rowCount, "row")} in ${res.result.duration}`
+          : `${plural(res.result.rowsAffected, "row")} affected`,
       )
     } catch (err) {
       history.refresh()
@@ -140,7 +141,9 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
   const explain = async () => {
     setBusy(true)
     try {
-      const res = await post<{ result: QueryResult }>(`/databases/${conn.id}/explain`, { query: sql })
+      const res = await post<{ result: QueryResult }>(`/databases/${conn.id}/explain`, {
+        query: sql,
+      })
       setPlan(res.result)
       setResult(null)
     } catch (err) {
@@ -191,7 +194,11 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] [&>*]:min-w-0">
         <Panel>
-          <PanelHeader icon={Database} title="SQL" description={`${conn.driver} · ${conn.database}`} />
+          <PanelHeader
+            icon={Database}
+            title="SQL"
+            description={`${conn.driver} · ${conn.database}`}
+          />
           <PanelBody flush>
             <CodeEditor
               className="h-56"
@@ -226,7 +233,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
             )}
             {outline.data && (
               <span className="text-[11px] text-muted-foreground">
-                {Object.keys(outline.data.tables).length} tables available to autocomplete
+                {plural(Object.keys(outline.data.tables).length, "table")} available to autocomplete
               </span>
             )}
             {!can("service.control") && (
@@ -265,8 +272,13 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
                     >
                       <span className="truncate font-mono text-[11px]">{h.sql}</span>
                       <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                        <span className={cn("size-1.5 rounded-full", h.success ? "bg-success" : "bg-destructive")} />
-                        {h.risk} · {h.rowCount} rows · {h.durationMs}ms
+                        <span
+                          className={cn(
+                            "size-1.5 rounded-full",
+                            h.success ? "bg-success" : "bg-destructive",
+                          )}
+                        />
+                        {h.risk} · {plural(h.rowCount, "row")} · {h.durationMs}ms
                       </span>
                     </button>
                   ))}
@@ -278,13 +290,18 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
                     <p className="p-3 text-xs text-muted-foreground">No saved queries.</p>
                   )}
                   {saved.data?.map((q) => (
-                    <div key={q.id} className="group flex items-center gap-1 px-3 py-2 hover:bg-accent">
+                    <div
+                      key={q.id}
+                      className="group flex items-center gap-1 px-3 py-2 hover:bg-accent"
+                    >
                       <button
                         onClick={() => setSql(q.sql)}
                         className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
                       >
                         <span className="truncate text-xs font-medium">{q.name}</span>
-                        <span className="truncate font-mono text-[10px] text-muted-foreground">{q.sql}</span>
+                        <span className="truncate font-mono text-[10px] text-muted-foreground">
+                          {q.sql}
+                        </span>
                       </button>
                       {can("service.control") && (
                         <Button

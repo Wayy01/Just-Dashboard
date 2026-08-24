@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Upload } from "lucide-react"
 import { toast } from "sonner"
+import { plural } from "@/lib/format"
 import { post } from "@/lib/api"
 import type { DbImportResult, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -85,8 +86,8 @@ export function ImportDialog({
         { confirm: confirmText },
       )
       setResult(res)
-      toast.success(`Imported ${res.inserted} rows`, {
-        description: res.failed ? `${res.failed} rows failed` : undefined,
+      toast.success(`Imported ${plural(res.inserted, "row")}`, {
+        description: res.failed ? `${plural(res.failed, "row")} failed` : undefined,
       })
       onDone()
     } catch (err) {
@@ -193,9 +194,9 @@ export function ImportDialog({
             </label>
             {documentStore && (
               <p className="col-span-full text-[11px] text-muted-foreground">
-                A standalone MongoDB server has no transaction to wrap this in, so a failure
-                partway leaves what already landed in place. The result below says exactly how
-                much that was.
+                A standalone MongoDB server has no transaction to wrap this in, so a failure partway
+                leaves what already landed in place. The result below says exactly how much that
+                was.
               </p>
             )}
           </div>

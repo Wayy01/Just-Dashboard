@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { ArrowRight, ScanSearch, Search } from "lucide-react"
 import { toast } from "sonner"
+import { plural } from "@/lib/format"
 import { get } from "@/lib/api"
 import type { DbConnection, DbSearchResult } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -81,8 +82,8 @@ export function SearchTab({
         </Button>
         {result && (
           <span className="text-xs text-muted-foreground">
-            {result.matches.length} match{result.matches.length === 1 ? "" : "es"} across{" "}
-            {result.tablesScanned} table{result.tablesScanned === 1 ? "" : "s"}
+            {plural(result.matches.length, "match", "matches")} across{" "}
+            {plural(result.tablesScanned, "table")}
           </span>
         )}
       </PanelToolbar>
@@ -112,7 +113,7 @@ export function SearchTab({
               <EmptyState
                 icon={ScanSearch}
                 title={`No row contains “${ran}”`}
-                description={`Searched ${result.tablesScanned} table${result.tablesScanned === 1 ? "" : "s"}.`}
+                description={`Searched ${plural(result.tablesScanned, "table")}.`}
               />
             ) : (
               <div className="min-w-0 overflow-x-auto">
