@@ -349,6 +349,18 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 		cancel()
 	}()
 
+	// A repaint owed to the session because its size changed, held back until
+	// the size stops changing. Dragging the panel divider produces a resize a
+	// frame, and a `refresh-client` per frame would be a subprocess per frame
+	// for a picture that is about to be wrong again. One repaint after the
+	// drag settles is the whole point — see term.Manager.Redraw.
+	var redraw *time.Timer
+	defer func() {
+		if redraw != nil {
+			redraw.Stop()
+		}
+	}()
+
 	for {
 		kind, data, err := conn.ReadMessage()
 		if err != nil {
@@ -359,7 +371,33 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 			if json.Unmarshal(data, &ctrl) == nil {
 				switch ctrl.Type {
 				case "resize":
-					sess.Resize(ctrl.Rows, ctrl.Cols)
+					if changed, _ := sess.Resize(ctrl.Rows, ctrl.Cols); changed && sess.TmuxName != "" {
+						name := sess.TmuxName
+						if redraw != nil {
+							redraw.Stop()
+						}
+						redraw = time.AfterFunc(200*time.Millisecond, func() {
+							// Detached: the repaint is owed to the tmux
+							// session, which outlives this socket, and a
+							// browser that closed the tab mid-drag has left a
+							// half-drawn screen for whoever attaches next.
+							ctx, cancel := detachedContext(10)
+							defer cancel()
+							_ = s.modules.term.Redraw(ctx, name)
+						})
+					}
+					continue
+				case "exit-copy":
+					// The first keystroke after scrolling up. tmux is in copy
+					// mode and would swallow it as a copy command; this is the
+					// browser asking to be put back at the prompt before the
+					// keystroke that follows is delivered. Synchronous, so the
+					// order the operator typed in is the order tmux sees.
+					if sess.TmuxName != "" {
+						ctx, cancel := detachedContext(5)
+						_ = s.modules.term.ExitCopyMode(ctx, sess.TmuxName)
+						cancel()
+					}
 					continue
 				case "input":
 					sess.Write([]byte(ctrl.Data))

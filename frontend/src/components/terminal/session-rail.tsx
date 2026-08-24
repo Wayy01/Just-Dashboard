@@ -88,6 +88,7 @@ export function SessionRail({
   onDeleteFolder,
   onReorderFolders,
   onMoveWindow,
+  className,
 }: {
   sessions: TerminalWorkspace[]
   folders: TerminalFolder[]
@@ -107,6 +108,8 @@ export function SessionRail({
   onReorderFolders: (names: string[]) => void
   /** A window dragged out of its session and dropped onto another one. */
   onMoveWindow: (from: string, index: number, to: string) => void
+  /** The page owns the rail's width — it is the operator's to drag. */
+  className?: string
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -161,7 +164,7 @@ export function SessionRail({
   }
 
   return (
-    <div className="flex min-h-0 w-full shrink-0 flex-col gap-2 lg:w-72">
+    <div className={cn("flex min-h-0 w-full shrink-0 flex-col gap-2 lg:w-72", className)}>
       <div className="flex items-center gap-1">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
