@@ -3,8 +3,10 @@ package dbx
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -457,4 +459,46 @@ func TestLiveRedis(t *testing.T) {
 			t.Fatalf("RedisInfo: %v", err)
 		}
 	})
+}
+
+// TestLiveRedisScanFindsASelectiveMatch is the bug the loop in RedisScan
+// exists for.
+//
+// SCAN's COUNT is a hint about how many slots to examine, not how many keys to
+// return, so a pattern matching a handful of keys in a large keyspace matches
+// nothing at all in the first turn. Handing that page back reported an empty
+// keyspace for a pattern that matches: the browser's pattern box said "No keys
+// match this pattern" over a key it could see by name.
+func TestLiveRedisScanFindsASelectiveMatch(t *testing.T) {
+	client := liveRedis(t)
+	ctx := context.Background()
+
+	// Enough noise that the needle is not in the first turn's slots.
+	for i := 0; i < 600; i++ {
+		client.Set(ctx, "jdscan:noise:"+strconv.Itoa(i), "x", time.Minute)
+	}
+	client.Set(ctx, "jdscan:needle", "found", time.Minute)
+	t.Cleanup(func() {
+		keys, _, _ := client.Scan(ctx, 0, "jdscan:*", 10000).Result()
+		if len(keys) > 0 {
+			client.Del(ctx, keys...)
+		}
+	})
+
+	page, err := RedisScan(ctx, client, "jdscan:needle", 0, 100)
+	if err != nil {
+		t.Fatalf("RedisScan: %v", err)
+	}
+	if len(page.Keys) != 1 || page.Keys[0].Key != "jdscan:needle" {
+		t.Fatalf("a pattern matching one key returned %d: %+v", len(page.Keys), page.Keys)
+	}
+
+	// And the ordinary case still pages rather than returning the keyspace.
+	broad, err := RedisScan(ctx, client, "jdscan:*", 0, 50)
+	if err != nil {
+		t.Fatalf("RedisScan(broad): %v", err)
+	}
+	if len(broad.Keys) < 50 {
+		t.Errorf("a broad pattern returned %d keys, want a full page of 50", len(broad.Keys))
+	}
 }

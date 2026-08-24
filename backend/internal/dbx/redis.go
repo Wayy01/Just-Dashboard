@@ -150,9 +150,37 @@ func RedisScan(ctx context.Context, client *redis.Client, pattern string, cursor
 	if count <= 0 || count > 500 {
 		count = 100
 	}
-	keys, next, err := client.Scan(ctx, cursor, pattern, int64(count)).Result()
-	if err != nil {
-		return nil, err
+	// SCAN is asked repeatedly rather than once, because an empty turn does not
+	// mean an empty result. COUNT is a hint about how many slots to *examine*,
+	// not how many to return, so a selective pattern routinely matches nothing
+	// in the first turn and everything in the ninth: `user:*` against a
+	// keyspace of three hundred sessions answered "No keys match this pattern"
+	// while user:1 sat in it. Returning that page verbatim made the pattern box
+	// — the whole point of scanning server-side — report an empty keyspace and
+	// leave the operator to click Next blindly.
+	//
+	// The loop is bounded in both directions that matter: it stops as soon as
+	// it has a page's worth, and it gives up after scanTurns turns whatever
+	// happens, handing back the cursor it reached. A pattern matching nothing
+	// at all therefore costs a bounded amount of work per request and the
+	// client can carry on from where this left off, which is what Done and
+	// Cursor are for.
+	const scanTurns = 50
+	keys := []string{}
+	next := cursor
+	for turn := 0; turn < scanTurns; turn++ {
+		batch, cur, err := client.Scan(ctx, next, pattern, int64(count)).Result()
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, batch...)
+		next = cur
+		if next == 0 || len(keys) >= count {
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	page := &RedisPage{Keys: make([]RedisKey, 0, len(keys)), Cursor: next, Done: next == 0}
 	if len(keys) == 0 {
