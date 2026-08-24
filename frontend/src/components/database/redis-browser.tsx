@@ -5,7 +5,7 @@ import { Clock, Copy, Database, KeyRound, Pencil, Plus, Save, Search, Trash2 } f
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
-import { cn } from "@/lib/utils"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import type { DbConnection, RedisPage, RedisValue } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { usePoll } from "@/hooks/use-poll"
@@ -215,7 +215,9 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
             A glob pattern, matched by the server with SCAN — not a filter over this page.
           </p>
 
-          <div className="max-h-[calc(100svh-30rem)] space-y-0.5 overflow-y-auto">
+          <div
+            className={cn("max-h-[calc(100svh-30rem)] space-y-0.5 overflow-y-auto", ringSafeScroll)}
+          >
             {page.loading && <LoadingRows rows={5} />}
             {page.data?.keys.length === 0 && (
               <p className="p-2 text-xs text-muted-foreground">No keys match this pattern.</p>
