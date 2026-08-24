@@ -17,12 +17,14 @@ package dbx
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	_ "github.com/go-sql-driver/mysql"
@@ -367,19 +369,64 @@ func collectRows(rows *sql.Rows, maxRows int, statement string) (*QueryResult, e
 }
 
 // normaliseValue converts driver values into something JSON can carry.
-// []byte in particular would otherwise be base64-encoded and unreadable for
-// what is almost always text.
+//
+// []byte is the interesting one, and it arrives for two completely different
+// reasons. MySQL hands back ordinary text columns as bytes, so encoding every
+// []byte would turn most of a MySQL database into base64; but a bytea, a BLOB
+// or a varbinary really is binary, and `string(t)` on it is both unreadable
+// and *lossy* — invalid UTF-8 becomes U+FFFD, which put mojibake and raw
+// control characters into the grid, into CSV and JSON exports, and into the
+// INSERT statement the row menu copies to the clipboard, where the bytes that
+// came back were no longer the bytes that went in.
+//
+// So the decision is made on the content: bytes that are valid UTF-8 text are
+// the text they are, and anything else becomes the hex form every one of these
+// engines also accepts and prints. Long values are cut off rather than turning
+// a megabyte blob into two megabytes of hex in a row nobody can read anyway.
 func normaliseValue(v any) any {
 	switch t := v.(type) {
 	case nil:
 		return nil
 	case []byte:
-		return string(t)
+		if isPrintableText(t) {
+			return string(t)
+		}
+		return hexPreview(t)
 	case time.Time:
 		return t.UTC().Format(time.RFC3339Nano)
 	default:
 		return v
 	}
+}
+
+// maxHexPreview bounds the rendered form of a binary value. A row is meant to
+// be looked at; an operator who needs the whole blob wants the export, not a
+// cell.
+const maxHexPreview = 256
+
+func isPrintableText(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for _, r := range string(b) {
+		// Tab, newline and carriage return are ordinary in a text column. The
+		// rest of C0, and the NUL in particular, mean this is not text.
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func hexPreview(b []byte) string {
+	if len(b) <= maxHexPreview {
+		return "\\x" + hex.EncodeToString(b)
+	}
+	return "\\x" + hex.EncodeToString(b[:maxHexPreview]) +
+		"… (" + itoa(len(b)) + " bytes)"
 }
 
 func returnsRows(query string) bool {
