@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { errorMessage } from "@/lib/api"
 import type { DbColumn } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -83,7 +84,7 @@ export function RowEditor({
       onOpenChange(false)
     } catch (err) {
       toast.error(mode === "insert" ? "Insert failed" : "Update failed", {
-        description: String(err),
+        description: errorMessage(err),
       })
     } finally {
       setBusy(false)

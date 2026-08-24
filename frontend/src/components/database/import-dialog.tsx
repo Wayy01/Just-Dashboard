@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Upload } from "lucide-react"
 import { toast } from "sonner"
 import { plural } from "@/lib/format"
-import { post } from "@/lib/api"
+import { errorMessage, post } from "@/lib/api"
 import type { DbImportResult, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -91,7 +91,7 @@ export function ImportDialog({
       })
       onDone()
     } catch (err) {
-      toast.error("Import failed", { description: String(err) })
+      toast.error("Import failed", { description: errorMessage(err) })
       throw err
     } finally {
       setBusy(false)

@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { plural } from "@/lib/format"
-import { del, get, post } from "@/lib/api"
+import { del, errorMessage, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
   DbConnection,
@@ -106,7 +106,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       )
     } catch (err) {
       history.refresh()
-      toast.error("Query failed", { description: String(err) })
+      toast.error("Query failed", { description: errorMessage(err) })
       throw err
     } finally {
       setBusy(false)
@@ -147,7 +147,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       setPlan(res.result)
       setResult(null)
     } catch (err) {
-      toast.error("Could not plan the statement", { description: String(err) })
+      toast.error("Could not plan the statement", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -386,7 +386,7 @@ function SaveDialog({
       onOpenChange(false)
       setName("")
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      toast.error("Could not save", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }

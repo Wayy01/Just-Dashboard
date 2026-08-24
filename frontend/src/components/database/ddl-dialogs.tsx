@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { post } from "@/lib/api"
+import { errorMessage, post } from "@/lib/api"
 import type { DbDriverInfo, DbNewColumn, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -82,7 +82,7 @@ export function CreateTableDialog({
       setColumns([{ ...EMPTY_COLUMN }])
       onDone()
     } catch (err) {
-      toast.error("Could not create the table", { description: String(err) })
+      toast.error("Could not create the table", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -278,7 +278,7 @@ export function AddColumnDialog({
       setCol({ ...EMPTY_COLUMN })
       onDone()
     } catch (err) {
-      toast.error("Could not add the column", { description: String(err) })
+      toast.error("Could not add the column", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -386,7 +386,7 @@ export function CreateIndexDialog({
       setFields([])
       onDone()
     } catch (err) {
-      toast.error("Could not create the index", { description: String(err) })
+      toast.error("Could not create the index", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -493,7 +493,7 @@ export function RenameDialog({
       onOpenChange(false)
       onDone(to)
     } catch (err) {
-      toast.error("Could not rename", { description: String(err) })
+      toast.error("Could not rename", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }

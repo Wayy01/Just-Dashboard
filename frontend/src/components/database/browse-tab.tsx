@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { del, downloadUrl, get, patch, post } from "@/lib/api"
+import { del, downloadUrl, errorMessage, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type {
@@ -282,7 +282,7 @@ export function BrowseTab({
       await navigator.clipboard.writeText(res.sql)
       toast.success(`Copied ${plural(recs.length, "row")} as SQL`)
     } catch (err) {
-      toast.error("Could not copy", { description: String(err) })
+      toast.error("Could not copy", { description: errorMessage(err) })
     }
   }
 
@@ -329,7 +329,7 @@ export function BrowseTab({
       })
       setCount(res.count)
     } catch (err) {
-      toast.error("Could not count rows", { description: String(err) })
+      toast.error("Could not count rows", { description: errorMessage(err) })
     } finally {
       setCounting(false)
     }

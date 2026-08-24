@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react"
 import { Clock, Copy, Database, KeyRound, Pencil, Plus, Save, Search, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { del, get, post } from "@/lib/api"
+import { del, errorMessage, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, RedisPage, RedisValue } from "@/lib/types"
@@ -355,7 +355,7 @@ function NewKeyDialog({
     try {
       await onCreate(key.trim(), type, field.trim(), value, Number(ttl) || -1)
     } catch (err) {
-      toast.error("Could not create the key", { description: String(err) })
+      toast.error("Could not create the key", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -457,7 +457,7 @@ function RenameKeyDialog({
     try {
       await onRename(to.trim())
     } catch (err) {
-      toast.error("Could not rename the key", { description: String(err) })
+      toast.error("Could not rename the key", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -528,7 +528,7 @@ function RedisValueView({
       toast.success("Value saved")
       onChanged()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      toast.error("Could not save", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -547,7 +547,7 @@ function RedisValueView({
       toast.success(Number(ttl) > 0 ? `Expires in ${ttl}s` : "Expiry cleared")
       onChanged()
     } catch (err) {
-      toast.error("Could not set the TTL", { description: String(err) })
+      toast.error("Could not set the TTL", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -882,7 +882,7 @@ function MemberDialog({
     try {
       await onSave(field, member)
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      toast.error("Could not save", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }

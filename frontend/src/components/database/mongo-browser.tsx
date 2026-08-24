@@ -13,7 +13,7 @@ import {
   Upload,
 } from "lucide-react"
 import { toast } from "sonner"
-import { del, downloadUrl, get, patch, post } from "@/lib/api"
+import { del, downloadUrl, errorMessage, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, DbTable, MongoCollectionInfo, QueryResult } from "@/lib/types"
@@ -441,7 +441,13 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           </TabsContent>
 
           <TabsContent value="aggregate" className="min-w-0">
-            <AggregateTab conn={conn} database={dbName} collection={collection} confirm={confirm} />
+            <AggregateTab
+              conn={conn}
+              database={dbName}
+              collection={collection}
+              confirm={confirm}
+              onWrote={collections.refresh}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -512,7 +518,7 @@ function DocumentDialog({
     try {
       await onSave(json)
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      toast.error("Could not save", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }
@@ -551,11 +557,17 @@ function AggregateTab({
   database,
   collection,
   confirm,
+  // A $out or $merge pipeline creates or replaces a collection, which the list
+  // beside this tab has no other way to hear about: it polls on demand only, so
+  // the collection somebody just built stayed invisible until they switched
+  // database or reloaded the page.
+  onWrote,
 }: {
   conn: DbConnection
   database: string
   collection?: string
   confirm: ConfirmFn
+  onWrote: () => void
 }) {
   const { can } = useAuth()
   const [pipeline, setPipeline] = useState('[\n  { "$match": {} },\n  { "$limit": 20 }\n]')
@@ -577,8 +589,9 @@ function AggregateTab({
       )
       setResult(res.result)
       toast.success(`${plural(res.result.rowCount, "document")} in ${res.result.duration}`)
+      if (writes) onWrote()
     } catch (err) {
-      toast.error("Pipeline failed", { description: String(err) })
+      toast.error("Pipeline failed", { description: errorMessage(err) })
       throw err
     } finally {
       setBusy(false)

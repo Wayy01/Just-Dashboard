@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Copy, Database, Download, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { get, post } from "@/lib/api"
+import { errorMessage, get, post } from "@/lib/api"
 import type { DbConnection, OrmTarget, OrmTargetInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { CodeEditor } from "@/components/code-editor"
@@ -54,7 +54,7 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
       })
       setOutput(res)
     } catch (err) {
-      toast.error("Generation failed", { description: String(err) })
+      toast.error("Generation failed", { description: errorMessage(err) })
     } finally {
       setBusy(false)
     }

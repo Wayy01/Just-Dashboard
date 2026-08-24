@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { CheckCircle2, Plug, XCircle } from "lucide-react"
 import { toast } from "sonner"
-import { get, post, put } from "@/lib/api"
+import { errorMessage, get, post, put } from "@/lib/api"
 import { usePoll } from "@/hooks/use-poll"
 import type { DbConnection, DbDriver, DbDriverInfo } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -48,14 +48,19 @@ export function ConnectionDialog({
   // The engine list comes from the server, which is the only thing that knows
   // which dialects are registered. A hard-coded copy here went stale the moment
   // an engine was added and offered a driver the backend would reject.
-  const drivers = usePoll((signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal), 0)
+  const drivers = usePoll(
+    (signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal),
+    0,
+  )
   const [name, setName] = useState(existing?.name ?? "")
   const [driver, setDriver] = useState<DbDriver>(existing?.driver ?? "postgres")
   const info = drivers.data?.find((d) => d.id === driver)
   const [dsn, setDsn] = useState("")
-  const [testResult, setTestResult] = useState<{ ok: boolean; version?: string; error?: string } | null>(
-    null,
-  )
+  const [testResult, setTestResult] = useState<{
+    ok: boolean
+    version?: string
+    error?: string
+  } | null>(null)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -69,7 +74,7 @@ export function ConnectionDialog({
       })
       setTestResult(res)
     } catch (err) {
-      setTestResult({ ok: false, error: String(err) })
+      setTestResult({ ok: false, error: errorMessage(err) })
     } finally {
       setTesting(false)
     }
@@ -89,7 +94,7 @@ export function ConnectionDialog({
       onDone()
     } catch (err) {
       toast.error(editing ? "Could not update connection" : "Could not add connection", {
-        description: String(err),
+        description: errorMessage(err),
       })
     } finally {
       setSaving(false)
@@ -111,7 +116,11 @@ export function ConnectionDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Driver</Label>
-            <Select value={driver} onValueChange={(v) => setDriver(v as DbDriver)} disabled={editing}>
+            <Select
+              value={driver}
+              onValueChange={(v) => setDriver(v as DbDriver)}
+              disabled={editing}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -132,7 +141,9 @@ export function ConnectionDialog({
           <div className="space-y-1.5">
             <Label htmlFor="conn-dsn">
               {driver === "sqlite" ? "Database file path" : "Connection string"}
-              {editing && <span className="ml-1.5 text-muted-foreground">(leave blank to keep)</span>}
+              {editing && (
+                <span className="ml-1.5 text-muted-foreground">(leave blank to keep)</span>
+              )}
             </Label>
             <Input
               id="conn-dsn"
