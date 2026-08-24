@@ -5,6 +5,7 @@ import {
   FileCode,
   FolderTree,
   GitBranch as GitBranchIcon,
+  GitCompare,
   Loader2,
   PanelRightClose,
   Save,
@@ -21,13 +22,14 @@ import { CodeEditor } from "@/components/code-editor"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { FileTree, type ConfirmRequest } from "@/components/files/file-tree"
 import { DiffView } from "@/components/files/diff-view"
 import { GitTools } from "@/components/terminal/git-tools"
 
 type Overlay =
   | { kind: "file"; path: string }
-  | { kind: "diff"; title: string; subtitle?: string; body: string }
+  | { kind: "diff"; title: string; subtitle?: string; body: string; singleFile?: boolean }
   | null
 
 /**
@@ -54,6 +56,19 @@ export function WorkspaceTools({
   const [tab, setTab] = useState<"files" | "git">("files")
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+
+  /**
+   * Switching tab puts the open file or diff away.
+   *
+   * The overlay covers the panel body, so without this a click on "Git" while
+   * a file was open changed a tab nobody could see and read as a dead button.
+   * Going to the other tab *is* leaving the file — there is one panel here,
+   * not two — and the file is one click away in the tree either way.
+   */
+  const showTab = (next: "files" | "git") => {
+    setOverlay(null)
+    setTab(next)
+  }
 
   const detect = usePoll(
     (signal) =>
@@ -96,10 +111,20 @@ export function WorkspaceTools({
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-hairline bg-surface-header px-1.5 py-1">
-        <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={FolderTree}>
+        <TabButton
+          active={tab === "files"}
+          onClick={() => showTab("files")}
+          icon={FolderTree}
+          hint="The files under the shell's working directory"
+        >
           Files
         </TabButton>
-        <TabButton active={tab === "git"} onClick={() => setTab("git")} icon={GitBranchIcon}>
+        <TabButton
+          active={tab === "git"}
+          onClick={() => showTab("git")}
+          icon={GitBranchIcon}
+          hint="Stage, commit and push the repository the shell is in"
+        >
           Git
           {(status.data?.files.length ?? 0) > 0 && (
             <span className="ml-1 rounded bg-warning/20 px-1 font-mono text-[10px] text-warning">
@@ -107,22 +132,31 @@ export function WorkspaceTools({
             </span>
           )}
           {detect.data?.inRoots && detect.data.repo && !status.data?.files.length && (
-            <span className="ml-1 size-1.5 rounded-full bg-success" title="clean checkout" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="ml-1 size-1.5 rounded-full bg-success" />
+              </TooltipTrigger>
+              <TooltipContent>Working tree clean</TooltipContent>
+            </Tooltip>
           )}
         </TabButton>
         <span className="flex-1" />
         {onClose && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            title="Hide this panel"
-            aria-label="Hide this panel"
-            className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-            onClick={onClose}
-          >
-            <PanelRightClose className="size-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-label="Hide this panel"
+                className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                onClick={onClose}
+              >
+                <PanelRightClose className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Hide files &amp; git</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
@@ -134,32 +168,51 @@ export function WorkspaceTools({
             title="No session"
             description="Open or pick a session and its files and git status show up here."
           />
-        ) : tab === "files" ? (
-          <FileTree
-            key={treeRoot}
-            root={treeRoot}
-            statusMap={statusMap}
-            canWrite={can("file.write")}
-            canDelete={can("destructive")}
-            activeFile={overlay?.kind === "file" ? overlay.path : undefined}
-            onOpenFile={(path) => setOverlay({ kind: "file", path })}
-            onConfirm={setConfirm}
-            onChanged={refreshGit}
-            onOpenInFiles={onOpenInFiles}
-          />
         ) : (
-          <GitTools
-            dir={dir ?? ""}
-            detect={detect.data}
-            detectLoading={detect.loading}
-            detectError={detect.error}
-            status={status}
-            canControl={can("service.control")}
-            canDestruct={can("destructive")}
-            onShowDiff={(d) => setOverlay({ kind: "diff", ...d })}
-            onConfirm={setConfirm}
-            onChanged={refreshGit}
-          />
+          // Both tabs stay mounted, and the one you are not looking at is
+          // hidden rather than unmounted. Unmounting threw away everything the
+          // tree knew — which folders were open, where you had scrolled to —
+          // so a glance at the git tab and back landed you at the top of a
+          // collapsed tree, five clicks from where you were. Neither tab polls
+          // on its own (the panel owns those requests), so the one out of
+          // sight costs a render and nothing else.
+          <>
+            <div
+              className={cn(
+                "flex min-h-0 flex-1 flex-col",
+                tab !== "files" && "hidden",
+              )}
+            >
+              <FileTree
+                key={treeRoot}
+                root={treeRoot}
+                statusMap={statusMap}
+                canWrite={can("file.write")}
+                canDelete={can("destructive")}
+                activeFile={overlay?.kind === "file" ? overlay.path : undefined}
+                onOpenFile={(path) => setOverlay({ kind: "file", path })}
+                onConfirm={setConfirm}
+                onChanged={refreshGit}
+                onOpenInFiles={onOpenInFiles}
+              />
+            </div>
+            <div
+              className={cn("flex min-h-0 flex-1 flex-col", tab !== "git" && "hidden")}
+            >
+              <GitTools
+                dir={dir ?? ""}
+                detect={detect.data}
+                detectLoading={detect.loading}
+                detectError={detect.error}
+                status={status}
+                canControl={can("service.control")}
+                canDestruct={can("destructive")}
+                onShowDiff={(d) => setOverlay({ kind: "diff", ...d })}
+                onConfirm={setConfirm}
+                onChanged={refreshGit}
+              />
+            </div>
+          </>
         )}
 
         {overlay?.kind === "file" && (
@@ -169,6 +222,8 @@ export function WorkspaceTools({
             key={overlay.path}
             path={overlay.path}
             canWrite={can("file.write")}
+            change={statusMap[overlay.path]}
+            repoPath={repoPath}
             onClose={() => setOverlay(null)}
             onSaved={refreshGit}
           />
@@ -178,6 +233,7 @@ export function WorkspaceTools({
             title={overlay.title}
             subtitle={overlay.subtitle}
             body={overlay.body}
+            singleFile={overlay.singleFile}
             onClose={() => setOverlay(null)}
           />
         )}
@@ -194,36 +250,58 @@ function TabButton({
   active,
   onClick,
   icon: Icon,
+  hint,
   children,
 }: {
   active: boolean
   onClick: () => void
   icon: React.ComponentType<{ className?: string }>
+  /** What the tab shows — the label is one word and the count beside it is
+   *  the only other clue. */
+  hint: string
   children: React.ReactNode
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
-        active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      <Icon className="size-3.5" />
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+            active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon className="size-3.5" />
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   )
 }
 
-/** The file viewer/editor, drawn over the panel body rather than in a sheet. */
+/**
+ * The file viewer/editor, drawn over the panel body rather than in a sheet.
+ *
+ * A changed file can also be read as its diff, from the same place, without
+ * going to the git tab and finding it in a list: opening a file you are in the
+ * middle of editing and asking "what did I change here" is the same thought,
+ * two seconds apart. The file is what opens — the diff is a toggle, because
+ * most files are opened to be read or edited rather than reviewed.
+ */
 function InlineFile({
   path,
   canWrite,
+  change,
+  repoPath,
   onClose,
   onSaved,
 }: {
   path: string
   canWrite: boolean
+  /** This file's git status, when it has one and the shell is in a repo. */
+  change?: GitFileChange
+  repoPath?: string
   onClose: () => void
   onSaved: () => void
 }) {
@@ -231,6 +309,13 @@ function InlineFile({
   const [draft, setDraft] = useState("")
   const [error, setError] = useState<Error>()
   const [saving, setSaving] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
+  // The diff, tagged with what it is a diff *of*. Holding the tag rather than
+  // clearing the body when the request changes keeps every write to this state
+  // inside the fetch's own callback: a synchronous reset in the effect is a
+  // second render of a panel that is already re-rendering.
+  const [diff, setDiff] = useState<{ key: string; body?: string; error?: Error }>()
+  const [saves, setSaves] = useState(0)
 
   // The component is keyed on the path by its caller, so it mounts fresh for
   // each file and this only ever fetches — no synchronous reset needed.
@@ -245,6 +330,34 @@ function InlineFile({
     return () => controller.abort()
   }, [path])
 
+  // A file that git knows nothing about has nothing to compare against, and
+  // one that is only staged has its change in the index rather than the
+  // working tree — asking for the wrong one of those returns an empty diff and
+  // reads as "no changes" for a file the list says is modified.
+  const diffable = Boolean(change && repoPath && change.label !== "untracked")
+  const staged = Boolean(change?.staged && !change?.worktree)
+
+  // Re-read on every entry to the diff, and after every save: the point of
+  // reading it here is that you are editing the file, so a copy from before
+  // the last write is exactly the wrong answer.
+  const diffKey = `${path}|${staged}|${saves}`
+  const current = diff?.key === diffKey ? diff : undefined
+
+  useEffect(() => {
+    if (!showDiff || !diffable || !repoPath) return
+    const controller = new AbortController()
+    const root = repoPath.replace(/\/$/, "")
+    const relative = path.startsWith(root + "/") ? path.slice(root.length + 1) : path
+    get<{ diff: string }>(
+      "/git/diff",
+      { path: repoPath, file: relative, staged: staged ? "true" : undefined },
+      controller.signal,
+    )
+      .then((res) => setDiff({ key: diffKey, body: res.diff }))
+      .catch((err) => !controller.signal.aborted && setDiff({ key: diffKey, error: err }))
+    return () => controller.abort()
+  }, [showDiff, diffable, repoPath, path, staged, diffKey])
+
   const dirty = file !== undefined && draft !== file.content
 
   const save = async () => {
@@ -253,6 +366,7 @@ function InlineFile({
       await put("/files/write", { path, content: draft })
       toast.success("Saved", { description: path })
       setFile((f) => (f ? { ...f, content: draft } : f))
+      setSaves((n) => n + 1)
       onSaved()
     } catch (err) {
       toast.error("Could not save", { description: String(err) })
@@ -273,39 +387,109 @@ function InlineFile({
             unsaved
           </Badge>
         )}
-        {file && !file.binary && canWrite && (
-          <Button size="xs" onClick={save} disabled={!dirty || saving}>
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            Save
-          </Button>
+        {change && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="xs"
+                variant={showDiff ? "secondary" : "ghost"}
+                aria-pressed={showDiff}
+                className="shrink-0 gap-1 px-1.5 text-[11px]"
+                onClick={() => setShowDiff((v) => !v)}
+              >
+                <GitCompare className="size-3.5" />
+                Diff
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {showDiff
+                ? "Back to the file"
+                : !diffable
+                  ? "Untracked — there is no earlier version to compare against"
+                  : staged
+                    ? "Show what is staged for the next commit"
+                    : "Show what changed since the last commit"}
+            </TooltipContent>
+          </Tooltip>
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="size-6 p-0 text-muted-foreground hover:text-foreground"
-          title="Close (Esc)"
-          aria-label="Close"
-          onClick={onClose}
-        >
-          <X className="size-3.5" />
-        </Button>
+        {file && !file.binary && canWrite && !showDiff && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="xs" onClick={save} disabled={!dirty || saving}>
+                {saving ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Save className="size-3.5" />
+                )}
+                Save
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Write this file back to disk</TooltipContent>
+          </Tooltip>
+        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="size-6 p-0 text-muted-foreground hover:text-foreground"
+              aria-label="Close"
+              onClick={onClose}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Close this file (Esc)</TooltipContent>
+        </Tooltip>
       </div>
       <div className="min-h-0 flex-1">
-        {error && <ErrorState error={error} className="m-3" />}
-        {!file && !error && <LoadingRows className="p-3" rows={6} />}
-        {file?.binary && (
-          <div className="p-4 text-xs text-muted-foreground">
-            This looks like a binary file ({bytes(file.size)}); it is not shown here.
-          </div>
-        )}
-        {file && !file.binary && (
-          <CodeEditor
-            className="h-full"
-            value={draft}
-            onChange={setDraft}
-            language={file.language}
-            readOnly={!canWrite}
-          />
+        {showDiff ? (
+          // An untracked file is not a failed diff, and saying so beats a
+          // disabled button: a control that cannot be pressed also cannot be
+          // hovered, so the one place with room for the explanation is the
+          // place the explanation would have gone.
+          !diffable ? (
+            <div className="p-4 text-xs text-muted-foreground">
+              git is not tracking this file yet, so there is no earlier version to compare it
+              against — every line in it is new. Stage it from the Git tab and the diff appears
+              here.
+            </div>
+          ) : current?.error ? (
+            <ErrorState error={current.error} className="m-3" />
+          ) : current?.body === undefined ? (
+            <LoadingRows className="p-3" rows={6} />
+          ) : (
+            <DiffView
+              className="h-full"
+              singleFile
+              body={
+                current.body ||
+                (dirty
+                  ? "Nothing committed yet for this file — the change you are looking at is unsaved."
+                  : "No textual diff (a binary file, or a change git records without content).")
+              }
+            />
+          )
+        ) : (
+          <>
+            {error && <ErrorState error={error} className="m-3" />}
+            {!file && !error && <LoadingRows className="p-3" rows={6} />}
+            {file?.binary && (
+              <div className="p-4 text-xs text-muted-foreground">
+                This looks like a binary file ({bytes(file.size)}); it is not shown here.
+              </div>
+            )}
+            {file && !file.binary && (
+              <CodeEditor
+                className="h-full"
+                value={draft}
+                onChange={setDraft}
+                language={file.language}
+                readOnly={!canWrite}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -317,11 +501,13 @@ function InlineDiff({
   title,
   subtitle,
   body,
+  singleFile,
   onClose,
 }: {
   title: string
   subtitle?: string
   body: string
+  singleFile?: boolean
   onClose: () => void
 }) {
   return (
@@ -333,18 +519,22 @@ function InlineDiff({
           </p>
           {subtitle && <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>}
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-          title="Close (Esc)"
-          aria-label="Close"
-          onClick={onClose}
-        >
-          <X className="size-3.5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+              aria-label="Close"
+              onClick={onClose}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Close the diff (Esc)</TooltipContent>
+        </Tooltip>
       </div>
-      <DiffView body={body} className="min-h-0 flex-1" />
+      <DiffView body={body} singleFile={singleFile} className="min-h-0 flex-1" />
     </div>
   )
 }

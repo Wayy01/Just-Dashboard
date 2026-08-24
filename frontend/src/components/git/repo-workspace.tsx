@@ -30,6 +30,7 @@ import { Panel } from "@/components/panel"
 import { Page } from "@/components/page"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   DropdownMenu,
@@ -126,16 +127,20 @@ export function RepoWorkspace({
     <Page fill className="gap-2 px-2 py-2 md:px-3 md:py-3">
       {/* Header: where you are, what branch, and the network actions. */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-          title="Back to all repositories"
-          aria-label="Back to repositories"
-          onClick={onBack}
-        >
-          <ArrowLeft className="size-4" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+              aria-label="Back to repositories"
+              onClick={onBack}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Back to all repositories</TooltipContent>
+        </Tooltip>
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium" title={repo.path}>
             {repo.name}
@@ -145,63 +150,86 @@ export function RepoWorkspace({
             {head.remote ? ` · ${head.remote}` : ""}
           </p>
         </div>
-        <button
-          onClick={() => setTab("branches")}
-          title="Switch or manage branches"
-          className="shrink-0"
-        >
-          <Badge variant={head.detached ? "destructive" : "secondary"} className="font-normal">
-            <GitBranchIcon className="size-3" />
-            {head.branch || "—"}
-          </Badge>
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button onClick={() => setTab("branches")} className="shrink-0">
+              <Badge variant={head.detached ? "destructive" : "secondary"} className="font-normal">
+                <GitBranchIcon className="size-3" />
+                {head.branch || "—"}
+              </Badge>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {head.detached
+              ? "HEAD is detached — switch or manage branches"
+              : "Switch or manage branches"}
+          </TooltipContent>
+        </Tooltip>
         <AheadBehind ahead={head.ahead} behind={head.behind} />
 
         <span className="flex-1" />
 
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!!busy}
-          title="Check the remote for new commits without changing your files"
-          onClick={() =>
-            run("Fetched", () => post<GitResult>("/git/fetch", undefined, { query: { ...q, prune: true } }))
-          }
-        >
-          <RefreshCw className={cn("size-4", busy === "Fetched" && "animate-spin")} />
-          Fetch
-        </Button>
-        {canControl && (
-          <>
+        <Tooltip>
+          <TooltipTrigger asChild>
             <Button
               size="sm"
               variant="outline"
               disabled={!!busy}
-              title="Bring the latest committed changes down from the remote"
-              onClick={() => run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))}
+              onClick={() =>
+                run("Fetched", () =>
+                  post<GitResult>("/git/fetch", undefined, { query: { ...q, prune: true } }),
+                )
+              }
             >
-              <ArrowDownToLine className="size-4" />
-              Pull
-              {head.behind > 0 && (
-                <span className="numeric ml-0.5 rounded bg-warning/20 px-1 text-[10px] text-warning">
-                  {head.behind}
-                </span>
-              )}
+              <RefreshCw className={cn("size-4", busy === "Fetched" && "animate-spin")} />
+              Fetch
             </Button>
-            <Button
-              size="sm"
-              disabled={!!busy}
-              title="Send your committed changes up to the remote"
-              onClick={() => run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))}
-            >
-              <ArrowUpFromLine className="size-4" />
-              Push
-              {head.ahead > 0 && (
-                <span className="numeric ml-0.5 rounded bg-primary-foreground/20 px-1 text-[10px]">
-                  {head.ahead}
-                </span>
-              )}
-            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Check the remote for new commits without changing your files</TooltipContent>
+        </Tooltip>
+        {canControl && (
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!busy}
+                  onClick={() =>
+                    run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))
+                  }
+                >
+                  <ArrowDownToLine className="size-4" />
+                  Pull
+                  {head.behind > 0 && (
+                    <span className="numeric ml-0.5 rounded bg-warning/20 px-1 text-[10px] text-warning">
+                      {head.behind}
+                    </span>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Bring the latest committed changes down from the remote</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  disabled={!!busy}
+                  onClick={() =>
+                    run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))
+                  }
+                >
+                  <ArrowUpFromLine className="size-4" />
+                  Push
+                  {head.ahead > 0 && (
+                    <span className="numeric ml-0.5 rounded bg-primary-foreground/20 px-1 text-[10px]">
+                      {head.ahead}
+                    </span>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Send your committed changes up to the remote</TooltipContent>
+            </Tooltip>
             <StashMenu
               busy={busy}
               stashes={status.data?.stashes ?? 0}
@@ -324,18 +352,22 @@ function StashMenu({
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!!busy}
-          title="Stash and other actions"
-          aria-label="More git actions"
-          className="px-2"
-        >
-          <MoreHorizontal className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!!busy}
+              aria-label="More git actions"
+              className="px-2"
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Stash and other actions</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuLabel className="text-xs">Set changes aside</DropdownMenuLabel>
         <DropdownMenuItem disabled={clean} onSelect={onStash}>

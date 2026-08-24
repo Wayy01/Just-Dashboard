@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /**
  * How a branch stands against its upstream: commits waiting to push (ahead) and
@@ -23,16 +24,26 @@ export function AheadBehind({
   return (
     <span className="numeric flex items-center gap-1.5 font-mono text-xs">
       {ahead > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-success" title={`${ahead} to push`}>
-          <ArrowUpFromLine className="size-3" />
-          {ahead}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center gap-0.5 text-success">
+              <ArrowUpFromLine className="size-3" />
+              {ahead}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{`${ahead} commit${ahead === 1 ? "" : "s"} to push`}</TooltipContent>
+        </Tooltip>
       )}
       {behind > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-warning" title={`${behind} to pull`}>
-          <ArrowDownToLine className="size-3" />
-          {behind}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center gap-0.5 text-warning">
+              <ArrowDownToLine className="size-3" />
+              {behind}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{`${behind} commit${behind === 1 ? "" : "s"} to pull`}</TooltipContent>
+        </Tooltip>
       )}
     </span>
   )

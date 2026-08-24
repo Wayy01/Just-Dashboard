@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import type { FileEntry } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconAction } from "@/components/icon-action"
 import { TableCell, TableRow } from "@/components/ui/table"
@@ -158,17 +159,21 @@ export function FileRow({
             </>
           )}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="More actions"
-                title="More actions"
-                className="size-7 p-0 text-muted-foreground hover:text-foreground"
-              >
-                <MoreHorizontal className="size-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="More actions"
+                    className="size-7 p-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Rename, move, copy, permissions, delete</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuItem onSelect={onOpen}>
                 {entry.isDir ? (

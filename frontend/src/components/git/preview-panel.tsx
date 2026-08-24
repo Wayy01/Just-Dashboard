@@ -11,10 +11,19 @@ import { DiffView } from "@/components/files/diff-view"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /** What the preview column is showing: a diff, or a file open for editing. */
 export type GitPreview =
-  | { kind: "diff"; title: string; subtitle?: string; body: string }
+  | {
+      kind: "diff"
+      title: string
+      subtitle?: string
+      body: string
+      /** One file's diff, titled with its name — the renderer can drop git's
+       *  header rather than repeat it. */
+      singleFile?: boolean
+    }
   | { kind: "file"; path: string }
 
 /**
@@ -56,7 +65,7 @@ export function PreviewPanel({
           subtitle={preview.subtitle}
           onClose={onClose}
         />
-        <DiffView body={preview.body} className="min-h-0 flex-1" />
+        <DiffView body={preview.body} singleFile={preview.singleFile} className="min-h-0 flex-1" />
       </div>
     )
   }
@@ -194,16 +203,20 @@ function PreviewHeader({
         )}
       </div>
       {trailing}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-        title="Close"
-        aria-label="Close"
-        onClick={onClose}
-      >
-        <X className="size-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Close the preview</TooltipContent>
+      </Tooltip>
     </div>
   )
 }

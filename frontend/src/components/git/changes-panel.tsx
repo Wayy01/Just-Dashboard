@@ -5,6 +5,7 @@ import { Check, GitCommitHorizontal, Minus, Plus, RotateCcw, Upload } from "luci
 import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
 import type { GitFileChange, GitResult, GitStatus } from "@/lib/types"
 import type { usePoll } from "@/hooks/use-poll"
 import type { ConfirmRequest } from "@/components/confirm-dialog"
@@ -13,6 +14,7 @@ import type { GitPreview } from "@/components/git/preview-panel"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 type GitRun = (label: string, fn: () => Promise<GitResult>) => Promise<GitResult>
 
@@ -60,6 +62,7 @@ export function ChangesPanel({
         title: file.path,
         subtitle: staged ? "staged — ready to commit" : `working tree — ${file.label}`,
         body: res.diff || "No textual diff (binary file, or no line changes).",
+        singleFile: true,
       })
     } catch (err) {
       toast.error("Could not read the diff", { description: String(err) })
@@ -154,7 +157,11 @@ export function ChangesPanel({
                 tone="success"
                 action={
                   canControl && (
-                    <GroupAction disabled={!!busy} onClick={() => unstage([])}>
+                    <GroupAction
+                      disabled={!!busy}
+                      hint="Take every staged file back out of the next commit"
+                      onClick={() => unstage([])}
+                    >
                       Unstage all
                     </GroupAction>
                   )
@@ -187,12 +194,21 @@ export function ChangesPanel({
                 action={
                   <>
                     {canDestruct && (
-                      <GroupAction danger disabled={!!busy} onClick={discardAll}>
+                      <GroupAction
+                        danger
+                        disabled={!!busy}
+                        hint="Restore every tracked file to HEAD — untracked files are left alone"
+                        onClick={discardAll}
+                      >
                         Discard all
                       </GroupAction>
                     )}
                     {canControl && (
-                      <GroupAction disabled={!!busy} onClick={() => stage([])}>
+                      <GroupAction
+                        disabled={!!busy}
+                        hint="Stage every change in the working tree"
+                        onClick={() => stage([])}
+                      >
                         Stage all
                       </GroupAction>
                     )}
@@ -260,25 +276,33 @@ export function ChangesPanel({
               Amend last commit
             </label>
             <span className="flex-1" />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!!busy || !canCommit}
-              onClick={() => void commit(true)}
-              title="Commit the staged changes, then push them to the remote"
-            >
-              <Upload className="size-3.5" />
-              Commit &amp; push
-            </Button>
-            <Button
-              size="sm"
-              disabled={!!busy || !canCommit}
-              onClick={() => void commit(false)}
-              title="Commit the staged changes (Ctrl+Enter)"
-            >
-              <GitCommitHorizontal className="size-3.5" />
-              Commit
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!busy || !canCommit}
+                  onClick={() => void commit(true)}
+                >
+                  <Upload className="size-3.5" />
+                  Commit &amp; push
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Commit the staged changes, then push them to the remote</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  disabled={!!busy || !canCommit}
+                  onClick={() => void commit(false)}
+                >
+                  <GitCommitHorizontal className="size-3.5" />
+                  Commit
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Commit the staged changes (Ctrl+Enter)</TooltipContent>
+            </Tooltip>
           </div>
           {staged.length === 0 && (
             <p className="text-[11px] text-muted-foreground">
@@ -332,26 +356,33 @@ function FileRow({
   onClick: () => void
   actions?: React.ReactNode
 }) {
+  const tone = gitTone(file)
   return (
     <div
       className={cn(
-        "group flex min-w-0 items-center gap-2 px-3 py-1.5 hover:bg-[var(--row-hover)]",
+        "group relative flex min-w-0 items-center gap-2 bg-(--git-tint) px-3 py-1.5",
+        "before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-(--git-edge) before:content-['']",
+        "hover:bg-[var(--row-hover)]",
         active && "bg-primary/10",
       )}
+      style={gitStyle(tone)}
     >
-      <span
-        className={cn(
-          "w-5 shrink-0 text-center font-mono text-[10px]",
-          file.label === "deleted" ? "text-destructive" : "text-muted-foreground",
-        )}
-        title={file.label}
-      >
-        {file.label === "untracked" ? "U" : (file.worktree || file.index || "?").toUpperCase()}
-      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="w-5 shrink-0 text-center font-mono text-[10px] text-(--git-colour)">
+            {gitLetter(file)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{describeChange(file)}</TooltipContent>
+      </Tooltip>
+      {/* The name carries no tooltip — see the same row in the terminal's git
+          tab for why. */}
       <button
         onClick={onClick}
-        className="min-w-0 flex-1 truncate text-left font-mono text-[12px] hover:underline"
-        title={`${file.path} — ${file.label}`}
+        className={cn(
+          "min-w-0 flex-1 truncate text-left font-mono text-[12px] text-(--git-colour) hover:underline",
+          file.label === "deleted" && "line-through",
+        )}
       >
         {file.path}
       </button>
@@ -376,44 +407,62 @@ function RowAction({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      className={cn("size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground", className)}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          disabled={disabled}
+          className={cn(
+            "size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground",
+            className,
+          )}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
+/**
+ * A whole-group action. The visible label is the verb; the tooltip is the
+ * scope, which is the half that decides whether you meant to press it.
+ */
 function GroupAction({
   disabled,
   danger,
+  hint,
   onClick,
   children,
 }: {
   disabled?: boolean
   danger?: boolean
+  hint: string
   onClick: () => void
   children: React.ReactNode
 }) {
   return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-40",
-        danger
-          ? "text-destructive hover:bg-destructive/10"
-          : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          disabled={disabled}
+          onClick={onClick}
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-40",
+            danger
+              ? "text-destructive hover:bg-destructive/10"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   )
 }

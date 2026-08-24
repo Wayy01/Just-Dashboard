@@ -39,6 +39,7 @@ import { PermissionsDialog } from "@/components/files/permissions-dialog"
 import { usePrompt } from "@/components/files/prompt-dialog"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -359,34 +360,44 @@ export default function FilesPage() {
         actions={
           <>
             <SearchDialog path={path} onOpen={(p, isDir) => (isDir ? setPath(p) : setEditing(p))} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                prompt({
-                  title: "Go to path",
-                  label: "Absolute path",
-                  initial: path,
-                  confirmLabel: "Go",
-                  placeholder: "/var/www",
-                  submit: (p) => setPath(clean(p)),
-                })
-              }
-              title="Jump to an absolute path"
-            >
-              <FolderInput className="size-4" />
-              Go to…
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    prompt({
+                      title: "Go to path",
+                      label: "Absolute path",
+                      initial: path,
+                      confirmLabel: "Go",
+                      placeholder: "/var/www",
+                      submit: (p) => setPath(clean(p)),
+                    })
+                  }
+                >
+                  <FolderInput className="size-4" />
+                  Go to…
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Jump straight to an absolute path</TooltipContent>
+            </Tooltip>
             {selected.length === 0 && (
-              <Button
-                variant={showTree ? "secondary" : "outline"}
-                size="sm"
-                onClick={() => setShowTree((v) => !v)}
-                title="Toggle the folder tree"
-              >
-                <ListTree className="size-4" />
-                Tree
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={showTree ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setShowTree((v) => !v)}
+                  >
+                    <ListTree className="size-4" />
+                    Tree
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {showTree ? "Hide the folder tree" : "Show the folder tree"}
+                </TooltipContent>
+              </Tooltip>
             )}
             {selected.length > 0 ? (
               <SelectionActions
@@ -726,31 +737,56 @@ function SelectionActions({
       <span className="numeric text-[13px] text-muted-foreground">{count} selected</span>
       {canWrite && (
         <>
-          <Button variant="outline" size="sm" onClick={onCopy}>
-            <ClipboardPaste className="size-4" />
-            Copy
-          </Button>
-          <Button variant="outline" size="sm" onClick={onCut}>
-            <Scissors className="size-4" />
-            Cut
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={onCopy}>
+                <ClipboardPaste className="size-4" />
+                Copy
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Hold these to paste into another folder</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={onCut}>
+                <Scissors className="size-4" />
+                Cut
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Hold these to move into another folder</TooltipContent>
+          </Tooltip>
         </>
       )}
-      <Button variant="outline" size="sm" asChild>
-        <a href={archiveHref} download>
-          <FileArchive className="size-4" />
-          Archive
-        </a>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="sm" asChild>
+            <a href={archiveHref} download>
+              <FileArchive className="size-4" />
+              Archive
+            </a>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Download the selection as one .tar.gz</TooltipContent>
+      </Tooltip>
       {canDestruct && (
-        <Button variant="outline" size="sm" className="text-destructive" onClick={onDelete}>
-          <Trash2 className="size-4" />
-          Delete
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="sm" className="text-destructive" onClick={onDelete}>
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Delete the selection permanently</TooltipContent>
+        </Tooltip>
       )}
-      <Button variant="ghost" size="sm" onClick={onClear} title="Clear selection">
-        <X className="size-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="sm" aria-label="Clear selection" onClick={onClear}>
+            <X className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Clear the selection</TooltipContent>
+      </Tooltip>
     </>
   )
 }

@@ -18,6 +18,7 @@ import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
 import type {
   GitBranch,
   GitCommit,
@@ -31,9 +32,17 @@ import { usePoll } from "@/hooks/use-poll"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { ConfirmRequest } from "@/components/files/file-tree"
 
-type DiffRequest = { title: string; subtitle?: string; body: string }
+type DiffRequest = {
+  title: string
+  subtitle?: string
+  body: string
+  /** The diff is of one file, whose name is already the title — so the
+   *  renderer can drop git's header instead of repeating it. */
+  singleFile?: boolean
+}
 
 /**
  * The git workflow for whatever repository the terminal's shell is sitting in.
@@ -203,9 +212,16 @@ function RepoHeader({
       <GitBranchIcon
         className={cn("size-3.5 shrink-0", repo.detached ? "text-destructive" : "text-success")}
       />
-      <span className="min-w-0 max-w-[9rem] truncate font-mono text-[12px] font-medium" title={repo.branch}>
-        {repo.branch}
-      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="min-w-0 max-w-[9rem] truncate font-mono text-[12px] font-medium">
+            {repo.branch}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {repo.detached ? `Detached at ${repo.branch}` : `On branch ${repo.branch}`}
+        </TooltipContent>
+      </Tooltip>
       <AheadBehind ahead={repo.ahead} behind={repo.behind} />
       <span className="flex-1" />
       <GitButton
@@ -296,6 +312,7 @@ function ChangesTab({
         title: file,
         subtitle: staged ? "staged changes" : "working tree changes",
         body: res.diff || "No textual diff (binary file, or no changes).",
+        singleFile: true,
       })
     } catch (err) {
       toast.error("Could not read the diff", { description: String(err) })
@@ -366,7 +383,11 @@ function ChangesTab({
                 tone="success"
                 action={
                   canControl && (
-                    <GroupButton disabled={!!busy} onClick={() => unstage([])}>
+                    <GroupButton
+                      disabled={!!busy}
+                      hint="Take every staged file back out of the next commit"
+                      onClick={() => unstage([])}
+                    >
                       Unstage all
                     </GroupButton>
                   )
@@ -404,6 +425,7 @@ function ChangesTab({
                       <GroupButton
                         disabled={!!busy}
                         danger
+                        hint="Restore every tracked file to HEAD — untracked files are left alone"
                         onClick={() =>
                           onConfirm({
                             title: "Discard all working-tree changes",
@@ -426,7 +448,11 @@ function ChangesTab({
                       </GroupButton>
                     )}
                     {canControl && (
-                      <GroupButton disabled={!!busy} onClick={() => stage([])}>
+                      <GroupButton
+                        disabled={!!busy}
+                        hint="Stage every change in the working tree"
+                        onClick={() => stage([])}
+                      >
                         Stage all
                       </GroupButton>
                     )}
@@ -496,25 +522,33 @@ function ChangesTab({
               Amend
             </label>
             <span className="flex-1" />
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
-              onClick={() => void commit(true)}
-              title="Commit the staged changes, then push"
-            >
-              <ArrowUpFromLine className="size-3.5" />
-              Commit &amp; push
-            </Button>
-            <Button
-              size="xs"
-              disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
-              onClick={() => void commit(false)}
-              title="Commit the staged changes (Ctrl+Enter)"
-            >
-              <GitCommitHorizontal className="size-3.5" />
-              Commit
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
+                  onClick={() => void commit(true)}
+                >
+                  <ArrowUpFromLine className="size-3.5" />
+                  Commit &amp; push
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Commit the staged changes, then push the branch</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="xs"
+                  disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
+                  onClick={() => void commit(false)}
+                >
+                  <GitCommitHorizontal className="size-3.5" />
+                  Commit
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Commit the staged changes (Ctrl+Enter)</TooltipContent>
+            </Tooltip>
           </div>
           {staged.length === 0 && (message.trim() || amend) && (
             <p className="text-[11px] text-muted-foreground">Stage something first.</p>
@@ -559,8 +593,9 @@ function HistoryTab({
   return (
     <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-1">
       {log.data.map((c) => (
+        <Tooltip key={c.sha}>
+          <TooltipTrigger asChild>
         <button
-          key={c.sha}
           onClick={() => show(c)}
           className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--row-hover)]"
         >
@@ -574,11 +609,14 @@ function HistoryTab({
           </div>
           {(c.insertions > 0 || c.deletions > 0) && (
             <span className="numeric shrink-0 font-mono text-[10px]">
-              <span className="text-success">+{c.insertions}</span>{" "}
-              <span className="text-destructive">−{c.deletions}</span>
+              <span className="text-(--git-added)">+{c.insertions}</span>{" "}
+              <span className="text-(--git-deleted)">−{c.deletions}</span>
             </span>
           )}
         </button>
+          </TooltipTrigger>
+          <TooltipContent>{`${c.short} · ${timestamp(c.at)} — click to see this commit's diff`}</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   )
@@ -629,9 +667,19 @@ function BranchesTab({
             placeholder="New branch from HEAD"
             className="h-7 text-[12px]"
           />
-          <Button type="submit" size="xs" variant="outline" disabled={!!busy || !newBranch.trim()}>
-            Create
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="submit"
+                size="xs"
+                variant="outline"
+                disabled={!!busy || !newBranch.trim()}
+              >
+                Create
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create the branch at HEAD and stay where you are</TooltipContent>
+          </Tooltip>
         </form>
       )}
       <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-1">
@@ -653,19 +701,24 @@ function BranchesTab({
             </div>
             <AheadBehind ahead={b.ahead} behind={b.behind} />
             {canControl && !b.current && !b.remote && (
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={!!busy}
-                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                onClick={() =>
-                  run(`Switched to ${b.name}`, () =>
-                    post<GitResult>("/git/checkout", { ref: b.name }, { query: q }),
-                  ).then(() => branches.refresh())
-                }
-              >
-                Switch
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={!!busy}
+                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={() =>
+                      run(`Switched to ${b.name}`, () =>
+                        post<GitResult>("/git/checkout", { ref: b.name }, { query: q }),
+                      ).then(() => branches.refresh())
+                    }
+                  >
+                    Switch
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{`Check out ${b.name}`}</TooltipContent>
+              </Tooltip>
             )}
           </div>
         ))}
@@ -681,16 +734,26 @@ function AheadBehind({ ahead, behind }: { ahead: number; behind: number }) {
   return (
     <span className="numeric flex items-center gap-1 font-mono text-[11px]">
       {ahead > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-success" title="commits to push">
-          <ArrowUpFromLine className="size-3" />
-          {ahead}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center gap-0.5 text-success">
+              <ArrowUpFromLine className="size-3" />
+              {ahead}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{`${ahead} commit${ahead === 1 ? "" : "s"} to push`}</TooltipContent>
+        </Tooltip>
       )}
       {behind > 0 && (
-        <span className="inline-flex items-center gap-0.5 text-warning" title="commits to pull">
-          <ArrowDownToLine className="size-3" />
-          {behind}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center gap-0.5 text-warning">
+              <ArrowDownToLine className="size-3" />
+              {behind}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{`${behind} commit${behind === 1 ? "" : "s"} to pull`}</TooltipContent>
+        </Tooltip>
       )}
     </span>
   )
@@ -737,21 +800,31 @@ function FileRow({
   onDiff: () => void
   action?: React.ReactNode
 }) {
+  const tone = gitTone(file)
   return (
-    <div className="group flex min-w-0 items-center gap-2 px-2 py-1 hover:bg-[var(--row-hover)]">
-      <span
-        className={cn(
-          "w-6 shrink-0 text-center font-mono text-[10px]",
-          file.label === "deleted" ? "text-destructive" : "text-muted-foreground",
-        )}
-        title={file.label}
-      >
-        {file.label === "untracked" ? "U" : (file.worktree || file.index || "?").toUpperCase()}
-      </span>
+    <div
+      className="group relative flex min-w-0 items-center gap-2 bg-(--git-tint) px-2 py-1 before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-(--git-edge) before:content-[''] hover:bg-[var(--row-hover)]"
+      style={gitStyle(tone)}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="w-6 shrink-0 text-center font-mono text-[10px] text-(--git-colour)">
+            {gitLetter(file)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{describeChange(file)}</TooltipContent>
+      </Tooltip>
+      {/* No tooltip on the name. The row is a list of paths and clicking one
+          to see its diff is the only thing it does — a hint that repeats the
+          path back and explains the obvious is in the way of reading the
+          list, which is what this panel is for. The status letter beside it
+          keeps its tooltip, because a letter is not self-explanatory. */}
       <button
         onClick={onDiff}
-        className="min-w-0 flex-1 truncate text-left font-mono text-[12px] hover:underline"
-        title={file.path}
+        className={cn(
+          "min-w-0 flex-1 truncate text-left font-mono text-[12px] text-(--git-colour) hover:underline",
+          file.label === "deleted" && "line-through",
+        )}
       >
         {file.path}
       </button>
@@ -776,18 +849,22 @@ function GitButton({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-      onClick={onClick}
-    >
-      {busy ? <Spinner className="size-3.5" /> : children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          disabled={disabled}
+          className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+          onClick={onClick}
+        >
+          {busy ? <Spinner className="size-3.5" /> : children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -805,44 +882,66 @@ function RowButton({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      className={cn("size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground", className)}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          disabled={disabled}
+          className={cn(
+            "size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground",
+            className,
+          )}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
+/**
+ * A group's own action — "Stage all", "Discard all".
+ *
+ * It carries a tooltip despite having a visible label, because the label is
+ * the verb and the tooltip is the scope: "all" means every file in *this*
+ * group, which is not the same as every file in the list, and the difference
+ * matters most for the one that cannot be undone.
+ */
 function GroupButton({
   disabled,
   danger,
+  hint,
   onClick,
   children,
 }: {
   disabled?: boolean
   danger?: boolean
+  hint: string
   onClick: () => void
   children: React.ReactNode
 }) {
   return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-40",
-        danger
-          ? "text-destructive hover:bg-destructive/10"
-          : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          disabled={disabled}
+          onClick={onClick}
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-40",
+            danger
+              ? "text-destructive hover:bg-destructive/10"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
   )
 }

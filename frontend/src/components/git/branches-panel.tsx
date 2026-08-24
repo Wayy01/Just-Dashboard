@@ -10,6 +10,7 @@ import type { ConfirmRequest } from "@/components/confirm-dialog"
 import { AheadBehind } from "@/components/git/ahead-behind"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import {
   DropdownMenu,
@@ -149,30 +150,39 @@ export function BranchesPanel({
             </div>
             <AheadBehind ahead={b.ahead} behind={b.behind} />
             {canControl && !b.current && (
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={!!busy}
-                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                onClick={() => switchTo(b.name)}
-              >
-                Switch
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={!!busy}
+                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={() => switchTo(b.name)}
+                  >
+                    Switch
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{`Check out ${b.name}`}</TooltipContent>
+              </Tooltip>
             )}
             {canDestruct && !b.current && (
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={!!busy}
-                    title="More"
-                    aria-label={`More actions for ${b.name}`}
-                    className="size-6 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-                  >
-                    <MoreHorizontal className="size-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!!busy}
+                        aria-label={`More actions for ${b.name}`}
+                        className="size-6 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
+                      >
+                        <MoreHorizontal className="size-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>{`Delete ${b.name}`}</TooltipContent>
+                </Tooltip>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => remove(b, false)}>Delete branch</DropdownMenuItem>
                   <DropdownMenuSeparator />

@@ -9,6 +9,7 @@ import type { ConfirmRequest } from "@/components/confirm-dialog"
 import type { GitPreview } from "@/components/git/preview-panel"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /**
  * The repository's history. Each commit opens as a diff in the preview column,
@@ -104,22 +105,26 @@ export function HistoryPanel({
           </button>
           {(c.insertions > 0 || c.deletions > 0) && (
             <span className="numeric mt-0.5 shrink-0 font-mono text-[11px]">
-              <span className="text-success">+{c.insertions}</span>{" "}
-              <span className="text-destructive">−{c.deletions}</span>
+              <span className="text-(--git-added)">+{c.insertions}</span>{" "}
+              <span className="text-(--git-deleted)">−{c.deletions}</span>
             </span>
           )}
           {/* Undoing to the current tip is a no-op, so it is offered only below it. */}
           {canDestruct && i > 0 && (
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Undo commits back to here (keeps your changes)"
-              aria-label="Undo to here"
-              className="size-6 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-              onClick={() => resetTo(c)}
-            >
-              <Undo2 className="size-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Undo to here"
+                  className="size-6 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
+                  onClick={() => resetTo(c)}
+                >
+                  <Undo2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Undo commits back to here, keeping your changes</TooltipContent>
+            </Tooltip>
           )}
         </div>
       ))}

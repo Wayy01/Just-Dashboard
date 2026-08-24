@@ -16,11 +16,13 @@ import {
 import { toast } from "sonner"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
 import type { FileEntry, FileListing, GitFileChange } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from "@/components/state"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /** What the inline confirm surface needs; the tools panel renders it. */
 export type ConfirmRequest = {
@@ -34,12 +36,14 @@ export type ConfirmRequest = {
 /**
  * A lazy, git-aware file tree rooted at one directory.
  *
- * Everything here is deliberately inline — no portalled dialog, popover or
- * tooltip — because this panel is expected to be open while the terminal is in
- * the browser's real fullscreen, where a portal to `document.body` renders
- * outside the fullscreen element and is simply invisible. Create rows are
- * inputs woven into the tree, delete goes through the panel's own inline
- * confirm, and every label is a plain `title` attribute.
+ * The dialogs here are deliberately inline — a create row is an input woven
+ * into the tree, delete goes through the panel's own confirm — because this
+ * panel is expected to be open while the terminal is in the browser's real
+ * fullscreen, where anything portalled to `document.body` renders outside the
+ * fullscreen element and is simply invisible. Tooltips are the exception and
+ * no longer have to be: `usePortalContainer` mounts them inside whatever is
+ * fullscreen, so an icon button here can carry a real label rather than a
+ * native `title` the browser sits on for a second before showing.
  *
  * Each folder fetches its children the first time it is opened and caches them;
  * `reload` drops one folder's cache so a change (a new file, a delete, a git
@@ -126,6 +130,20 @@ export function FileTree({
     },
     [expanded, root, load],
   )
+
+  /**
+   * Opens a folder without the possibility of closing it.
+   *
+   * A double-click on a folder is two clicks, and two toggles is where it
+   * started — so the second half of the gesture opens rather than flips.
+   */
+  const expand = (path: string) => {
+    setExpanded((s) => {
+      if (s.has(path)) return s
+      if (!children[path]) void load(path)
+      return new Set(s).add(path)
+    })
+  }
 
   const toggle = (path: string) => {
     setExpanded((s) => {
@@ -249,6 +267,7 @@ export function FileTree({
           canDelete={canDelete}
           creating={creating}
           onToggle={toggle}
+          onExpand={expand}
           onOpenFile={onOpenFile}
           onNavigate={onNavigate}
           onStartCreate={(parent, kind) => {
@@ -281,6 +300,7 @@ type LevelProps = {
   canDelete: boolean
   creating: { parent: string; kind: "file" | "folder" } | null
   onToggle: (path: string) => void
+  onExpand: (path: string) => void
   onOpenFile: (path: string) => void
   onNavigate?: (path: string) => void
   onStartCreate: (parent: string, kind: "file" | "folder") => void
@@ -339,6 +359,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
   const indent = 8 + depth * 14
   const isOpen = expanded.has(entry.path)
   const status = statusMap[entry.path]
+  const tone = status ? gitTone(status) : null
   const dirHasChanges =
     entry.isDir &&
     Object.keys(statusMap).some((p) => p.startsWith(entry.path + "/"))
@@ -348,21 +369,41 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
     props.onNavigate?.(entry.path)
   }
 
+  /**
+   * What a double-click means, which depends entirely on what was clicked.
+   *
+   * A folder opens; it is emphatically *not* handed to `onOpenFile`. That is
+   * the file reader, and asking the server to read a directory comes back as
+   * "path is a directory" — a red row in the tree for the most ordinary
+   * gesture in any file manager, and one that looked like a stale-path bug
+   * because the click that followed it worked.
+   */
+  const onDoubleClick = () => {
+    if (!entry.isDir) return
+    props.onExpand(entry.path)
+    props.onNavigate?.(entry.path)
+  }
+
   return (
     <>
       <div
         className={cn(
-          "group flex items-center gap-1 py-[3px] pr-1 text-[13px] hover:bg-[var(--row-hover)]",
+          "group relative flex items-center gap-1 py-[3px] pr-1 text-[13px] hover:bg-[var(--row-hover)]",
+          // The tint and the rule down the edge are the same fact as the
+          // letter, said in a way that survives being scanned rather than
+          // read: a wall of filenames with one green line in it answers
+          // "what did I touch" without any of them being looked at.
+          tone && "bg-(--git-tint) before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-(--git-edge) before:content-['']",
           activeFile === entry.path && "bg-primary/10",
           entry.isDir && activeDir === entry.path && "bg-primary/10",
         )}
-        style={{ paddingLeft: indent }}
+        style={{ paddingLeft: indent, ...(tone ? gitStyle(tone) : null) }}
       >
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1 text-left"
           onClick={() => (entry.isDir ? onFolderClick() : props.onOpenFile(entry.path))}
-          onDoubleClick={() => entry.isDir && props.onOpenFile(entry.path)}
+          onDoubleClick={onDoubleClick}
           title={entry.path}
         >
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
@@ -384,8 +425,8 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
           <span
             className={cn(
               "truncate",
-              status?.label === "deleted" && "text-destructive line-through",
-              status && status.label !== "deleted" && "text-warning",
+              tone && "text-(--git-colour)",
+              status?.label === "deleted" && "line-through",
             )}
           >
             {entry.name}
@@ -393,7 +434,12 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
           {status ? (
             <StatusMark change={status} />
           ) : dirHasChanges ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-warning" title="contains changes" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="ml-auto size-1.5 shrink-0 rounded-full bg-(--git-modified)" />
+              </TooltipTrigger>
+              <TooltipContent>Contains changes</TooltipContent>
+            </Tooltip>
           ) : null}
         </button>
 
@@ -484,21 +530,32 @@ function CreateRow({
   )
 }
 
-/** The one-letter git badge on a changed file. Colour matches the git page. */
+/**
+ * The one-letter git mark on a changed file.
+ *
+ * The colour says *what* changed and the ring says whether it is staged —
+ * previously the colour said "staged" and the kind of change was left to the
+ * letter, which meant a deleted file and an added one were the same shade of
+ * green and the only difference was a character most people do not read.
+ */
 function StatusMark({ change }: { change: GitFileChange }) {
-  const letter = change.staged
-    ? (change.index || "?").toUpperCase()
-    : (change.worktree || change.index || "?").toUpperCase()
+  const tone = gitTone(change)
   return (
-    <span
-      className={cn(
-        "ml-auto shrink-0 rounded px-1 font-mono text-[10px] leading-none",
-        change.staged ? "bg-success/15 text-success" : "bg-warning/15 text-warning",
-      )}
-      title={`${change.label}${change.staged ? " · staged" : ""}`}
-    >
-      {change.label === "untracked" ? "U" : letter}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "ml-auto shrink-0 rounded px-1 font-mono text-[10px] leading-none",
+            "bg-(--git-tint) text-(--git-colour)",
+            change.staged && "ring-1 ring-(--git-edge)",
+          )}
+          style={gitStyle(tone)}
+        >
+          {gitLetter(change)}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{describeChange(change)}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -516,18 +573,25 @@ function TreeButton({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      asChild={asChild}
-      title={label}
-      aria-label={label}
-      className={cn("size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground", className)}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          asChild={asChild}
+          aria-label={label}
+          className={cn(
+            "size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground",
+            className,
+          )}
+          onClick={onClick}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 

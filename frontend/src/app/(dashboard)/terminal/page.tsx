@@ -20,7 +20,8 @@ import type {
   TerminalWorkspace,
 } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { actionFor, keymap, type ShortcutAction } from "@/lib/terminal-keymap"
+import { actionFor, formatChord, keymap, useKeymap, type ShortcutAction } from "@/lib/terminal-keymap"
+import { usePanelSize } from "@/lib/panel-size"
 import { cn } from "@/lib/utils"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page } from "@/components/page"
@@ -28,8 +29,10 @@ import { XtermPane } from "@/components/xterm-pane"
 import { SessionRail } from "@/components/terminal/session-rail"
 import { PaneBar, WindowStrip } from "@/components/terminal/window-strip"
 import { WorkspaceTools } from "@/components/terminal/workspace-tools"
+import { ResizeHandle } from "@/components/resize-handle"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 type TerminalList = {
   enabled: boolean
@@ -42,6 +45,22 @@ type TerminalList = {
 
 /** Every persistent-session route is addressed by tmux name. */
 const persistent = (name: string) => `/terminal/persistent/${encodeURIComponent(name)}`
+
+/**
+ * What the two side panels may be dragged to.
+ *
+ * The maxima are not decoration. A rail and a file tree that may grow without
+ * limit can leave the terminal a column of hyphens on a laptop — and the pane
+ * is not a panel that looks wrong when it is small, it is eighty columns of
+ * output that stop being eighty columns. So each panel has a ceiling, and
+ * `fitPanels` applies the one that actually binds: whatever is left after the
+ * other panel and TERMINAL_MIN have taken their share of the row.
+ */
+const RAIL = { min: 208, max: 480, base: 288 }
+const TOOLS = { min: 256, max: 640, base: 336 }
+const TERMINAL_MIN = 360
+/** The two grab strips, which are part of the row's width like anything else. */
+const HANDLE = 8
 
 export default function TerminalPage() {
   const { confirm, dialog } = useConfirm()
@@ -58,6 +77,13 @@ export default function TerminalPage() {
   const [showTools, setShowTools] = useState(true)
   const [immersive, setImmersive] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
+  // How wide each panel was dragged, and how much row there is to divide. The
+  // stored width is a preference, not a layout: it is clamped against the row
+  // on every render rather than written back, so a width that was reasonable
+  // on a monitor gives way on a laptop and comes back when the window grows.
+  const [railWidth, setRailWidth, resetRailWidth] = usePanelSize("terminal.rail", RAIL.base)
+  const [toolsWidth, setToolsWidth, resetToolsWidth] = usePanelSize("terminal.tools", TOOLS.base)
+  const [rowWidth, setRowWidth] = useState(0)
   // Deep link: a compose stack, a repository or a build context can hand the
   // terminal a directory to start in, so "I need a shell here" does not mean
   // opening one and retyping the path. Read above the early returns below,
@@ -112,6 +138,20 @@ export default function TerminalPage() {
     }
   }, [immersive])
 
+  // The row's own width, which is what the panel ceilings are measured
+  // against. Observed rather than read from the viewport because the same
+  // element is the fullscreen one: entering fullscreen changes this by the
+  // width of the sidebar and the page gutter, and the panels have to give the
+  // terminal its minimum in both.
+  useEffect(() => {
+    const el = workspaceRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => setRowWidth(el.clientWidth))
+    observer.observe(el)
+    setRowWidth(el.clientWidth)
+    return () => observer.disconnect()
+  }, [loading, error, data?.enabled])
+
   // Esc leaves native fullscreen through the browser; drop the overlay with it
   // so the two can never disagree.
   useEffect(() => {
@@ -158,6 +198,33 @@ export default function TerminalPage() {
   )
 
   const activeWindow = (windows.data ?? []).find((w) => w.active)
+
+  /**
+   * A panel's width, given everything else on the row.
+   *
+   * Two ceilings, and the lower wins: the panel's own maximum, and what is
+   * left once the other panel and the terminal have had their minimum. The
+   * floor is the panel's minimum even when that leaves the terminal less than
+   * TERMINAL_MIN — a window too narrow for both is a window too narrow, and
+   * shrinking the tree to nothing to pretend otherwise helps nobody. Below
+   * `lg` this is not applied at all: the layout stacks and each panel is the
+   * full width of the column.
+   */
+  const fitPanel = (want: number, self: { min: number; max: number }, other: number) => {
+    if (!rowWidth) return want
+    const handles = (showRail ? HANDLE : 0) + (showTools ? HANDLE : 0)
+    const room = rowWidth - handles - TERMINAL_MIN - other
+    return Math.max(self.min, Math.min(self.max, room, want))
+  }
+  // The tools panel is fitted first, against the rail's *minimum* rather than
+  // its current width, and the rail is then fitted against the result. Fitting
+  // it against nothing let one panel keep a comfortable width while the other
+  // absorbed the entire shortfall on a narrow window — the rail sat at 208px
+  // next to a 336px file tree and the terminal got what was left. This way a
+  // window too narrow for both walks them down together, and the order only
+  // decides which of the two reaches its minimum first.
+  const toolsPx = fitPanel(toolsWidth, TOOLS, showRail ? RAIL.min : 0)
+  const railPx = fitPanel(railWidth, RAIL, showTools ? toolsPx : 0)
 
   // Where the tools panel looks: the active window's current directory, which
   // tmux updates as the shell cds around, falling back to where the session was
@@ -433,6 +500,8 @@ export default function TerminalPage() {
         true,
       )
     },
+    "workspace.rail": () => setShowRail((v) => !v),
+    "workspace.tools": () => setShowTools((v) => !v),
     "pane.splitRight": () => splitActive(true),
     "pane.splitDown": () => splitActive(false),
     "pane.close": () => {
@@ -517,6 +586,12 @@ export default function TerminalPage() {
       */}
         <div
           ref={workspaceRef}
+          style={
+            {
+              "--jd-rail": `${railPx}px`,
+              "--jd-tools": `${toolsPx}px`,
+            } as React.CSSProperties
+          }
           className={cn(
             "flex min-h-0 flex-1 flex-col gap-3 lg:flex-row",
             // The overlay is CSS so the panel toggles never touch the
@@ -526,6 +601,7 @@ export default function TerminalPage() {
         >
           {showRail && (
           <SessionRail
+            className="lg:w-(--jd-rail)"
             sessions={data.sessions}
             folders={data.folders}
             activeId={active}
@@ -570,6 +646,17 @@ export default function TerminalPage() {
             }
           />
           )}
+          {showRail && (
+            <ResizeHandle
+              side="left"
+              label="Sessions panel width"
+              value={railPx}
+              min={RAIL.min}
+              max={RAIL.max}
+              onChange={(px, commit) => setRailWidth(px, commit)}
+              onReset={resetRailWidth}
+            />
+          )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
             {/*
@@ -584,6 +671,7 @@ export default function TerminalPage() {
                 active={showRail}
                 onClick={() => setShowRail((v) => !v)}
                 label={showRail ? "Hide the sessions rail" : "Show the sessions rail"}
+                action="workspace.rail"
                 icon={PanelLeft}
               />
               {currentDir && (
@@ -599,12 +687,14 @@ export default function TerminalPage() {
                 active={showTools}
                 onClick={() => setShowTools((v) => !v)}
                 label={showTools ? "Hide files & git" : "Show files & git"}
+                action="workspace.tools"
                 icon={PanelRight}
               />
               <WorkspaceToggle
                 active={immersive}
                 onClick={toggleImmersive}
                 label={immersive ? "Leave fullscreen" : "Fullscreen workspace"}
+                action="terminal.fullscreen"
                 icon={immersive ? Minimize2 : Maximize2}
               />
             </div>
@@ -734,7 +824,18 @@ export default function TerminalPage() {
           </div>
 
           {showTools && (
-            <div className="flex min-h-[16rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[21rem] xl:w-[23rem]">
+            <ResizeHandle
+              side="right"
+              label="Files and git panel width"
+              value={toolsPx}
+              min={TOOLS.min}
+              max={TOOLS.max}
+              onChange={(px, commit) => setToolsWidth(px, commit)}
+              onReset={resetToolsWidth}
+            />
+          )}
+          {showTools && (
+            <div className="flex min-h-[16rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-(--jd-tools)">
               <WorkspaceTools
                 dir={currentDir}
                 onOpenInFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
@@ -753,19 +854,27 @@ function WorkspaceToggle({
   active,
   onClick,
   label,
+  action,
   icon: Icon,
 }: {
   active: boolean
   onClick: () => void
   label: string
+  /** The chord is read from the live keymap and shown with the label: this bar
+   *  is where somebody discovers the panel can be hidden, and the shortcut is
+   *  no use to them anywhere else. */
+  action?: ShortcutAction
   icon: React.ComponentType<{ className?: string }>
 }) {
+  const map = useKeymap()
+  const chord = action ? map[action] : undefined
   return (
+    <Tooltip>
+      <TooltipTrigger asChild>
     <Button
       type="button"
       size="sm"
       variant="ghost"
-      title={label}
       aria-label={label}
       aria-pressed={active}
       className={cn(
@@ -776,5 +885,8 @@ function WorkspaceToggle({
     >
       <Icon className="size-3.5" />
     </Button>
+      </TooltipTrigger>
+      <TooltipContent>{chord ? `${label} · ${formatChord(chord)}` : label}</TooltipContent>
+    </Tooltip>
   )
 }
