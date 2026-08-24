@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import { Asterisk, KeyRound, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
-import { errorMessage, post } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { post } from "@/lib/api"
 import { plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbDriverInfo, DbNewColumn, DbTableDetail } from "@/lib/types"
@@ -79,13 +79,13 @@ export function CreateTableDialog({
         table,
         columns: columns.filter((c) => c.name && c.type),
       })
-      toast.success(`Created ${table}`, { description: res.statement })
+      notify.success(`Created ${table}`, { description: res.statement })
       onOpenChange(false)
       setTable("")
       setColumns([{ ...EMPTY_COLUMN }])
       onDone()
     } catch (err) {
-      toast.error("Could not create the table", { description: errorMessage(err) })
+      notify.error("Could not create the table", err)
     } finally {
       setBusy(false)
     }
@@ -334,12 +334,12 @@ export function AddColumnDialog({
         table,
         column: col,
       })
-      toast.success(`Added ${col.name}`, { description: res.statement })
+      notify.success(`Added ${col.name}`, { description: res.statement })
       onOpenChange(false)
       setCol({ ...EMPTY_COLUMN })
       onDone()
     } catch (err) {
-      toast.error("Could not add the column", { description: errorMessage(err) })
+      notify.error("Could not add the column", err)
     } finally {
       setBusy(false)
     }
@@ -441,13 +441,13 @@ export function CreateIndexDialog({
         fields,
         unique,
       })
-      toast.success(`Created ${name}`, { description: res.statement })
+      notify.success(`Created ${name}`, { description: res.statement })
       onOpenChange(false)
       setName("")
       setFields([])
       onDone()
     } catch (err) {
-      toast.error("Could not create the index", { description: errorMessage(err) })
+      notify.error("Could not create the index", err)
     } finally {
       setBusy(false)
     }
@@ -550,11 +550,11 @@ export function RenameDialog({
         name: kind === "column" ? current : "",
         to,
       })
-      toast.success(`Renamed to ${to}`)
+      notify.success(`Renamed to ${to}`)
       onOpenChange(false)
       onDone(to)
     } catch (err) {
-      toast.error("Could not rename", { description: errorMessage(err) })
+      notify.error("Could not rename", err)
     } finally {
       setBusy(false)
     }

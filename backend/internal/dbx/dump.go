@@ -150,7 +150,7 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	switch driver {
 	case DriverPostgres:
 		path = filepath.Join(outDir, fmt.Sprintf("%s-%s.dump", database, stamp))
-		cmd = exec.CommandContext(ctx, "pg_dump",
+		cmd = exec.CommandContext(ctx, postgresTool("pg_dump", postgresServerMajor(ctx, dsn)),
 			"--host", info.Host, "--port", info.Port, "--username", info.User,
 			"--format", "custom", "--no-password", "--file", path, database)
 		cmd.Env = append(os.Environ(), "PGPASSWORD="+info.Password)
@@ -183,7 +183,15 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
 		os.Remove(path)
-		return nil, fmt.Errorf("dump failed: %s", strings.TrimSpace(buf.String()))
+		// The tool's own output when it produced any, and the exec error when
+		// it did not. A missing binary writes nothing to stderr at all, so the
+		// message was "dump failed:" followed by nothing — which says something
+		// went wrong and withholds the only useful part, the name of the tool
+		// that is not installed.
+		if detail := strings.TrimSpace(buf.String()); detail != "" {
+			return nil, fmt.Errorf("dump failed: %s", detail)
+		}
+		return nil, fmt.Errorf("dump failed: %w", err)
 	}
 	st, err := os.Stat(path)
 	if err != nil {
@@ -220,7 +228,7 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 	var cmd *exec.Cmd
 	switch driver {
 	case DriverPostgres:
-		cmd = exec.CommandContext(ctx, "pg_restore",
+		cmd = exec.CommandContext(ctx, postgresTool("pg_restore", postgresServerMajor(ctx, dsn)),
 			"--host", info.Host, "--port", info.Port, "--username", info.User,
 			"--no-password", "--clean", "--if-exists", "--dbname", database, dumpPath)
 		cmd.Env = append(os.Environ(), "PGPASSWORD="+info.Password)
@@ -253,7 +261,10 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	if err := cmd.Run(); err != nil {
-		return buf.String(), fmt.Errorf("restore failed: %s", strings.TrimSpace(buf.String()))
+		if detail := strings.TrimSpace(buf.String()); detail != "" {
+			return buf.String(), fmt.Errorf("restore failed: %s", detail)
+		}
+		return buf.String(), fmt.Errorf("restore failed: %w", err)
 	}
 	return strings.TrimSpace(buf.String()), nil
 }
@@ -404,4 +415,97 @@ func mysqlDefaultsFile(info *ConnInfo) (string, func(), error) {
 		return "", func() {}, err
 	}
 	return f.Name(), cleanup, nil
+}
+
+// Picking the right pg_dump for the server being dumped.
+//
+// PostgreSQL refuses point blank: "aborting because of server version
+// mismatch". A pg_dump older than the server it is pointed at will not run, so
+// the client that happened to be in the image decided which servers could be
+// backed up at all — a Debian bookworm image ships 15, and a dashboard next to
+// a Postgres 16 could not dump it.
+//
+// Distributions install each major version under its own directory, so the fix
+// is to look for the one that matches. A newer client can read an older server,
+// so the fallback is the highest installed rather than whatever is on PATH.
+// Nothing is guessed about what exists: the directory is read.
+
+var pgBinDirs = []string{"/usr/lib/postgresql", "/usr/pgsql", "/opt/homebrew/opt"}
+
+// postgresTool returns the path to a Postgres client binary suitable for a
+// server of the given major version, and the plain name if nothing better is
+// found — which keeps a machine that installs the tools somewhere unusual
+// working exactly as it did before.
+func postgresTool(name string, serverMajor int) string {
+	installed := installedPGVersions(name)
+	if len(installed) == 0 {
+		return name
+	}
+	// Exactly the server's version is always safe.
+	if serverMajor > 0 {
+		if path, ok := installed[serverMajor]; ok {
+			return path
+		}
+	}
+	// Otherwise the newest, which can read anything older than itself.
+	best := 0
+	for major := range installed {
+		if major > best {
+			best = major
+		}
+	}
+	if serverMajor > 0 && best < serverMajor {
+		// Everything installed is older than the server. Returning the newest
+		// still produces the clearest possible failure — Postgres names both
+		// versions — and there is nothing better to try.
+		return installed[best]
+	}
+	return installed[best]
+}
+
+// installedPGVersions maps a major version to the path of `name` for it.
+func installedPGVersions(name string) map[int]string {
+	out := map[int]string{}
+	for _, root := range pgBinDirs {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			major, err := strconv.Atoi(strings.TrimPrefix(e.Name(), "postgresql@"))
+			if err != nil {
+				continue
+			}
+			path := filepath.Join(root, e.Name(), "bin", name)
+			if _, err := os.Stat(path); err == nil {
+				out[major] = path
+			}
+		}
+	}
+	return out
+}
+
+// postgresServerMajor asks the server what it is. A failure here is not fatal:
+// the caller falls back to the newest client installed, which is the right
+// answer far more often than not.
+func postgresServerMajor(ctx context.Context, dsn string) int {
+	d, err := DialectFor(DriverPostgres)
+	if err != nil {
+		return 0
+	}
+	db, err := sql.Open(d.SQLDriverName(), d.NormaliseDSN(dsn))
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	var num int
+	// server_version_num is 160015 for 16.15, which is the major without any
+	// of the parsing that the display string would need.
+	if err := db.QueryRowContext(ctx, "SHOW server_version_num").Scan(&num); err != nil {
+		return 0
+	}
+	return num / 10000
 }

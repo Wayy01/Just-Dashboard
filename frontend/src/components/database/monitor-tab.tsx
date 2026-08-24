@@ -30,7 +30,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Detail, DetailList } from "@/components/page"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import {
   Dialog,
   DialogContent,
@@ -353,7 +353,7 @@ function SessionDialog({
             variant="ghost"
             onClick={() => {
               navigator.clipboard.writeText(session.query ?? "")
-              toast.success("Statement copied")
+              notify.success("Statement copied")
             }}
             disabled={!session.query}
           >

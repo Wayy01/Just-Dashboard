@@ -2,8 +2,8 @@
 
 import { useCallback, useState } from "react"
 import { Clock, Copy, Database, KeyRound, Pencil, Plus, Save, Search, Trash2 } from "lucide-react"
-import { toast } from "sonner"
-import { del, errorMessage, get, post } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, RedisPage, RedisValue } from "@/lib/types"
@@ -118,7 +118,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
 
   const renameKey = async (from: string, to: string) => {
     await post(`/databases/${conn.id}/keys/rename`, { key: from, to }, { query: { db } })
-    toast.success(`Renamed to ${to}`)
+    notify.success(`Renamed to ${to}`)
     setRenaming(null)
     // Follow the key rather than keeping a name the server no longer has.
     setSelected(to)
@@ -131,7 +131,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       { key, type, field, value: val, ttl, create: true },
       { query: { db } },
     )
-    toast.success(`Created ${key}`)
+    notify.success(`Created ${key}`)
     setCreating(false)
     setSelected(key)
     page.refresh()
@@ -148,7 +148,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       ),
       action: async (c) => {
         await del(`/databases/${conn.id}/keys`, { body: { key }, confirm: c, query: { db } })
-        toast.success("Key deleted")
+        notify.success("Key deleted")
         setSelected(null)
         page.refresh()
       },
@@ -355,7 +355,7 @@ function NewKeyDialog({
     try {
       await onCreate(key.trim(), type, field.trim(), value, Number(ttl) || -1)
     } catch (err) {
-      toast.error("Could not create the key", { description: errorMessage(err) })
+      notify.error("Could not create the key", err)
     } finally {
       setBusy(false)
     }
@@ -457,7 +457,7 @@ function RenameKeyDialog({
     try {
       await onRename(to.trim())
     } catch (err) {
-      toast.error("Could not rename the key", { description: errorMessage(err) })
+      notify.error("Could not rename the key", err)
     } finally {
       setBusy(false)
     }
@@ -525,10 +525,10 @@ function RedisValueView({
           query: { db },
         },
       )
-      toast.success("Value saved")
+      notify.success("Value saved")
       onChanged()
     } catch (err) {
-      toast.error("Could not save", { description: errorMessage(err) })
+      notify.error("Could not save", err)
     } finally {
       setBusy(false)
     }
@@ -544,10 +544,10 @@ function RedisValueView({
           query: { db },
         },
       )
-      toast.success(Number(ttl) > 0 ? `Expires in ${ttl}s` : "Expiry cleared")
+      notify.success(Number(ttl) > 0 ? `Expires in ${ttl}s` : "Expiry cleared")
       onChanged()
     } catch (err) {
-      toast.error("Could not set the TTL", { description: errorMessage(err) })
+      notify.error("Could not set the TTL", err)
     } finally {
       setBusy(false)
     }
@@ -556,8 +556,8 @@ function RedisValueView({
   const copy = (text: string) =>
     navigator.clipboard
       .writeText(text)
-      .then(() => toast.success("Copied"))
-      .catch(() => toast.error("Could not copy"))
+      .then(() => notify.success("Copied"))
+      .catch(() => notify.error("Could not copy"))
 
   return (
     <div className="space-y-3 p-4">
@@ -669,7 +669,7 @@ function MemberEditor({
       { key: value.key, type: value.type, field, value: member },
       { query: { db } },
     )
-    toast.success("Saved")
+    notify.success("Saved")
     setEditing(null)
     setAdding(false)
     onChanged()
@@ -691,7 +691,7 @@ function MemberEditor({
           confirm: c,
           query: { db },
         })
-        toast.success("Member removed")
+        notify.success("Member removed")
         onChanged()
       },
     })
@@ -882,7 +882,7 @@ function MemberDialog({
     try {
       await onSave(field, member)
     } catch (err) {
-      toast.error("Could not save", { description: errorMessage(err) })
+      notify.error("Could not save", err)
     } finally {
       setBusy(false)
     }

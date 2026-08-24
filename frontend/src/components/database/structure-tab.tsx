@@ -1,7 +1,7 @@
 "use client"
 
 import { Copy, KeyRound, Link2, ListTree, Pencil, Table2, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { del, get } from "@/lib/api"
 import type { DbConnection, DbDriverInfo, DbTableDetail } from "@/lib/types"
@@ -75,7 +75,7 @@ export function StructureTab({
           body: { schema, table, name: column },
           confirm: c,
         })
-        toast.success(`Dropped ${column}`)
+        notify.success(`Dropped ${column}`)
         detail.refresh()
       },
     })
@@ -95,7 +95,7 @@ export function StructureTab({
           body: { schema, table, name },
           confirm: c,
         })
-        toast.success(`Dropped ${name}`)
+        notify.success(`Dropped ${name}`)
         detail.refresh()
       },
     })
@@ -291,8 +291,8 @@ export function StructureTab({
                 onClick={() =>
                   navigator.clipboard
                     .writeText(d.createSql!)
-                    .then(() => toast.success("Copied DDL"))
-                    .catch(() => toast.error("Could not copy"))
+                    .then(() => notify.success("Copied DDL"))
+                    .catch(() => notify.error("Could not copy"))
                 }
               >
                 <Copy className="size-3.5" />

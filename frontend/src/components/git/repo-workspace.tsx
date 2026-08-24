@@ -12,7 +12,7 @@ import {
   RotateCcw,
   Undo2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { GitFileChange, GitRepo, GitResult, GitStatus } from "@/lib/types"
@@ -90,12 +90,12 @@ export function RepoWorkspace({
       setBusy(label)
       try {
         const res = await fn()
-        toast.success(label, { description: res.output?.split("\n").slice(0, 3).join("\n") })
+        notify.success(label, { description: res.output?.split("\n").slice(0, 3).join("\n") })
         status.refresh()
         onRepoChanged()
         return res
       } catch (err) {
-        toast.error(`${label} failed`, { description: String(err) })
+        notify.error(`${label} failed`, err)
         throw err
       } finally {
         setBusy(undefined)
@@ -185,7 +185,9 @@ export function RepoWorkspace({
               Fetch
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Check the remote for new commits without changing your files</TooltipContent>
+          <TooltipContent>
+            Check the remote for new commits without changing your files
+          </TooltipContent>
         </Tooltip>
         {canControl && (
           <>
@@ -208,7 +210,9 @@ export function RepoWorkspace({
                   )}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Bring the latest committed changes down from the remote</TooltipContent>
+              <TooltipContent>
+                Bring the latest committed changes down from the remote
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -236,7 +240,9 @@ export function RepoWorkspace({
               clean={status.data?.clean}
               onStash={() => run("Stashed", () => post<GitResult>("/git/stash", {}, { query: q }))}
               onPop={() =>
-                run("Stash popped", () => post<GitResult>("/git/stash/pop", undefined, { query: q }))
+                run("Stash popped", () =>
+                  post<GitResult>("/git/stash/pop", undefined, { query: q }),
+                )
               }
             />
           </>

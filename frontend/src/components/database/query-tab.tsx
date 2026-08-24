@@ -12,9 +12,9 @@ import {
   Star,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
-import { del, errorMessage, get, post } from "@/lib/api"
+import { del, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type {
   DbConnection,
@@ -99,14 +99,14 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       setResult(res.result)
       setPlan(null)
       history.refresh()
-      toast.success(
+      notify.success(
         res.result.columns.length
           ? `${plural(res.result.rowCount, "row")} in ${res.result.duration}`
           : `${plural(res.result.rowsAffected, "row")} affected`,
       )
     } catch (err) {
       history.refresh()
-      toast.error("Query failed", { description: errorMessage(err) })
+      notify.error("Query failed", err)
       throw err
     } finally {
       setBusy(false)
@@ -147,7 +147,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       setPlan(res.result)
       setResult(null)
     } catch (err) {
-      toast.error("Could not plan the statement", { description: errorMessage(err) })
+      notify.error("Could not plan the statement", err)
     } finally {
       setBusy(false)
     }
@@ -155,7 +155,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
 
   const saveSnippet = async (name: string) => {
     await post(`/databases/${conn.id}/queries`, { name, sql })
-    toast.success(`Saved "${name}"`)
+    notify.success(`Saved "${name}"`)
     saved.refresh()
   }
   const deleteSnippet = (q: DbSavedQuery) =>
@@ -386,7 +386,7 @@ function SaveDialog({
       onOpenChange(false)
       setName("")
     } catch (err) {
-      toast.error("Could not save", { description: errorMessage(err) })
+      notify.error("Could not save", err)
     } finally {
       setBusy(false)
     }

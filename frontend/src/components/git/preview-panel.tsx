@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { FileCode, GitCompare, Loader2, Save, X } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import type { FileContent } from "@/lib/types"
@@ -116,12 +116,12 @@ function FilePreview({
     setSaving(true)
     try {
       await put("/files/write", { path, content: draft })
-      toast.success("Saved", { description: path })
+      notify.success("Saved", { description: path })
       setFile((f) => (f ? { ...f, content: draft } : f))
       // A save can change the working tree, so let the status refresh.
       onChanged()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     } finally {
       setSaving(false)
     }

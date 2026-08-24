@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
@@ -84,9 +84,7 @@ export function FileTree({
   const [loading, setLoading] = useState<Set<string>>(new Set())
   const [failed, setFailed] = useState<Record<string, string>>({})
   // The folder an inline create-row is attached to, and what it makes.
-  const [creating, setCreating] = useState<{ parent: string; kind: "file" | "folder" } | null>(
-    null,
-  )
+  const [creating, setCreating] = useState<{ parent: string; kind: "file" | "folder" } | null>(null)
 
   const load = useCallback(
     async (path: string) => {
@@ -169,7 +167,7 @@ export function FileTree({
     try {
       if (creating.kind === "folder") await post("/files/mkdir", { path: target })
       else await post("/files/touch", { path: target })
-      toast.success(`Created ${trimmed}`)
+      notify.success(`Created ${trimmed}`)
       const parent = creating.parent
       setCreating(null)
       setExpanded((s) => new Set(s).add(parent))
@@ -177,7 +175,7 @@ export function FileTree({
       onChanged()
       if (creating.kind === "file") onOpenFile(target)
     } catch (err) {
-      toast.error("Could not create that", { description: String(err) })
+      notify.error("Could not create that", err)
     }
   }
 
@@ -197,7 +195,7 @@ export function FileTree({
           confirm: entry.name,
           query: { path: entry.path, recursive: entry.isDir },
         })
-        toast.success(`Deleted ${entry.name}`)
+        notify.success(`Deleted ${entry.name}`)
         await load(parent)
         onChanged()
       },
@@ -206,7 +204,10 @@ export function FileTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b border-hairline bg-surface-header/60 px-2 py-1.5">
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={root}>
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+          title={root}
+        >
           {root}
         </span>
         {canWrite && (
@@ -325,7 +326,10 @@ function TreeLevel(props: LevelProps) {
         />
       )}
       {loadingThis && !entries && (
-        <div className="flex items-center gap-2 px-2 py-1 text-[11px] text-muted-foreground" style={{ paddingLeft: indent + 16 }}>
+        <div
+          className="flex items-center gap-2 px-2 py-1 text-[11px] text-muted-foreground"
+          style={{ paddingLeft: indent + 16 }}
+        >
           <Spinner className="size-3" />
           Loading…
         </div>
@@ -361,8 +365,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
   const status = statusMap[entry.path]
   const tone = status ? gitTone(status) : null
   const dirHasChanges =
-    entry.isDir &&
-    Object.keys(statusMap).some((p) => p.startsWith(entry.path + "/"))
+    entry.isDir && Object.keys(statusMap).some((p) => p.startsWith(entry.path + "/"))
 
   const onFolderClick = () => {
     props.onToggle(entry.path)
@@ -393,7 +396,8 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
           // letter, said in a way that survives being scanned rather than
           // read: a wall of filenames with one green line in it answers
           // "what did I touch" without any of them being looked at.
-          tone && "bg-(--git-tint) before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-(--git-edge) before:content-['']",
+          tone &&
+            "bg-(--git-tint) before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-(--git-edge) before:content-['']",
           activeFile === entry.path && "bg-primary/10",
           entry.isDir && activeDir === entry.path && "bg-primary/10",
         )}
@@ -408,7 +412,9 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
         >
           <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
             {entry.isDir ? (
-              <ChevronRight className={cn("size-3.5 transition-transform", isOpen && "rotate-90")} />
+              <ChevronRight
+                className={cn("size-3.5 transition-transform", isOpen && "rotate-90")}
+              />
             ) : null}
           </span>
           {entry.isDir ? (

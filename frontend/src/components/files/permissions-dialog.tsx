@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import type { FileEntry } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -64,7 +64,10 @@ function Body({
   const [recursive, setRecursive] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const digits = octal.padStart(3, "0").split("").map((d) => parseInt(d, 10) || 0)
+  const digits = octal
+    .padStart(3, "0")
+    .split("")
+    .map((d) => parseInt(d, 10) || 0)
   const setBit = (scopeIndex: number, value: number, on: boolean) => {
     const next = [...digits]
     next[scopeIndex] = on ? next[scopeIndex] | value : next[scopeIndex] & ~value
@@ -89,11 +92,11 @@ function Body({
           recursive,
         })
       }
-      toast.success("Permissions updated", { description: entry.name })
+      notify.success("Permissions updated", { description: entry.name })
       onDone()
       onOpenChange(false)
     } catch (err) {
-      toast.error("Could not update permissions", { description: String(err) })
+      notify.error("Could not update permissions", err)
     } finally {
       setBusy(false)
     }

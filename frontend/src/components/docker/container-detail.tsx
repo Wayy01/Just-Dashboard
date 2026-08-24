@@ -13,7 +13,7 @@ import {
   Pencil,
   ShieldAlert,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { duration, timestamp } from "@/lib/format"
 import type {
@@ -243,7 +243,8 @@ function ContainerShell({ detail }: { detail: ContainerDetail }) {
   // "root" that switched between a request with no user and a request for
   // root, i.e. between the same thing twice.
   const imageUser = detail.user.trim()
-  const runsAsRoot = imageUser === "" || imageUser === "root" || imageUser.startsWith("0:") || imageUser === "0"
+  const runsAsRoot =
+    imageUser === "" || imageUser === "root" || imageUser.startsWith("0:") || imageUser === "0"
   const account = asRoot || runsAsRoot ? "root" : imageUser
 
   return (
@@ -575,7 +576,7 @@ function ContainerActions({
       // is what they were going to type anyway.
       onDuplicate?.({ ...spec, name: `${spec.name}-copy`, start: true })
     } catch (err) {
-      toast.error("Could not read this container's settings", { description: String(err) })
+      notify.error("Could not read this container's settings", err)
     } finally {
       setBusy(false)
     }
@@ -598,7 +599,11 @@ function ContainerActions({
         </>
       ),
       action: async (phrase) => {
-        await post(`/docker/containers/${detail.id}/recreate`, { pullLatest: true }, { confirm: phrase })
+        await post(
+          `/docker/containers/${detail.id}/recreate`,
+          { pullLatest: true },
+          { confirm: phrase },
+        )
         onChanged()
       },
     })
@@ -622,9 +627,7 @@ function ContainerActions({
           Duplicate
         </Button>
       )}
-      {can("service.control") && (
-        <RenameButton detail={detail} onRenamed={onChanged} />
-      )}
+      {can("service.control") && <RenameButton detail={detail} onRenamed={onChanged} />}
     </>
   )
 }
@@ -636,12 +639,12 @@ function RenameButton({ detail, onRenamed }: { detail: ContainerDetail; onRename
   const save = async () => {
     try {
       await post(`/docker/containers/${detail.id}/rename`, { name })
-      toast.success(`Renamed to ${name}`)
+      notify.success(`Renamed to ${name}`)
       setEditing(false)
       onRenamed()
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err)
-      toast.error("Could not rename it", { description: message })
+      notify.error("Could not rename it", message)
     }
   }
 
@@ -697,7 +700,8 @@ function WritableLayer({ containerId }: { containerId: string }) {
   )
 
   const interesting = useMemo(() => {
-    const noise = /^\/(tmp|run|proc|sys|dev|var\/(run|log|cache|tmp|lib\/(apt|dpkg))|etc\/(hosts|hostname|resolv\.conf|mtab))/
+    const noise =
+      /^\/(tmp|run|proc|sys|dev|var\/(run|log|cache|tmp|lib\/(apt|dpkg))|etc\/(hosts|hostname|resolv\.conf|mtab))/
     return (data ?? []).filter((c) => c.kind !== "deleted" && !noise.test(c.path))
   }, [data])
 
@@ -745,7 +749,8 @@ function WritableLayer({ containerId }: { containerId: string }) {
  */
 function RawInspect({ containerId }: { containerId: string }) {
   const { data, error, loading } = usePoll<Record<string, unknown>>(
-    (signal) => get<Record<string, unknown>>(`/docker/containers/${containerId}/raw`, undefined, signal),
+    (signal) =>
+      get<Record<string, unknown>>(`/docker/containers/${containerId}/raw`, undefined, signal),
     0,
     [containerId],
   )
@@ -764,8 +769,8 @@ function RawInspect({ containerId }: { containerId: string }) {
           variant="outline"
           onClick={() =>
             navigator.clipboard.writeText(text).then(
-              () => toast.success("Copied"),
-              () => toast.error("Could not copy"),
+              () => notify.success("Copied"),
+              () => notify.error("Could not copy"),
             )
           }
         >
@@ -792,12 +797,18 @@ function RawInspect({ containerId }: { containerId: string }) {
  */
 function Reachability({ containerId }: { containerId: string }) {
   const { data } = usePoll<
-    { hostIp?: string; hostPort: number; containerPort: number; public: boolean; vhost?: string; url?: string; tls?: boolean }[]
-  >(
-    (signal) => get(`/docker/containers/${containerId}/routes`, undefined, signal),
-    0,
-    [containerId],
-  )
+    {
+      hostIp?: string
+      hostPort: number
+      containerPort: number
+      public: boolean
+      vhost?: string
+      url?: string
+      tls?: boolean
+    }[]
+  >((signal) => get(`/docker/containers/${containerId}/routes`, undefined, signal), 0, [
+    containerId,
+  ])
   if (!data || data.length === 0) return null
 
   return (
@@ -902,15 +913,15 @@ function ResourceLimitsEditor({
         {},
       )
       if (res.warnings?.length) {
-        toast.warning("Applied, with a caveat", { description: res.warnings[0] })
+        notify.warning("Applied, with a caveat", { description: res.warnings[0] })
       } else {
-        toast.success("Limits updated")
+        notify.success("Limits updated")
       }
       setOpen(false)
       onSaved()
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err)
-      toast.error("Could not change the limits", { description: message })
+      notify.error("Could not change the limits", message)
     } finally {
       setBusy(false)
     }

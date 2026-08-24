@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { KeyRound, Lock, Plus, Trash2, Unlock, UserPlus, Users } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { SSHKey, SystemUser } from "@/lib/types"
@@ -50,10 +50,10 @@ export default function SystemUsersPage() {
   const setLocked = async (user: SystemUser, locked: boolean) => {
     try {
       await patch(`/system-users/${encodeURIComponent(user.username)}`, { locked })
-      toast.success(`${user.username} ${locked ? "locked" : "unlocked"}`)
+      notify.success(`${user.username} ${locked ? "locked" : "unlocked"}`)
       refresh()
     } catch (err) {
-      toast.error("Could not change lock state", { description: String(err) })
+      notify.error("Could not change lock state", err)
     }
   }
 
@@ -217,7 +217,7 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
           .filter(Boolean),
         sshKey: sshKey.trim(),
       })
-      toast.success(`Created ${username}`)
+      notify.success(`Created ${username}`)
       setOpen(false)
       setUsername("")
       setComment("")
@@ -225,7 +225,7 @@ function CreateUserDialog({ onDone }: { onDone: () => void }) {
       setSshKey("")
       onDone()
     } catch (err) {
-      toast.error("Could not create account", { description: String(err) })
+      notify.error("Could not create account", err)
     }
   }
 
@@ -323,12 +323,12 @@ function SSHKeysSheet({
     if (!username) return
     try {
       await post(`/system-users/${encodeURIComponent(username)}/keys`, { key: newKey.trim() })
-      toast.success("Key authorised")
+      notify.success("Key authorised")
       setNewKey("")
       refresh()
       onChanged()
     } catch (err) {
-      toast.error("Key rejected", { description: String(err) })
+      notify.error("Key rejected", err)
     }
   }
 

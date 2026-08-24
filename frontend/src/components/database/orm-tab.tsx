@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import { Copy, Database, Download, Sparkles } from "lucide-react"
-import { toast } from "sonner"
-import { errorMessage, get, post } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { get, post } from "@/lib/api"
 import type { DbConnection, OrmTarget, OrmTargetInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { CodeEditor } from "@/components/code-editor"
@@ -54,7 +54,7 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
       })
       setOutput(res)
     } catch (err) {
-      toast.error("Generation failed", { description: errorMessage(err) })
+      notify.error("Generation failed", err)
     } finally {
       setBusy(false)
     }
@@ -127,8 +127,8 @@ export function OrmTab({ conn, schema }: { conn: DbConnection; schema: string })
             onClick={() =>
               navigator.clipboard
                 .writeText(output.schema)
-                .then(() => toast.success("Copied schema"))
-                .catch(() => toast.error("Could not copy"))
+                .then(() => notify.success("Copied schema"))
+                .catch(() => notify.error("Could not copy"))
             }
           >
             <Copy className="size-3.5" />

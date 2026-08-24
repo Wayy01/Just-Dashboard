@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react"
 import { Download, FileText, RefreshCw, ScrollText } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { downloadUrl, get } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -330,7 +330,7 @@ function DownloadDialog({ source }: { source: LogSource }) {
           </p>
         </div>
         <DialogFooter>
-          <Button asChild onClick={() => toast.success("Export started")}>
+          <Button asChild onClick={() => notify.success("Export started")}>
             <a href={href} download>
               <FileText className="size-4" />
               Download

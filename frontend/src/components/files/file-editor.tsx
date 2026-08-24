@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { FileCode, Loader2, Save, ShieldAlert } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { downloadUrl, get, post, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import type { FileContent } from "@/lib/types"
@@ -72,11 +72,11 @@ function FileEditorPanel({
     setSaving(true)
     try {
       await put("/files/write", { path, content: draft })
-      toast.success("Saved", { description: path })
+      notify.success("Saved", { description: path })
       setFile((f) => (f ? { ...f, content: draft } : f))
       onSaved?.()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     } finally {
       setSaving(false)
     }
@@ -86,10 +86,10 @@ function FileEditorPanel({
     if (!path) return
     try {
       await post("/files/chmod", { path, mode })
-      toast.success(`Mode set to ${mode}`)
+      notify.success(`Mode set to ${mode}`)
       onSaved?.()
     } catch (err) {
-      toast.error("Could not change mode", { description: String(err) })
+      notify.error("Could not change mode", err)
     }
   }
 
@@ -185,9 +185,7 @@ function FileEditorPanel({
   )
 }
 
-const IMAGE_EXTS = new Set([
-  "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg",
-])
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg"])
 
 /** Whether a path names an image the browser can render inline. */
 function isImage(path: string | null): boolean {

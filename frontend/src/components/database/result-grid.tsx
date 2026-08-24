@@ -13,7 +13,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbForeignKey, QueryResult } from "@/lib/types"
@@ -323,8 +323,8 @@ function CellDetail({ value }: { value: unknown }) {
           onClick={() =>
             navigator.clipboard
               .writeText(text)
-              .then(() => toast.success("Copied to clipboard"))
-              .catch(() => toast.error("Could not copy"))
+              .then(() => notify.success("Copied to clipboard"))
+              .catch(() => notify.error("Could not copy"))
           }
         >
           <Copy className="size-3.5" />
@@ -345,6 +345,6 @@ function CellDetail({ value }: { value: unknown }) {
 function copyJSON(row: Record<string, unknown>) {
   navigator.clipboard
     .writeText(JSON.stringify(row, null, 2))
-    .then(() => toast.success("Copied row as JSON"))
-    .catch(() => toast.error("Could not copy"))
+    .then(() => notify.success("Copied row as JSON"))
+    .catch(() => notify.error("Could not copy"))
 }

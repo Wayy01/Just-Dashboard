@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Check, GitCommitHorizontal, Minus, Plus, RotateCcw, Upload } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
@@ -65,7 +65,7 @@ export function ChangesPanel({
         singleFile: true,
       })
     } catch (err) {
-      toast.error("Could not read the diff", { description: String(err) })
+      notify.error("Could not read the diff", err)
     }
   }
 
@@ -74,12 +74,14 @@ export function ChangesPanel({
   const stage = (files: string[]) =>
     void run("Staged", () => post<GitResult>("/git/stage", { files }, { query: q })).catch(() => {})
   const unstage = (files: string[]) =>
-    void run("Unstaged", () => post<GitResult>("/git/unstage", { files }, { query: q })).catch(() => {})
+    void run("Unstaged", () => post<GitResult>("/git/unstage", { files }, { query: q })).catch(
+      () => {},
+    )
 
   const commit = async (thenPush: boolean) => {
     const msg = message.trim()
     if (!msg && !amend) {
-      toast.error("Write a short message describing your changes first")
+      notify.error("Write a short message describing your changes first")
       return
     }
     try {
@@ -175,7 +177,11 @@ export function ChangesPanel({
                     onClick={() => showDiff(f, true)}
                     actions={
                       canControl && (
-                        <RowAction label="Unstage" disabled={!!busy} onClick={() => unstage([f.path])}>
+                        <RowAction
+                          label="Unstage"
+                          disabled={!!busy}
+                          onClick={() => unstage([f.path])}
+                        >
                           <Minus className="size-3.5" />
                         </RowAction>
                       )
@@ -234,7 +240,11 @@ export function ChangesPanel({
                           </RowAction>
                         )}
                         {canControl && (
-                          <RowAction label="Stage" disabled={!!busy} onClick={() => stage([f.path])}>
+                          <RowAction
+                            label="Stage"
+                            disabled={!!busy}
+                            onClick={() => stage([f.path])}
+                          >
                             <Plus className="size-3.5" />
                           </RowAction>
                         )}
@@ -260,7 +270,9 @@ export function ChangesPanel({
               }
             }}
             placeholder={
-              amend ? "New message (leave blank to keep the previous one)" : "Describe what you changed…"
+              amend
+                ? "New message (leave blank to keep the previous one)"
+                : "Describe what you changed…"
             }
             rows={3}
             className="resize-none font-mono text-[12px]"
@@ -288,7 +300,9 @@ export function ChangesPanel({
                   Commit &amp; push
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Commit the staged changes, then push them to the remote</TooltipContent>
+              <TooltipContent>
+                Commit the staged changes, then push them to the remote
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -333,7 +347,9 @@ function Group({
   return (
     <div>
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-hairline bg-surface-header/95 px-3 py-1.5 backdrop-blur">
-        <span className={cn("size-1.5 rounded-full", tone === "success" ? "bg-success" : "bg-warning")} />
+        <span
+          className={cn("size-1.5 rounded-full", tone === "success" ? "bg-success" : "bg-warning")}
+        />
         <span className="text-[12px] font-medium">{label}</span>
         <GitExplain name={explain} />
         <span className="numeric text-[11px] text-muted-foreground">{count}</span>

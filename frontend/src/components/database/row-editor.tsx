@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { errorMessage } from "@/lib/api"
 import type { DbColumn } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -83,9 +83,7 @@ export function RowEditor({
       await onSubmit(values, key)
       onOpenChange(false)
     } catch (err) {
-      toast.error(mode === "insert" ? "Insert failed" : "Update failed", {
-        description: errorMessage(err),
-      })
+      notify.error(mode === "insert" ? "Insert failed" : "Update failed", errorMessage(err))
     } finally {
       setBusy(false)
     }

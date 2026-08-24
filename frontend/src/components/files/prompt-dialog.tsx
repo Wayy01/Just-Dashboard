@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -39,9 +39,7 @@ export type PromptRequest = {
  */
 export function usePrompt() {
   const [request, setRequest] = useState<PromptRequest | null>(null)
-  const dialog = (
-    <PromptDialog request={request} onOpenChange={(o) => !o && setRequest(null)} />
-  )
+  const dialog = <PromptDialog request={request} onOpenChange={(o) => !o && setRequest(null)} />
   return { prompt: setRequest, dialog }
 }
 
@@ -53,7 +51,13 @@ function PromptDialog({
   onOpenChange: (open: boolean) => void
 }) {
   if (!request) return null
-  return <PromptBody key={request.title + (request.initial ?? "")} request={request} onOpenChange={onOpenChange} />
+  return (
+    <PromptBody
+      key={request.title + (request.initial ?? "")}
+      request={request}
+      onOpenChange={onOpenChange}
+    />
+  )
 }
 
 function PromptBody({
@@ -74,7 +78,7 @@ function PromptBody({
       await request.submit(value.trim())
       onOpenChange(false)
     } catch (err) {
-      toast.error(`${request.title} failed`, { description: String(err) })
+      notify.error(`${request.title} failed`, err)
       setBusy(false)
     }
   }

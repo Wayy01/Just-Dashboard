@@ -13,7 +13,7 @@ import {
   RotateCcw,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { relativeTime, shortSha, timestamp } from "@/lib/format"
 import type { DeployCommit, DeployProject, DeployRun, EnvVar } from "@/lib/types"
@@ -61,10 +61,10 @@ export default function DeployPage() {
   const deploy = async (project: DeployProject) => {
     try {
       await post(`/deploy/${project.id}/run`)
-      toast.success(`Deploying ${project.name}`, { description: "Watch progress in the history." })
+      notify.success(`Deploying ${project.name}`, { description: "Watch progress in the history." })
       refresh()
     } catch (err) {
-      toast.error("Could not start deployment", { description: String(err) })
+      notify.error("Could not start deployment", err)
     }
   }
 
@@ -219,7 +219,7 @@ function HookDialog({ project }: { project: DeployProject }) {
                 variant="outline"
                 onClick={() => {
                   navigator.clipboard.writeText(url)
-                  toast.success("Copied")
+                  notify.success("Copied")
                 }}
               >
                 <Copy className="size-4" />
@@ -245,7 +245,7 @@ function HookDialog({ project }: { project: DeployProject }) {
                 const res = await post<{ secret: string }>(`/deploy/${project.id}/rotate-secret`)
                 setSecret(res.secret)
               } catch (err) {
-                toast.error("Could not rotate", { description: String(err) })
+                notify.error("Could not rotate", err)
               }
             }}
           >
@@ -462,14 +462,14 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
   const save = async () => {
     try {
       await put(`/deploy/${project.id}/env`, { key, value })
-      toast.success(`${key} saved`)
+      notify.success(`${key} saved`)
       setKey("")
       setValue("")
       setRevealed(null)
       refresh()
       onChanged()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     }
   }
 
@@ -530,7 +530,7 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
               try {
                 setRevealed(await get<EnvVar[]>(`/deploy/${project.id}/env/reveal`))
               } catch (err) {
-                toast.error("Could not reveal", { description: String(err) })
+                notify.error("Could not reveal", err)
               }
             }}
           >
@@ -587,7 +587,7 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
       setSecret(res.secret)
       onDone()
     } catch (err) {
-      toast.error("Could not create project", { description: String(err) })
+      notify.error("Could not create project", err)
     }
   }
 

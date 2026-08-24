@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { Activity, Clock, Cpu, ListChecks, Play, RotateCw, Square, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, duration, percent, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -104,7 +104,7 @@ function PM2Tab() {
     await post(`/pm2/${encodeURIComponent(proc.name)}/${action}`, undefined, {
       confirm: confirmText,
     })
-    toast.success(`${proc.name} ${action}ed`)
+    notify.success(`${proc.name} ${action}ed`)
     refresh()
   }
 
@@ -172,7 +172,7 @@ function PM2Tab() {
                       {proc.status !== "online" && can("service.control") && (
                         <IconAction
                           label="Start"
-                          onClick={() => act(proc, "start").catch((e) => toast.error(String(e)))}
+                          onClick={() => act(proc, "start").catch((e) => notify.error(String(e)))}
                         >
                           <Play />
                         </IconAction>
@@ -284,7 +284,7 @@ function SystemdTab() {
     await post(`/systemd/${encodeURIComponent(unit.name)}/${action}`, undefined, {
       confirm: confirmText,
     })
-    toast.success(`${unit.name} ${action}`)
+    notify.success(`${unit.name} ${action}`)
     refresh()
   }
 
@@ -369,7 +369,7 @@ function SystemdTab() {
                       {unit.activeState !== "active" && can("service.control") && (
                         <IconAction
                           label="Start"
-                          onClick={() => act(unit, "start").catch((e) => toast.error(String(e)))}
+                          onClick={() => act(unit, "start").catch((e) => notify.error(String(e)))}
                         >
                           <Play />
                         </IconAction>
@@ -421,7 +421,7 @@ function SystemdTab() {
                           className="text-muted-foreground"
                           onClick={() =>
                             act(unit, unit.enabled ? "disable" : "enable").catch((e) =>
-                              toast.error(String(e)),
+                              notify.error(String(e)),
                             )
                           }
                         >

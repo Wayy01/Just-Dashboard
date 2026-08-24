@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { FolderPlus, Layers, Loader2, Play, Plus } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { ComposeStack } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -131,10 +131,10 @@ function StackCard({
     setBusy(true)
     try {
       await post(`/docker/stacks/${encodeURIComponent(stack.name)}/up`)
-      toast.success(`${stack.name} is up`)
+      notify.success(`${stack.name} is up`)
       onChanged()
     } catch (err) {
-      toast.error(`Could not start ${stack.name}`, { description: String(err) })
+      notify.error(`Could not start ${stack.name}`, err)
     } finally {
       setBusy(false)
     }
@@ -201,7 +201,11 @@ function StackCard({
             </Button>
             {can("service.control") && stack.running < stack.total && (
               <Button size="sm" variant="ghost" onClick={bringUp} disabled={busy}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                {busy ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Play className="size-3.5" />
+                )}
                 Bring up
               </Button>
             )}
@@ -243,13 +247,13 @@ function NewStackDialog({
         name,
         dir: dir.trim() || undefined,
       })
-      toast.success(`${res.name} created`, { description: res.dir })
+      notify.success(`${res.name} created`, { description: res.dir })
       onOpenChange(false)
       onCreated(res.name)
       setName("")
       setDir("")
     } catch (err) {
-      toast.error("Could not create the stack", { description: String(err) })
+      notify.error("Could not create the stack", err)
     } finally {
       setBusy(false)
     }

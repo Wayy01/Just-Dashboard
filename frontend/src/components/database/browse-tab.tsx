@@ -15,8 +15,8 @@ import {
   Upload,
   X,
 } from "lucide-react"
-import { toast } from "sonner"
-import { del, downloadUrl, errorMessage, get, patch, post } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type {
@@ -254,9 +254,9 @@ export function BrowseTab({
           }
         }
         if (failed) {
-          toast.warning(`Deleted ${keys.length - failed}, ${failed} could not be removed`)
+          notify.warning(`Deleted ${keys.length - failed}, ${failed} could not be removed`)
         } else {
-          toast.success(`Deleted ${plural(keys.length, "row")}`)
+          notify.success(`Deleted ${plural(keys.length, "row")}`)
         }
         reload()
       },
@@ -280,9 +280,9 @@ export function BrowseTab({
         rows: recs,
       })
       await navigator.clipboard.writeText(res.sql)
-      toast.success(`Copied ${plural(recs.length, "row")} as SQL`)
+      notify.success(`Copied ${plural(recs.length, "row")} as SQL`)
     } catch (err) {
-      toast.error("Could not copy", { description: errorMessage(err) })
+      notify.error("Could not copy", err)
     }
   }
 
@@ -329,7 +329,7 @@ export function BrowseTab({
       })
       setCount(res.count)
     } catch (err) {
-      toast.error("Could not count rows", { description: errorMessage(err) })
+      notify.error("Could not count rows", err)
     } finally {
       setCounting(false)
     }
@@ -337,12 +337,12 @@ export function BrowseTab({
 
   const insertRow = async (values: Record<string, unknown>) => {
     await post(`/databases/${conn.id}/rows`, { schema, table, values })
-    toast.success("Row inserted")
+    notify.success("Row inserted")
     reload()
   }
   const updateRow = async (values: Record<string, unknown>, key?: Record<string, unknown>) => {
     await patch(`/databases/${conn.id}/rows`, { schema, table, values, key })
-    toast.success("Row updated")
+    notify.success("Row updated")
     reload()
   }
   const deleteRow = (row: Record<string, unknown>) => {
@@ -362,7 +362,7 @@ export function BrowseTab({
       ),
       action: async (c) => {
         await del(`/databases/${conn.id}/rows`, { body: { schema, table, key }, confirm: c })
-        toast.success("Row deleted")
+        notify.success("Row deleted")
         reload()
       },
     })
@@ -387,7 +387,7 @@ export function BrowseTab({
       ),
       action: async (c) => {
         await del(`/databases/${conn.id}/ddl/table`, { body: { schema, table }, confirm: c })
-        toast.success(`Dropped ${table}`)
+        notify.success(`Dropped ${table}`)
         setCount(null)
         // Deselected before the list is refreshed: the table is gone, and
         // leaving it selected left the grid showing its last rows under a live
@@ -409,7 +409,7 @@ export function BrowseTab({
       ),
       action: async (c) => {
         await post(`/databases/${conn.id}/ddl/truncate`, { schema, table }, { confirm: c })
-        toast.success(`Emptied ${table}`)
+        notify.success(`Emptied ${table}`)
         reload()
       },
     })

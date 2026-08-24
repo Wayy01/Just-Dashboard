@@ -22,7 +22,7 @@ import {
   Upload,
   X,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { API_BASE, del, downloadUrl, get, post } from "@/lib/api"
 import { truncateMiddle } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -187,10 +187,10 @@ export default function FilesPage() {
         { method: "POST", credentials: "include", body: form },
       )
       if (!res.ok) throw new Error((await res.json()).error?.message ?? res.statusText)
-      toast.success(`Uploaded ${arr.length} file${arr.length === 1 ? "" : "s"}`)
+      notify.success(`Uploaded ${arr.length} file${arr.length === 1 ? "" : "s"}`)
       refresh()
     } catch (err) {
-      toast.error("Upload failed", { description: String(err) })
+      notify.error("Upload failed", err)
     } finally {
       if (uploadRef.current) uploadRef.current.value = ""
     }
@@ -205,12 +205,11 @@ export default function FilesPage() {
       initial: entry.name,
       confirmLabel: "Rename",
       selectBasename: true,
-      validate: (v) =>
-        v.includes("/") ? "A name cannot contain a slash." : undefined,
+      validate: (v) => (v.includes("/") ? "A name cannot contain a slash." : undefined),
       hint: (v) => join(path, v || "…"),
       submit: async (name) => {
         await post("/files/move", { from: entry.path, to: join(path, name) })
-        toast.success(`Renamed to ${name}`)
+        notify.success(`Renamed to ${name}`)
         refresh()
       },
     })
@@ -220,10 +219,10 @@ export default function FilesPage() {
     const name = uniqueName(entry.name, taken)
     try {
       await post("/files/copy", { from: entry.path, to: join(path, name) })
-      toast.success(`Duplicated as ${name}`)
+      notify.success(`Duplicated as ${name}`)
       refresh()
     } catch (err) {
-      toast.error("Could not duplicate", { description: String(err) })
+      notify.error("Could not duplicate", err)
     }
   }
 
@@ -233,10 +232,10 @@ export default function FilesPage() {
         archive: entry.path,
         destination: path,
       })
-      toast.success(`Extracted ${res.extracted} item${res.extracted === 1 ? "" : "s"}`)
+      notify.success(`Extracted ${res.extracted} item${res.extracted === 1 ? "" : "s"}`)
       refresh()
     } catch (err) {
-      toast.error("Could not extract", { description: String(err) })
+      notify.error("Could not extract", err)
     }
   }
 
@@ -285,7 +284,7 @@ export default function FilesPage() {
         }
         clearSelection()
         refresh()
-        if (failed) toast.error(`${failed} item(s) could not be deleted`)
+        if (failed) notify.error(`${failed} item(s) could not be deleted`)
       },
     })
 
@@ -316,8 +315,8 @@ export default function FilesPage() {
     if (clip.mode === "cut") setClip(null)
     clearSelection()
     refresh()
-    if (failed) toast.error(`${failed} item(s) could not be pasted`)
-    else if (ok) toast.success(`${clip.mode === "cut" ? "Moved" : "Copied"} ${ok} item(s) here`)
+    if (failed) notify.error(`${failed} item(s) could not be pasted`)
+    else if (ok) notify.success(`${clip.mode === "cut" ? "Moved" : "Copied"} ${ok} item(s) here`)
   }
 
   const newFolder = () =>
@@ -328,7 +327,7 @@ export default function FilesPage() {
       hint: (v) => join(path, v || "…"),
       submit: async (name) => {
         await post("/files/mkdir", { path: join(path, name) })
-        toast.success(`Created ${name}`)
+        notify.success(`Created ${name}`)
         refresh()
       },
     })
@@ -341,7 +340,7 @@ export default function FilesPage() {
       hint: (v) => join(path, v || "…"),
       submit: async (name) => {
         await post("/files/touch", { path: join(path, name) })
-        toast.success(`Created ${name}`)
+        notify.success(`Created ${name}`)
         refresh()
         setEditing(join(path, name))
       },
@@ -350,7 +349,9 @@ export default function FilesPage() {
   const cutCopy = (mode: "cut" | "copy", paths: string[]) => {
     if (paths.length === 0) return
     setClip({ mode, paths })
-    toast.success(`${mode === "cut" ? "Cut" : "Copied"} ${paths.length} item(s) — paste in any folder`)
+    notify.success(
+      `${mode === "cut" ? "Cut" : "Copied"} ${paths.length} item(s) — paste in any folder`,
+    )
   }
 
   const clipPaths = useMemo(() => new Set(clip?.paths ?? []), [clip])
@@ -420,7 +421,11 @@ export default function FilesPage() {
             ) : (
               canWrite && (
                 <>
-                  <NewMenu onFolder={newFolder} onFile={newFile} onSymlink={() => setSymlinkOpen(true)} />
+                  <NewMenu
+                    onFolder={newFolder}
+                    onFile={newFile}
+                    onSymlink={() => setSymlinkOpen(true)}
+                  />
                   <Button size="sm" onClick={() => uploadRef.current?.click()}>
                     <Upload className="size-4" />
                     Upload
@@ -596,17 +601,38 @@ export default function FilesPage() {
                         }
                       />
                     </TableHead>
-                    <SortHead label="Name" k="name" sort={sort} setSort={setSort} className="w-full" />
-                    <SortHead label="Size" k="size" sort={sort} setSort={setSort} className="text-right" />
+                    <SortHead
+                      label="Name"
+                      k="name"
+                      sort={sort}
+                      setSort={setSort}
+                      className="w-full"
+                    />
+                    <SortHead
+                      label="Size"
+                      k="size"
+                      sort={sort}
+                      setSort={setSort}
+                      className="text-right"
+                    />
                     <SortHead label="Modified" k="modified" sort={sort} setSort={setSort} />
                     <SortHead label="Owner" k="owner" sort={sort} setSort={setSort} />
-                    <SortHead label="Mode" k="mode" sort={sort} setSort={setSort} className="w-20" />
+                    <SortHead
+                      label="Mode"
+                      k="mode"
+                      sort={sort}
+                      setSort={setSort}
+                      className="w-20"
+                    />
                     <TableHead className="w-px" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {path !== "/" && (
-                    <TableRow className="select-none" onActivate={() => setPath(listing.data!.parent)}>
+                    <TableRow
+                      className="select-none"
+                      onActivate={() => setPath(listing.data!.parent)}
+                    >
                       <TableCell />
                       <TableCell colSpan={6}>
                         <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -647,7 +673,9 @@ export default function FilesPage() {
                         <EmptyState
                           icon={FolderTree}
                           title="This directory is empty"
-                          description={canWrite ? "Drop files here to upload, or use New." : undefined}
+                          description={
+                            canWrite ? "Drop files here to upload, or use New." : undefined
+                          }
                         />
                       </TableCell>
                     </TableRow>
@@ -669,12 +697,7 @@ export default function FilesPage() {
         onOpenChange={(open) => !open && setPermsEntry(null)}
         onDone={refresh}
       />
-      <SymlinkDialog
-        open={symlinkOpen}
-        dir={path}
-        onOpenChange={setSymlinkOpen}
-        onDone={refresh}
-      />
+      <SymlinkDialog open={symlinkOpen} dir={path} onOpenChange={setSymlinkOpen} onDone={refresh} />
       {dialog}
       {promptDialog}
     </Page>
@@ -846,9 +869,7 @@ function SymlinkDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        {open && (
-          <SymlinkBody dir={dir} onClose={() => onOpenChange(false)} onDone={onDone} />
-        )}
+        {open && <SymlinkBody dir={dir} onClose={() => onOpenChange(false)} onDone={onDone} />}
       </DialogContent>
     </Dialog>
   )
@@ -872,11 +893,11 @@ function SymlinkBody({
     setBusy(true)
     try {
       await post("/files/symlink", { target: target.trim(), link: join(dir, name.trim()) })
-      toast.success(`Created link ${name.trim()}`)
+      notify.success(`Created link ${name.trim()}`)
       onDone()
       onClose()
     } catch (err) {
-      toast.error("Could not create symlink", { description: String(err) })
+      notify.error("Could not create symlink", err)
     } finally {
       setBusy(false)
     }
@@ -888,30 +909,30 @@ function SymlinkBody({
         <DialogTitle>New symlink</DialogTitle>
       </DialogHeader>
       <div className="space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Points at</label>
-            <Input
-              autoFocus
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              placeholder="/path/it/points/to"
-              className="font-mono text-xs"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Link name</label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && create()}
-              placeholder="link-name"
-              className="font-mono text-xs"
-            />
-            <p className="font-mono text-[11px] break-all text-muted-foreground">
-              {join(dir, name || "…")} → {target || "…"}
-            </p>
-          </div>
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">Points at</label>
+          <Input
+            autoFocus
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="/path/it/points/to"
+            className="font-mono text-xs"
+          />
         </div>
+        <div className="space-y-1.5">
+          <label className="text-xs text-muted-foreground">Link name</label>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="link-name"
+            className="font-mono text-xs"
+          />
+          <p className="font-mono text-[11px] break-all text-muted-foreground">
+            {join(dir, name || "…")} → {target || "…"}
+          </p>
+        </div>
+      </div>
       <DialogFooter>
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
@@ -946,7 +967,7 @@ function SearchDialog({
     try {
       setHits(await get("/files/search", { path, q: query, content, regex, limit: 200 }))
     } catch (err) {
-      toast.error("Search failed", { description: String(err) })
+      notify.error("Search failed", err)
     } finally {
       setBusy(false)
     }
