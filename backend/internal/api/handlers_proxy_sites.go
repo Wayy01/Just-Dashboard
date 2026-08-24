@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/jobs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
 	"github.com/go-chi/chi/v5"
 )
@@ -190,22 +193,53 @@ func (s *Server) handleDomainDNS(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// handleCertIssue starts an issuance and hands back the job to watch.
+//
+// The validation is synchronous and the command is not. A bad email, an
+// unknown DNS provider or a wildcard over an HTTP challenge are all mistakes
+// the operator should hear about in the response to their own click — not a
+// minute later as a job that failed. Everything past that point is an ACME
+// exchange with a certificate authority, which is exactly the kind of wait
+// that wants a console rather than a spinner.
 func (s *Server) handleCertIssue(w http.ResponseWriter, r *http.Request) error {
 	var req proxysvc.IssueRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	ctx, cancel := timeoutCtx(r, 6*time.Minute)
-	defer cancel()
-	out, err := s.modules.proxy.Issue(ctx, req)
+	args, err := s.modules.proxy.IssueArgs(req)
 	if err != nil {
-		httpx.SetAudit(r, "certificates.issue", strings.Join(req.Domains, ","),
-			map[string]any{"result": "failed", "staging": req.Staging})
-		return httpx.Err(http.StatusBadGateway, "issue_failed", err.Error())
+		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "certificates.issue", strings.Join(req.Domains, ","),
-		map[string]any{"method": req.Method, "staging": req.Staging})
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	target := strings.Join(req.Domains, ", ")
+	httpx.SetAudit(r, "certificates.issue", target,
+		map[string]any{"method": req.Method, "staging": req.Staging, "streamed": true})
+
+	title := "Issuing a certificate for " + target
+	if req.Staging {
+		title = "Test issuance for " + target
+	}
+	s.startJob(w, r, jobs.Spec{
+		Kind: "certbot.issue", Title: title, Target: target, Timeout: 10 * time.Minute,
+	}, func(ctx context.Context, out jobs.Emitter) error {
+		if req.Staging {
+			out.Status("Using Let's Encrypt's staging authority: the certificate will not be trusted by browsers, and this run does not count against the rate limit.")
+		}
+		return certbotJob(ctx, out, args)
+	})
+	return nil
+}
+
+// certbotJob runs certbot and turns a non-zero exit into an error, so a failed
+// order reads as a failed job rather than as a job that succeeded while
+// printing a problem.
+func certbotJob(ctx context.Context, out jobs.Emitter, args []string) error {
+	code, err := out.Run(ctx, "certbot", args...)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("certbot exited %d — the last lines above say why", code)
+	}
 	return nil
 }
 
@@ -220,16 +254,32 @@ func (s *Server) handleCertRenew(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	ctx, cancel := timeoutCtx(r, 6*time.Minute)
-	defer cancel()
-	out, err := s.modules.proxy.Renew(ctx, req.Name, req.DryRun, req.Force)
+	args, err := s.modules.proxy.RenewArgs(req.Name, req.DryRun, req.Force)
 	if err != nil {
-		httpx.SetAudit(r, "certificates.renew", req.Name, map[string]any{"result": "failed"})
-		return httpx.Err(http.StatusBadGateway, "renew_failed", err.Error())
+		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "certificates.renew", req.Name,
-		map[string]any{"dryRun": req.DryRun, "force": req.Force})
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	target := req.Name
+	if target == "" {
+		target = "every certificate due"
+	}
+	httpx.SetAudit(r, "certificates.renew", target,
+		map[string]any{"dryRun": req.DryRun, "force": req.Force, "streamed": true})
+
+	title := "Renewing " + target
+	if req.DryRun {
+		title = "Dry run: renewing " + target
+	}
+	s.startJob(w, r, jobs.Spec{
+		Kind: "certbot.renew", Title: title, Target: target, Timeout: 10 * time.Minute,
+	}, func(ctx context.Context, out jobs.Emitter) error {
+		if req.DryRun {
+			out.Status("A dry run performs the whole exchange against the staging authority and changes nothing on disk.")
+		}
+		if req.Force {
+			out.Status("Forced renewal spends one of the five duplicate certificates Let's Encrypt allows per week.")
+		}
+		return certbotJob(ctx, out, args)
+	})
 	return nil
 }
 
@@ -248,14 +298,17 @@ func (s *Server) handleCertRevoke(w http.ResponseWriter, r *http.Request) error 
 	if err := httpx.RequireTypedConfirmation(w, r, "revoke "+req.Name); err != nil {
 		return err
 	}
-	ctx, cancel := timeoutCtx(r, 4*time.Minute)
-	defer cancel()
-	out, err := s.modules.proxy.Revoke(ctx, req.Name)
+	args, err := s.modules.proxy.RevokeArgs(req.Name)
 	if err != nil {
-		return httpx.Err(http.StatusBadGateway, "revoke_failed", err.Error())
+		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "certificates.revoke", req.Name, nil)
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	httpx.SetAudit(r, "certificates.revoke", req.Name, map[string]any{"streamed": true})
+	s.startJob(w, r, jobs.Spec{
+		Kind: "certbot.revoke", Title: "Revoking " + req.Name, Target: req.Name,
+		Timeout: 5 * time.Minute,
+	}, func(ctx context.Context, out jobs.Emitter) error {
+		return certbotJob(ctx, out, args)
+	})
 	return nil
 }
 

@@ -1,14 +1,18 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/jobs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/netsec"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
 	"github.com/go-chi/chi/v5"
@@ -242,6 +246,14 @@ type sshApplyRequest struct {
 	Settings map[string]string `json:"settings"`
 }
 
+// handleSSHApply plans synchronously and applies as a job.
+//
+// The split is deliberate and is where the value is. Every refusal — an
+// unknown directive, a value out of range, and above all a change that would
+// leave nobody a way in — has to reach the operator as the answer to their own
+// click. What follows is a write, an `sshd -t` and a reload, each worth
+// watching: this is the one operation where "it said it worked" is not the
+// same as knowing the daemon came back.
 func (s *Server) handleSSHApply(w http.ResponseWriter, r *http.Request) error {
 	var req sshApplyRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -250,22 +262,34 @@ func (s *Server) handleSSHApply(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.RequireTypedConfirmation(w, r, "change ssh"); err != nil {
 		return err
 	}
-	res, err := s.modules.netsec.ApplySSHSettings(r.Context(), req.Settings)
+	plan, err := s.modules.netsec.PlanSSHSettings(r.Context(), req.Settings)
 	if err != nil {
 		if errors.Is(err, netsec.ErrLockout) {
 			httpx.SetAudit(r, "ssh.config", "", map[string]any{"result": "refused_lockout"})
 			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
 		}
-		if errors.Is(err, netsec.ErrSSHInvalid) {
-			httpx.SetAudit(r, "ssh.config", "", map[string]any{"result": "rejected"})
-			return httpx.Err(http.StatusUnprocessableEntity, "invalid_config", res.Output)
-		}
 		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "ssh.config", res.File, map[string]any{
-		"applied": res.Applied, "reloaded": res.Reloaded,
+	httpx.SetAudit(r, "ssh.config", plan.File,
+		map[string]any{"applied": plan.Applied, "streamed": true})
+
+	s.startJob(w, r, jobs.Spec{
+		Kind:   "ssh.apply",
+		Title:  "Applying SSH settings: " + strings.Join(plan.Applied, ", "),
+		Target: plan.File, Timeout: 2 * time.Minute,
+	}, func(ctx context.Context, out jobs.Emitter) error {
+		res, err := s.modules.netsec.ApplySSHPlan(ctx, plan, out)
+		if err != nil {
+			if errors.Is(err, netsec.ErrSSHInvalid) {
+				return fmt.Errorf("sshd rejected the configuration and the previous file was restored")
+			}
+			return err
+		}
+		if res.ReloadError != "" {
+			return fmt.Errorf("the configuration is valid and written, but sshd did not reload: %s", res.ReloadError)
+		}
+		return nil
 	})
-	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }
 

@@ -102,7 +102,7 @@ func TestIssueValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := s.Issue(t.Context(), tc.req); err == nil {
+			if _, err := s.IssueArgs(tc.req); err == nil {
 				t.Fatal("accepted")
 			}
 		})
@@ -111,13 +111,63 @@ func TestIssueValidation(t *testing.T) {
 
 func TestRenewAndRevokeValidateTheName(t *testing.T) {
 	s := New("/etc/nginx", "/etc/caddy/Caddyfile")
-	if _, err := s.Renew(t.Context(), "../../etc/passwd", false, false); err == nil {
+	if _, err := s.RenewArgs("../../etc/passwd", false, false); err == nil {
 		t.Error("accepted a path as a certificate name")
 	}
-	if _, err := s.Revoke(t.Context(), ""); err == nil {
+	if _, err := s.RevokeArgs(""); err == nil {
 		t.Error("accepted an empty name")
 	}
-	if _, err := s.Revoke(t.Context(), "app.example.com; rm -rf /"); err == nil {
+	if _, err := s.RevokeArgs("app.example.com; rm -rf /"); err == nil {
 		t.Error("accepted a name carrying a command")
+	}
+}
+
+// The argv is the whole contract now that running it belongs to a job, so it
+// is worth reading back rather than trusting.
+func TestIssueArgsShape(t *testing.T) {
+	s := New("/etc/nginx", "/etc/caddy/Caddyfile")
+	args, err := s.IssueArgs(IssueRequest{
+		Domains: []string{"app.example.com", "www.app.example.com"},
+		Email:   "ops@example.com", Method: "webroot", WebRoot: "/var/www/html", Staging: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"certonly", "--webroot", "-w /var/www/html", "--non-interactive", "--agree-tos",
+		"-m ops@example.com", "--keep-until-expiring", "--staging",
+		"-d app.example.com", "-d www.app.example.com",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q from %q", want, joined)
+		}
+	}
+}
+
+func TestRenewArgsShape(t *testing.T) {
+	s := New("/etc/nginx", "/etc/caddy/Caddyfile")
+	args, err := s.RenewArgs("app.example.com", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"renew", "--non-interactive", "--cert-name app.example.com", "--dry-run"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q from %q", want, joined)
+		}
+	}
+	if strings.Contains(joined, "--force-renewal") {
+		t.Error("force was not asked for")
+	}
+
+	// An empty name renews everything due, which is what certbot does with no
+	// --cert-name at all.
+	all, err := s.RenewArgs("", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(all, " "), "--cert-name") {
+		t.Errorf("renew-all should not name a lineage: %q", all)
 	}
 }

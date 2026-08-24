@@ -97,20 +97,26 @@ func (s *Service) Check(ctx context.Context) (*Report, error) {
 	return rep, nil
 }
 
-// Upgrade applies pending updates.
+// UpgradeCommand returns the command that applies pending updates.
 //
 // Only the non-interactive, no-new-packages form is offered: this runs
 // unattended behind a web request, and a dist-upgrade that wants to remove
 // something should be a decision somebody makes at a real terminal.
-func (s *Service) Upgrade(ctx context.Context, securityOnly bool) (string, error) {
+//
+// It returns the command rather than running it because an upgrade is watched
+// rather than waited for — apt on a machine two hundred packages behind takes
+// long enough that a request holding the connection open is indistinguishable
+// from a broken dashboard.
+func (s *Service) UpgradeCommand(securityOnly bool) (string, []string, []string, error) {
 	m := detect()
 	if m == nil {
-		return "", ErrNotSupported
+		return "", nil, nil, ErrNotSupported
 	}
 	if err := guardSecurityOnly(m, securityOnly); err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
-	return m.Upgrade(ctx, securityOnly)
+	name, args, env := m.UpgradeCommand(securityOnly)
+	return name, args, env, nil
 }
 
 // guardSecurityOnly refuses a narrowed upgrade where narrowing means nothing.
@@ -154,23 +160,18 @@ func (aptManager) List(ctx context.Context) ([]Package, error) {
 	return packages, nil
 }
 
-func (aptManager) Upgrade(ctx context.Context, securityOnly bool) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
+func (aptManager) UpgradeCommand(securityOnly bool) (string, []string, []string) {
 	args := []string{"-y", "--no-install-recommends", "-o", "Dpkg::Options::=--force-confold", "upgrade"}
 	if securityOnly {
 		// Restricting to the security pocket keeps a routine patch run from
 		// pulling in every unrelated version bump.
 		args = append([]string{"-t", detectSecuritySuite()}, args...)
 	}
-	cmd := hostexec.CommandOnHost(ctx, "apt-get", args...)
-	cmd.Env = append(os.Environ(),
-		"DEBIAN_FRONTEND=noninteractive",
-		"LC_ALL=C",
-		"NEEDRESTART_MODE=a",
-	)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// NEEDRESTART_MODE=a stops needrestart opening a full-screen prompt on
+	// Ubuntu, which in a non-interactive run is a command that never returns.
+	return "apt-get", args, []string{
+		"DEBIAN_FRONTEND=noninteractive", "LC_ALL=C", "NEEDRESTART_MODE=a",
+	}
 }
 
 // parseInstLine reads one simulated-install line, which looks like:

@@ -100,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 			s.mountNetSecRoutes(r)
 			s.mountBackupRoutes(r)
 			s.mountDeployRoutes(r)
+			s.mountJobRoutes(r)
 		})
 	})
 	return r

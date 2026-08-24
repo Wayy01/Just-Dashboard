@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/jobs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/updates"
 	"github.com/go-chi/chi/v5"
 )
@@ -32,6 +36,13 @@ func (s *Server) handleUpdatesCheck(w http.ResponseWriter, r *http.Request) erro
 	return nil
 }
 
+// handleUpdatesApply starts the upgrade and hands back the job to watch.
+//
+// This was a request that held the connection open for up to half an hour,
+// which is indistinguishable from a broken dashboard — and if the browser gave
+// up, the operator was left with no idea whether apt was still running. It is
+// a job now: it survives the tab, and the transcript is there to read
+// afterwards whether or not anybody watched it happen.
 func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) error {
 	securityOnly := r.URL.Query().Get("security") == "true"
 	phrase := "upgrade packages"
@@ -41,24 +52,38 @@ func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) erro
 	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
 		return err
 	}
-	out, err := s.modules.updates.Upgrade(r.Context(), securityOnly)
-	httpx.SetAudit(r, "system.updates.apply", "", map[string]any{
-		"securityOnly": securityOnly,
-		"ok":           err == nil,
-	})
+	name, args, env, err := s.modules.updates.UpgradeCommand(securityOnly)
 	if err != nil {
-		return httpx.Err(http.StatusBadGateway, "upgrade_failed", trimOutput(out))
+		if errors.Is(err, updates.ErrNotSupported) {
+			return httpx.Err(http.StatusServiceUnavailable, "not_installed", err.Error())
+		}
+		return httpx.BadRequest("%v", err)
 	}
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": trimOutput(out)})
-	return nil
-}
+	httpx.SetAudit(r, "system.updates.apply", name, map[string]any{
+		"securityOnly": securityOnly, "streamed": true,
+	})
 
-// trimOutput keeps an apt transcript to something a browser can render; the
-// tail is the part that says whether it worked.
-func trimOutput(out string) string {
-	const max = 64 * 1024
-	if len(out) <= max {
-		return out
+	title := "Upgrading packages with " + name
+	if securityOnly {
+		title = "Installing security updates with " + name
 	}
-	return "… earlier output trimmed …\n" + out[len(out)-max:]
+	s.startJob(w, r, jobs.Spec{
+		Kind: "updates.apply", Title: title, Target: name, Timeout: 2 * time.Hour,
+	}, func(ctx context.Context, out jobs.Emitter) error {
+		code, err := out.RunEnv(ctx, env, name, args...)
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			return fmt.Errorf("%s exited %d — the last lines above say why", name, code)
+		}
+		// The reboot flag is only meaningful after the packages have landed,
+		// and it is the one thing an operator needs to know that the
+		// transcript does not say plainly.
+		if rep, err := s.modules.updates.Check(ctx); err == nil && rep.RebootRequired {
+			out.Status("A restart is required: the running kernel and libraries are still the old ones.")
+		}
+		return nil
+	})
+	return nil
 }

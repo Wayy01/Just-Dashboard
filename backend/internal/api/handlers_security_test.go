@@ -32,13 +32,19 @@ import (
 // signIn creates an admin, completes the second factor and returns a cookie
 // header for an authenticated session.
 func signIn(t *testing.T, s *Server) string {
+	return signInAs(t, s, "tester", auth.RoleAdmin)
+}
+
+// signInAs is the same for any role, so the capability tests can hold a
+// readonly session next to an admin one.
+func signInAs(t *testing.T, s *Server, username string, role auth.Role) string {
 	t.Helper()
 	ctx := t.Context()
-	user, err := s.Auth.CreateUser(ctx, "tester", "Correct-Horse-Battery-9", auth.RoleAdmin, false)
+	user, err := s.Auth.CreateUser(ctx, username, "Correct-Horse-Battery-9", role, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	login, err := s.Auth.Login(ctx, "tester", "Correct-Horse-Battery-9", "127.0.0.1", "test")
+	login, err := s.Auth.Login(ctx, username, "Correct-Horse-Battery-9", "127.0.0.1", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,27 +412,7 @@ func TestTLSScanReportsAnUnreachableHost(t *testing.T) {
 // configured is not privileged information — but cannot touch sshd.
 func TestReadonlyCannotChangeSSH(t *testing.T) {
 	s := testServer(t)
-	ctx := t.Context()
-	user, err := s.Auth.CreateUser(ctx, "viewer", "Correct-Horse-Battery-9", auth.RoleReadOnly, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	login, err := s.Auth.Login(ctx, "viewer", "Correct-Horse-Battery-9", "127.0.0.1", "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret, err := s.Auth.BeginTOTPEnrollment(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, _ := totp.GenerateCode(secret.Secret, time.Now())
-	if _, err := s.Auth.ConfirmTOTPEnrollment(ctx, user.ID, code); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Auth.VerifySecondFactor(ctx, login.SessionID, user.ID, code); err != nil {
-		t.Fatal(err)
-	}
-	c := &client{t: t, h: s.Routes(), cookie: httpx.SessionCookie + "=" + login.Token}
+	c := &client{t: t, h: s.Routes(), cookie: signInAs(t, s, "viewer", auth.RoleReadOnly)}
 
 	if w := c.do(http.MethodGet, "/api/v1/security/posture", "", nil); w.Code != http.StatusOK {
 		t.Errorf("posture is readable by every role: got %d", w.Code)
@@ -439,110 +425,6 @@ func TestReadonlyCannotChangeSSH(t *testing.T) {
 	}
 	if w := c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"dns","target":"localhost"}`, nil); w.Code != http.StatusForbidden {
 		t.Errorf("probe = %d, want 403", w.Code)
-	}
-}
-
-// The stream renderer is the other server-side one, and the same contract
-// holds: what the form previews is what lands on disk.
-func TestStreamPreviewRendersNginx(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/proxy/streams/preview", `{"spec":{
-		"name":"replica","listen":5432,"protocol":"tcp",
-		"upstream":"10.0.0.5:5432","allowFrom":["10.0.0.0/8"]
-	}}`, nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-	var res struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"listen 5432;", "server 10.0.0.5:5432;", "deny all;"} {
-		if !strings.Contains(res.Content, want) {
-			t.Errorf("missing %q from:\n%s", want, res.Content)
-		}
-	}
-}
-
-func TestStreamPreviewRejectsAnInjectedDirective(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/proxy/streams/preview", `{"spec":{
-		"name":"replica","listen":5432,"upstream":"10.0.0.5:5432; root /","allowFrom":[]
-	}}`, nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// A password file is only useful if it is a real htpasswd file, so the write
-// goes through the API and the listing has to show what landed.
-func TestAuthFileRoundTrip(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/proxy/auth-files/",
-		`{"file":"staging","user":"admin","password":"correct horse battery"}`, nil)
-	if w.Code == http.StatusBadRequest && strings.Contains(w.Body.String(), "permission") {
-		t.Skip("no write access to /etc/nginx in this environment")
-	}
-	if w.Code != http.StatusOK {
-		t.Skipf("could not write the password file here (%d): %s", w.Code, w.Body.String())
-	}
-	var file proxysvc.AuthFile
-	if err := json.Unmarshal(w.Body.Bytes(), &file); err != nil {
-		t.Fatal(err)
-	}
-	if len(file.Users) != 1 || file.Users[0] != "admin" {
-		t.Fatalf("users = %v", file.Users)
-	}
-	t.Cleanup(func() {
-		c.do(http.MethodDelete, "/api/v1/proxy/auth-files/staging", "",
-			map[string]string{"X-Confirm": "staging"})
-	})
-}
-
-func TestAuthFileRejectsAShortPassword(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/proxy/auth-files/",
-		`{"file":"staging","user":"admin","password":"short"}`, nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// The one thing an import must never do is accept a key that does not belong
-// to the certificate — nginx refuses that pair at reload, on a live server.
-func TestCertImportRejectsAMismatchedKey(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/certificates/import",
-		`{"name":"broken","certificate":"not a certificate","key":"not a key"}`, nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// A wildcard over an HTTP challenge cannot work, and the refusal has to reach
-// the client rather than being discovered as a certbot failure minutes later.
-func TestCertIssueRefusesAWildcardOverHTTP(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/certificates/issue",
-		`{"domains":["*.example.com"],"email":"a@example.com","method":"nginx"}`, nil)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "DNS challenge") {
-		t.Errorf("the answer should say what to do instead: %s", w.Body.String())
-	}
-}
-
-// Disconnecting a process that is not an interactive login must be refused —
-// without that check the route is a kill primitive.
-func TestDisconnectRefusesAProcessThatIsNotASession(t *testing.T) {
-	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/ssh-sessions/1/disconnect", `{}`,
-		map[string]string{"X-Confirm": "disconnect 1"})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -155,6 +155,55 @@ func TestSecurityOnlySupportIsDeclaredHonestly(t *testing.T) {
 	}
 }
 
+// The argv is the contract now that a job runs it, so it is read back rather
+// than trusted — and the environment matters as much: an apt run without
+// NEEDRESTART_MODE opens a full-screen prompt and never returns.
+func TestUpgradeCommands(t *testing.T) {
+	name, args, env := aptManager{}.UpgradeCommand(false)
+	if name != "apt-get" {
+		t.Fatalf("name = %q", name)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-y") || !strings.Contains(joined, "upgrade") {
+		t.Errorf("apt args = %q", joined)
+	}
+	envJoined := strings.Join(env, " ")
+	for _, want := range []string{"DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=a"} {
+		if !strings.Contains(envJoined, want) {
+			t.Errorf("missing %q from the environment %q", want, envJoined)
+		}
+	}
+
+	// Security-only narrows to the pocket rather than being a different verb.
+	_, secArgs, _ := aptManager{}.UpgradeCommand(true)
+	if !strings.Contains(strings.Join(secArgs, " "), "-t ") {
+		t.Errorf("security-only apt should pin a suite: %q", secArgs)
+	}
+
+	_, dnfArgs, _ := dnfManager{binary: "dnf"}.UpgradeCommand(true)
+	if !strings.Contains(strings.Join(dnfArgs, " "), "--security") {
+		t.Errorf("dnf security args = %q", dnfArgs)
+	}
+
+	// Arch cannot do a partial upgrade, so both forms are the same full -Syu.
+	_, pacFull, _ := pacmanManager{}.UpgradeCommand(false)
+	_, pacSec, _ := pacmanManager{}.UpgradeCommand(true)
+	if strings.Join(pacFull, " ") != strings.Join(pacSec, " ") {
+		t.Errorf("pacman should not pretend to narrow: %q vs %q", pacFull, pacSec)
+	}
+	if !strings.Contains(strings.Join(pacFull, " "), "-Syu") {
+		t.Errorf("pacman args = %q", pacFull)
+	}
+
+	// Every manager must produce something runnable.
+	for _, m := range managers() {
+		n, a, _ := m.UpgradeCommand(false)
+		if n == "" || len(a) == 0 {
+			t.Errorf("%s produced no command", m.Name())
+		}
+	}
+}
+
 func TestGuardSecurityOnly(t *testing.T) {
 	if err := guardSecurityOnly(aptManager{}, true); err != nil {
 		t.Errorf("apt can narrow to security and was refused: %v", err)

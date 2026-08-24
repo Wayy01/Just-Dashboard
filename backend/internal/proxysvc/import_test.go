@@ -142,7 +142,7 @@ func TestImportCertificateRejectsABadName(t *testing.T) {
 // attempt beats relaying certbot's version of it afterwards.
 func TestIssueRefusesAWildcardOverHTTP(t *testing.T) {
 	s := New("/etc/nginx", "/etc/caddy/Caddyfile")
-	_, err := s.Issue(t.Context(), IssueRequest{
+	_, err := s.IssueArgs(IssueRequest{
 		Domains: []string{"*.example.com"}, Email: "a@example.com", Method: "nginx",
 	})
 	if err == nil {
@@ -155,13 +155,13 @@ func TestIssueRefusesAWildcardOverHTTP(t *testing.T) {
 
 func TestIssueDNSRequiresAKnownProvider(t *testing.T) {
 	s := New("/etc/nginx", "/etc/caddy/Caddyfile")
-	_, err := s.Issue(t.Context(), IssueRequest{
+	_, err := s.IssueArgs(IssueRequest{
 		Domains: []string{"example.com"}, Email: "a@example.com", Method: "dns",
 	})
 	if err == nil {
 		t.Fatal("accepted a DNS challenge with no provider")
 	}
-	_, err = s.Issue(t.Context(), IssueRequest{
+	_, err = s.IssueArgs(IssueRequest{
 		Domains: []string{"example.com"}, Email: "a@example.com",
 		Method: "dns", DNSProvider: "some-registrar",
 	})

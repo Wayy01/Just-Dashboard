@@ -9,6 +9,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/files"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/gitx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/jobs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/linuxusers"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/logsx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/metrics"
@@ -42,6 +43,10 @@ type moduleSet struct {
 	dbs          *dbx.Manager
 	linuxUsers   *linuxusers.Service
 	netsec       *netsec.Service
+	// jobs runs the operations that take longer than a request should:
+	// certbot, package upgrades, sshd applies. They outlive the request that
+	// started them and are watched by id rather than by the socket.
+	jobs         *jobs.Manager
 	backupStore  *backups.Store
 	backupRunner *backups.Runner
 	backupSched  *backups.Scheduler
@@ -77,6 +82,7 @@ func (s *Server) initModules() {
 	s.modules.dbs = dbx.NewManager()
 	s.modules.linuxUsers = linuxusers.New()
 	s.modules.netsec = netsec.New()
+	s.modules.jobs = jobs.New(s.Log)
 
 	s.modules.backupStore = backups.NewStore(s.Store, s.Sealer)
 	s.modules.backupRunner = backups.NewRunner(s.modules.backupStore,

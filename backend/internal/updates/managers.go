@@ -32,9 +32,11 @@ type manager interface {
 	// List enumerates what could be upgraded, without refreshing the index —
 	// that hits the network and belongs to the host's own timer.
 	List(ctx context.Context) ([]Package, error)
-	// Upgrade applies them. securityOnly narrows to the security pocket where
-	// the manager has one; managers that do not are documented on the method.
-	Upgrade(ctx context.Context, securityOnly bool) (string, error)
+	// UpgradeCommand returns the argv that applies them, rather than running
+	// it. An upgrade is streamed to a console now — half an hour of apt output
+	// is the thing an operator most wants to watch — so the command has to be
+	// something a job can take, not something buried inside a blocking call.
+	UpgradeCommand(securityOnly bool) (name string, args []string, env []string)
 	// SupportsSecurityOnly reports whether narrowing means anything here. On
 	// Alpine and Arch it does not, and offering the switch would be a lie.
 	SupportsSecurityOnly() bool
@@ -106,13 +108,13 @@ func (m dnfManager) List(ctx context.Context) ([]Package, error) {
 	return packages, nil
 }
 
-func (m dnfManager) Upgrade(ctx context.Context, securityOnly bool) (string, error) {
+func (m dnfManager) UpgradeCommand(securityOnly bool) (string, []string, []string) {
 	args := []string{"-y"}
 	if securityOnly {
 		args = append(args, "--security")
 	}
 	args = append(args, "upgrade")
-	return run(ctx, 30*time.Minute, m.binary, args...)
+	return m.binary, args, []string{"LC_ALL=C"}
 }
 
 // parseDNFCheckUpdate reads the three-column table check-update prints:
@@ -231,11 +233,11 @@ func (m zypperManager) List(ctx context.Context) ([]Package, error) {
 	return packages, nil
 }
 
-func (m zypperManager) Upgrade(ctx context.Context, securityOnly bool) (string, error) {
+func (m zypperManager) UpgradeCommand(securityOnly bool) (string, []string, []string) {
 	if securityOnly {
-		return run(ctx, 30*time.Minute, "zypper", "--non-interactive", "patch", "--category", "security")
+		return "zypper", []string{"--non-interactive", "patch", "--category", "security"}, []string{"LC_ALL=C"}
 	}
-	return run(ctx, 30*time.Minute, "zypper", "--non-interactive", "update")
+	return "zypper", []string{"--non-interactive", "update"}, []string{"LC_ALL=C"}
 }
 
 // parseZypperUpdates reads the pipe-delimited table:
@@ -313,12 +315,12 @@ func (m pacmanManager) List(ctx context.Context) ([]Package, error) {
 	return parsePacmanUpdates(out), nil
 }
 
-// Upgrade is the full -Syu. Arch does not support partial upgrades: applying
-// packages against a stale database is the documented way to break the system,
-// so refreshing here is correct even though every other manager reads on-disk
-// state.
-func (m pacmanManager) Upgrade(ctx context.Context, _ bool) (string, error) {
-	return run(ctx, 30*time.Minute, "pacman", "-Syu", "--noconfirm")
+// UpgradeCommand is the full -Syu. Arch does not support partial upgrades:
+// applying packages against a stale database is the documented way to break
+// the system, so refreshing here is correct even though every other manager
+// reads on-disk state.
+func (m pacmanManager) UpgradeCommand(bool) (string, []string, []string) {
+	return "pacman", []string{"-Syu", "--noconfirm"}, []string{"LC_ALL=C"}
 }
 
 // parsePacmanUpdates reads `name 1.0-1 -> 1.1-1`.
@@ -355,11 +357,11 @@ func (m apkManager) List(ctx context.Context) ([]Package, error) {
 	return parseApkVersions(out), nil
 }
 
-func (m apkManager) Upgrade(ctx context.Context, _ bool) (string, error) {
+func (m apkManager) UpgradeCommand(bool) (string, []string, []string) {
 	// apk resolves against the index it has, and Alpine's is usually stale in
 	// a long-running container. --no-cache fetches a fresh one for this run
 	// without leaving it on disk.
-	return run(ctx, 30*time.Minute, "apk", "upgrade", "--no-cache")
+	return "apk", []string{"upgrade", "--no-cache"}, []string{"LC_ALL=C"}
 }
 
 // parseApkVersions reads `apk version -l '<'`:

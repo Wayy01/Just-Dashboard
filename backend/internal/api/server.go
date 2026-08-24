@@ -88,4 +88,8 @@ func (s *Server) Shutdown() {
 	s.modules.term.Shutdown()
 	s.modules.dbs.Shutdown()
 	s.modules.docker.Close()
+	// Jobs are deliberately not cancelled: a certificate issuance or a package
+	// upgrade interrupted halfway is worse than one that completes into a
+	// dashboard that has restarted. Only the subscribers are released.
+	s.modules.jobs.Shutdown()
 }

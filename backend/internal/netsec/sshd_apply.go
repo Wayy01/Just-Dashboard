@@ -26,6 +26,25 @@ import (
 
 var ErrSSHInvalid = fmt.Errorf("sshd rejected the configuration")
 
+// SSHApplyPlan is a validated change, ready to write.
+//
+// Applying is streamed now, which means the two halves have to come apart: the
+// checks answer the request — a lockout is a 409 the operator sees at once,
+// not a job that fails a second later — while the write, the `sshd -t` and the
+// reload belong to a job whose output is worth watching.
+type SSHApplyPlan struct {
+	// File is where the change lands, named up front because a settings page
+	// that edits a file without saying which is an unmarked edit.
+	File string
+	// Content is the whole new file, already merged.
+	Content string
+	// Applied lists the directives being set, for the audit entry.
+	Applied []string
+
+	original string
+	existed  bool
+}
+
 // SSHApplyResult reports what happened, in the order it happened, so a
 // partial success reads as one.
 type SSHApplyResult struct {
@@ -49,8 +68,12 @@ var (
 	sshUserRe = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,32}$`)
 )
 
-// ApplySSHSettings writes a closed set of directives and reloads sshd.
-func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]string) (*SSHApplyResult, error) {
+// PlanSSHSettings validates a change and works out the file it produces.
+//
+// Nothing is written here. Every refusal this function can make — an unknown
+// directive, a value out of range, any of the lockouts — is one the caller
+// should hear about in the response to its own request.
+func (s *Service) PlanSSHSettings(ctx context.Context, changes map[string]string) (*SSHApplyPlan, error) {
 	if len(changes) == 0 {
 		return nil, fmt.Errorf("no settings given")
 	}
@@ -90,8 +113,7 @@ func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]strin
 		// class of mistake as turning off passwords with no key: the change
 		// applies, the daemon reloads, and the next connection has nowhere to
 		// land. The firewall is the only place that can answer, so it is asked.
-		fw, err := s.Status(ctx)
-		if err == nil {
+		if fw, err := s.Status(ctx); err == nil {
 			if err := guardSSHPort(port, fw); err != nil {
 				return nil, err
 			}
@@ -100,25 +122,79 @@ func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]strin
 
 	target := current.ManagedFile
 	original, existed := readFileOrEmpty(target)
-	updated := applyDirectives(original, clean, filepath.Base(target) == managedDropIn)
-	if err := writeSSHFile(target, updated); err != nil {
-		return nil, err
-	}
+	return &SSHApplyPlan{
+		File:     target,
+		Content:  applyDirectives(original, clean, filepath.Base(target) == managedDropIn),
+		Applied:  sortedKeys(clean),
+		original: original,
+		existed:  existed,
+	}, nil
+}
 
-	res := &SSHApplyResult{Written: true, File: target, Applied: sortedKeys(clean)}
+// ApplySSHPlan writes, validates and reloads, narrating as it goes.
+//
+// The order is the proxy editor's and for the same reason: write, test with
+// the daemon's own parser, put the file back on failure, reload only then.
+// `sshd -t` is the difference between a typo costing a reload and a typo
+// costing the machine.
+func (s *Service) ApplySSHPlan(ctx context.Context, plan *SSHApplyPlan, out LineWriter) (*SSHApplyResult, error) {
+	res := &SSHApplyResult{File: plan.File, Applied: plan.Applied}
+	out.Status("Writing %s", plan.File)
+	if err := writeSSHFile(plan.File, plan.Content); err != nil {
+		return res, err
+	}
+	res.Written = true
+
+	out.Status("Testing the configuration with sshd -t")
 	valid, output := sshdTest(ctx)
 	res.Valid, res.Output = valid, output
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line != "" {
+			out.Line("stderr", line)
+		}
+	}
 	if !valid {
-		restoreSSHFile(target, original, existed)
+		out.Status("Rejected — putting the previous file back")
+		restoreSSHFile(plan.File, plan.original, plan.existed)
 		return res, ErrSSHInvalid
 	}
+
+	out.Status("Reloading sshd")
 	if err := reloadSSH(ctx); err != nil {
+		// The file is good; the daemon would not pick it up. That is a real
+		// state, and pretending otherwise would leave the operator believing
+		// a setting is in force when it is not.
 		res.ReloadError = err.Error()
+		out.Line("stderr", err.Error())
 		return res, nil
 	}
 	res.Reloaded = true
+	out.Status("Done. Existing sessions are untouched by a reload — check a second terminal before closing this one.")
 	return res, nil
 }
+
+// LineWriter is the narrow slice of a job's emitter this package needs. Taking
+// an interface rather than importing the jobs package keeps netsec free of a
+// dependency on how its output is transported.
+type LineWriter interface {
+	Status(format string, args ...any)
+	Line(stream, text string)
+}
+
+// ApplySSHSettings is plan-then-apply in one call, for callers with nowhere to
+// stream to.
+func (s *Service) ApplySSHSettings(ctx context.Context, changes map[string]string) (*SSHApplyResult, error) {
+	plan, err := s.PlanSSHSettings(ctx, changes)
+	if err != nil {
+		return nil, err
+	}
+	return s.ApplySSHPlan(ctx, plan, discardLines{})
+}
+
+type discardLines struct{}
+
+func (discardLines) Status(string, ...any) {}
+func (discardLines) Line(string, string)   {}
 
 func sshDirectiveFor(key string) (sshDirective, bool) {
 	key = strings.ToLower(strings.TrimSpace(key))

@@ -190,20 +190,23 @@ var (
 	certNameRe   = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._*-]{0,126})$`)
 )
 
-// Issue obtains a certificate. It blocks: an ACME order is a handful of HTTP
-// round trips and usually finishes inside twenty seconds, and a streamed
-// version of this would be machinery in front of a wait nobody notices.
-func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
+// IssueArgs validates a request and returns the certbot argv it means.
+//
+// Split from running it because issuance is streamed now: the validation has
+// to answer the request synchronously — a bad email or a wildcard over HTTP is
+// a 400, not a job that fails a minute later — while the command itself
+// belongs to a job that outlives the request.
+func (s *Service) IssueArgs(req IssueRequest) ([]string, error) {
 	if len(req.Domains) == 0 {
-		return "", fmt.Errorf("at least one domain is required")
+		return nil, fmt.Errorf("at least one domain is required")
 	}
 	if len(req.Domains) > 100 {
-		return "", fmt.Errorf("a certificate may cover at most 100 domains")
+		return nil, fmt.Errorf("a certificate may cover at most 100 domains")
 	}
 	wildcard := false
 	for _, d := range req.Domains {
 		if !certDomainRe.MatchString(d) {
-			return "", fmt.Errorf("%q is not a valid domain name", d)
+			return nil, fmt.Errorf("%q is not a valid domain name", d)
 		}
 		if strings.HasPrefix(d, "*.") {
 			wildcard = true
@@ -213,10 +216,10 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 	// it afterwards: "Wildcard domains are not supported by the HTTP-01
 	// challenge" is accurate and tells nobody what to do instead.
 	if wildcard && req.Method != "dns" {
-		return "", fmt.Errorf("a wildcard certificate can only be issued with a DNS challenge — Let's Encrypt will not sign one any other way")
+		return nil, fmt.Errorf("a wildcard certificate can only be issued with a DNS challenge — Let's Encrypt will not sign one any other way")
 	}
 	if !emailRe.MatchString(req.Email) {
-		return "", fmt.Errorf("a contact email is required — it is where expiry warnings go")
+		return nil, fmt.Errorf("a contact email is required — it is where expiry warnings go")
 	}
 
 	args := []string{}
@@ -231,7 +234,7 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 			args = append(args, "--nginx")
 		case "webroot":
 			if !absPathRe.MatchString(req.WebRoot) {
-				return "", fmt.Errorf("the webroot must be an absolute path")
+				return nil, fmt.Errorf("the webroot must be an absolute path")
 			}
 			args = append(args, "--webroot", "-w", req.WebRoot)
 		case "standalone":
@@ -239,24 +242,24 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 		case "dns":
 			provider, ok := DNSProviderFor(req.DNSProvider)
 			if !ok {
-				return "", fmt.Errorf("choose a DNS provider for the challenge")
+				return nil, fmt.Errorf("choose a DNS provider for the challenge")
 			}
 			if !provider.Installed && !certbotPluginInstalled(provider.Plugin) {
-				return "", fmt.Errorf("certbot's %s plugin is not installed on this host", provider.Plugin)
+				return nil, fmt.Errorf("certbot's %s plugin is not installed on this host", provider.Plugin)
 			}
 			if provider.Key != "route53" && !HasDNSCredentials(provider.Key) {
-				return "", fmt.Errorf("%s has no credentials saved yet", provider.Name)
+				return nil, fmt.Errorf("%s has no credentials saved yet", provider.Name)
 			}
 			wait := req.DNSWait
 			if wait <= 0 {
 				wait = provider.DefaultWait
 			}
 			if wait > 3600 {
-				return "", fmt.Errorf("the propagation wait is too long")
+				return nil, fmt.Errorf("the propagation wait is too long")
 			}
 			args = append(args, dnsIssueArgs(provider, wait)...)
 		default:
-			return "", fmt.Errorf("method must be nginx, webroot, standalone or dns")
+			return nil, fmt.Errorf("method must be nginx, webroot, standalone or dns")
 		}
 	}
 	args = append(args, "--non-interactive", "--agree-tos", "-m", req.Email,
@@ -270,15 +273,15 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (string, error) {
 	for _, d := range req.Domains {
 		args = append(args, "-d", d)
 	}
-	return certbotRun(ctx, 5*time.Minute, args...)
+	return args, nil
 }
 
-// Renew renews one lineage. DryRun runs the whole exchange against the staging
-// authority and changes nothing, which is the only safe way to find out
-// whether renewal will work before the day it has to.
-func (s *Service) Renew(ctx context.Context, name string, dryRun, force bool) (string, error) {
+// RenewArgs builds a renewal. DryRun runs the whole exchange against the
+// staging authority and changes nothing, which is the only safe way to find
+// out whether renewal will work before the day it has to.
+func (s *Service) RenewArgs(name string, dryRun, force bool) ([]string, error) {
 	if name != "" && !certNameRe.MatchString(name) {
-		return "", fmt.Errorf("invalid certificate name")
+		return nil, fmt.Errorf("invalid certificate name")
 	}
 	args := []string{"renew", "--non-interactive"}
 	if name != "" {
@@ -293,18 +296,17 @@ func (s *Service) Renew(ctx context.Context, name string, dryRun, force bool) (s
 		// offers the switch.
 		args = append(args, "--force-renewal")
 	}
-	return certbotRun(ctx, 5*time.Minute, args...)
+	return args, nil
 }
 
 // Revoke tells the authority the certificate is no longer to be trusted, and
 // removes it. Irreversible in the sense that matters: the certificate cannot
 // be un-revoked, and every client that has it will start refusing the site.
-func (s *Service) Revoke(ctx context.Context, name string) (string, error) {
+func (s *Service) RevokeArgs(name string) ([]string, error) {
 	if !certNameRe.MatchString(name) {
-		return "", fmt.Errorf("invalid certificate name")
+		return nil, fmt.Errorf("invalid certificate name")
 	}
-	return certbotRun(ctx, 3*time.Minute, "revoke", "--non-interactive",
-		"--cert-name", name, "--delete-after-revoke")
+	return []string{"revoke", "--non-interactive", "--cert-name", name, "--delete-after-revoke"}, nil
 }
 
 func certbotRun(ctx context.Context, limit time.Duration, args ...string) (string, error) {
