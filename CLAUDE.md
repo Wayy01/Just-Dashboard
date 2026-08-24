@@ -365,6 +365,27 @@ Three inputs are shapes declared *in* netsec (`ExposedPort`, `CertSummary`) rath
 imported from `proxysvc`, so the audit keeps no dependency on how ports or certificates are
 discovered.
 
+### Package managers, plural
+
+`internal/updates` was `apt-get` and nothing else, which meant every RPM,
+Alpine and Arch host reported no package manager at all — and "no package
+manager" renders as "nothing to update" rather than as "never checked". The
+posture audit's pending-patch check was therefore silently dead on half the
+servers this runs on.
+
+It is a `manager` interface now: apt, dnf, yum, zypper, pacman and apk, each a
+listing command parsed by a pure function plus an upgrade argv. Two details are
+load-bearing. `dnf check-update` **exits 100 when there is something to do**, so
+treating a non-zero exit as failure reports an error for a host with updates and
+success for one without — exactly backwards. And Alpine and Arch publish no
+advisory data at all, so `SupportsSecurityOnly` is false there,
+`Report.SecurityFiltering` tells the UI to say "cannot tell" rather than "none
+outstanding", and `guardSecurityOnly` refuses a narrowed upgrade instead of
+quietly applying everything.
+
+Reboot detection follows the same shape: Debian's flag file first, then
+`needs-restarting -r` for the RPM world, then "cannot tell" reported as false.
+
 ### sshd, and the guard that makes it offerable
 
 `netsec/sshd.go` reads the **effective** configuration — `sshd -T`, falling back to parsing
@@ -392,6 +413,52 @@ The directive list is **closed**. Every entry is a line this code is willing to 
 sshd_config, and an open set would make the endpoint a config editor with extra steps — one
 that can take the machine off the network.
 
+Three of its entries need their own guards. `Port` is bounded by `LegalMin`/
+`LegalMax` rather than by the `Min`/`Max` that carry the *recommendation* — the
+two were one pair of fields and a port's range was consequently treated as
+advice and never enforced. Moving the port also asks the firewall first:
+`guardSSHPort` refuses a default-deny firewall with no rule for the new port,
+which is the same class of mistake as turning off passwords with no key.
+`AllowUsers`/`DenyUsers` are `kind: "list"`, which means spaces — so the value
+is checked for a newline explicitly (one would write a directive of the
+caller's choosing onto the next line) and normalised through `strings.Fields`
+before it is written. An emptied list is commented out rather than written as a
+keyword with no argument, which sshd refuses to start behind.
+
+`netsec.Disconnect` ends an interactive login. The PID is matched against the
+live session list before anything is signalled; without that check the route is
+a "kill any process on this host" primitive wearing a sensible name. SIGHUP
+rather than SIGKILL, so the login is recorded as ended rather than as a process
+that vanished.
+
+### One firewall page, three firewalls
+
+`netsec/firewall.go` is a dispatcher, not an implementation. `fwBackend` is the
+interface and there are three: ufw (`firewall_ufw.go`), firewalld
+(`firewall_firewalld.go`) and raw iptables (`firewall_iptables.go`). Validation
+and both lockout guards live in the dispatcher rather than in any backend, so a
+fourth cannot be added without them — that placement is the whole reason the
+refactor was worth doing.
+
+firewalld's model is genuinely different and the difference is the work. There
+are no rule numbers: a zone holds services, ports and rich rules, each removed
+by handing back the exact thing that was added. Numbers are assigned
+positionally by `Service.Status` so "delete rule 4" means something, and
+`Rule.Handle` carries what the backend actually needs — it is never serialised
+and never accepted from a client. Everything is written `--permanent` and
+reloaded, because a runtime-only rule disappears at the next boot.
+
+iptables is **read-only on purpose**. Writing rules there is the easiest of the
+three; the problem is that iptables has no persistence of its own, so a rule
+added from here would work until the machine rebooted and then vanish, leaving
+a page that says protected in front of a host that is not.
+`FirewallCapabilities` is how that reaches the UI: each backend declares what it
+can do, the page hides the rest, and `ReadOnlyReason` explains the absence. A
+greyed-out button with no reason is worse than one that is not there.
+
+`annotateRule` attaches the catalogue's name and warning centrally, so
+firewalld's rules read the same way ufw's do.
+
 ### Firewall: the parts that decide what the rules mean
 
 A rule list on its own is half the picture. `FirewallStatus` now carries the three default
@@ -405,6 +472,12 @@ raises "Invalid syntax" for both. The old single call therefore returned an erro
 and a firewall the page reported as inactive on **every host that had one**. It is two calls
 now: `numbered` for the rules with the numbers the delete route needs, `verbose` for the
 policy block, with the second a soft failure.
+
+`AppProfiles` is per backend: ufw expands `app list` with an `app info` call
+each, firewalld returns its predefined services by name only — resolving ports
+would be one subprocess per service, and it ships several hundred. That size
+difference is why the picker in the rule form is searchable rather than a plain
+select.
 
 `ServiceCatalogue` (`GET /security/services`) is the teaching layer for the rule form, the way
 `GLOSSARY` is for Docker: a short list of the ports a single-server operator actually opens
@@ -420,6 +493,13 @@ comma-separated port lists. `SetDefaultPolicy` refuses an inbound deny on a host
 list admits nobody; the ambiguous cases go to the typed confirmation, because a rule list that
 admits *something* cannot be judged from here without knowing which port the browser arrived
 on.
+
+Jail tuning is applied to the running server **and** written into
+`jail.d/99-just-dashboard.local`, because fail2ban reads that directory last and
+a runtime-only change is gone at the next restart — the same trap the jail
+start/stop control was rejected for. `mergeJailOverrides` rewrites one section
+and leaves every other jail, and any hand-written line inside the section it
+owns, exactly as it was.
 
 There is deliberately **no start/stop for a fail2ban jail**. `fail2ban-client status` lists
 only running jails, so one stopped from the UI would vanish from every listing with nothing
@@ -681,6 +761,35 @@ server's rather than a negotiation — and a version this client will not ask fo
 `unknown`, never as `refused`, because reporting it absent would be a false reassurance about
 exactly the versions that matter most. `grade` is a pure function of the scan for the same
 reason `Assess` is.
+
+**`dns01.go` — wildcards, and domains behind a CDN.** Let's Encrypt will only
+sign `*.example.com` against a DNS challenge, and a domain proxied by Cloudflare
+cannot answer an HTTP challenge because the request never reaches this host.
+Between them that was most of the certificates people actually wanted. Eight
+certbot plugins are supported as a closed set — each names its credentials and
+propagation arguments after itself, and route53 has neither — with credentials
+written 0600 into certbot's own tree. Asking for a wildcard over HTTP is refused
+here with what to do instead, rather than relaying certbot's "wildcard domains
+are not supported by the HTTP-01 challenge", which is accurate and useless.
+
+**`import.go` — a certificate somebody bought.** The key is checked against the
+certificate *before* either is written: a mismatched pair is accepted by every
+text editor and refused by nginx at reload, which on a live server means finding
+out during an outage. Imports live in `/etc/ssl/just-dashboard` rather than
+under `/etc/letsencrypt`, so a renewal run can never prune a certificate it did
+not issue.
+
+**`streams.go` — the things that do not speak HTTP.** nginx's `stream` is a
+top-level context, a sibling of `http`, so a stream cannot live in a file under
+sites-available. They go in `/etc/nginx/stream.d` and the page reports plainly
+when `nginx.conf` does not include it — a config nginx never reads is the same
+failure as a drop-in it ignores. nginx.conf itself is never edited from here:
+every other configuration on the host depends on it.
+
+**`htpasswd.go` — the site form's password field, with something to put in it.**
+bcrypt in process rather than shelling to `htpasswd`, which lives in
+apache2-utils and is not installed on a host running nginx — and which would
+put the password in an argv that `/proc/*/cmdline` makes world-readable.
 
 **`certbot.go` — issue, renew, revoke.** The dashboard already knows a certificate has eleven
 days left; leaving the operator to remember certbot's arguments is where every panel in this

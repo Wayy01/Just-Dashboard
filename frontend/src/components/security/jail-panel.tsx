@@ -1,10 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { Ban, Settings2 } from "lucide-react"
+import { Ban, Settings2, X } from "lucide-react"
 import { toast } from "sonner"
 import { get, post } from "@/lib/api"
-import type { Fail2banJail, JailConfig } from "@/lib/types"
+import type { Fail2banJail, JailConfig, JailParamResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Notice } from "@/components/state"
@@ -177,12 +177,27 @@ function JailTuning({
   const save = async () => {
     setBusy(true)
     try {
+      // One request for the whole policy: the three numbers are one setting —
+      // this many failures inside this window earns this long a ban — and
+      // sending them separately leaves a jail half-tuned if the tab closes.
+      const params: Record<string, number> = {}
       for (const [param, raw] of Object.entries(pending)) {
         const parsed = Number(raw)
-        if (!Number.isFinite(parsed)) continue
-        await post(`/fail2ban/${encodeURIComponent(jail)}/config`, { param, value: parsed })
+        if (Number.isFinite(parsed)) params[param] = parsed
       }
-      toast.success(`${jail} updated`)
+      const res = await post<JailParamResult>(
+        `/fail2ban/${encodeURIComponent(jail)}/config`,
+        { params },
+      )
+      if (res.warning) {
+        toast.warning(`${jail} partly updated`, { description: res.warning })
+      } else {
+        toast.success(`${jail} updated`, {
+          description: res.persisted
+            ? `Applied now and written to ${res.file}, so it survives a restart.`
+            : undefined,
+        })
+      }
       setPending({})
       refresh()
       onSaved()
@@ -244,8 +259,26 @@ function JailTuning({
             <Label>Never ban</Label>
             <div className="flex flex-wrap gap-1.5">
               {data?.ignoreIp.map((ip) => (
-                <Badge key={ip} variant="outline" className="font-mono font-normal">
+                <Badge key={ip} variant="outline" className="gap-1 font-mono font-normal">
                   {ip}
+                  <button
+                    type="button"
+                    aria-label={`Stop allowlisting ${ip}`}
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={async () => {
+                      try {
+                        await post(`/fail2ban/${encodeURIComponent(jail)}/ignore`, {
+                          ip,
+                          add: false,
+                        })
+                        refresh()
+                      } catch (err) {
+                        toast.error("Could not remove", { description: String(err) })
+                      }
+                    }}
+                  >
+                    <X className="size-3" />
+                  </button>
                 </Badge>
               ))}
               {data?.ignoreIp.length === 0 && (

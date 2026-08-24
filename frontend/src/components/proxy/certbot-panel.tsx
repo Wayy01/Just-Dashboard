@@ -4,10 +4,11 @@ import { useState } from "react"
 import { AlertTriangle, BadgeCheck, Clock, Loader2, RefreshCw, ShieldX } from "lucide-react"
 import { toast } from "sonner"
 import { get, post, ApiError } from "@/lib/api"
-import type { CertbotState } from "@/lib/types"
+import type { CertbotState, DNSProvider } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
+import { ImportDialog } from "@/components/proxy/import-dialog"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
@@ -15,6 +16,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
@@ -122,6 +131,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
             actions={
               admin && (
                 <>
+                  <ImportDialog onDone={() => onChanged?.()} />
                   <IssueDialog
                     onDone={() => {
                       refresh()
@@ -255,17 +265,37 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
   const [staging, setStaging] = useState(true)
   const [busy, setBusy] = useState(false)
   const [output, setOutput] = useState("")
+  const [dnsProvider, setDnsProvider] = useState("")
+  const [credentials, setCredentials] = useState("")
+
+  const providers = usePoll<DNSProvider[]>(
+    (signal) => get("/certificates/dns-providers", undefined, signal),
+    0,
+    [],
+    { enabled: open },
+  )
+  const provider = providers.data?.find((p) => p.key === dnsProvider)
+  // A wildcard is only ever signed against a DNS challenge, so the form says
+  // so the moment one is typed rather than after a failed attempt.
+  const wantsWildcard = domains.split(/[\s,]+/).some((d) => d.startsWith("*."))
 
   const submit = async () => {
     setBusy(true)
     setOutput("")
     try {
+      if (method === "dns" && credentials.trim() && provider?.key !== "route53") {
+        await post("/certificates/dns-credentials", {
+          provider: dnsProvider,
+          credentials,
+        })
+      }
       const res = await post<{ output: string }>("/certificates/issue", {
         domains: domains.split(/[\s,]+/).filter(Boolean),
         email,
         method,
         webRoot,
         staging,
+        dnsProvider: method === "dns" ? dnsProvider : "",
       })
       setOutput(res.output)
       toast.success(staging ? "Test certificate issued" : "Certificate issued", {
@@ -340,6 +370,9 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
               <ToggleGroupItem value="standalone" className="flex-1 text-[11px]">
                 Standalone
               </ToggleGroupItem>
+              <ToggleGroupItem value="dns" className="flex-1 text-[11px]">
+                DNS
+              </ToggleGroupItem>
             </ToggleGroup>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               {method === "nginx" &&
@@ -348,8 +381,70 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
                 "The challenge file is written into a folder your web server already serves."}
               {method === "standalone" &&
                 "certbot runs its own server on port 80. It fails if nginx is holding that port, which on this host it probably is."}
+              {method === "dns" &&
+                "certbot writes a record into your DNS through the provider's API. The only way to get a wildcard, and the only one that works when the domain sits behind a CDN."}
             </p>
           </div>
+          {wantsWildcard && method !== "dns" && (
+            <Notice tone="warning" icon={AlertTriangle} title="A wildcard needs the DNS challenge">
+              Let&rsquo;s Encrypt will not sign <code className="font-mono">*.example.com</code>{" "}
+              against an HTTP challenge, whatever the web server is doing. Switch the method to
+              DNS.
+            </Notice>
+          )}
+
+          {method === "dns" && (
+            <div className="space-y-3 rounded-lg border border-hairline bg-surface-sunken p-3">
+              <div className="space-y-1.5">
+                <Label>DNS provider</Label>
+                <Select value={dnsProvider} onValueChange={setDnsProvider}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Where this domain's DNS lives" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providers.data?.map((p) => (
+                      <SelectItem key={p.key} value={p.key}>
+                        {p.name}
+                        {!p.installed && " · plugin not installed"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {provider && !provider.installed && (
+                <Notice tone="warning" icon={AlertTriangle} title="The plugin is missing">
+                  Install <code className="font-mono">python3-certbot-{provider.plugin}</code> (or{" "}
+                  <code className="font-mono">certbot plugin install certbot-{provider.plugin}</code>{" "}
+                  on a snap install) before issuing.
+                </Notice>
+              )}
+              {provider && provider.key !== "route53" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="dns-credentials">Credentials</Label>
+                  <Textarea
+                    id="dns-credentials"
+                    value={credentials}
+                    onChange={(e) => setCredentials(e.target.value)}
+                    rows={4}
+                    className="font-mono text-[11px]"
+                    placeholder={provider.credentials}
+                  />
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    Saved to a file only root can read, and never shown again. Leave empty to reuse
+                    what is already stored for {provider.name}.
+                  </p>
+                </div>
+              )}
+              {provider && (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  certbot waits {provider.defaultWait}s for the record to propagate before asking
+                  Let&rsquo;s Encrypt to look. A challenge that fails on the first try is almost
+                  always that wait being too short rather than a wrong token.
+                </p>
+              )}
+            </div>
+          )}
+
           {method === "webroot" && (
             <div className="space-y-1.5">
               <Label htmlFor="issue-webroot">Folder</Label>
@@ -385,7 +480,12 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
           )}
         </div>
         <DialogFooter>
-          <Button onClick={submit} disabled={busy || !domains.trim() || !email.trim()}>
+          <Button
+            onClick={submit}
+            disabled={
+              busy || !domains.trim() || !email.trim() || (method === "dns" && !dnsProvider)
+            }
+          >
             {busy && <Loader2 className="size-4 animate-spin" />}
             {staging ? "Run the test" : "Issue"}
           </Button>

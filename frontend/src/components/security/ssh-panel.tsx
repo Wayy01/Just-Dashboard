@@ -184,8 +184,15 @@ export function SSHPanel() {
                     <p className="text-[11px] leading-relaxed text-foreground/80">{setting.risk}</p>
                   )}
                 </div>
-                <div className="w-40 shrink-0">
-                  {setting.kind === "choice" ? (
+                <div className={cn("shrink-0", setting.kind === "list" ? "w-full sm:w-72" : "w-40")}>
+                  {setting.kind === "list" ? (
+                    <Input
+                      value={valueOf(setting)}
+                      placeholder="deploy admin — empty allows everyone"
+                      className="font-mono text-xs"
+                      onChange={(e) => setPending((p) => ({ ...p, [setting.key]: e.target.value }))}
+                    />
+                  ) : setting.kind === "choice" ? (
                     <Select
                       value={valueOf(setting)}
                       onValueChange={(v) => setPending((p) => ({ ...p, [setting.key]: v }))}

@@ -98,6 +98,8 @@ const SOURCE_PRESETS = [
 
 function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: boolean }) {
   const [action, setAction] = useState("allow")
+  const [direction, setDirection] = useState("in")
+  const [position, setPosition] = useState("")
   const [mode, setMode] = useState<"service" | "profile">("service")
   const [preset, setPreset] = useState("")
   const [profile, setProfile] = useState("")
@@ -139,12 +141,13 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
     try {
       await post("/firewall/rules", {
         action,
-        direction: "in",
+        direction,
         port: mode === "service" ? port : "",
         protocol: mode === "service" ? protocol : "",
         app: mode === "profile" ? profile : "",
         from: source,
         comment,
+        position: Number(position) || 0,
       })
       toast.success("Rule added")
       onDone()
@@ -168,6 +171,7 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
       </DialogHeader>
 
       <div className="grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-[1fr_9rem]">
         <div className="space-y-1.5">
           <Label>Action</Label>
           <Select value={action} onValueChange={setAction}>
@@ -182,6 +186,25 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
             </SelectContent>
           </Select>
         </div>
+        <div className="space-y-1.5">
+          <Label>Direction</Label>
+          <Select value={direction} onValueChange={setDirection}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="in">inbound</SelectItem>
+              <SelectItem value="out">outbound</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        </div>
+        {direction === "out" && (
+          <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            Outbound rules govern what this server may reach, not who may reach it. Restricting
+            egress breaks package updates and certificate renewal unless you allow them first.
+          </p>
+        )}
 
         <Tabs value={mode} onValueChange={(v) => setMode(v as "service" | "profile")}>
           <TabsList className="w-full">
@@ -311,6 +334,22 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
         </div>
 
         <div className="space-y-1.5">
+          <Label htmlFor="rule-position">Insert at</Label>
+          <Input
+            id="rule-position"
+            value={position}
+            inputMode="numeric"
+            onChange={(e) => setPosition(e.target.value)}
+            placeholder="leave empty to add at the end"
+          />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Rules are checked in order and the first match wins, so a deny added after a broad
+            allow does nothing at all — which looks exactly like a deny that works. Give a number
+            to put this one in front.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
           <Label htmlFor="rule-comment">Comment</Label>
           <Input
             id="rule-comment"
@@ -331,7 +370,9 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
       <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
         <span className={cn("mr-auto text-[11px] text-muted-foreground", !ready && "opacity-0")}>
           <Badge variant="outline" className="font-mono font-normal">
-            ufw {action} in{source && ` from ${source}`}
+            ufw {position ? `insert ${position} ` : ""}
+            {action} {direction}
+            {source && ` from ${source}`}
             {mode === "service" ? ` to any port ${port}${protocol ? ` proto ${protocol}` : ""}` : ` app ${profile}`}
           </Badge>
         </span>

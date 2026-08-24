@@ -1056,6 +1056,15 @@ export type Fail2banJail = {
 }
 
 /** A jail's working policy: this many failures in this window earns this ban. */
+/** What happened to a jail parameter change, in both halves. */
+export type JailParamResult = {
+  applied: boolean
+  persisted: boolean
+  file?: string
+  output?: string
+  warning?: string
+}
+
 export type JailConfig = {
   name: string
   banTime: number
@@ -1446,7 +1455,8 @@ export type SSHSetting = {
   detail: string
   risk?: string
   options?: string[]
-  kind: "choice" | "number"
+  /** "list" is a space-separated set of account names; empty means unrestricted. */
+  kind: "choice" | "number" | "list"
 }
 
 export type KeyedAccount = { user: string; keys: number }
@@ -1685,4 +1695,49 @@ export type SiteResult = {
   enabled: boolean
   reloaded: boolean
   output?: string
+}
+
+/** A certbot DNS plugin — the only way to a wildcard, or past a CDN. */
+export type DNSProvider = {
+  key: string
+  name: string
+  plugin: string
+  installed: boolean
+  credentials: string
+  defaultWait: number
+}
+
+export type ImportResult = {
+  name: string
+  certPath: string
+  keyPath: string
+  certificate: Certificate
+  chainComplete: boolean
+  warnings: string[]
+}
+
+/** One forwarded port for something that does not speak HTTP. */
+export type StreamSpec = {
+  name: string
+  listen: number
+  protocol: "tcp" | "udp"
+  upstream: string
+  proxyProtocol: boolean
+  timeout?: number
+  allowFrom: string[]
+}
+
+export type StreamStatus = {
+  /** Whether nginx.conf actually pulls these in. Without it they are ignored. */
+  included: boolean
+  snippet: string
+  dir: string
+  streams: StreamSpec[]
+}
+
+/** An htpasswd file and who is in it. */
+export type AuthFile = {
+  name: string
+  path: string
+  users: string[]
 }

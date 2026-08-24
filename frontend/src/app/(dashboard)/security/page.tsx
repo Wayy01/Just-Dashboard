@@ -5,6 +5,7 @@ import {
   Ban,
   Cable,
   History,
+  LogOut,
   Radar,
   Network,
   Shield,
@@ -42,6 +43,7 @@ import { PosturePanel } from "@/components/security/posture-panel"
 import { SSHPanel } from "@/components/security/ssh-panel"
 import { ToolsPanel } from "@/components/security/tools-panel"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -431,7 +433,9 @@ function SessionsTab() {
 }
 
 function CurrentSessions() {
-  const { data, error, loading } = usePoll(
+  const { can } = useAuth()
+  const { confirm, dialog } = useConfirm()
+  const { data, error, loading, refresh } = usePoll(
     (signal) => get<LoginSession[]>("/ssh-sessions", undefined, signal),
     10000,
   )
@@ -440,6 +444,7 @@ function CurrentSessions() {
   if (!data?.length) return <EmptyState icon={Users} title="No interactive logins" />
 
   return (
+    <>
     <Panel>
       <PanelHeader
         icon={Users}
@@ -456,11 +461,12 @@ function CurrentSessions() {
               <TableHead>Logged in</TableHead>
               <TableHead>Idle</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead className="w-px" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.map((session, i) => (
-              <TableRow key={`${session.user}-${session.tty}-${i}`}>
+              <TableRow key={`${session.user}-${session.tty}-${i}`} className="group">
                 <TableCell className="text-[13px] font-medium">{session.user}</TableCell>
                 <TableCell className="font-mono text-xs">{session.tty}</TableCell>
                 <TableCell className="font-mono text-xs">{session.from || "local"}</TableCell>
@@ -475,12 +481,49 @@ function CurrentSessions() {
                     {session.isSsh ? "ssh" : "local"}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  {can("system.admin") && session.pid ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                      onClick={() =>
+                        confirm({
+                          title: `Disconnect ${session.user}`,
+                          phrase: `disconnect ${session.pid}`,
+                          confirmLabel: "Disconnect",
+                          description: (
+                            <p>
+                              The session on <b>{session.tty}</b> from{" "}
+                              <b>{session.from || "local"}</b> is hung up. Anything it is running
+                              in the foreground stops with it — a long job that was not started
+                              under tmux or nohup will not survive.
+                            </p>
+                          ),
+                          action: async (c) => {
+                            await post(
+                              `/ssh-sessions/${session.pid}/disconnect`,
+                              {},
+                              { confirm: c },
+                            )
+                            refresh()
+                          },
+                        })
+                      }
+                    >
+                      <LogOut className="size-3.5" />
+                      Disconnect
+                    </Button>
+                  ) : null}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </PanelBody>
     </Panel>
+    {dialog}
+    </>
   )
 }
 

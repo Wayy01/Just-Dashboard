@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import {
   BadgeCheck,
+  Cable,
   CheckCircle2,
   FileCode,
   Globe,
@@ -29,7 +30,9 @@ import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { AuthFilesPanel } from "@/components/proxy/auth-files-panel"
 import { CertbotPanel } from "@/components/proxy/certbot-panel"
+import { StreamsPanel } from "@/components/proxy/streams-panel"
 import { SiteForm } from "@/components/proxy/site-form"
 import { TLSReport } from "@/components/proxy/tls-report"
 import { Badge } from "@/components/ui/badge"
@@ -90,6 +93,10 @@ export default function ProxyPage() {
             <ScanLine className="size-3.5" />
             TLS report
           </TabsTrigger>
+          <TabsTrigger value="streams">
+            <Cable className="size-3.5" />
+            Streams
+          </TabsTrigger>
           <TabsTrigger value="ports">
             <Plug className="size-3.5" />
             Listening ports
@@ -103,6 +110,9 @@ export default function ProxyPage() {
         </TabsContent>
         <TabsContent value="report" className="min-w-0">
           <TLSReport />
+        </TabsContent>
+        <TabsContent value="streams" className="min-w-0">
+          <StreamsPanel />
         </TabsContent>
         <TabsContent value="ports" className="min-w-0">
           <PortsTab />
@@ -309,6 +319,10 @@ function VHostsTab({ hasNginx }: { hasNginx: boolean }) {
             )}
           </PanelBody>
         </Panel>
+
+        {/* Beside the sites they protect: the site form has a password field
+            and this is where its contents come from. */}
+        {admin && <AuthFilesPanel />}
       </div>
 
       <SiteForm
