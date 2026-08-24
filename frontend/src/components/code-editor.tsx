@@ -8,14 +8,36 @@ import { useTheme } from "@/hooks/use-theme"
 
 // Monaco pulls in a large worker bundle and touches `window`, so it is loaded
 // only when an editor is actually opened.
-const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center">
-      <Loader2 className="size-5 animate-spin text-muted-foreground" />
-    </div>
-  ),
-})
+//
+// Where it is loaded *from* is the part that matters here. @monaco-editor/react
+// resolves the editor at runtime and its default source is a CDN, which made
+// the SQL editor the one thing in this product that needed the operator's
+// browser to reach the public internet — in a dashboard whose entire security
+// story is a closed network perimeter, and which is normally reached down a
+// Tailscale or SSH tunnel. With the CDN unreachable the Query tab sat at
+// "Loading…" for ever: no error, no fallback, and no way to type a statement,
+// while Run happily executed a value nobody could see. It also told a third
+// party, on every page open, that this dashboard exists.
+//
+// `scripts/sync-monaco.mjs` copies the runtime into public/monaco at build
+// time and this points the loader at it, so the editor comes from the same
+// origin as everything else the dashboard serves.
+const MonacoEditor = dynamic(
+  () =>
+    import("@monaco-editor/react").then(async (mod) => {
+      const { loader } = await import("@monaco-editor/react")
+      loader.config({ paths: { vs: `${window.location.origin}/monaco/vs` } })
+      return mod
+    }),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    ),
+  },
+)
 
 /**
  * Monaco, wired to the dashboard's palette.
@@ -88,7 +110,6 @@ export function CodeEditor({
     </div>
   )
 }
-
 
 /**
  * Registers a schema-aware completion provider once per language.

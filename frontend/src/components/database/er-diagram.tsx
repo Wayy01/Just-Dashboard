@@ -59,7 +59,7 @@ export function ErDiagram({ conn, schema }: { conn: DbConnection; schema: string
         title="Relationships"
         description={
           edges.length
-            ? `${nodes.length} tables · ${edges.length} foreign keys`
+            ? `${nodes.length} tables · ${plural(edges.length, "foreign key")}`
             : "No foreign keys in this schema"
         }
       />
@@ -70,7 +70,7 @@ export function ErDiagram({ conn, schema }: { conn: DbConnection; schema: string
             title="Nothing to draw"
             description={
               isolated > 0
-                ? `${isolated} tables, none of them referencing another. Either this schema keeps its relationships in application code, or the constraints were never declared.`
+                ? `${plural(isolated, "table")}, none of them referencing another. Either this schema keeps its relationships in application code, or the constraints were never declared.`
                 : "No tables in this schema."
             }
           />
@@ -151,16 +151,33 @@ function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + "…" : s
 }
 
-// edgePath draws a horizontal bezier between two boxes, leaving the right edge
-// of the source and arriving at the left edge of the target. A straight line
-// between box centres would run through the boxes themselves.
+function plural(n: number, word: string) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`
+}
+
+// edgePath draws a horizontal bezier between two boxes, leaving one box by the
+// side that faces the other and arriving at the facing side of that one. A
+// straight line between box centres would run through the boxes themselves.
+//
+// Which side that is has to be decided per edge rather than fixed. An edge runs
+// from the table holding the foreign key to the table it references, and the
+// layout puts a referencing table to the *right* of what it references — so
+// almost every edge runs right to left. Leaving the source's right edge
+// unconditionally drew all of them backwards: out of the right of the box,
+// around the outside of the diagram, and into the left of a target already to
+// its left, with the control points flinging the curve further out still. The
+// result was clipped by the viewBox, which is why it read as two stubs pointing
+// at nothing rather than as a line going the wrong way.
 function edgePath(e: Edge) {
-  const x1 = e.from.x + BOX_W
+  const forward = e.to.x >= e.from.x
+  const x1 = forward ? e.from.x + BOX_W : e.from.x
+  const x2 = forward ? e.to.x : e.to.x + BOX_W
   const y1 = e.from.y + BOX_H / 2
-  const x2 = e.to.x
   const y2 = e.to.y + BOX_H / 2
   const dx = Math.max(40, Math.abs(x2 - x1) / 2)
-  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`
+  return `M ${x1} ${y1} C ${forward ? x1 + dx : x1 - dx} ${y1}, ${
+    forward ? x2 - dx : x2 + dx
+  } ${y2}, ${x2} ${y2}`
 }
 
 /**
