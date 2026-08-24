@@ -41,6 +41,13 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/", s.handle(s.handleDBConnCreate))
 			r.Method(http.MethodPost, "/test", s.handle(s.handleDBConnTest))
+			// Detecting a server reads container environment, and adopting one
+			// reads the credentials out of it, so both sit with creating a
+			// connection by hand rather than on the read surface beside them.
+			r.Method(http.MethodGet, "/detected", s.handle(s.handleDBDetected))
+			r.Method(http.MethodPost, "/adopt", s.handle(s.handleDBAdopt))
+			r.Method(http.MethodGet, "/provision/options", s.handle(s.handleDBProvisionOptions))
+			r.Method(http.MethodPost, "/provision", s.handle(s.handleDBProvision))
 			r.Method(http.MethodPut, "/{id}", s.handle(s.handleDBConnUpdate))
 			s.destructive(r, func(r chi.Router) {
 				r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDBConnDelete))
@@ -1263,6 +1270,14 @@ type driverInfo struct {
 	ColumnTypes []string   `json:"columnTypes,omitempty"`
 	FilterOps   []string   `json:"filterOps,omitempty"`
 }
+
+// containerNameRe and dbNameRe bound the two names a provision request can
+// choose. Both become arguments to something else — a Docker container name and
+// a CREATE DATABASE the image runs at first boot — so neither is taken verbatim.
+var (
+	containerNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	dbNameRe        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+)
 
 var driverLabels = map[dbx.Driver]struct{ label, kind, placeholder string }{
 	dbx.DriverPostgres:   {"PostgreSQL", "sql", "postgres://user:password@127.0.0.1:5432/dbname?sslmode=disable"},
