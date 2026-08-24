@@ -5,7 +5,7 @@ import { Asterisk, KeyRound, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { plural } from "@/lib/format"
-import { cn } from "@/lib/utils"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import type { DbDriverInfo, DbNewColumn, DbTableDetail } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -126,7 +126,7 @@ export function CreateTableDialog({
             {/* A header row, because four unlabelled fields in a line is a
                 puzzle. The widths are shared with the rows below through the
                 same grid template, so they stay aligned as the dialog resizes. */}
-            <div className={cn(COLUMN_GRID, "px-1 pb-0.5")}>
+            <div className={cn(COLUMN_GRID, "px-1 pb-1")}>
               <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                 Name
               </span>
@@ -145,7 +145,7 @@ export function CreateTableDialog({
               <span className="w-8" />
             </div>
 
-            <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+            <div className={cn("max-h-64 space-y-1.5 overflow-y-auto", ringSafeScroll)}>
               {columns.map((c, i) => (
                 <div key={i} className={COLUMN_GRID}>
                   <Input
@@ -258,22 +258,28 @@ function TypePicker({
 }) {
   // One control rather than two: the picker used to be a text box with a bare
   // dropdown arrow beside it, which read as two unrelated fields and put a
-  // second thing to aim at in a row that is already five things wide. The
-  // chevron now sits inside the field it fills.
+  // second thing to aim at in a row already five things wide. The chevron sits
+  // inside the field it fills.
+  //
+  // It is inset from the border rather than flush to it, because flush meant
+  // the trigger's own box was cut by the input's corner radius; and it has no
+  // hover surface of its own, because a second highlight inside a field reads
+  // as a separate control sitting on top of it. It is the affordance for the
+  // field it belongs to, so it takes the field's colour and brightens with it.
   return (
-    <div className="relative flex min-w-0 items-center">
+    <div className="group/type relative flex min-w-0 items-center">
       <Input
         placeholder="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 min-w-0 pr-7 font-mono text-xs"
+        className="h-8 min-w-0 pr-8 font-mono text-xs"
       />
       {types.length > 0 && (
         <Select value="" onValueChange={onChange}>
           <SelectTrigger
             size="sm"
             aria-label="Choose a type"
-            className="absolute right-0 h-8 w-7 justify-center border-0 bg-transparent px-0 shadow-none hover:bg-accent/60 focus-visible:ring-0 [&>span]:hidden"
+            className="absolute right-1.5 h-5 w-4 justify-center border-0 bg-transparent px-0 text-muted-foreground shadow-none transition-colors group-hover/type:text-foreground focus-visible:ring-0 data-[state=open]:text-foreground [&>span]:hidden [&>svg]:opacity-100"
           >
             <SelectValue />
           </SelectTrigger>
@@ -590,12 +596,18 @@ export function RenameDialog({
 }
 
 /**
- * The shared grid for the column editor's header and its rows, so the two stay
- * aligned as the dialog resizes rather than drifting apart at some width
- * nobody tested.
+ * The shared grid for the column editor's header and its rows.
+ *
+ * The last two tracks are fixed rather than `auto`, which is what the header
+ * labels were drifting on: `auto` sizes to content, and the header's content
+ * ("Key", and nothing over the remove button) is far narrower than the row's
+ * two toggles and a button. The two grids then divided a different amount of
+ * leftover space between the three `fr` tracks, so each label sat a little
+ * further right of its field than the one before — which reads as labels
+ * floating in the middle of nothing.
  */
 const COLUMN_GRID =
-  "grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_auto_auto] items-center gap-2"
+  "grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_6.75rem_2rem] items-center gap-2"
 
 function FlagToggle({
   on,

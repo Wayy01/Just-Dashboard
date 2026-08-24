@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { notify } from "@/lib/toast"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import { errorMessage } from "@/lib/api"
 import type { DbColumn } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -95,7 +96,7 @@ export function RowEditor({
         <DialogHeader>
           <DialogTitle>{mode === "insert" ? "Insert row" : "Edit row"}</DialogTitle>
         </DialogHeader>
-        <div className="grid max-h-[60vh] gap-3 overflow-y-auto pr-1">
+        <div className={cn("grid max-h-[60vh] gap-3 overflow-y-auto", ringSafeScroll)}>
           {columns.map((c) => {
             const f = fields[c.name] ?? { value: "", isNull: false }
             const isPk = primaryKey.includes(c.name)

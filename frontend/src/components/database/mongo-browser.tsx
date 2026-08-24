@@ -15,7 +15,7 @@ import {
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
-import { cn } from "@/lib/utils"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import type { DbConnection, DbTable, MongoCollectionInfo, QueryResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -245,7 +245,9 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
               </SelectContent>
             </Select>
           )}
-          <div className="max-h-[calc(100svh-28rem)] space-y-0.5 overflow-y-auto">
+          <div
+            className={cn("max-h-[calc(100svh-28rem)] space-y-0.5 overflow-y-auto", ringSafeScroll)}
+          >
             {collections.loading && <LoadingRows rows={4} />}
             {collections.data?.map((c) => (
               <button

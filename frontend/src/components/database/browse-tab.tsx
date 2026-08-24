@@ -18,7 +18,7 @@ import {
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
-import { cn } from "@/lib/utils"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import type {
   DbConnection,
   DbDriverInfo,
@@ -452,7 +452,9 @@ export function BrowseTab({
             onChange={(e) => setTextFilter(e.target.value)}
             className="h-8 text-xs"
           />
-          <div className="max-h-[calc(100svh-28rem)] space-y-0.5 overflow-y-auto">
+          <div
+            className={cn("max-h-[calc(100svh-28rem)] space-y-0.5 overflow-y-auto", ringSafeScroll)}
+          >
             {visibleTables.map((t) => (
               <button
                 key={`${t.schema}.${t.name}`}

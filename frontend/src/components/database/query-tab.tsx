@@ -15,7 +15,7 @@ import {
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { del, get, post } from "@/lib/api"
-import { cn } from "@/lib/utils"
+import { cn, ringSafeScroll } from "@/lib/utils"
 import type {
   DbConnection,
   DbHistoryEntry,
@@ -260,7 +260,12 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
             </PanelHeader>
             <PanelBody flush>
               <TabsContent value="history" className="m-0">
-                <div className="max-h-[16rem] divide-y divide-hairline overflow-y-auto">
+                <div
+                  className={cn(
+                    "max-h-[16rem] divide-y divide-hairline overflow-y-auto",
+                    ringSafeScroll,
+                  )}
+                >
                   {history.data?.length === 0 && (
                     <p className="p-3 text-xs text-muted-foreground">No statements yet.</p>
                   )}
@@ -285,7 +290,12 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
                 </div>
               </TabsContent>
               <TabsContent value="saved" className="m-0">
-                <div className="max-h-[16rem] divide-y divide-hairline overflow-y-auto">
+                <div
+                  className={cn(
+                    "max-h-[16rem] divide-y divide-hairline overflow-y-auto",
+                    ringSafeScroll,
+                  )}
+                >
                   {saved.data?.length === 0 && (
                     <p className="p-3 text-xs text-muted-foreground">No saved queries.</p>
                   )}
