@@ -125,17 +125,19 @@ conversion to `http.Handler` — it adds no behaviour. Return `httpx.Err/BadRequ
 keeps internal error strings off the wire. Decode bodies with `httpx.DecodeJSON` (4 MB cap,
 unknown fields rejected).
 
-Irreversible actions require the caller to echo a phrase in the **`X-Confirm`** header via
+`s.destructive(r, ...)` is the marker for "destructive" and adds the capability check and the
+tighter `destrLim` budget — it does *not* enforce confirmation. The **rare and unrecoverable**
+subset additionally requires the caller to echo a phrase in the **`X-Confirm`** header via
 `httpx.RequireTypedConfirmation(w, r, phrase)`, called **inside the handler** where the
 expected phrase is known; the phrase comes back to the client as `error.phrase`, not parsed
-out of the message. `s.destructive(r, ...)` is the marker for "irreversible" and adds the
-capability check and the tighter `destrLim` budget — it does *not* enforce confirmation.
-Adding a destructive route means doing both. It is nested inside stricter groups too
-(`system.admin` routes that delete something), because admin holds every capability, so
-"which routes are irreversible?" has one answer. The single exception is
-`POST /databases/{id}/query`, where the answer depends on the SQL: `dbx.Classify` decides,
-fails closed on anything it does not recognise, and the handler applies the same capability
-check and budget by hand.
+out of the message. Which routes are in that subset, and why the test is frequency rather than
+severity, is invariant 3 — read it before adding one.
+
+`s.destructive` is nested inside stricter groups too (`system.admin` routes that delete
+something), because admin holds every capability, so "which routes are destructive?" has one
+answer. The single exception is `POST /databases/{id}/query`, where the answer depends on the
+SQL: `dbx.Classify` decides, fails closed on anything it does not recognise, and the handler
+applies the same capability check and budget by hand.
 
 Two routes carry a check on the *content* of the request rather than on its path, for the
 same reason: the route cannot know. `POST /docker/containers` gates on `service.control`,
@@ -996,24 +998,49 @@ A change that weakens any of these has to say so explicitly:
 
 1. The network allowlist runs **before** authentication.
 2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
-3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. There are
-   two relaxations, both deliberate and both narrow.
+3. Every destructive action is behind `s.destructive` — the `destructive` capability, the
+   tighter `destrLim` budget and an audit entry — and pauses the operator with a confirmation
+   dialog. A **subset** of those additionally requires the typed `X-Confirm` phrase, enforced
+   server-side inside the handler where the expected phrase is known.
 
-   `httpx.RequireTypedConfirmationWS` also accepts the phrase as a query parameter — used only
-   by WebSocket routes, where a browser cannot set a header at all, and where `wsx`'s origin
-   check supplies what the header was protecting against. Do not reach for it from an ordinary
-   handler.
+   **The test for the phrase is frequency, not severity.** A phrase in front of something done
+   a dozen times a day is not read, it is typed — and the operator who has learned to type one
+   table name without looking types the next one the same way. That habit is precisely what the
+   phrase is protecting on the routes that keep it, so every route added to the typed set makes
+   the typed set weaker. The question to ask is not "is this dangerous" (they all are, that is
+   what `s.destructive` marks) but "how often does somebody do this, and can they get it back".
 
-   The three terminal close routes — a session, a window, a pane — are destructive and carry
-   **no phrase at all**. They stay inside `s.destructive`, so the capability check, the tighter
-   budget and the audit entry all still apply; only the typing is gone. The phrase exists so an
-   irreversible action cannot be a mis-click, and that holds for the things somebody deletes a
-   handful of times a year. Closing a shell is an everyday act — a dozen a day for anyone using
-   the panel as intended — and a phrase in front of an everyday act is not read, it is typed.
-   Training the operator to type "close terminal" without looking is worse than no guard,
-   because it is the exact habit the confirmation is protecting every *other* route with. This
-   is the reasoning to apply before adding a fourth exception; frequency is the test, not
-   severity.
+   Typed, because they are rare and there is no way back: `DROP TABLE`, `DROP COLUMN`,
+   `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a Mongo pipeline
+   with `$out`/`$merge`, a `critical` statement in the query runner, restoring a database or a
+   backup over live data, `compose down`, removing a Docker volume, any prune, deleting a
+   dashboard or Linux account, a recursive directory delete, `git discard` and `git reset
+   --hard`, toggling the firewall, applying package updates.
+
+   Not typed, because they are routine or recoverable or both: deleting rows and documents and
+   Redis keys, dropping an index, forgetting a connection, stopping a database session,
+   stopping/restarting/killing/removing/recreating a container, removing an image or a network,
+   deleting one file, signalling a process, stopping or restarting a service, revoking a token
+   or an SSH key, deleting a backup job or a deploy project, rolling back a deploy, disabling a
+   vhost, deleting a firewall rule, and closing a terminal session, window or pane.
+
+   Several routes decide by content rather than by path, and the narrowing lives at the call
+   site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
+   `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`, and
+   `composeNeedsPhrase` only for `down` — with `requireComposePhraseWS` applying the same
+   narrowing on the socket so the two entry points cannot disagree. The frontend mirrors each
+   with a conditional `phrase`, and the server re-decides regardless.
+
+   One relaxation on top of all this: `httpx.RequireTypedConfirmationWS` also accepts the
+   phrase as a query parameter — used only by WebSocket routes, where a browser cannot set a
+   header at all, and where `wsx`'s origin check supplies what the header was protecting
+   against. Do not reach for it from an ordinary handler.
+
+   `api/handlers_db_test.go` pins both directions for the database surface —
+   `TestIrreversibleDatabaseRoutesDemandAPhrase` and
+   `TestRoutineDatabaseRoutesDoNotAskForAPhrase` — because the line has two failure modes and
+   the second one (a phrase creeping back onto routine work, one defensible route at a time) is
+   the quieter of the two.
 4. Capability checks live on the route, never in the UI alone. Where the answer depends on
    what is *in* the request rather than which route it hit, the handler checks by hand and
    fails closed: `dbx.Classify` for SQL, `api.authoriseSpec` for a container spec that is

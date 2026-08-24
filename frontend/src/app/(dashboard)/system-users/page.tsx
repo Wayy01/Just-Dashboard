@@ -368,7 +368,6 @@ function SSHKeysSheet({
                   onClick={() =>
                     confirm({
                       title: "Revoke SSH key",
-                      phrase: username ?? "",
                       confirmLabel: "Revoke",
                       description: (
                         <p>

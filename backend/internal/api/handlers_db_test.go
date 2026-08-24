@@ -12,15 +12,20 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// The database surface grew from four destructive routes to eleven. Invariant 3
-// says every one enforces a typed confirmation server-side, and the way that
-// regresses is somebody adding a twelfth, mounting it correctly inside
-// s.destructive, and forgetting the phrase inside the handler. No router-level
-// test catches that: the mount looks right.
+// Which database routes ask for a typed phrase, and — just as importantly —
+// which do not.
 //
-// So this drives each destructive route with no X-Confirm header and asserts it
-// is refused. The routes are listed by hand on purpose — a test deriving the
-// list from the router would pass just as happily if one fell out of the group.
+// Invariant 3 reserves the typed phrase for the rare and unrecoverable, on the
+// grounds that a phrase in front of an everyday act is typed rather than read.
+// That line is a product decision and it has two failure modes, so both are
+// pinned here. Losing a phrase from a route that needs one is the obvious one.
+// The other is quieter and is how the line got crossed in the first place: a
+// phrase creeping back onto a routine action, one route at a time, each
+// defensible on its own, until an operator has learned to type table names
+// without looking at them.
+//
+// Both lists are written out by hand. A test deriving either from the router
+// would pass just as happily if a route moved between them.
 
 func dbTestRouter(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
@@ -55,29 +60,62 @@ func dbTestRouter(t *testing.T) (*Server, http.Handler) {
 	return s, r
 }
 
-func TestDestructiveDatabaseRoutesDemandConfirmation(t *testing.T) {
+type confirmCase struct{ method, path, body, why string }
+
+func driveWithoutConfirmation(t *testing.T, router http.Handler, c confirmCase) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+// These destroy something that cannot be got back, and are done rarely enough
+// that typing the name is a sentence read rather than a reflex.
+func TestIrreversibleDatabaseRoutesDemandAPhrase(t *testing.T) {
 	_, router := dbTestRouter(t)
 
-	cases := []struct{ method, path, body string }{
-		{http.MethodDelete, "/databases/1/ddl/table", `{"table":"t"}`},
-		{http.MethodDelete, "/databases/1/ddl/column", `{"table":"t","name":"c"}`},
-		{http.MethodDelete, "/databases/1/ddl/index", `{"table":"t","name":"i"}`},
-		{http.MethodPost, "/databases/1/ddl/truncate", `{"table":"t"}`},
-		{http.MethodDelete, "/databases/1/rows", `{"table":"t","key":{"id":1}}`},
-		{http.MethodDelete, "/databases/1", `{}`},
-		{http.MethodDelete, "/databases/1/keys", `{"key":"k"}`},
-		{http.MethodPost, "/databases/1/activity/kill", `{"pid":"42"}`},
-	}
-
-	for _, c := range cases {
-		req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-
+	for _, c := range []confirmCase{
+		{http.MethodDelete, "/databases/1/ddl/table", `{"table":"t"}`, "a dropped table is gone"},
+		{http.MethodDelete, "/databases/1/ddl/column", `{"table":"t","name":"c"}`, "a dropped column takes its data from every row"},
+		{http.MethodPost, "/databases/1/ddl/truncate", `{"table":"t"}`, "truncate empties the table"},
+		// Dropping a Mongo collection belongs on this list too, but the
+		// connection here is SQLite and that route refuses a non-Mongo driver
+		// before it reaches any confirmation. It is asserted in
+		// TestLiveAPIMongo instead, against a real Mongo connection.
+	} {
+		rec := driveWithoutConfirmation(t, router, c)
 		if !strings.Contains(rec.Body.String(), "confirmation") {
-			t.Errorf("%s %s without X-Confirm was not refused for want of a phrase: %d %s",
-				c.method, c.path, rec.Code, strings.TrimSpace(rec.Body.String()))
+			t.Errorf("%s %s ran without a phrase (%s): %d %s",
+				c.method, c.path, c.why, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+}
+
+// And these must NOT ask. Each is either routine, recoverable, or both, and a
+// phrase on any of them is what drains the phrase of meaning above.
+//
+// The connection here points at a path that cannot be opened, so most of these
+// fail — that is fine and deliberate. The assertion is only that they did not
+// fail *for want of a confirmation*, which is a claim their error bodies can
+// make regardless of what else went wrong.
+func TestRoutineDatabaseRoutesDoNotAskForAPhrase(t *testing.T) {
+	_, router := dbTestRouter(t)
+
+	for _, c := range []confirmCase{
+		{http.MethodDelete, "/databases/1/rows", `{"table":"t","key":{"id":1}}`, "editing rows is what a data browser is"},
+		{http.MethodDelete, "/databases/1/ddl/index", `{"table":"t","name":"i"}`, "an index rebuilds from its own definition"},
+		{http.MethodDelete, "/databases/1", `{}`, "forgetting a connection string does not touch the server"},
+		{http.MethodDelete, "/databases/1/keys", `{"key":"k"}`, "a Redis key is the unit of work in a key browser"},
+		{http.MethodDelete, "/databases/1/documents", `{"collection":"c","id":"x"}`, "a document is Mongo's row"},
+		{http.MethodPost, "/databases/1/activity/kill", `{"pid":"42"}`, "a stopped query rolls back; nothing is lost"},
+		{http.MethodPost, "/databases/1/import", `{"table":"t","data":"a,b\n1,2"}`, "an append adds rows and removes none"},
+	} {
+		rec := driveWithoutConfirmation(t, router, c)
+		if strings.Contains(rec.Body.String(), "confirmation") {
+			t.Errorf("%s %s asked for a phrase, but %s: %d %s",
+				c.method, c.path, c.why, rec.Code, strings.TrimSpace(rec.Body.String()))
 		}
 	}
 }

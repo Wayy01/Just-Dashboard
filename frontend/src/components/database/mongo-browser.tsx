@@ -171,7 +171,6 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   const deleteDoc = (row: Record<string, unknown>) =>
     confirm({
       title: "Delete document",
-      phrase: collection,
       confirmLabel: "Delete",
       description: (
         <p>

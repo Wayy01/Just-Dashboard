@@ -265,7 +265,12 @@ export default function FilesPage() {
                     onDelete={() =>
                       confirm({
                         title: entry.isDir ? "Delete directory" : "Delete file",
-                        phrase: entry.name,
+                        // Only a directory is typed for. Deleting one file is
+                        // what a file manager is, done constantly; a directory
+                        // takes a tree the operator cannot see the whole of
+                        // from the row they clicked, and that is the one worth
+                        // reading the name back for.
+                        phrase: entry.isDir ? entry.name : undefined,
                         confirmLabel: "Delete",
                         description: (
                           <p className="text-destructive">

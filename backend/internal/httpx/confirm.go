@@ -18,6 +18,22 @@ const ConfirmParam = "confirm"
 // RequireTypedConfirmation refuses the request unless the caller repeats the
 // exact phrase. The frontend renders this as a "type <name> to confirm" input;
 // scripted callers must send the header deliberately.
+//
+// The test for reaching for this is **frequency, not severity**. Every route
+// that calls it is destructive, but so are a great many that deliberately do
+// not: stopping a container, deleting a row, killing a process, removing an
+// image, disabling a site. Those are done several times in a sitting, and a
+// phrase in front of an everyday act is not read — it is typed, and the
+// operator who has learned to type one without looking types the next one the
+// same way. That habit is the thing this function is protecting on the routes
+// that still call it, so widening the set is how you weaken it.
+//
+// What is left is the rare and unrecoverable: dropping a table or a column,
+// emptying one, `compose down`, removing a Docker volume, a prune, deleting an
+// account, restoring over live data, discarding uncommitted work, turning the
+// firewall off, upgrading packages. Everything else keeps the capability check,
+// the tighter destructive budget and the audit entry — which is what
+// s.destructive is for — and pauses the operator with an ordinary dialog.
 func RequireTypedConfirmation(w http.ResponseWriter, r *http.Request, phrase string) error {
 	return requireConfirmation(r, phrase, false)
 }

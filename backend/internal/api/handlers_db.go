@@ -97,9 +97,10 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Method(http.MethodPost, "/{id}/aggregate", s.handle(s.handleMongoAggregate))
 			r.Method(http.MethodPost, "/{id}/collections", s.handle(s.handleMongoCreateCollection))
 		})
-		// A row delete is an irreversible DELETE, so it carries the destructive
-		// capability, the tighter budget and a typed confirmation naming the
-		// table — the same treatment DROP/TRUNCATE get through the query path.
+		// Everything here is destructive: the capability, the tighter budget and
+		// the audit entry apply to all of it. Only some of it additionally asks
+		// the operator to type a phrase, and each handler says which it is and
+		// why — invariant 3 is the rule they are applying.
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}/rows", s.handle(s.handleDBRowDelete))
 			// Killing a session stops work in flight and rolls it back, so it
@@ -107,9 +108,9 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			// activity list it is launched from.
 			r.Method(http.MethodPost, "/{id}/activity/kill", s.handle(s.handleDBKill))
 			r.Method(http.MethodPost, "/{id}/restore", s.handle(s.handleDBRestore))
-			// Schema changes that destroy. Each demands a typed confirmation
-			// naming what it removes, so this group is the whole answer to
-			// "which database routes are irreversible?".
+			// Schema changes that destroy. All but the index drop demand a
+			// typed confirmation naming what they remove; an index is the one
+			// object here that rebuilds from its own definition.
 			r.Method(http.MethodDelete, "/{id}/ddl/table", s.handle(s.handleDDLDropTable))
 			r.Method(http.MethodDelete, "/{id}/ddl/column", s.handle(s.handleDDLDropColumn))
 			r.Method(http.MethodDelete, "/{id}/ddl/index", s.handle(s.handleDDLDropIndex))
@@ -253,9 +254,8 @@ func (s *Server) handleDBConnDelete(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, conn.Name); err != nil {
-		return err
-	}
+	// No typed phrase: this forgets a connection string, it does not touch the
+	// server at the other end of it. Re-adding one is a form, not a restore.
 	s.modules.dbs.Close(id)
 	if _, err := s.Store.DB.ExecContext(r.Context(), `DELETE FROM db_connections WHERE id = ?`, id); err != nil {
 		return httpx.Internal(err)
@@ -545,8 +545,10 @@ func (s *Server) handleDBClassify(w http.ResponseWriter, r *http.Request) error 
 }
 
 // handleDBQuery runs arbitrary SQL. A destructive statement additionally
-// requires the destructive capability and a typed confirmation, so a
-// mistyped DELETE cannot execute on a single click.
+// requires the destructive capability and the tighter budget, and a *critical*
+// one — a DROP, a TRUNCATE, an UPDATE or DELETE with no WHERE — also requires a
+// typed confirmation, so the statement that hits every row cannot go out on a
+// single click.
 func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) error {
 	id, err := parseID(r)
 	if err != nil {
@@ -566,8 +568,16 @@ func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) error {
 			return httpx.Err(http.StatusForbidden, "forbidden",
 				"this statement is destructive and your role does not permit it")
 		}
-		if err := httpx.RequireTypedConfirmation(w, r, "run "+risk.Level); err != nil {
-			return err
+		// Only critical statements are typed for. "high" is a scoped UPDATE or
+		// DELETE — the ordinary work of a SQL console, done dozens of times in
+		// a sitting — and "run high" names nothing about what is being run, so
+		// it was boilerplate to type rather than a sentence to read. Critical
+		// is the unscoped version of the same statement, a DROP, a TRUNCATE:
+		// rare, and the whole table either way.
+		if risk.Level == "critical" {
+			if err := httpx.RequireTypedConfirmation(w, r, "run "+risk.Level); err != nil {
+				return err
+			}
 		}
 		if !s.destrLim.Allow(p.Username() + "|dbquery") {
 			return httpx.Err(http.StatusTooManyRequests, "rate_limited",
@@ -1001,12 +1011,12 @@ func (s *Server) handleDBRowDelete(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	// Deleting a row is an irreversible DELETE. Confirming on the table name
-	// forces the operator to read which table they are editing, matching the
-	// query path's treatment of DROP/TRUNCATE.
-	if err := httpx.RequireTypedConfirmation(w, r, req.Table); err != nil {
-		return err
-	}
+	// No typed phrase. Deleting a row is what a data browser is for — a dozen
+	// a day for anyone using this page as intended — and the bulk path made it
+	// worse by asking for the same table name eight times in a row. A phrase in
+	// front of an everyday act is not read, it is typed, and that habit is what
+	// weakens the phrase everywhere it still matters. The capability check, the
+	// tighter budget and the audit entry all still apply.
 	pool, conn, err := s.dbPool(r.Context(), id)
 	if err != nil {
 		return err
@@ -1438,10 +1448,9 @@ type killRequest struct {
 // handleDBKill terminates a session on the database server.
 //
 // Destructive: whatever the session had done rolls back, and an application
-// holding that connection sees it drop. The typed confirmation is the session
-// id itself rather than a fixed phrase, because the mistake this is guarding
-// against is not "meant to press nothing" — it is killing the wrong row in a
-// list of forty near-identical ones.
+// holding that connection sees it drop. It is still not typed for — see the
+// handler body. The pid is validated rather than escaped, which is the guard
+// that carries the weight here, because no engine binds a session id.
 func (s *Server) handleDBKill(w http.ResponseWriter, r *http.Request) error {
 	id, err := parseID(r)
 	if err != nil {
@@ -1454,9 +1463,10 @@ func (s *Server) handleDBKill(w http.ResponseWriter, r *http.Request) error {
 	if strings.TrimSpace(req.PID) == "" {
 		return httpx.BadRequest("a session id is required")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, req.PID); err != nil {
-		return err
-	}
+	// No typed phrase: nothing is lost that was not already going to roll back,
+	// and this button is pressed repeatedly under exactly the time pressure
+	// that makes a typing exercise counterproductive. The session id is on the
+	// row and in the dialog, which is what makes the right one identifiable.
 	pool, conn, err := s.dbPool(r.Context(), id)
 	if err != nil {
 		return err

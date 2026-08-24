@@ -122,7 +122,6 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                         onClick={() =>
                           confirm({
                             title: "Delete network",
-                            phrase: network.name,
                             confirmLabel: "Delete",
                             description: (
                               <p>

@@ -153,7 +153,6 @@ export default function DeployPage() {
                     onClick={() =>
                       confirm({
                         title: "Delete project",
-                        phrase: project.name,
                         confirmLabel: "Delete",
                         description: (
                           <p>
@@ -412,7 +411,6 @@ function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () =
                     onClick={() =>
                       confirm({
                         title: "Roll back",
-                        phrase: project.name,
                         confirmLabel: "Roll back",
                         description: (
                           <>

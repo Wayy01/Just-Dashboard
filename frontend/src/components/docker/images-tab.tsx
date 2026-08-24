@@ -278,7 +278,6 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                             onClick={() =>
                               confirm({
                                 title: "Delete image",
-                                phrase: imagePhrase(image),
                                 confirmLabel: "Delete",
                                 description: (
                                   <>

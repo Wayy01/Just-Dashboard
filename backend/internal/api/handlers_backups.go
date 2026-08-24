@@ -153,9 +153,8 @@ func (s *Server) handleBackupJobDelete(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return mapBackupError(err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, job.Name); err != nil {
-		return err
-	}
+	// No typed phrase: this deletes a schedule, not the archives it produced.
+	// Restoring one of those is the route that still asks.
 	if err := s.modules.backupStore.Delete(r.Context(), id); err != nil {
 		return httpx.Internal(err)
 	}

@@ -116,7 +116,11 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
     if (risk?.destructive) {
       confirm({
         title: "Run destructive statement",
-        phrase: `run ${risk.level}`,
+        // Only a critical statement is typed for — a DROP, a TRUNCATE, or an
+        // UPDATE/DELETE with no WHERE. "high" is a scoped write, which is the
+        // ordinary work of a SQL console; making somebody type "run high"
+        // dozens of times a sitting is how the phrase stops being read.
+        phrase: risk.level === "critical" ? `run ${risk.level}` : undefined,
         confirmLabel: "Run it",
         description: (
           <>

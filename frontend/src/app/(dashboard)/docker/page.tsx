@@ -179,13 +179,12 @@ export default function DockerPage() {
           break
         case "set-restart":
           // Docker cannot change a restart policy in place, so this is a
-          // recreate with one field edited. It goes through the same typed
-          // confirmation as any other recreate, because it interrupts the
-          // service for as long as the replacement takes to start.
+          // recreate with one field edited. It confirms like any other
+          // recreate — a pause, not a phrase to type: the old container is
+          // renamed aside and put back if the replacement fails to start.
           if (finding.targetId && finding.target) {
             confirm({
               title: "Set a restart policy",
-              phrase: finding.target,
               confirmLabel: "Apply",
               description: (
                 <>
@@ -524,7 +523,6 @@ export default function DockerPage() {
                                       onClick={() =>
                                         confirm({
                                           title: "Restart container",
-                                          phrase: container.name,
                                           confirmLabel: "Restart",
                                           description: (
                                             <p>
@@ -543,7 +541,6 @@ export default function DockerPage() {
                                       onClick={() =>
                                         confirm({
                                           title: "Stop container",
-                                          phrase: container.name,
                                           confirmLabel: "Stop",
                                           description: (
                                             <p>
@@ -581,7 +578,6 @@ export default function DockerPage() {
                                 onClick={() =>
                                   confirm({
                                     title: "Update container",
-                                    phrase: container.name,
                                     confirmLabel: "Update",
                                     description: (
                                       <>
@@ -622,7 +618,6 @@ export default function DockerPage() {
                                 onClick={() =>
                                   confirm({
                                     title: "Remove container",
-                                    phrase: container.name,
                                     confirmLabel: "Remove",
                                     description: (
                                       <p>

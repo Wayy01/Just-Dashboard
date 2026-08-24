@@ -149,7 +149,6 @@ export default function BackupsPage() {
                     onClick={() =>
                       confirm({
                         title: "Delete backup job",
-                        phrase: job.name,
                         confirmLabel: "Delete",
                         description: (
                           <p>

@@ -84,9 +84,10 @@ func ListActivity(ctx context.Context, db *sql.DB, driver Driver) ([]Activity, e
 //
 // It is destructive in the sense the route map means: something running is
 // stopped, and whatever it had done so far rolls back. The handler in front
-// demands the capability and a typed confirmation naming the pid, because the
-// one thing worse than an app hung on a lock is an operator killing the wrong
-// session while trying to fix it.
+// demands the capability and pauses on a confirmation naming the session, but
+// asks for no phrase to be typed — this is pressed repeatedly under exactly the
+// time pressure that makes a typing exercise counterproductive, and the rollback
+// means nothing is lost that was not already going.
 func KillQuery(ctx context.Context, db *sql.DB, driver Driver, pid string) error {
 	d, err := DialectFor(driver)
 	if err != nil {

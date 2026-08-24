@@ -180,6 +180,22 @@ func TestLiveAPIMongo(t *testing.T) {
 		}
 	})
 
+	// The two Mongo deletes sit on opposite sides of the confirmation line, and
+	// this is the only harness with a real Mongo connection to prove it on.
+	t.Run("document_delete_is_plain_but_drop_collection_is_typed", func(t *testing.T) {
+		rec := do(t, r, http.MethodDelete, pathf("/databases/%d/documents", id),
+			`{"collection":"`+coll+`","filter":"{\"name\":\"Cy\"}"}`)
+		if strings.Contains(rec.Body.String(), "confirmation") {
+			t.Errorf("deleting a document asked for a phrase: %s", rec.Body.String())
+		}
+		drop := do(t, r, http.MethodDelete, pathf("/databases/%d/collections", id),
+			`{"collection":"`+coll+`"}`)
+		if !strings.Contains(drop.Body.String(), "confirmation") {
+			t.Errorf("dropping a collection ran without a phrase: %d %s",
+				drop.Code, drop.Body.String())
+		}
+	})
+
 	t.Run("sql_only_routes_refuse_mongo", func(t *testing.T) {
 		// The SQL surface must decline rather than half-work.
 		rec := do(t, r, http.MethodGet, pathf("/databases/%d/outline", id), "")
@@ -218,23 +234,18 @@ func TestLiveAPIRedis(t *testing.T) {
 		}
 	})
 
-	t.Run("member_delete_needs_confirmation", func(t *testing.T) {
+	// Removing one member of a collection takes no typed phrase: it is the
+	// everyday edit of a key browser, and the earlier rule asked for the member
+	// name every time. What it must still do is remove exactly that member.
+	t.Run("member_delete_removes_only_that_member", func(t *testing.T) {
 		rec := do(t, r, http.MethodDelete, pathf("/databases/%d/keys", id),
 			`{"key":"`+key+`","type":"hash","member":"city"}`)
-		if !strings.Contains(rec.Body.String(), "confirmation") {
-			t.Fatalf("member delete ran without a confirmation: %d %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("member delete: %d %s", rec.Code, rec.Body.String())
 		}
-		// With the phrase — the member, not the key — it goes through.
-		req := httptest.NewRequest(http.MethodDelete, pathf("/databases/%d/keys", id),
-			strings.NewReader(`{"key":"`+key+`","type":"hash","member":"city"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Confirm", "city")
-		rec2 := httptest.NewRecorder()
-		r.ServeHTTP(rec2, req)
-		if rec2.Code != http.StatusOK {
-			t.Fatalf("confirmed member delete: %d %s", rec2.Code, rec2.Body.String())
+		if strings.Contains(rec.Body.String(), "confirmation") {
+			t.Fatalf("member delete asked for a phrase: %s", rec.Body.String())
 		}
-		// The rest of the hash must survive.
 		rec3 := do(t, r, http.MethodGet, pathf("/databases/%d/keys/value", id)+"?key="+key, "")
 		if strings.Contains(rec3.Body.String(), "Oslo") {
 			t.Error("member survived its deletion")
@@ -256,12 +267,9 @@ func TestLiveAPIRedis(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), target) {
 			t.Errorf("scan did not find the renamed key: %s", rec.Body.String())
 		}
-		// Clean up through the product's own route.
-		req := httptest.NewRequest(http.MethodDelete, pathf("/databases/%d/keys", id),
-			strings.NewReader(`{"key":"`+target+`"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Confirm", target)
-		r.ServeHTTP(httptest.NewRecorder(), req)
+		// Clean up through the product's own route, which no longer asks for a
+		// phrase to delete a key.
+		do(t, r, http.MethodDelete, pathf("/databases/%d/keys", id), `{"key":"`+target+`"}`)
 	})
 }
 
@@ -402,22 +410,27 @@ func TestLiveAPIDeveloperSurface(t *testing.T) {
 		}
 	})
 
-	t.Run("kill_demands_the_pid_as_its_phrase", func(t *testing.T) {
-		// No header at all.
+	// Stopping a session takes no typed phrase — it is pressed repeatedly under
+	// time pressure and nothing is lost that was not already rolling back — but
+	// the pid it is given is still validated rather than pasted into a
+	// statement, which is the guard that actually matters on this route.
+	t.Run("kill_validates_its_pid_without_a_phrase", func(t *testing.T) {
 		rec := do(t, r, http.MethodPost, pathf("/databases/%d/activity/kill", id), `{"pid":"99999"}`)
-		if !strings.Contains(rec.Body.String(), "confirmation") {
-			t.Errorf("kill without X-Confirm was not refused: %d %s", rec.Code, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "confirmation") {
+			t.Errorf("kill asked for a phrase: %d %s", rec.Code, rec.Body.String())
 		}
-		// The wrong phrase — a plausible near-miss, which is the mistake the
-		// pid-as-phrase choice is guarding against.
-		req := httptest.NewRequest(http.MethodPost, pathf("/databases/%d/activity/kill", id),
-			strings.NewReader(`{"pid":"99999"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Confirm", "99998")
-		rec2 := httptest.NewRecorder()
-		r.ServeHTTP(rec2, req)
-		if rec2.Code == http.StatusOK {
-			t.Errorf("kill with the wrong phrase succeeded: %s", rec2.Body.String())
+		for _, bad := range []string{`1; DROP TABLE jd_api_devx`, `1 OR 1=1`, ``} {
+			b, _ := json.Marshal(map[string]string{"pid": bad})
+			out := do(t, r, http.MethodPost, pathf("/databases/%d/activity/kill", id), string(b))
+			if out.Code == http.StatusOK {
+				t.Errorf("kill accepted %q: %s", bad, out.Body.String())
+			}
+		}
+		// The table the injected fragment named is still there.
+		count := do(t, r, http.MethodGet,
+			pathf("/databases/%d/count", id)+"?schema=public&table=jd_api_devx", "")
+		if count.Code != http.StatusOK {
+			t.Fatalf("table is gone after the rejected kills: %d %s", count.Code, count.Body.String())
 		}
 	})
 

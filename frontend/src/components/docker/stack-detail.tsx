@@ -121,11 +121,17 @@ function StackBody({
     if (code !== 0) throw new Error(`compose ${action} exited with status ${code}`)
   }
 
-  /** The destructive actions go through the same typed confirmation the API demands. */
+  /**
+   * The destructive actions all pause for a confirmation, and `down` is the one
+   * that asks for the stack's name to be typed — it is the only one that
+   * removes the containers. Update and restart are the ordinary redeploy cycle,
+   * run several times in an afternoon, and the server narrows the phrase the
+   * same way so the two cannot disagree.
+   */
   const confirmRun = (action: string, title: string, description: React.ReactNode) =>
     confirm({
       title,
-      phrase: name ?? "",
+      phrase: action === "down" ? (name ?? "") : undefined,
       confirmLabel: title.split(" ")[0],
       description,
       action: (phrase) => run(action, { confirmPhrase: phrase }),

@@ -48,9 +48,15 @@ carries no licensing question at all.
 
 - Run the checks: `cd frontend && bun run build` and `cd backend && go build ./...`.
 - Keep the security posture intact. The network allowlist runs before
-  authentication, two-factor is mandatory, and irreversible actions require a
-  typed confirmation phrase enforced server-side. A change that weakens any of
-  those needs to say so explicitly in the PR description.
+  authentication, two-factor is mandatory, every destructive route sits behind
+  the destructive capability with an audit entry, and the rare irreversible ones
+  require a typed confirmation phrase enforced server-side. A change that
+  weakens any of those needs to say so explicitly in the PR description.
+- Before putting a typed confirmation on a new route, read invariant 3 in
+  CLAUDE.md. The test is frequency, not severity: everything behind
+  `s.destructive` is dangerous, and adding a phrase to something done several
+  times a sitting is what teaches operators to type phrases without reading
+  them.
 - Match the surrounding code. Comments explain *why*, not *what*.
 
 ## Security issues

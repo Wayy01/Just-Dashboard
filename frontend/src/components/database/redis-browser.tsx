@@ -112,7 +112,6 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
   const deleteKey = (key: string) =>
     confirm({
       title: "Delete key",
-      phrase: key,
       confirmLabel: "Delete",
       description: (
         <p>
@@ -430,7 +429,6 @@ function MemberEditor({
   const remove = (member: string, shown: string) =>
     confirm({
       title: `Remove ${value.type} member`,
-      phrase: member,
       confirmLabel: "Remove",
       description: (
         <p>

@@ -190,12 +190,13 @@ function ActivityPanel({
                           onClick={() =>
                             confirm({
                               title: "Stop this session",
-                              // The phrase is the session id rather than a
-                              // fixed word: the mistake being guarded against
-                              // is killing the wrong row in a list of forty
-                              // near-identical ones, not pressing the button
-                              // by accident.
-                              phrase: s.pid,
+                              // No phrase to type: this button is pressed
+                              // repeatedly under exactly the time pressure
+                              // that makes a typing exercise harmful, and
+                              // nothing is lost that was not already going to
+                              // roll back. The dialog names the session and
+                              // shows its statement, which is what identifies
+                              // the right one.
                               confirmLabel: "Stop it",
                               description: (
                                 <>

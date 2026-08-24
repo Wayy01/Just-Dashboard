@@ -18,7 +18,9 @@ import (
 // The split in capability follows what the query classifier already decided:
 // CREATE is medium risk and needs service.control, DROP and TRUNCATE are
 // critical and need the destructive capability plus a typed confirmation. A
-// form must not be a cheaper way to do what the SQL console gates.
+// form must not be a cheaper way to do what the SQL console gates — which is
+// also why dropping an index is the one exception on both sides at once: the
+// classifier does not call it critical and neither does this file.
 
 type ddlRequest struct {
 	Schema  string          `json:"schema"`
@@ -35,11 +37,11 @@ type ddlRequest struct {
 // ddlContext decodes the request and identifies the connection, without
 // opening a pool.
 //
-// The pool comes later, deliberately: a destructive handler must reach its
-// typed confirmation before it does any work, so a request arriving without the
-// phrase is refused rather than first dialling the database. It also keeps the
-// error the caller sees honest — "you did not confirm" rather than whatever the
-// connection attempt happened to say.
+// The pool comes later, deliberately: a handler that asks for a typed phrase
+// must reach that check before it does any work, so a request arriving without
+// the phrase is refused rather than first dialling the database. It also keeps
+// the error the caller sees honest — "you did not confirm" rather than whatever
+// the connection attempt happened to say.
 func (s *Server) ddlContext(r *http.Request) (*ddlRequest, *dbConnection, error) {
 	id, err := parseID(r)
 	if err != nil {
@@ -228,9 +230,9 @@ func (s *Server) handleDDLDropIndex(w http.ResponseWriter, r *http.Request) erro
 	if strings.TrimSpace(req.Name) == "" {
 		return httpx.BadRequest("the index to drop is required")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, req.Name); err != nil {
-		return err
-	}
+	// No typed phrase: an index holds no data of its own and the Structure tab
+	// shows the definition that recreates it. Dropping one costs a rebuild, not
+	// a restore from backup.
 	pool, _, err := s.dbPool(r.Context(), conn.ID)
 	if err != nil {
 		return err

@@ -225,7 +225,6 @@ export function BrowseTab({
     })
     confirm({
       title: `Delete ${keys.length} rows`,
-      phrase: table,
       confirmLabel: `Delete ${keys.length} rows`,
       description: (
         <p className="text-sm">
@@ -338,7 +337,6 @@ export function BrowseTab({
     for (const c of pk) key[c] = row[c]
     confirm({
       title: "Delete row",
-      phrase: table,
       confirmLabel: "Delete row",
       description: (
         <p className="text-sm">

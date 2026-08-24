@@ -8,8 +8,9 @@
 // paths safe: identifiers (schema, table and column names) are always validated
 // and quoted, never bound, while values are always bound, never interpolated;
 // and a query runner is inherently powerful, so destructive statements are
-// classified before they run and the handler demands a typed confirmation for
-// them. Row edits go one step further and refuse to run without a primary key,
+// classified before they run and the handler demands the destructive capability
+// for them, plus a typed confirmation once a statement is critical. Row edits go
+// one step further and refuse to run without a primary key,
 // so an UPDATE or DELETE cannot silently touch more than the one row intended.
 package dbx
 

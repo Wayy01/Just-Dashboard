@@ -584,7 +584,6 @@ function ContainerActions({
   const update = () =>
     confirm?.({
       title: "Update this container",
-      phrase: detail.name,
       confirmLabel: "Update",
       description: (
         <>

@@ -126,7 +126,6 @@ export default function DatabasesPage() {
                   onClick={() =>
                     confirm({
                       title: "Remove connection",
-                      phrase: active.name,
                       confirmLabel: "Remove",
                       description: (
                         <p>

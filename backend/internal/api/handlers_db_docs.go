@@ -151,9 +151,9 @@ func (s *Server) handleRedisExpire(w http.ResponseWriter, r *http.Request) error
 
 // handleRedisDelete removes whole keys, or one field of a hash.
 //
-// The typed confirmation names the first key. A multi-key delete confirms on
-// the count instead, because asking somebody to type out eight key names is how
-// you teach them to paste without reading.
+// Neither takes a typed phrase. Both are the everyday edit of a key browser,
+// and the rule that asked for the key name meant a multi-select of eight wanted
+// eight names typed — which is how you teach somebody to paste without reading.
 func (s *Server) handleRedisDelete(w http.ResponseWriter, r *http.Request) error {
 	var req redisWriteRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -166,20 +166,10 @@ func (s *Server) handleRedisDelete(w http.ResponseWriter, r *http.Request) error
 	if len(keys) == 0 {
 		return httpx.BadRequest("at least one key is required")
 	}
-	// Removing one member of a collection confirms on that member; removing
-	// whole keys confirms on the key, or on a count when there are several,
-	// because asking somebody to type out eight key names teaches them to paste
-	// without reading.
-	phrase := keys[0]
-	if len(keys) > 1 {
-		phrase = "delete " + itoaLocal(len(keys)) + " keys"
-	}
-	if req.Member != "" {
-		phrase = req.Member
-	}
-	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
-		return err
-	}
+	// No typed phrase. A Redis key is the unit of work in a key browser and a
+	// member is smaller still; both are deleted constantly, and the earlier
+	// rule asked for eight key names in a row on a multi-select. The dialog
+	// names what is going.
 	client, conn, err := s.redisClient(r)
 	if err != nil {
 		return err
@@ -343,12 +333,9 @@ func (s *Server) handleMongoDelete(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	// Deleting many documents at once confirms on the collection, deleting one
-	// on the collection too — there is no stable short name for a document, and
-	// the filter is already on screen above the button.
-	if err := httpx.RequireTypedConfirmation(w, r, collection); err != nil {
-		return err
-	}
+	// No typed phrase: a document is Mongo's row, and deleting one is the same
+	// everyday act the SQL side stopped typing for. Dropping the whole
+	// collection is the one below, and that still asks.
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
 	n, err := dbx.MongoDelete(ctx, client, db, collection, req.Filter, req.Many)

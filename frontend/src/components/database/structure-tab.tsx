@@ -82,7 +82,6 @@ export function StructureTab({
   const dropIndex = (name: string) =>
     confirm({
       title: "Drop index",
-      phrase: name,
       confirmLabel: "Drop index",
       description: (
         <p>

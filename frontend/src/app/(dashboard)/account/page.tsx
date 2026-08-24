@@ -366,7 +366,6 @@ function TokensTab() {
                           onClick={() =>
                             confirm({
                               title: "Revoke token",
-                              phrase: token.name,
                               confirmLabel: "Revoke",
                               description: (
                                 <p>

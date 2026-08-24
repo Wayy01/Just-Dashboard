@@ -30,8 +30,9 @@ type ConfirmFn = ReturnType<typeof useConfirm>["confirm"]
  * The whole load is one transaction on the server, so the two switches here
  * mean what they say: "stop at the first bad row" aborts everything, and
  * leaving it off still commits or rolls back as a unit — a row being skipped
- * never means a file was half applied. Replacing the contents is destructive
- * and routed through the same typed confirmation a DROP gets.
+ * never means a file was half applied. Appending is a plain confirmation;
+ * replacing the contents empties the table first and so asks for the table's
+ * name to be typed, exactly as a TRUNCATE does.
  */
 export function ImportDialog({
   open,

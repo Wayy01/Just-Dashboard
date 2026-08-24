@@ -61,8 +61,12 @@ It is built to sit behind a VPN or an SSH tunnel, and that is enforced rather th
   handler at all, let alone guess at it.
 - Two-factor is **mandatory**. A correct password on its own yields a session that every
   route rejects except the 2FA ones.
-- Irreversible actions require a **typed confirmation phrase**, checked on the server, so it
-  cannot be skipped by calling the API directly.
+- Destructive actions pause for a confirmation, and the rare, unrecoverable ones — dropping a
+  table, removing a volume, deleting an account, restoring over live data — additionally
+  require a **typed confirmation phrase**, checked on the server, so it cannot be skipped by
+  calling the API directly. The line is drawn by *frequency*: a phrase in front of something
+  done a dozen times a day gets typed rather than read, which is exactly how it stops working
+  on the routes that need it.
 - Every state-changing request lands in an **audit log**: who, what, when, from where, and
   whether it worked.
 
@@ -148,7 +152,7 @@ A real PTY over a WebSocket, running `su -l` into a host account, not a shell in
 container. Your dotfiles, your PATH, your installed tools.
 
 Backed by tmux, so closing the tab, leaving the page and restarting the dashboard all leave
-the session running. Only closing one stops it, and that takes a typed confirmation. The
+the session running. Only closing one stops it, and that asks first. The
 title, the folder and the favourite flag live on the tmux session itself, which is why a
 session picked up after a restart is still called what you called it.
 
@@ -403,7 +407,8 @@ Every request passes the same chain:
 network allowlist → rate limit → authenticate → capability → handler
 ```
 
-Destructive routes additionally require a typed confirmation and get a tighter rate budget.
+Destructive routes get a tighter rate budget, and the rare irreversible ones also require a
+typed confirmation phrase.
 
 **On privileges.** The compose file grants the backend `privileged: true`, `pid: host` and
 the Docker socket. That is what makes "restart this unit" and "kill this process" mean
