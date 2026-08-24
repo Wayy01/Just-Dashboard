@@ -1,8 +1,10 @@
 package api
 
 import (
+	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,4 +278,71 @@ func TestSQLiteConnectionsAreContainedByFileRoots(t *testing.T) {
 			t.Errorf("containDSN touched a %s DSN: %q -> %q, %v", d, dsn, got, err)
 		}
 	}
+}
+
+// Every provision template has to describe a container that actually runs and
+// that this package can then connect to. The two halves are written in
+// different places — the spec here, the recognition in dbx — and the failure
+// when they disagree is silent: the container is created, nothing listens, and
+// the adopt that follows waits for an engine that was never going to answer.
+func TestProvisionTemplatesAreCoherent(t *testing.T) {
+	for engine, tmpl := range provisionTemplates {
+		if !tmpl.driver.Valid() {
+			t.Errorf("%s: driver %q is not a driver", engine, tmpl.driver)
+		}
+		if tmpl.image == "" || tmpl.port == 0 || tmpl.dataPath == "" {
+			t.Errorf("%s: incomplete template %+v", engine, tmpl)
+		}
+		// The image this starts must be one dbx.Detect recognises, or the
+		// server it creates cannot be adopted afterwards — which is the whole
+		// point of creating it from here.
+		cand, password := dbx.Detect("probe", tmpl.image, envPairs(tmpl.env("s3cret", "app")),
+			[]dbx.PublishedPort{{ContainerPort: tmpl.port, HostIP: "127.0.0.1", HostPort: tmpl.port}})
+		if cand == nil {
+			t.Errorf("%s: image %q is not recognised by dbx.Detect", engine, tmpl.image)
+			continue
+		}
+		if cand.Driver != tmpl.driver {
+			t.Errorf("%s: template says %q, detection says %q", engine, tmpl.driver, cand.Driver)
+		}
+		if !cand.Connectable() {
+			t.Errorf("%s: not connectable — %s", engine, cand.Reason)
+		}
+		if password != "s3cret" {
+			t.Errorf("%s: the generated password is not the one detection reads back: %q", engine, password)
+		}
+		if dsn := dbx.BuildDSN(*cand, password); dsn == "" {
+			t.Errorf("%s: no DSN could be built", engine)
+		}
+	}
+}
+
+// A provisioned server is published to loopback only: one this dashboard
+// started should not become reachable from the internet because a default was
+// convenient.
+func TestProvisionTemplatesBindLoopback(t *testing.T) {
+	s := testServer(t)
+	t.Cleanup(s.Shutdown)
+	// The binding is written at the one place the spec is built, so this
+	// asserts on that constant rather than on a container nobody started.
+	if !strings.Contains(readSource(t, "handlers_db_detect.go"), `HostIP: "127.0.0.1"`) {
+		t.Error("the provision spec no longer pins the published port to loopback")
+	}
+}
+
+func envPairs(vars []dockerx.EnvVar) map[string]string {
+	out := map[string]string{}
+	for _, v := range vars {
+		out[v.Name] = v.Value
+	}
+	return out
+}
+
+func readSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
