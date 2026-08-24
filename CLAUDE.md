@@ -67,7 +67,13 @@ bun run build
 bun is the package manager (`bun.lock`, `packageManager: bun@1.3.11`) — do not introduce
 `package-lock.json` or `yarn.lock`. Next's dev rewrite proxies HTTP but **not** WebSocket
 upgrades, so for socket-backed pages in dev also set
-`NEXT_PUBLIC_WS_BASE=http://localhost:8080`.
+`NEXT_PUBLIC_WS_BASE=http://localhost:8080`; the WebSocket origin check then needs
+`JD_ALLOWED_ORIGINS=http://localhost:3000` on the backend, since the page and the socket are
+no longer the same origin the way they are behind Caddy.
+
+`bun dev` and `bun run build` both run `scripts/sync-monaco.mjs` first, which copies the code
+editor into `public/`. Running `next` directly skips that hook and leaves every editor in the
+product spinning — see "The editor is served from here, not from a CDN".
 
 There is no frontend test suite; `bun run build` and `bun run lint` are the whole gate.
 (`playwright` sits in devDependencies for ad-hoc screenshotting and is wired to no script.)
@@ -487,6 +493,18 @@ the form shows and the finding the audit raises are the same claim. `parseUFWRul
 to each rule — but only warns when the source is unrestricted, since the same port limited to
 a private range is the arrangement being recommended.
 
+`ReplaceRule` is the edit. Neither ufw nor firewalld has one — a rule is a line, and changing
+it means writing another and removing this one — so the order is the whole safety property:
+the replacement goes in **first**, and only then is the original removed. Deleting first and
+failing to add would leave a hole in the firewall, which is the one outcome an edit must never
+produce; failing the other way round leaves two rules, which is visible in the list and no
+less strict than before. ufw is ordered, so the replacement is inserted at the old rule's
+number and the original — pushed down one by the insert — is deleted at `number+1`. firewalld
+has no numbers of its own (the position in the listing is this dashboard's), so the old rule's
+`Handle` is resolved *before* anything is added, because adding changes what position N points
+at. The ordering lives in `replaceRule`, separate from backend detection, so it is driven by
+tests against a recording backend rather than discovered on a live firewall.
+
 `AddRule` gained `insert` (ufw stops at the first match, so a deny added after a broad allow
 does nothing at all, which looks exactly like a deny that works), application profiles, and
 comma-separated port lists. `SetDefaultPolicy` refuses an inbound deny on a host whose rule
@@ -810,6 +828,44 @@ level filters are applied *before* lines are sent. A single container log line i
 256 KB (`dockerx.maxLogLine`) so a container emitting a gigabyte without a newline cannot
 exhaust the dashboard's memory.
 
+### Jobs: the operations that outlive their request
+
+`internal/jobs` runs the commands that take minutes — issuing a certificate, upgrading every
+package, writing sshd's config and reloading the daemon. All three used to be ordinary
+handlers, so the browser held a request open for the length of a certbot run and a dropped
+VPN meant an operator with no idea whether their SSH config had been applied.
+
+It is deliberately *not* the compose runner's shape. `RunComposeStream` is a socket that owns
+its command and refuses to reconnect, because reconnecting re-issues the GET and re-issues the
+GET runs the command again. A job inverts every part of that: the work descends from
+`context.Background()` (like `helpers.detachedContext`) so nothing about the browser can kill
+it, output goes into a ring buffer with a sequence number per line, and a subscriber asks for
+everything `after` a sequence it already has. So closing the tab, navigating away and losing
+the connection all leave the work running and the transcript complete.
+
+- `Manager.Start(spec, run)` returns immediately with a `Job`; the API answers `202`.
+- `Emitter` is what a runner writes through: `Status` for the narration between steps, `Line`
+  for raw output, and `Run`/`RunEnv`, which execute through `hostexec` and forward both
+  streams line by line.
+- `Subscribe(id, after)` is the resume: backlog first, then a live channel. A subscriber that
+  cannot keep up is skipped rather than allowed to stall the command — the buffer is the
+  record, the channel is only the tail.
+- Bounded on purpose: 5000 lines a job, 64 KB a line, 50 jobs kept. `prune` runs when a job
+  finishes as well as when one starts, or a burst that ends after the last `Start` would sit
+  over the cap until something else happened — which on an idle dashboard is never. A running
+  job is never pruned.
+
+The split between what is checked before the job and what happens inside it is the other
+half. Validation stays synchronous — a bad email, a wildcard asked for over HTTP, an sshd
+change that would lock the operator out — so a refusal answers the click that caused it
+rather than arriving a minute later as a failed job. That is why `certbot.go` exposes
+`IssueArgs`/`RenewArgs`/`RevokeArgs` rather than `Issue`/`Renew`/`Revoke`, why
+`netsec.PlanSSHSettings` is separate from `ApplySSHPlan`, and why `updates.UpgradeCommand`
+returns an argv instead of running one.
+
+`GET /jobs/{id}/stream` sends the job, then the backlog, then batches output every 120ms.
+Cancelling is `service.control`; the routes are in `api/handlers_jobs.go`.
+
 ### Keeping secrets from leaking sideways
 
 Four separate places, all guarding the same thing:
@@ -925,6 +981,23 @@ same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
 (`docker/`, `files/`, `metrics/`, `procs/`, `proxy/`, `security/`, `terminal/`).
+
+### The editor is served from here, not from a CDN
+
+`components/code-editor.tsx` wraps Monaco, and the one line that matters is
+`loader.config({ paths: { vs: "/monaco/vs" } })`. `@monaco-editor/react` otherwise fetches the
+editor from `cdn.jsdelivr.net` at runtime, which is wrong twice over: it is third-party
+JavaScript executing in the same origin as a session that drives the Docker socket, systemd
+and a root shell — exactly what this product's security argument rules out — and it means
+every editor in the dashboard (files, compose, nginx, the site preview) is a spinner that
+never resolves for an operator whose workstation has no egress, which is the workstation this
+is meant to be reached from.
+
+`scripts/sync-monaco.mjs` copies `monaco-editor/min/vs` into `public/monaco/vs`. It runs from
+`predev` and `prebuild`, **and** explicitly in the Dockerfile, because the image builds by
+invoking next's entrypoint directly and never sees the npm hooks. The copy is generated, so it
+is gitignored and excluded from eslint — 24 MB of somebody else's minified output takes longer
+to lint than everything this repo wrote.
 
 ### Charts
 

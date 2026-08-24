@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, FileCode, Globe, Loader2, Plus, Trash2 } f
 import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { DomainCheck, SiteResult, SiteSpec } from "@/lib/types"
+import type { DomainCheck, SiteLocation, SiteResult, SiteSpec } from "@/lib/types"
 import { CodeEditor } from "@/components/code-editor"
 import { SidePanel } from "@/components/side-panel"
 import { Notice } from "@/components/state"
@@ -435,6 +435,16 @@ function SiteFormBody({
             />
           </Field>
 
+          {spec.kind === "proxy" && (
+            <>
+              <Section title="Paths that go somewhere else" />
+              <LocationsField
+                locations={spec.locations}
+                onChange={(v) => set("locations", v)}
+              />
+            </>
+          )}
+
           <Section title="Anything else" />
           <Field label="Extra configuration" hint="Added verbatim inside the server block.">
             <Textarea
@@ -656,5 +666,89 @@ function ListField({
         </div>
       </div>
     </Field>
+  )
+}
+
+/**
+ * Extra paths, each sent somewhere other than the site's default.
+ *
+ * The commonest reverse-proxy layout after "one app on one domain" is two:
+ * /api to a backend and everything else to a static build, or /ws to a socket
+ * server. The renderer has always supported it and the form did not, which
+ * meant the one arrangement past the simplest sent people to the raw editor.
+ *
+ * nginx matches the longest prefix regardless of order, so these are rendered
+ * before the catch-all purely because that is the order a reader expects.
+ */
+function LocationsField({
+  locations,
+  onChange,
+}: {
+  locations: SiteLocation[]
+  onChange: (locations: SiteLocation[]) => void
+}) {
+  const update = (i: number, patch: Partial<SiteLocation>) =>
+    onChange(locations.map((loc, j) => (j === i ? { ...loc, ...patch } : loc)))
+
+  return (
+    <div className="space-y-2">
+      {locations.map((loc, i) => (
+        <div key={i} className="space-y-1.5 rounded-lg border border-hairline bg-surface-sunken p-2.5">
+          <div className="flex items-center gap-2">
+            <Input
+              value={loc.path}
+              onChange={(e) => update(i, { path: e.target.value })}
+              placeholder="/api"
+              className="font-mono text-xs"
+            />
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="text-destructive"
+              aria-label={`Remove ${loc.path || "location"}`}
+              onClick={() => onChange(locations.filter((_, j) => j !== i))}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+          <Input
+            value={loc.upstream ?? ""}
+            onChange={(e) => update(i, { upstream: e.target.value, root: "" })}
+            placeholder="http://127.0.0.1:4000 — or leave empty and give a folder"
+            className="font-mono text-xs"
+          />
+          {!loc.upstream && (
+            <Input
+              value={loc.root ?? ""}
+              onChange={(e) => update(i, { root: e.target.value })}
+              placeholder="/var/www/assets"
+              className="font-mono text-xs"
+            />
+          )}
+          <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={loc.webSockets}
+              onChange={(e) => update(i, { webSockets: e.target.checked })}
+              className="size-3.5 accent-[var(--primary)]"
+            />
+            WebSockets on this path
+          </label>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() =>
+          onChange([...locations, { path: "", upstream: "", webSockets: false }])
+        }
+      >
+        <Plus className="size-3.5" />
+        Add a path
+      </Button>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Everything not matched by one of these goes to the site&rsquo;s main upstream.
+      </p>
+    </div>
   )
 }

@@ -23,6 +23,10 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/rules", s.handle(s.handleFirewallAddRule))
+			// Editing is a replace, and it is not in the destructive group:
+			// the new rule goes in before the old one comes out, so the worst
+			// failure leaves the firewall exactly as strict as it was.
+			r.Method(http.MethodPut, "/rules/{number}", s.handle(s.handleFirewallReplaceRule))
 			// Logging is the one firewall setting that cannot cost anybody
 			// their access, so it is the one that stays out of the
 			// destructive group.
@@ -177,6 +181,29 @@ func mapFirewallError(err error) error {
 		return httpx.Err(http.StatusServiceUnavailable, "no_firewall", err.Error())
 	}
 	return httpx.BadRequest("%v", err)
+}
+
+func (s *Server) handleFirewallReplaceRule(w http.ResponseWriter, r *http.Request) error {
+	number, err := strconv.Atoi(chi.URLParam(r, "number"))
+	if err != nil {
+		return httpx.BadRequest("invalid rule number")
+	}
+	var req netsec.RuleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	out, err := s.modules.netsec.ReplaceRule(r.Context(), number, req, httpx.ClientIP(r))
+	if err != nil {
+		if errors.Is(err, netsec.ErrLockout) {
+			httpx.SetAudit(r, "firewall.rule.replace", strconv.Itoa(number),
+				map[string]any{"result": "refused_lockout"})
+			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
+		}
+		return mapFirewallError(err)
+	}
+	httpx.SetAudit(r, "firewall.rule.replace", strconv.Itoa(number), req)
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
 }
 
 func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request) error {

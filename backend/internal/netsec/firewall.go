@@ -373,6 +373,95 @@ func guardLockout(action, direction, from, callerIP string) error {
 	return nil
 }
 
+// ReplaceRule edits a rule, which on a firewall means replacing it.
+//
+// Neither ufw nor firewalld has an edit: a rule is a line, and changing one
+// means removing it and putting another in its place. The order here is the
+// part worth getting right — the replacement goes in *first*, so a failure
+// leaves the original rule doing its job. Deleting first and then failing to
+// add would leave a hole in the firewall, which is the one outcome an edit
+// must never produce.
+func (s *Service) ReplaceRule(ctx context.Context, number int, req RuleRequest, callerIP string) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	return replaceRule(ctx, b, number, req, callerIP)
+}
+
+// replaceRule is the ordering itself, separated from backend detection so it
+// can be driven against a backend that records what it was asked to do. The
+// sequence is the whole point of the function and a host with no firewall
+// installed is no place to find out it is wrong.
+func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, callerIP string) (string, error) {
+	if !b.Capabilities().Editable {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
+	if number <= 0 {
+		return "", fmt.Errorf("rule number must be positive")
+	}
+	clean, err := normaliseRule(req)
+	if err != nil {
+		return "", err
+	}
+	if err := guardLockout(clean.Action, clean.Direction, clean.From, callerIP); err != nil {
+		return "", err
+	}
+
+	// firewalld has no ordering and no numbers of its own — the position in
+	// the listing is this dashboard's — so the old rule's handle is resolved
+	// before anything is added, because adding changes what position N points
+	// at. ufw is ordered and numbered, so the replacement is inserted at the
+	// old rule's place and the original, now pushed down by one, is removed.
+	var oldHandle string
+	if b.Kind() == BackendUFW {
+		clean.Position = number
+	} else {
+		st, err := b.Status(ctx)
+		if err != nil {
+			return "", err
+		}
+		if number > len(st.Rules) {
+			return "", fmt.Errorf("no rule %d", number)
+		}
+		oldHandle = st.Rules[number-1].Handle
+	}
+
+	added, err := b.AddRule(ctx, clean)
+	if err != nil {
+		return "", err
+	}
+
+	target := number
+	if b.Kind() == BackendUFW {
+		target = number + 1
+	}
+	var removed string
+	if oldHandle != "" {
+		remover, ok := b.(handleRemover)
+		if !ok {
+			return added, fmt.Errorf("the new rule was added, but this backend cannot remove the old one")
+		}
+		removed, err = remover.removeHandle(ctx, oldHandle)
+	} else {
+		removed, err = b.DeleteRule(ctx, target)
+	}
+	if err != nil {
+		// Both rules exist now. That is visible in the list and harmless — the
+		// firewall is at least as strict as it was — which is why this is the
+		// order to fail in.
+		return added, fmt.Errorf("the replacement was added but the original rule could not be removed: %w", err)
+	}
+	return strings.TrimSpace(added + "\n" + removed), nil
+}
+
+// handleRemover is a backend that identifies rules by something other than
+// their position. Discovered by assertion rather than added to fwBackend,
+// because only firewalld needs it and ufw's answer would be a lie.
+type handleRemover interface {
+	removeHandle(ctx context.Context, handle string) (string, error)
+}
+
 func (s *Service) DeleteRule(ctx context.Context, number int) (string, error) {
 	b := s.backend()
 	if b == nil {

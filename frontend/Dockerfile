@@ -10,6 +10,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Monaco is served from this origin rather than from a CDN, so its files have
+# to be in public/ before the build. Invoking next directly below skips the
+# prebuild hook that does this during development, hence the explicit call.
+RUN node scripts/sync-monaco.mjs
 # Dependencies are resolved by bun, but the compile itself runs under Node:
 # the baseline bun binary in the official image segfaults tearing down after
 # a Next build. Invoking next's own entrypoint keeps npm out of the picture.

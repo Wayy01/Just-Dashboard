@@ -3,12 +3,11 @@
 import { useMemo, useState } from "react"
 import { AlertTriangle, Check, ChevronsUpDown, Plus } from "lucide-react"
 import { toast } from "sonner"
-import { get, post } from "@/lib/api"
+import { get, post, put } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { AppProfile, ServicePreset } from "@/lib/types"
+import type { AppProfile, FirewallRule, ServicePreset } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { Notice } from "@/components/state"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -89,6 +88,47 @@ export function AddRuleDialog({
   )
 }
 
+/**
+ * The same form, opened on a rule that already exists.
+ *
+ * A firewall has no edit — a rule is a line, and changing one means writing
+ * another and removing this one — but "delete it and get it right the second
+ * time" is how a port ends up open for the thirty seconds in between, or shut
+ * permanently because the retype went wrong. The server does the replacement
+ * in the safe order; this is the form that asks for it.
+ */
+export function EditRuleDialog({
+  rule,
+  open,
+  onOpenChange,
+  onDone,
+  hasProfiles = true,
+}: {
+  rule: FirewallRule
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDone: () => void
+  hasProfiles?: boolean
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        {open && (
+          <RuleForm
+            key={`edit-${rule.number}`}
+            hasProfiles={hasProfiles}
+            edit={rule}
+            onDone={() => {
+              onOpenChange(false)
+              onDone()
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 const SOURCE_PRESETS = [
   { key: "anywhere", label: "Anywhere", value: "", hint: "Every address on the internet" },
   { key: "private", label: "Private network", value: "10.0.0.0/8", hint: "RFC1918 — adjust to your range" },
@@ -96,18 +136,53 @@ const SOURCE_PRESETS = [
   { key: "custom", label: "Specific address", value: "", hint: "One IP or a CIDR" },
 ] as const
 
-function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: boolean }) {
-  const [action, setAction] = useState("allow")
-  const [direction, setDirection] = useState("in")
+/**
+ * A listed rule read back into the form's fields.
+ *
+ * ufw prints "Anywhere" where the request that made the rule said nothing at
+ * all, so the round trip has to undo that or every edit would come back with a
+ * literal source of "Anywhere" and be refused as not an address. A rule with
+ * no port was written from an application profile, and its target is that
+ * profile's name.
+ */
+function fieldsOf(rule?: FirewallRule) {
+  const from = rule?.from ?? ""
+  const anywhere = from === "" || /^anywhere/i.test(from)
+  const profile = rule && !rule.port && rule.to && !/^\d/.test(rule.to) ? rule.to : ""
+  return {
+    action: (rule?.action ?? "allow").toLowerCase(),
+    direction: (rule?.direction ?? "in").toLowerCase() === "out" ? "out" : "in",
+    mode: (profile ? "profile" : "service") as "service" | "profile",
+    profile,
+    port: rule?.port ?? "",
+    protocol: rule?.protocol || "tcp",
+    sourceKind: anywhere ? "anywhere" : "custom",
+    from: anywhere ? "" : from,
+    comment: rule?.comment ?? "",
+  }
+}
+
+function RuleForm({
+  onDone,
+  hasProfiles,
+  edit,
+}: {
+  onDone: () => void
+  hasProfiles: boolean
+  edit?: FirewallRule
+}) {
+  const initial = useMemo(() => fieldsOf(edit), [edit])
+  const [action, setAction] = useState(initial.action)
+  const [direction, setDirection] = useState(initial.direction)
   const [position, setPosition] = useState("")
-  const [mode, setMode] = useState<"service" | "profile">("service")
+  const [mode, setMode] = useState<"service" | "profile">(initial.mode)
   const [preset, setPreset] = useState("")
-  const [profile, setProfile] = useState("")
-  const [port, setPort] = useState("")
-  const [protocol, setProtocol] = useState("tcp")
-  const [sourceKind, setSourceKind] = useState<string>("anywhere")
-  const [from, setFrom] = useState("")
-  const [comment, setComment] = useState("")
+  const [profile, setProfile] = useState(initial.profile)
+  const [port, setPort] = useState(initial.port)
+  const [protocol, setProtocol] = useState(initial.protocol)
+  const [sourceKind, setSourceKind] = useState<string>(initial.sourceKind)
+  const [from, setFrom] = useState(initial.from)
+  const [comment, setComment] = useState(initial.comment)
   const [busy, setBusy] = useState(false)
 
   const services = usePoll<ServicePreset[]>(
@@ -122,9 +197,17 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
     () => services.data?.find((s) => s.key === preset),
     [services.data, preset],
   )
+  // The warning has to follow the port, not the dropdown. Picking Redis from
+  // the list and typing 6379 are the same rule, and opening an existing rule
+  // that already exposes it is the moment somebody is best placed to fix it —
+  // which is exactly the case a warning keyed to the select never fires in.
+  const matched = useMemo(
+    () => chosen ?? services.data?.find((s) => s.port === port && s.protocol === protocol),
+    [chosen, services.data, port, protocol],
+  )
   const source = sourceKind === "custom" ? from : (SOURCE_PRESETS.find((p) => p.key === sourceKind)?.value ?? "")
   const unrestricted = source === ""
-  const dangerous = action === "allow" && unrestricted && !!chosen?.danger
+  const dangerous = action === "allow" && unrestricted && !!matched?.danger
 
   const applyPreset = (key: string) => {
     setPreset(key)
@@ -138,18 +221,27 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
 
   const submit = async () => {
     setBusy(true)
+    const body = {
+      action,
+      direction,
+      port: mode === "service" ? port : "",
+      protocol: mode === "service" ? protocol : "",
+      app: mode === "profile" ? profile : "",
+      from: source,
+      comment,
+      // An edit keeps the rule's place: the server inserts the replacement
+      // where the original was, which is the only way a firewall whose first
+      // match wins can be edited without changing what it does.
+      position: edit ? 0 : Number(position) || 0,
+    }
     try {
-      await post("/firewall/rules", {
-        action,
-        direction,
-        port: mode === "service" ? port : "",
-        protocol: mode === "service" ? protocol : "",
-        app: mode === "profile" ? profile : "",
-        from: source,
-        comment,
-        position: Number(position) || 0,
-      })
-      toast.success("Rule added")
+      if (edit?.number !== undefined) {
+        await put(`/firewall/rules/${edit.number}`, body)
+        toast.success("Rule replaced")
+      } else {
+        await post("/firewall/rules", body)
+        toast.success("Rule added")
+      }
       onDone()
     } catch (err) {
       toast.error("Rule rejected", { description: String(err) })
@@ -163,10 +255,11 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
   return (
     <>
       <DialogHeader>
-        <DialogTitle>New inbound rule</DialogTitle>
+        <DialogTitle>{edit ? `Edit rule ${edit.number}` : "New inbound rule"}</DialogTitle>
         <DialogDescription>
-          Rules are checked in order and the first match wins. A rule that would block the address
-          you are connected from is refused before it is applied.
+          {edit
+            ? "A firewall has no edit, so this writes the replacement first and removes the original once it is in — the rule keeps its place and the port is never briefly unprotected."
+            : "Rules are checked in order and the first match wins. A rule that would block the address you are connected from is refused before it is applied."}
         </DialogDescription>
       </DialogHeader>
 
@@ -333,7 +426,7 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
           )}
         </div>
 
-        <div className="space-y-1.5">
+        <div className={cn("space-y-1.5", edit && "hidden")}>
           <Label htmlFor="rule-position">Insert at</Label>
           <Input
             id="rule-position"
@@ -360,24 +453,31 @@ function RuleForm({ onDone, hasProfiles }: { onDone: () => void; hasProfiles: bo
         </div>
 
         {dangerous && (
-          <Notice tone="danger" icon={AlertTriangle} title={`${chosen?.name} open to the internet`}>
-            {chosen?.danger} Choose a source above, or bind the service to 127.0.0.1 instead of
+          <Notice tone="danger" icon={AlertTriangle} title={`${matched?.name} open to the internet`}>
+            {matched?.danger} Choose a source above, or bind the service to 127.0.0.1 instead of
             opening the port at all.
           </Notice>
         )}
       </div>
 
       <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
-        <span className={cn("mr-auto text-[11px] text-muted-foreground", !ready && "opacity-0")}>
-          <Badge variant="outline" className="font-mono font-normal">
-            ufw {position ? `insert ${position} ` : ""}
-            {action} {direction}
-            {source && ` from ${source}`}
-            {mode === "service" ? ` to any port ${port}${protocol ? ` proto ${protocol}` : ""}` : ` app ${profile}`}
-          </Badge>
-        </span>
+        {/* Deliberately not the Badge primitive: it is shrink-0 and nowrap by
+            design, and a long command in a flex row that cannot shrink pushes
+            the dialog wider than its own max-width, clipping the controls on
+            the right-hand side. This wraps instead. */}
+        <code
+          className={cn(
+            "mr-auto min-w-0 rounded-md border px-2 py-1 font-mono text-[11px] leading-relaxed break-words text-muted-foreground",
+            !ready && "opacity-0",
+          )}
+        >
+          ufw {edit ? `insert ${edit.number} ` : position ? `insert ${position} ` : ""}
+          {action} {direction}
+          {source && ` from ${source}`}
+          {mode === "service" ? ` to any port ${port}${protocol ? ` proto ${protocol}` : ""}` : ` app ${profile}`}
+        </code>
         <Button onClick={submit} disabled={!ready || busy}>
-          Add rule
+          {edit ? "Save changes" : "Add rule"}
         </Button>
       </DialogFooter>
     </>

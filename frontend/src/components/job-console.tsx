@@ -269,7 +269,14 @@ export function RecentJobs({
           )}
         >
           <JobIcon status={job.status} />
-          <span className="truncate">{job.target || job.title}</span>
+          {/* The target makes the better label when it is a domain or a
+              package set: it is short, and it is the thing that differs
+              between runs. A file path is neither — every SSH apply writes
+              the same drop-in, so a row of chips all read as the same
+              truncated path and the list stops being a way to find a run. */}
+          <span className="truncate">
+            {job.target && !job.target.startsWith("/") ? job.target : job.title}
+          </span>
         </button>
       ))}
     </div>

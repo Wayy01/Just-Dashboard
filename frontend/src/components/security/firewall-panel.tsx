@@ -1,16 +1,17 @@
 "use client"
 
-import { AlertTriangle, Lock, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { AlertTriangle, Lock, Pencil, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { del, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { FirewallStatus, Posture } from "@/lib/types"
+import type { FirewallRule, FirewallStatus, Posture } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { AreaFindings } from "@/components/security/posture-panel"
-import { AddRuleDialog } from "@/components/security/rule-form"
+import { AddRuleDialog, EditRuleDialog } from "@/components/security/rule-form"
 import { Badge } from "@/components/ui/badge"
 import { IconAction } from "@/components/icon-action"
 import { Label } from "@/components/ui/label"
@@ -58,6 +59,7 @@ export function FirewallPanel({
 }) {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
+  const [editing, setEditing] = useState<FirewallRule | null>(null)
   const admin = can("system.admin")
 
   if (loading) return <LoadingPanel />
@@ -314,7 +316,16 @@ export function FirewallPanel({
                         rule.comment
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {writable && rule.number !== undefined && (
+                        <IconAction
+                          label="Edit rule"
+                          className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                          onClick={() => setEditing(rule)}
+                        >
+                          <Pencil />
+                        </IconAction>
+                      )}
                       {writable && rule.number !== undefined && (
                         <IconAction
                           label="Delete rule"
@@ -357,6 +368,15 @@ export function FirewallPanel({
         </Panel>
       </div>
       {dialog}
+      {editing && (
+        <EditRuleDialog
+          rule={editing}
+          open
+          onOpenChange={(o) => !o && setEditing(null)}
+          onDone={refresh}
+          hasProfiles={caps.profiles}
+        />
+      )}
     </>
   )
 }

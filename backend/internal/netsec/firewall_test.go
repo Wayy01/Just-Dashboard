@@ -1,6 +1,7 @@
 package netsec
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -245,5 +246,182 @@ func TestSetLoggingRejectsUnknownLevels(t *testing.T) {
 	s := New()
 	if _, err := s.SetLogging(t.Context(), "verbose"); err == nil {
 		t.Error("accepted an unknown level")
+	}
+}
+
+// An edit is a delete and an add, and the order it happens in is the whole
+// safety property: the replacement goes in first so a failure leaves the
+// original rule standing. These drive the sequence against a backend that
+// records what it was asked to do, because the alternative is finding out on a
+// live firewall.
+
+type recordedBackend struct {
+	kind    Backend
+	caps    FirewallCapabilities
+	rules   []Rule
+	calls   []string
+	addErr  error
+	delErr  error
+	lastAdd RuleRequest
+}
+
+func (b *recordedBackend) Kind() Backend { return b.kind }
+func (b *recordedBackend) Detect() bool  { return true }
+func (b *recordedBackend) Status(context.Context) (*FirewallStatus, error) {
+	b.calls = append(b.calls, "status")
+	return &FirewallStatus{Enabled: true, Backend: b.kind, Rules: b.rules}, nil
+}
+func (b *recordedBackend) AddRule(_ context.Context, req RuleRequest) (string, error) {
+	b.calls = append(b.calls, fmt.Sprintf("add %s/%s at %d", req.Port, req.Protocol, req.Position))
+	b.lastAdd = req
+	if b.addErr != nil {
+		return "", b.addErr
+	}
+	return "rule added", nil
+}
+func (b *recordedBackend) DeleteRule(_ context.Context, number int) (string, error) {
+	b.calls = append(b.calls, fmt.Sprintf("delete %d", number))
+	if b.delErr != nil {
+		return "", b.delErr
+	}
+	return "rule deleted", nil
+}
+func (b *recordedBackend) removeHandle(_ context.Context, handle string) (string, error) {
+	b.calls = append(b.calls, "remove "+handle)
+	if b.delErr != nil {
+		return "", b.delErr
+	}
+	return "rule removed", nil
+}
+func (b *recordedBackend) SetEnabled(context.Context, bool) (string, error) { return "", nil }
+func (b *recordedBackend) SetDefaultPolicy(context.Context, string, string) (string, error) {
+	return "", nil
+}
+func (b *recordedBackend) SetLogging(context.Context, string) (string, error) { return "", nil }
+func (b *recordedBackend) Reset(context.Context) (string, error)              { return "", nil }
+func (b *recordedBackend) Profiles(context.Context) ([]AppProfile, error)     { return nil, nil }
+func (b *recordedBackend) Capabilities() FirewallCapabilities                 { return b.caps }
+
+func editable(kind Backend) *recordedBackend {
+	return &recordedBackend{kind: kind, caps: FirewallCapabilities{Editable: true}}
+}
+
+// ufw stops at the first match, so the replacement has to land where the
+// original was rather than at the bottom — and the original, pushed down a
+// place by the insert, is number+1 by the time it is deleted.
+func TestReplaceRuleOnUFWInsertsAtThePositionThenDeletesTheOneBelow(t *testing.T) {
+	b := editable(BackendUFW)
+	if _, err := replaceRule(t.Context(), b, 3, RuleRequest{Action: "allow", Port: "8443", Protocol: "tcp"}, "203.0.113.9"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"add 8443/tcp at 3", "delete 4"}
+	if strings.Join(b.calls, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("calls = %v, want %v", b.calls, want)
+	}
+}
+
+// firewalld has no order and no numbers of its own — the position in the
+// listing is this dashboard's — so the old rule has to be identified before
+// anything is added, or the number points at something else by then.
+func TestReplaceRuleOnFirewalldResolvesTheHandleBeforeAdding(t *testing.T) {
+	b := editable(BackendFirewalld)
+	b.rules = []Rule{{Handle: "svc:ssh"}, {Handle: "port:8080/tcp"}}
+	if _, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "9090", Protocol: "tcp"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"status", "add 9090/tcp at 0", "remove port:8080/tcp"}
+	if strings.Join(b.calls, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("calls = %v, want %v", b.calls, want)
+	}
+	// Position is ufw's concept; sending one to firewalld would be noise.
+	if b.lastAdd.Position != 0 {
+		t.Errorf("position %d sent to a backend with no ordering", b.lastAdd.Position)
+	}
+}
+
+// If the add fails there must be no delete at all: the original rule is still
+// the only thing standing between the host and the network.
+func TestReplaceRuleLeavesTheOriginalWhenTheAddFails(t *testing.T) {
+	b := editable(BackendUFW)
+	b.addErr = errors.New("ufw said no")
+	if _, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "22", Protocol: "tcp"}, ""); err == nil {
+		t.Fatal("expected the failure to be reported")
+	}
+	for _, c := range b.calls {
+		if strings.HasPrefix(c, "delete") || strings.HasPrefix(c, "remove") {
+			t.Fatalf("deleted the original after a failed add: %v", b.calls)
+		}
+	}
+}
+
+// The opposite failure leaves two rules, which is visible in the list and
+// harmless — the firewall is at least as strict as it was. It still has to be
+// reported rather than passed off as a clean edit.
+func TestReplaceRuleReportsAnOrphanedOriginal(t *testing.T) {
+	b := editable(BackendUFW)
+	b.delErr = errors.New("no such rule")
+	out, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "22", Protocol: "tcp"}, "")
+	if err == nil {
+		t.Fatal("a half-finished edit reported as success")
+	}
+	if !strings.Contains(err.Error(), "original") {
+		t.Errorf("error does not say what state the firewall is in: %v", err)
+	}
+	// The add did happen, and the caller is told so rather than being left to
+	// guess whether to retry.
+	if out == "" {
+		t.Error("the output of the successful half was dropped")
+	}
+}
+
+// The same guard the add path has: an edit that turns a rule into one severing
+// the caller's own connection is still a lockout.
+func TestReplaceRuleRefusesALockout(t *testing.T) {
+	b := editable(BackendUFW)
+	_, err := replaceRule(t.Context(), b, 1, RuleRequest{Action: "deny", Direction: "in", From: "203.0.113.0/24"}, "203.0.113.9")
+	if err == nil {
+		t.Fatal("accepted a rule covering the caller's own address")
+	}
+	if len(b.calls) != 0 {
+		t.Fatalf("touched the firewall before the guard ran: %v", b.calls)
+	}
+}
+
+func TestReplaceRuleRefusesAReadOnlyBackend(t *testing.T) {
+	b := &recordedBackend{kind: BackendIPTables, caps: iptablesBackend{}.Capabilities()}
+	_, err := replaceRule(t.Context(), b, 1, RuleRequest{Action: "allow", Port: "22"}, "")
+	if !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("err = %v, want ErrReadOnly so the API can answer 501", err)
+	}
+	if len(b.calls) != 0 {
+		t.Fatalf("a read-only backend was written to: %v", b.calls)
+	}
+}
+
+func TestReplaceRuleRejectsBadInput(t *testing.T) {
+	b := editable(BackendUFW)
+	if _, err := replaceRule(t.Context(), b, 0, RuleRequest{Action: "allow", Port: "22"}, ""); err == nil {
+		t.Error("accepted rule number 0, which no listing ever contains")
+	}
+	if _, err := replaceRule(t.Context(), b, 1, RuleRequest{Action: "drop", Port: "22"}, ""); err == nil {
+		t.Error("skipped validation that the add path applies")
+	}
+	if len(b.calls) != 0 {
+		t.Fatalf("touched the firewall on a rejected request: %v", b.calls)
+	}
+}
+
+// A number past the end of firewalld's listing has to be refused before the
+// add, or the edit silently becomes an add.
+func TestReplaceRuleRefusesAnUnknownFirewalldRule(t *testing.T) {
+	b := editable(BackendFirewalld)
+	b.rules = []Rule{{Handle: "svc:ssh"}}
+	if _, err := replaceRule(t.Context(), b, 4, RuleRequest{Action: "allow", Port: "22", Protocol: "tcp"}, ""); err == nil {
+		t.Fatal("accepted a rule number nothing in the listing has")
+	}
+	for _, c := range b.calls {
+		if strings.HasPrefix(c, "add") {
+			t.Fatalf("added a rule for an edit that could not be resolved: %v", b.calls)
+		}
 	}
 }

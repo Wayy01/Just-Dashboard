@@ -423,6 +423,12 @@ func TestReadonlyCannotChangeSSH(t *testing.T) {
 	if w := c.do(http.MethodPost, "/api/v1/firewall/rules", `{"action":"allow","port":"22"}`, nil); w.Code != http.StatusForbidden {
 		t.Errorf("firewall rule = %d, want 403", w.Code)
 	}
+	// Editing a rule is a write like any other; it is not destructive — the
+	// replacement goes in before the original comes out — so the group it is
+	// mounted in is the one worth pinning.
+	if w := c.do(http.MethodPut, "/api/v1/firewall/rules/1", `{"action":"allow","port":"22"}`, nil); w.Code != http.StatusForbidden {
+		t.Errorf("firewall rule edit = %d, want 403", w.Code)
+	}
 	if w := c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"dns","target":"localhost"}`, nil); w.Code != http.StatusForbidden {
 		t.Errorf("probe = %d, want 403", w.Code)
 	}
@@ -445,5 +451,24 @@ func TestUpdatesReportIsHonestAboutTheManager(t *testing.T) {
 	}
 	if report.Available && report.Manager == "" {
 		t.Error("a report from an available manager should name it")
+	}
+}
+
+// A rule edit reaches the firewall service rather than a 404 or a 405, and it
+// does so without a typed phrase — which is the deliberate difference from
+// delete. What the host's firewall then says is its own business; a machine
+// with none answers 501 and that is a complete answer.
+func TestFirewallRuleEditIsMountedAndNeedsNoPhrase(t *testing.T) {
+	c, _ := newClient(t)
+	w := c.do(http.MethodPut, "/api/v1/firewall/rules/2", `{"action":"allow","port":"8443","protocol":"tcp"}`, nil)
+	switch w.Code {
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		t.Fatalf("the edit route is not mounted: %d", w.Code)
+	case http.StatusPreconditionRequired:
+		t.Fatal("an edit asked for a typed phrase; only irreversible actions do")
+	}
+	// A malformed number is the route's own answer and proves the handler ran.
+	if w := c.do(http.MethodPut, "/api/v1/firewall/rules/two", `{"action":"allow","port":"22"}`, nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("non-numeric rule number = %d, want 400", w.Code)
 	}
 }

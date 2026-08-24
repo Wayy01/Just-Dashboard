@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Monaco's own build, copied out of node_modules by scripts/sync-monaco.mjs so
+# the editor is served from this origin rather than a CDN. Generated, not
+# authored — it is 24 MB of somebody else's minified output.
+/public/monaco/

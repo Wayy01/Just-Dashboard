@@ -336,6 +336,13 @@ func (b firewalldBackend) DeleteRule(ctx context.Context, number int) (string, e
 	if handle == "" {
 		return "", fmt.Errorf("no rule %d in this zone", number)
 	}
+	return b.removeHandle(ctx, handle)
+}
+
+// removeHandle deletes by the thing firewalld was given rather than by a
+// position, which is what makes an edit safe: the handle is resolved before
+// anything is added, so it still names the rule it named.
+func (b firewalldBackend) removeHandle(ctx context.Context, handle string) (string, error) {
 	kind, value, _ := strings.Cut(handle, ":")
 	var arg string
 	switch kind {
