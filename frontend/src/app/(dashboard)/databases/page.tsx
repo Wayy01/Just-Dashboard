@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { BrowseTab, type TableSelection } from "@/components/database/browse-tab"
+import { DetectedPanel } from "@/components/database/detected-panel"
 import { StructureTab } from "@/components/database/structure-tab"
 import { QueryTab } from "@/components/database/query-tab"
 import { OrmTab } from "@/components/database/orm-tab"
@@ -84,11 +85,16 @@ export default function DatabasesPage() {
       {connections.loading && <LoadingPanel />}
       {connections.error && <ErrorState error={connections.error} />}
 
+      {/* Above the connections rather than below: on a fresh install this is
+          the whole page, and it is the answer to "I have no connection string"
+          — which is where somebody who has just arrived actually is. */}
+      <DetectedPanel onConnected={connections.refresh} />
+
       {connections.data?.length === 0 && (
         <EmptyState
           icon={Database}
           title="No connections configured"
-          description="Add a PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, Oracle, MongoDB or Redis connection to browse it here. Connection strings are encrypted at rest and never sent back to the browser."
+          description="Connect a database running on this server from the panel above, or add one anywhere else by its connection string. PostgreSQL, MySQL, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis are supported, and connection strings are encrypted at rest and never sent back to the browser."
         />
       )}
 

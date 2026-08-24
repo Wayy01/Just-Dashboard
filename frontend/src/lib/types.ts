@@ -899,14 +899,7 @@ export type Listener = {
 }
 
 export type DbDriver =
-  | "postgres"
-  | "mysql"
-  | "sqlite"
-  | "sqlserver"
-  | "clickhouse"
-  | "oracle"
-  | "mongodb"
-  | "redis"
+  "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "oracle" | "mongodb" | "redis"
 
 /**
  * What one engine can do, as the server reports it.
@@ -1564,4 +1557,36 @@ export type TerminalPane = {
   top: number
   right: number
   bottom: number
+}
+
+// --- detected and provisioned database servers ----------------------------
+
+/**
+ * A database server found running on this host. It deliberately carries no
+ * password: what reaches the browser is the description of a connection that
+ * could be made, not the means to make it.
+ */
+export type DbDetectedServer = {
+  driver: DbConnection["driver"]
+  container: string
+  image: string
+  host: string
+  port: number
+  user?: string
+  database?: string
+  /** Why this one cannot be connected to, when it cannot. */
+  reason?: string
+  /** The name of the connection already pointing at it, if there is one. */
+  adopted?: string
+  health?: string
+  status?: string
+}
+
+export type DbDetected = { servers: DbDetectedServer[] }
+
+export type DbProvisionOption = {
+  engine: string
+  label: string
+  image: string
+  driver: string
 }
