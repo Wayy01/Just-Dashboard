@@ -1,14 +1,14 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle, CheckCircle2, KeyRound, TerminalSquare } from "lucide-react"
-import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { SSHApplyResult, SSHDConfig, SSHSetting } from "@/lib/types"
+import type { Job, SSHDConfig, SSHSetting } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
+import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
@@ -50,6 +50,14 @@ export function SSHPanel() {
   )
   const [pending, setPending] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  const console_ = useJobConsole()
+
+  // The effective configuration is only right once sshd has reloaded.
+  const jobStatus = console_.job?.status
+  useEffect(() => {
+    if (jobStatus === "succeeded") refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus])
 
   const dirty = useMemo(() => Object.keys(pending).length > 0, [pending])
 
@@ -102,14 +110,14 @@ export function SSHPanel() {
       action: async (c) => {
         setBusy(true)
         try {
-          const res = await post<SSHApplyResult>("/ssh/config", { settings: pending }, { confirm: c })
-          if (res.reloadError) {
-            toast.warning("Saved, but sshd was not reloaded", { description: res.reloadError })
-          } else {
-            toast.success("Applied and reloaded")
-          }
+          // The plan — including every lockout guard — is checked before this
+          // returns, so a refusal is this dialog's answer. What comes back is
+          // a job for the write, the sshd -t and the reload, which is the part
+          // worth watching: this is the one operation where "it said it
+          // worked" is not the same as knowing the daemon came back.
+          const job = await post<Job>("/ssh/config", { settings: pending }, { confirm: c })
+          console_.attach(job)
           setPending({})
-          refresh()
         } finally {
           setBusy(false)
         }
@@ -119,6 +127,13 @@ export function SSHPanel() {
   return (
     <>
       <div className="flex min-w-0 flex-col gap-4">
+        <JobConsole
+          job={console_.job}
+          lines={console_.lines}
+          onDismiss={console_.dismiss}
+          onCancel={console_.cancel}
+        />
+
         {noKeys && (
           <Notice tone="warning" icon={KeyRound} title="No account on this host has an SSH key">
             Password authentication cannot safely be turned off until one does — with no key
@@ -140,7 +155,9 @@ export function SSHPanel() {
             title="SSH server"
             description={`Port ${data.ports.join(", ")} · read from ${data.source}`}
             actions={
-              insecure === 0 ? (
+              <>
+              <RecentJobs kinds={["ssh."]} onOpen={console_.open} />
+              {insecure === 0 ? (
                 <Badge variant="success" className="font-normal">
                   <CheckCircle2 className="size-3" />
                   hardened
@@ -149,7 +166,8 @@ export function SSHPanel() {
                 <Badge variant="warning" className="font-normal">
                   {insecure} {insecure === 1 ? "setting" : "settings"} below the recommendation
                 </Badge>
-              )
+              )}
+              </>
             }
           />
           <PanelBody className="space-y-2.5">

@@ -1,14 +1,14 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { PackageCheck, RefreshCw, RotateCcw, ShieldAlert } from "lucide-react"
-import { toast } from "sonner"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
-import type { UpdateReport } from "@/lib/types"
+import type { Job, UpdateReport } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
+import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
 import { Page, PageHeader, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { StatTile } from "@/components/stat-tile"
@@ -44,6 +44,15 @@ export default function UpdatesPage() {
     )
   }, [report.data, filter])
 
+  const console_ = useJobConsole()
+
+  // The package list is only right once the upgrade has finished.
+  const jobStatus = console_.job?.status
+  useEffect(() => {
+    if (jobStatus === "succeeded") report.refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus])
+
   const apply = (securityOnly: boolean) =>
     confirm({
       title: securityOnly ? "Install security updates" : "Upgrade all packages",
@@ -52,25 +61,28 @@ export default function UpdatesPage() {
       description: (
         <>
           <p>
-            Runs <b>apt-get upgrade</b> on the host
-            {securityOnly ? " restricted to the security pocket" : ""}. Services whose packages
+            Runs the host&rsquo;s package manager
+            {securityOnly ? ", restricted to the security pocket" : ""}. Services whose packages
             change are restarted.
           </p>
           <p className="text-muted-foreground">
-            New packages are never installed and nothing is removed. This can take several minutes.
+            New packages are never installed and nothing is removed. The output appears below as it
+            happens, and the upgrade keeps running if you close this page.
           </p>
         </>
       ),
       action: async (c) => {
         setApplying(true)
         try {
-          const res = await post<{ output: string }>("/updates/apply", undefined, {
+          // 202 with a job. This used to be a request that held the connection
+          // open for up to half an hour, which is indistinguishable from a
+          // broken dashboard — and if the browser gave up first, nobody could
+          // tell whether apt was still going.
+          const job = await post<Job>("/updates/apply", undefined, {
             confirm: c,
             query: { security: securityOnly },
           })
-          const tail = res.output.trim().split("\n").slice(-3).join("\n")
-          toast.success("Updates applied", { description: tail })
-          report.refresh()
+          console_.attach(job)
         } finally {
           setApplying(false)
         }
@@ -88,6 +100,7 @@ export default function UpdatesPage() {
         description="Operating system packages this server is missing"
         actions={
           <>
+            <RecentJobs kinds={["updates."]} onOpen={console_.open} />
             {can("destructive") && data?.available && data.packages.length > 0 && (
               <>
                 {data.securityCount > 0 && (
@@ -119,6 +132,12 @@ export default function UpdatesPage() {
             </Button>
           </>
         }
+      />
+      <JobConsole
+        job={console_.job}
+        lines={console_.lines}
+        onDismiss={console_.dismiss}
+        onCancel={console_.cancel}
       />
 
       {report.error && <ErrorState error={report.error} />}

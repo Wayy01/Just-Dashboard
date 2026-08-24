@@ -1,14 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { AlertTriangle, BadgeCheck, Clock, Loader2, RefreshCw, ShieldX } from "lucide-react"
 import { toast } from "sonner"
 import { get, post, ApiError } from "@/lib/api"
-import type { CertbotState, DNSProvider } from "@/lib/types"
+import type { CertbotState, DNSProvider, Job } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ImportDialog } from "@/components/proxy/import-dialog"
+import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
@@ -69,6 +70,18 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
   )
   const [busy, setBusy] = useState("")
   const admin = can("system.admin")
+  const console_ = useJobConsole()
+
+  // The list is only right once certbot has finished writing, so it is
+  // refreshed when the job ends rather than when it starts.
+  const lastStatus = console_.job?.status
+  useEffect(() => {
+    if (lastStatus === "succeeded") {
+      refresh()
+      onChanged?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastStatus])
 
   const unavailable = error instanceof ApiError && error.code === "certbot_unavailable"
   if (loading) return <LoadingPanel />
@@ -84,22 +97,20 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
   if (error) return <ErrorState error={error} />
   if (!data) return null
 
-  const renew = async (name: string, dryRun: boolean) => {
+  const renew = async (name: string, dryRun: boolean, force = false) => {
     setBusy(name)
-    const label = name === ALL_CERTS ? "everything due" : name
     try {
-      const res = await post<{ output: string }>("/certificates/renew", {
+      // 202 with a job: certbot's exchange with the authority is watched
+      // rather than waited on, and it keeps going if this page is closed.
+      const job = await post<Job>("/certificates/renew", {
         // certbot renews every due lineage when no --cert-name is given.
         name: name === ALL_CERTS ? "" : name,
         dryRun,
+        force,
       })
-      toast.success(dryRun ? `Dry run passed for ${label}` : `${label} renewed`, {
-        description: res.output.split("\n").slice(-1)[0],
-      })
-      refresh()
-      onChanged?.()
+      console_.attach(job)
     } catch (err) {
-      toast.error(dryRun ? "Dry run failed" : "Renewal failed", { description: String(err) })
+      toast.error(dryRun ? "Dry run refused" : "Renewal refused", { description: String(err) })
     } finally {
       setBusy("")
     }
@@ -108,6 +119,13 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
   return (
     <>
       <div className="flex min-w-0 flex-col gap-4">
+        <JobConsole
+          job={console_.job}
+          lines={console_.lines}
+          onDismiss={console_.dismiss}
+          onCancel={console_.cancel}
+        />
+
         {!data.autoRenew && data.certs.length > 0 && (
           <Notice tone="warning" icon={Clock} title="Nothing is scheduled to renew these">
             No certbot timer and no cron entry was found. Let&rsquo;s Encrypt certificates last
@@ -131,13 +149,9 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
             actions={
               admin && (
                 <>
+                  <RecentJobs kinds={["certbot."]} onOpen={console_.open} />
                   <ImportDialog onDone={() => onChanged?.()} />
-                  <IssueDialog
-                    onDone={() => {
-                      refresh()
-                      onChanged?.()
-                    }}
-                  />
+                  <IssueDialog onStarted={console_.attach} />
                   <Button
                     size="sm"
                     variant="outline"
@@ -213,6 +227,30 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
                             <Button
                               size="xs"
                               variant="ghost"
+                              disabled={busy === cert.name}
+                              title="Renew even though it is not due. Spends one of the five duplicate certificates Let's Encrypt allows per week."
+                              onClick={() =>
+                                confirm({
+                                  title: `Force renewal of ${cert.name}`,
+                                  confirmLabel: "Renew now",
+                                  description: (
+                                    <p>
+                                      certbot normally refuses to renew a certificate that is not
+                                      due. Forcing it spends one of the five duplicate certificates
+                                      Let&rsquo;s Encrypt allows per week for this set of names.
+                                    </p>
+                                  ),
+                                  action: async () => {
+                                    await renew(cert.name, false, true)
+                                  },
+                                })
+                              }
+                            >
+                              Force
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
                               className="text-destructive"
                               onClick={() =>
                                 confirm({
@@ -227,13 +265,12 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
                                     </p>
                                   ),
                                   action: async (c) => {
-                                    await post(
+                                    const job = await post<Job>(
                                       "/certificates/revoke",
                                       { name: cert.name },
                                       { confirm: c },
                                     )
-                                    refresh()
-                                    onChanged?.()
+                                    console_.attach(job)
                                   },
                                 })
                               }
@@ -256,7 +293,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
   )
 }
 
-function IssueDialog({ onDone }: { onDone: () => void }) {
+function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
   const [open, setOpen] = useState(false)
   const [domains, setDomains] = useState("")
   const [email, setEmail] = useState("")
@@ -264,7 +301,6 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
   const [webRoot, setWebRoot] = useState("/var/www/html")
   const [staging, setStaging] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [output, setOutput] = useState("")
   const [dnsProvider, setDnsProvider] = useState("")
   const [credentials, setCredentials] = useState("")
 
@@ -281,7 +317,6 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
 
   const submit = async () => {
     setBusy(true)
-    setOutput("")
     try {
       if (method === "dns" && credentials.trim() && provider?.key !== "route53") {
         await post("/certificates/dns-credentials", {
@@ -289,7 +324,9 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
           credentials,
         })
       }
-      const res = await post<{ output: string }>("/certificates/issue", {
+      // The answer is a job, not a result: the ACME exchange is watched in
+      // the console behind this dialog, which is why the dialog can close.
+      const job = await post<Job>("/certificates/issue", {
         domains: domains.split(/[\s,]+/).filter(Boolean),
         email,
         method,
@@ -297,16 +334,10 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
         staging,
         dnsProvider: method === "dns" ? dnsProvider : "",
       })
-      setOutput(res.output)
-      toast.success(staging ? "Test certificate issued" : "Certificate issued", {
-        description: staging
-          ? "It is not trusted by browsers. Turn the test switch off to get the real one."
-          : undefined,
-      })
-      onDone()
+      onStarted(job)
+      setOpen(false)
     } catch (err) {
-      setOutput(String(err))
-      toast.error("Could not issue", { description: String(err) })
+      toast.error("Could not start", { description: String(err) })
     } finally {
       setBusy(false)
     }
@@ -472,11 +503,6 @@ function IssueDialog({ onDone }: { onDone: () => void }) {
               Five failed attempts an hour for the same set of names, and five duplicate
               certificates a week. Get a staging run to pass first.
             </Notice>
-          )}
-          {output && (
-            <pre className="max-h-48 overflow-auto rounded-lg border border-hairline bg-surface-sunken p-3 font-mono text-[11px] whitespace-pre-wrap">
-              {output}
-            </pre>
           )}
         </div>
         <DialogFooter>

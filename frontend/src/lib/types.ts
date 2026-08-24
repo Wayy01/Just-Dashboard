@@ -1741,3 +1741,37 @@ export type AuthFile = {
   path: string
   users: string[]
 }
+
+/**
+ * One long-running operation — a certificate issuance, a package upgrade, an
+ * sshd apply.
+ *
+ * Unlike the compose runner's socket, a job is not owned by the console
+ * watching it: closing the tab does not stop it, and reopening picks it up
+ * where it is rather than starting it again.
+ */
+export type JobStatus = "running" | "succeeded" | "failed" | "cancelled"
+
+export type Job = {
+  id: string
+  kind: string
+  title: string
+  target?: string
+  status: JobStatus
+  exitCode: number
+  error?: string
+  startedAt: string
+  endedAt?: string
+  startedBy?: string
+  /** Every line produced, including any the buffer has dropped. */
+  lines: number
+}
+
+export type JobLine = {
+  /** Assigned by the job, and what a reconnecting console resumes from. */
+  seq: number
+  /** stdout, stderr, or status for the runner's own headings. */
+  stream: string
+  text: string
+  at: string
+}
