@@ -63,6 +63,25 @@ https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.
        postgresql-client-18 \
     && rm -rf /var/lib/apt/lists/*
 
+# MongoDB's dump tools, from MongoDB rather than from Debian, which packages
+# neither mongodump nor mongorestore at all.
+#
+# The dashboard can dump a Mongo database without them — dbx writes the archive
+# through the driver it is already connected with — but mongodump's own format
+# is what every other Mongo tool reads, so a backup taken here stays useful
+# somewhere else. The built-in path remains the fallback, and remains what runs
+# if this layer is ever dropped.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://pgp.mongodb.com/server-7.0.asc \
+       -o /etc/apt/keyrings/mongodb.asc \
+    && chmod a+r /etc/apt/keyrings/mongodb.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/mongodb.asc] \
+https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
+       > /etc/apt/sources.list.d/mongodb.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends mongodb-database-tools \
+    && rm -rf /var/lib/apt/lists/*
+
 # Debian ships neither a standalone docker CLI nor the compose v2 plugin, and
 # this image must not carry a second daemon — only the client that talks to
 # the host's socket. Docker's own repository is the supported source for both.

@@ -606,6 +606,28 @@ size. `search.go` finds which table a value lives in, bounded in three direction
 (tables visited, columns compared, matches per table) — those bounds are not tuning knobs,
 they are what makes the feature safe to point at a production server.
 
+**A dump for every engine, with no external dependency.** Three of the eight
+have a client-side dump tool the image can carry (`pg_dump`, `mysqldump`,
+`mongodump`); the rest have none — ClickHouse's is a separate package, SQL
+Server's ships only inside Microsoft's image, Oracle's runs on the server, Redis
+has none — and the answer used to be `ErrUnsupported` at the moment the operator
+pressed the button, which is the worst time to learn that a backup was never
+possible. `dump_sql.go` writes the dump itself over the connection already open:
+DDL then INSERTs, ordered so a referenced table is created and filled before the
+tables referencing it, since alphabetical order fails on the first foreign key.
+`dump_nosql.go` does the same for Mongo and Redis as gzipped JSON Lines — Redis
+through `DUMP`/`RESTORE`, so every type survives including the ones with no
+textual form. The native tool is still preferred where it exists, and a native
+tool that *fails* falls through to the built-in one rather than to an error, so
+a `pg_dump` too old for its server is a slower dump rather than no dump.
+`dumpLiteral` is the second place in the package that puts a value into SQL text
+rather than binding it — unavoidable, since a dump file is text — and it is
+per-engine for a reason `rowsql.go` can ignore: a backslash is an escape inside
+a string literal on MySQL and ClickHouse and a plain character on the other
+four, so one rule loses data on half of them. `Restore` picks its reader from
+the file's first bytes rather than from the driver, because a Postgres
+connection may hold either a `PGDMP` archive or the SQL this package wrote.
+
 **Testing is against real servers, and skips rather than fails.** `live_test.go`,
 `live_nosql_test.go`, `live_devx_test.go` and `api/handlers_db_live_test.go` take each
 engine's DSN from an environment variable defaulting to a local instance, and skip with a
