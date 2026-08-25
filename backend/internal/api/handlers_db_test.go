@@ -87,6 +87,7 @@ func TestIrreversibleDatabaseRoutesDemandAPhrase(t *testing.T) {
 		{http.MethodDelete, "/databases/1/ddl/table", `{"table":"t"}`, "a dropped table is gone"},
 		{http.MethodDelete, "/databases/1/ddl/column", `{"table":"t","name":"c"}`, "a dropped column takes its data from every row"},
 		{http.MethodPost, "/databases/1/ddl/truncate", `{"table":"t"}`, "truncate empties the table"},
+		{http.MethodDelete, "/databases/1/database", `{}`, "a dropped database takes every table with it"},
 		// Dropping a Mongo collection belongs on this list too, but the
 		// connection here is SQLite and that route refuses a non-Mongo driver
 		// before it reaches any confirmation. It is asserted in

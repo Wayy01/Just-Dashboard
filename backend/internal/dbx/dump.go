@@ -134,7 +134,11 @@ func parseMySQLDSN(dsn string) (*ConnInfo, error) {
 }
 
 type DumpResult struct {
-	Path     string `json:"path"`
+	Path string `json:"path"`
+	// File is the base name of Path. The browser needs it to ask for the dump
+	// back, and splitting a path in TypeScript is a separator assumption this
+	// side of the wire already knows the answer to.
+	File     string `json:"file"`
 	Size     int64  `json:"size"`
 	Duration string `json:"duration"`
 	Database string `json:"database"`
@@ -162,6 +166,16 @@ type DumpResult struct {
 // the backup they were relying on had never been possible — which is the worst
 // time to find out and the reason a backup feature exists at all.
 func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*DumpResult, error) {
+	res, err := runDump(ctx, driver, dsn, database, outDir)
+	if res != nil {
+		res.File = filepath.Base(res.Path)
+	}
+	return res, err
+}
+
+// runDump is Dump without the bookkeeping, so the several places that build a
+// result do not each have to remember to fill in every derived field.
+func runDump(ctx context.Context, driver Driver, dsn, database, outDir string) (*DumpResult, error) {
 	info, err := ParseDSN(driver, dsn)
 	if err != nil {
 		return nil, err

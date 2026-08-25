@@ -329,3 +329,18 @@ func (oracleDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) 
 	}
 	return scanSizes(rows, schema)
 }
+
+// Oracle has no database to drop: what the rest of this package calls a
+// database is a user, and everything it owns goes with it under CASCADE.
+// Dropping the user the session is connected as fails — "cannot drop a user
+// that is currently connected" — which is the engine's answer and a clearer
+// one than anything this could substitute.
+func (d oracleDialect) DropDatabaseSQL(name string) ([]DropStatement, error) {
+	q, err := d.QuoteIdent(name)
+	if err != nil {
+		return nil, err
+	}
+	return []DropStatement{{SQL: "DROP USER " + q + " CASCADE"}}, nil
+}
+
+func (oracleDialect) AdminDatabase() string { return "" }
