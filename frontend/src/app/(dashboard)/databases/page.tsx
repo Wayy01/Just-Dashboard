@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Database, DownloadCloud, Pencil, Plus, Trash2 } from "lucide-react"
+import { Database, DownloadCloud, Flame, Pencil, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
-import { del, get, post } from "@/lib/api"
+import { del, downloadUrl, get, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { DbConnection, DbDriverInfo } from "@/lib/types"
@@ -170,7 +170,6 @@ export default function DatabasesPage() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-destructive"
                   onClick={() =>
                     confirm({
                       title: "Remove connection",
@@ -191,6 +190,51 @@ export default function DatabasesPage() {
                 >
                   <Trash2 className="size-4" />
                   Remove
+                </Button>
+                {/*
+                 * The one action on this page that nothing undoes. It is
+                 * deliberately the last item and the only red one: "Remove"
+                 * beside it forgets a connection string, and the two were
+                 * indistinguishable while the destructive one did not exist.
+                 */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive"
+                  onClick={() =>
+                    confirm({
+                      title: "Delete database",
+                      confirmLabel: "Delete for good",
+                      phrase: dropPhrase(active),
+                      description: (
+                        <div className="space-y-2">
+                          <p>
+                            Deletes <b>{dropPhrase(active)}</b> on {active.host || "this server"}.{" "}
+                            {dropExplanation(active)}
+                          </p>
+                          <p>
+                            Nothing here can bring it back — take a dump first if you might want it.
+                            If this database was started from this page, its container keeps
+                            running; remove that from Docker.
+                          </p>
+                        </div>
+                      ),
+                      action: async (c) => {
+                        const res = await del<{ connectionRemoved: boolean }>(
+                          `/databases/${active.id}/database`,
+                          // An empty object rather than no body: the route
+                          // accepts an optional database name, and the server
+                          // defaults it to this connection's own.
+                          { confirm: c, body: {} },
+                        )
+                        if (res.connectionRemoved) setActive(null)
+                        connections.refresh()
+                      },
+                    })
+                  }
+                >
+                  <Flame className="size-4" />
+                  Delete database
                 </Button>
               </>
             )}
@@ -342,15 +386,28 @@ function ConnectionStatus({ id }: { id: number }) {
 
 function BackupButton({ conn }: { conn: DbConnection }) {
   const [busy, setBusy] = useState(false)
+
+  // The dump stays on the server — that is what the restore route reads, and
+  // what a scheduled job would keep — and a copy comes down to the browser.
+  // A backup whose only copy lives on the machine it is protecting is not one.
+  const download = (file: string) => {
+    const a = document.createElement("a")
+    a.href = downloadUrl(`/databases/${conn.id}/backup/download`, { file })
+    a.download = file
+    a.click()
+  }
+
   const run = async () => {
     setBusy(true)
     try {
       const res = await post<{
         path: string
+        file: string
         size: number
         duration: string
         summary?: string
       }>(`/databases/${conn.id}/backup`, { database: conn.database })
+      download(res.file)
       // What the dump actually holds. A dump of nothing and a dump of
       // everything both end in "complete", and "0 tables" is the only thing
       // that tells them apart before the day someone needs the file.
@@ -358,6 +415,10 @@ function BackupButton({ conn }: { conn: DbConnection }) {
         description: [res.summary, `${bytes(res.size)} in ${res.duration}`, res.path]
           .filter(Boolean)
           .join(" · "),
+        // A browser that declined the automatic download — or an operator who
+        // dismissed the prompt — still has one click to the file, rather than
+        // having to take the dump again.
+        action: { label: "Download", onClick: () => download(res.file) },
       })
     } catch (err) {
       notify.error("Dump failed", err)
@@ -368,7 +429,36 @@ function BackupButton({ conn }: { conn: DbConnection }) {
   return (
     <Button size="sm" variant="outline" onClick={run} disabled={busy}>
       {busy ? <Spinner /> : <DownloadCloud className="size-4" />}
-      Dump now
+      Dump &amp; download
     </Button>
   )
+}
+
+/**
+ * What the operator has to type to delete a database, mirroring the server's
+ * dropTargetName. The server re-decides; this is what the dialog shows.
+ *
+ * It is the database's name on six engines. SQLite's is a file, so it is the
+ * file's name rather than the whole path — a phrase too long to type is a
+ * phrase that gets pasted without being read. Redis numbers its keyspaces, and
+ * "0" is not a confirmation, so it takes the form Redis uses itself.
+ */
+function dropPhrase(conn: DbConnection) {
+  if (conn.driver === "sqlite") return (conn.database ?? "").split("/").pop() ?? ""
+  if (conn.driver === "redis") return `db${(conn.database || "0").replace(/^db/, "")}`
+  return conn.database ?? ""
+}
+
+/** What deleting actually does on this engine, in one sentence for the dialog. */
+function dropExplanation(conn: DbConnection) {
+  switch (conn.driver) {
+    case "sqlite":
+      return "The database file is deleted from disk, along with its write-ahead log."
+    case "redis":
+      return "Every key in this keyspace is deleted. Redis keyspaces are fixed at startup, so the numbered database itself stays — emptied."
+    case "oracle":
+      return "The schema and everything it owns are dropped. Oracle refuses this while the account is connected, including from this dashboard."
+    default:
+      return "Every table, view, index and row in it is dropped. The server itself keeps running."
+  }
 }

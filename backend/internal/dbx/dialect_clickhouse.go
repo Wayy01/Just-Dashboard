@@ -254,3 +254,14 @@ func (clickhouseDialect) TableSizes(ctx context.Context, db *sql.DB, schema stri
 	}
 	return scanSizes(rows, schema)
 }
+func (d clickhouseDialect) DropDatabaseSQL(name string) ([]DropStatement, error) {
+	q, err := d.QuoteIdent(name)
+	if err != nil {
+		return nil, err
+	}
+	return []DropStatement{{SQL: "DROP DATABASE IF EXISTS " + q}}, nil
+}
+
+// ClickHouse's connection database is only a default for unqualified names, so
+// there is nothing to move away from.
+func (clickhouseDialect) AdminDatabase() string { return "" }

@@ -108,6 +108,29 @@ type Dialect interface {
 	// ClickHouse's CREATE TABLE needs an engine and a sorting key, so it opts
 	// out rather than emitting statements that will not run.
 	SupportsDDL() bool
+	// DropDatabaseSQL returns the statements that remove a database entirely.
+	//
+	// Only the **last** one has to succeed. The others are preparation the
+	// engine needs and that is harmless when it does not apply — terminating
+	// the sessions still attached, putting SQL Server into single-user mode —
+	// and failing the whole drop because a database had no connections to
+	// terminate would be absurd.
+	DropDatabaseSQL(name string) ([]DropStatement, error)
+	// AdminDatabase is another database on the same server to connect to while
+	// dropping one, because Postgres and SQL Server both refuse to drop the
+	// database the session is currently in. An empty string means this engine
+	// does not care and the connection can stay where it is.
+	AdminDatabase() string
+}
+
+// A DropStatement is one step of removing a database, with its bound
+// arguments. Arguments rather than interpolation even here: a database name is
+// an identifier in one of these statements and a *value* in the next, and the
+// rule that values are bound does not get an exception because the statement
+// happens to be administrative.
+type DropStatement struct {
+	SQL  string
+	Args []any
 }
 
 // dialects is the registry. A driver with no entry here is not a SQL engine

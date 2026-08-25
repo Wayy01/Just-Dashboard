@@ -87,6 +87,10 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
 			r.Method(http.MethodPost, "/{id}/query", s.handle(s.handleDBQuery))
 			r.Method(http.MethodPost, "/{id}/backup", s.handle(s.handleDBBackup))
+			// A dump the operator can take away. GET rather than POST because
+			// it is a read of a file the dashboard already wrote, and because
+			// a browser download has to be a navigable URL.
+			r.Method(http.MethodGet, "/{id}/backup/download", s.handle(s.handleDBBackupDownload))
 			r.Method(http.MethodPost, "/{id}/rows", s.handle(s.handleDBRowInsert))
 			r.Method(http.MethodPatch, "/{id}/rows", s.handle(s.handleDBRowUpdate))
 			r.Method(http.MethodPost, "/{id}/queries", s.handle(s.handleDBSavedCreate))
@@ -128,6 +132,12 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}/keys", s.handle(s.handleRedisDelete))
 			r.Method(http.MethodDelete, "/{id}/documents", s.handle(s.handleMongoDelete))
 			r.Method(http.MethodDelete, "/{id}/collections", s.handle(s.handleMongoDropCollection))
+			// Removing the database itself, which is the one thing on this
+			// page that cannot be undone by anything except a dump taken
+			// first. system.admin on top of the destructive group: creating a
+			// database needs it, and so should destroying one.
+			r.With(httpx.RequireCapability(auth.CapSystemAdmin)).
+				Method(http.MethodDelete, "/{id}/database", s.handle(s.handleDBDropDatabase))
 		})
 	})
 }

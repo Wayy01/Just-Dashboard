@@ -347,3 +347,13 @@ func SQLiteDSNWithPath(dsn, path string) string {
 	}
 	return path + rest
 }
+
+// A SQLite database is a file, so there is no statement that removes one —
+// DropDatabase deletes the file (and its journal) instead and never reaches
+// here. The method exists because the interface is what makes the compiler
+// name an engine that has not answered a question.
+func (sqliteDialect) DropDatabaseSQL(string) ([]DropStatement, error) {
+	return nil, fmt.Errorf("a SQLite database is a file; it is removed rather than dropped")
+}
+
+func (sqliteDialect) AdminDatabase() string { return "" }

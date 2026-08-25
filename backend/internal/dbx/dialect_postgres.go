@@ -239,3 +239,26 @@ func (postgresDialect) TableSizes(ctx context.Context, db *sql.DB, schema string
 	}
 	return scanSizes(rows, schema)
 }
+
+// Postgres refuses to drop a database anything is connected to, and says so
+// with "is being accessed by other users" rather than naming them. 13 added
+// WITH (FORCE); terminating the backends first works on every version and is
+// the same thing by hand.
+func (d postgresDialect) DropDatabaseSQL(name string) ([]DropStatement, error) {
+	q, err := d.QuoteIdent(name)
+	if err != nil {
+		return nil, err
+	}
+	return []DropStatement{
+		{
+			SQL: "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " +
+				"WHERE datname = " + d.Placeholder(1) + " AND pid <> pg_backend_pid()",
+			Args: []any{name},
+		},
+		{SQL: "DROP DATABASE IF EXISTS " + q},
+	}, nil
+}
+
+// A session cannot drop the database it is in, and the one database every
+// Postgres install has is the maintenance one.
+func (postgresDialect) AdminDatabase() string { return "postgres" }

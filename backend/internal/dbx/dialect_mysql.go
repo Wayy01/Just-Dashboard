@@ -232,3 +232,13 @@ func (mysqlDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) (
 	}
 	return scanSizes(rows, schema)
 }
+func (d mysqlDialect) DropDatabaseSQL(name string) ([]DropStatement, error) {
+	q, err := d.QuoteIdent(name)
+	if err != nil {
+		return nil, err
+	}
+	return []DropStatement{{SQL: "DROP DATABASE IF EXISTS " + q}}, nil
+}
+
+// MySQL is happy to drop the database the session has selected.
+func (mysqlDialect) AdminDatabase() string { return "" }

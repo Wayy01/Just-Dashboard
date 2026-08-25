@@ -628,6 +628,20 @@ four, so one rule loses data on half of them. `Restore` picks its reader from
 the file's first bytes rather than from the driver, because a Postgres
 connection may hold either a `PGDMP` archive or the SQL this package wrote.
 
+**A dump the operator can take away, and a database they can remove.** The dump stays on the
+server — that is what the restore route reads — and a copy goes to the browser as soon as it
+is written, because a backup whose only copy is on the machine it protects is not one.
+`GET /databases/{id}/backup/download` takes a *name*, not a path, and contains it against that
+connection's own dump directory with a `files.Service` scoped to it: invariant 6's containment
+with the right root, since narrowing `JD_FILE_ROOTS` must not stop the dashboard handing back
+a file it wrote itself. `DELETE /databases/{id}/database` is the other end — `Dialect` gained
+`DropDatabaseSQL` and `AdminDatabase` because Postgres and SQL Server both refuse to drop the
+database the session is inside, and because two engines have no such verb at all: a SQLite
+database is a file to unlink, and a Redis keyspace is fixed at startup and can only be
+emptied, which `DropResult.Gone` reports rather than pretending otherwise. The connection is
+deleted with the database when it was that connection's own, since a connection to a database
+that no longer exists fails every request it is asked.
+
 **Testing is against real servers, and skips rather than fails.** `live_test.go`,
 `live_nosql_test.go`, `live_devx_test.go` and `api/handlers_db_live_test.go` take each
 engine's DSN from an environment variable defaulting to a local instance, and skip with a
@@ -1054,12 +1068,12 @@ A change that weakens any of these has to say so explicitly:
    the typed set weaker. The question to ask is not "is this dangerous" (they all are, that is
    what `s.destructive` marks) but "how often does somebody do this, and can they get it back".
 
-   Typed, because they are rare and there is no way back: `DROP TABLE`, `DROP COLUMN`,
-   `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a Mongo pipeline
-   with `$out`/`$merge`, a `critical` statement in the query runner, restoring a database or a
-   backup over live data, `compose down`, removing a Docker volume, any prune, deleting a
-   dashboard or Linux account, a recursive directory delete, `git discard` and `git reset
-   --hard`, toggling the firewall, applying package updates.
+   Typed, because they are rare and there is no way back: `DROP DATABASE`, `DROP TABLE`,
+   `DROP COLUMN`, `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a
+   Mongo pipeline with `$out`/`$merge`, a `critical` statement in the query runner, restoring
+   a database or a backup over live data, `compose down`, removing a Docker volume, any prune,
+   deleting a dashboard or Linux account, a recursive directory delete, `git discard` and
+   `git reset --hard`, toggling the firewall, applying package updates.
 
    Not typed, because they are routine or recoverable or both: deleting rows and documents and
    Redis keys, dropping an index, forgetting a connection, stopping a database session,

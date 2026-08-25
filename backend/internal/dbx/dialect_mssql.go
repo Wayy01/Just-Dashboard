@@ -314,3 +314,20 @@ func (mssqlDialect) TableSizes(ctx context.Context, db *sql.DB, schema string) (
 	}
 	return scanSizes(rows, schema)
 }
+
+// SQL Server will not drop a database while anything is connected, and unlike
+// Postgres it has a switch for it: single-user mode with an immediate rollback
+// disconnects everyone else. That statement fails when the database is already
+// gone, which is why it is preparation rather than the drop itself.
+func (d mssqlDialect) DropDatabaseSQL(name string) ([]DropStatement, error) {
+	q, err := d.QuoteIdent(name)
+	if err != nil {
+		return nil, err
+	}
+	return []DropStatement{
+		{SQL: "ALTER DATABASE " + q + " SET SINGLE_USER WITH ROLLBACK IMMEDIATE"},
+		{SQL: "DROP DATABASE IF EXISTS " + q},
+	}, nil
+}
+
+func (mssqlDialect) AdminDatabase() string { return "master" }
