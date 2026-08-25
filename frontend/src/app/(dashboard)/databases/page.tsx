@@ -345,12 +345,19 @@ function BackupButton({ conn }: { conn: DbConnection }) {
   const run = async () => {
     setBusy(true)
     try {
-      const res = await post<{ path: string; size: number; duration: string }>(
-        `/databases/${conn.id}/backup`,
-        { database: conn.database },
-      )
+      const res = await post<{
+        path: string
+        size: number
+        duration: string
+        summary?: string
+      }>(`/databases/${conn.id}/backup`, { database: conn.database })
+      // What the dump actually holds. A dump of nothing and a dump of
+      // everything both end in "complete", and "0 tables" is the only thing
+      // that tells them apart before the day someone needs the file.
       notify.success("Dump complete", {
-        description: `${bytes(res.size)} in ${res.duration} → ${res.path}`,
+        description: [res.summary, `${bytes(res.size)} in ${res.duration}`, res.path]
+          .filter(Boolean)
+          .join(" · "),
       })
     } catch (err) {
       notify.error("Dump failed", err)
