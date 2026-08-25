@@ -62,17 +62,41 @@ func ParseDSN(driver Driver, dsn string) (*ConnInfo, error) {
 	if info.Host == "" {
 		info.Host = "127.0.0.1"
 	}
+	// SQL Server is the one engine whose driver takes the database as a query
+	// parameter rather than as the path, so reading only the path reported every
+	// SQL Server connection as having no database — and the dump then refused to
+	// run for want of one the connection string had all along.
+	if driver == DriverMSSQL && info.Database == "" {
+		q := u.Query()
+		info.Database = firstNonEmpty(q.Get("database"), q.Get("Database"))
+	}
 	if info.Port == "" {
-		switch driver {
-		case DriverPostgres:
-			info.Port = "5432"
-		case DriverMySQL:
-			info.Port = "3306"
-		case DriverMongo:
-			info.Port = "27017"
-		}
+		info.Port = defaultPort(driver)
 	}
 	return info, nil
+}
+
+// defaultPort is what the engine listens on when the connection string does not
+// say. Only three engines had an entry here, which left the connection detail
+// the databases list shows blank for the other four.
+func defaultPort(driver Driver) string {
+	switch driver {
+	case DriverPostgres:
+		return "5432"
+	case DriverMySQL:
+		return "3306"
+	case DriverMongo:
+		return "27017"
+	case DriverRedis:
+		return "6379"
+	case DriverMSSQL:
+		return "1433"
+	case DriverClickHouse:
+		return "9000"
+	case DriverOracle:
+		return "1521"
+	}
+	return ""
 }
 
 // parseMySQLDSN handles user:pass@tcp(host:port)/dbname.
@@ -110,16 +134,33 @@ func parseMySQLDSN(dsn string) (*ConnInfo, error) {
 }
 
 type DumpResult struct {
-	Path      string    `json:"path"`
-	Size      int64     `json:"size"`
-	Duration  string    `json:"duration"`
-	Database  string    `json:"database"`
-	Driver    Driver    `json:"driver"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Duration string `json:"duration"`
+	Database string `json:"database"`
+	Driver   Driver `json:"driver"`
+	// Summary is one line describing what is in the file — "4 tables, 1054
+	// rows", "306 keys". Separate from Output because Output is whatever the
+	// tool said, and mongodump says a timestamped paragraph: a dump of nothing
+	// and a dump of everything both end in success, and the only thing that
+	// tells them apart on screen is this.
+	Summary   string    `json:"summary,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	Output    string    `json:"output,omitempty"`
 }
 
 // Dump writes a backup of one database into outDir and returns where it landed.
+//
+// Every engine this dashboard can connect to can be dumped. Where a native tool
+// exists and is installed it is used, because its format is the one the engine's
+// own restore path is fastest and most faithful with; where it does not, or
+// where it fails, dbx writes the dump itself over the connection it already has
+// (dump_sql.go, dump_nosql.go).
+//
+// The fallback is not a nicety. "unsupported database driver: clickhouse" was
+// the dashboard admitting, at the moment the operator pressed the button, that
+// the backup they were relying on had never been possible — which is the worst
+// time to find out and the reason a backup feature exists at all.
 func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*DumpResult, error) {
 	info, err := ParseDSN(driver, dsn)
 	if err != nil {
@@ -131,53 +172,107 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	if database == "" {
 		database = info.Database
 	}
-	if database == "" {
-		return nil, fmt.Errorf("no database named in the connection string; specify one explicitly")
+	if driver == DriverRedis {
+		// Redis names its databases with integers, so it validates its own.
+		return dumpRedis(ctx, dsn, database, outDir)
 	}
-	if !identifierRe.MatchString(database) {
-		return nil, fmt.Errorf("invalid database name %q", database)
+	if err := validateDumpDatabase(database); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return nil, err
 	}
-	stamp := time.Now().UTC().Format("20060102-150405")
-	start := time.Now()
 
-	var (
-		cmd  *exec.Cmd
-		path string
-	)
+	fallback := func() (*DumpResult, error) {
+		if driver == DriverMongo {
+			return dumpMongoDriver(ctx, dsn, database, outDir)
+		}
+		return dumpGenericSQL(ctx, driver, dsn, database, outDir)
+	}
+	native, tool := nativeDumpCommand(ctx, driver, dsn, info, database, outDir)
+	if native == nil {
+		return fallback()
+	}
+	res, err := native()
+	if err == nil {
+		return res, nil
+	}
+	// The native tool is there and refused. Everything that makes it refuse a
+	// dump — a version it will not read, a feature the server has and it does
+	// not, a missing helper of its own — is something the driver path does not
+	// care about, so it is worth the second attempt before reporting a failure.
+	fb, ferr := fallback()
+	if ferr != nil {
+		return nil, fmt.Errorf("%w (and the built-in dump also failed: %v)", err, ferr)
+	}
+	fb.Summary += " (built-in dump; " + tool + " refused)"
+	fb.Output = strings.TrimSpace(fmt.Sprintf("%s\n%s reported: %v", fb.Output, tool, err))
+	return fb, nil
+}
+
+// nativeDumpCommand returns a closure running the engine's own dump tool, or
+// nil when that tool is not installed. Deciding here rather than inside Dump
+// keeps "which tool, and is it present" in one place for the three engines that
+// have one.
+func nativeDumpCommand(ctx context.Context, driver Driver, dsn string, info *ConnInfo, database, outDir string) (func() (*DumpResult, error), string) {
+	start := time.Now()
 	switch driver {
 	case DriverPostgres:
-		path = filepath.Join(outDir, fmt.Sprintf("%s-%s.dump", database, stamp))
-		cmd = exec.CommandContext(ctx, postgresTool("pg_dump", postgresServerMajor(ctx, dsn)),
-			"--host", info.Host, "--port", info.Port, "--username", info.User,
-			"--format", "custom", "--no-password", "--file", path, database)
-		cmd.Env = append(os.Environ(), "PGPASSWORD="+info.Password)
+		tool := postgresTool("pg_dump", postgresServerMajor(ctx, dsn))
+		if !toolAvailable(tool) {
+			return nil, ""
+		}
+		path := filepath.Join(outDir, dumpFilename(database, "postgres", "dump", start))
+		return func() (*DumpResult, error) {
+			cmd := exec.CommandContext(ctx, tool,
+				"--host", info.Host, "--port", info.Port, "--username", info.User,
+				"--format", "custom", "--no-password", "--file", path, database)
+			cmd.Env = append(os.Environ(), "PGPASSWORD="+info.Password)
+			return runDumpCommand(cmd, tool, path, driver, database, start)
+		}, tool
 	case DriverMySQL:
-		path = filepath.Join(outDir, fmt.Sprintf("%s-%s.sql", database, stamp))
-		defaults, cleanup, err := mysqlDefaultsFile(info)
-		if err != nil {
-			return nil, err
+		if !toolAvailable("mysqldump") {
+			return nil, ""
 		}
-		defer cleanup()
-		cmd = exec.CommandContext(ctx, "mysqldump",
-			"--defaults-extra-file="+defaults,
-			"--single-transaction", "--quick", "--routines", "--triggers",
-			"--result-file="+path, database)
+		path := filepath.Join(outDir, dumpFilename(database, "mysql", "sql", start))
+		return func() (*DumpResult, error) {
+			defaults, cleanup, err := mysqlDefaultsFile(info)
+			if err != nil {
+				return nil, err
+			}
+			defer cleanup()
+			cmd := exec.CommandContext(ctx, "mysqldump",
+				"--defaults-extra-file="+defaults,
+				"--single-transaction", "--quick", "--routines", "--triggers",
+				// Tablespace metadata needs the PROCESS privilege, which is
+				// server-wide and which no sensible application login has. Asking
+				// for it put "mysqldump: Error: Access denied" on the end of a
+				// dump that had otherwise worked perfectly.
+				"--no-tablespaces",
+				"--result-file="+path, database)
+			return runDumpCommand(cmd, "mysqldump", path, driver, database, start)
+		}, "mysqldump"
 	case DriverMongo:
-		path = filepath.Join(outDir, fmt.Sprintf("%s-%s.archive", database, stamp))
-		conf, cleanup, err := mongoConfigFile(dsn)
-		if err != nil {
-			return nil, err
+		if !toolAvailable("mongodump") {
+			return nil, ""
 		}
-		defer cleanup()
-		cmd = exec.CommandContext(ctx, "mongodump",
-			"--config", conf, "--db", database, "--archive="+path, "--gzip")
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
+		path := filepath.Join(outDir, dumpFilename(database, "mongo", "archive", start))
+		return func() (*DumpResult, error) {
+			conf, cleanup, err := mongoConfigFile(dsn)
+			if err != nil {
+				return nil, err
+			}
+			defer cleanup()
+			cmd := exec.CommandContext(ctx, "mongodump",
+				"--config", conf, "--db", database, "--archive="+path, "--gzip")
+			return runDumpCommand(cmd, "mongodump", path, driver, database, start)
+		}, "mongodump"
 	}
+	return nil, ""
+}
 
+// runDumpCommand executes one dump tool and turns its exit into a result.
+func runDumpCommand(cmd *exec.Cmd, tool, path string, driver Driver, database string, start time.Time) (*DumpResult, error) {
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -200,13 +295,50 @@ func Dump(ctx context.Context, driver Driver, dsn, database, outDir string) (*Du
 	return &DumpResult{
 		Path: path, Size: st.Size(), Driver: driver, Database: database,
 		Duration:  time.Since(start).Round(time.Millisecond).String(),
-		StartedAt: start.UTC(), Output: strings.TrimSpace(buf.String()),
+		StartedAt: start.UTC(), Summary: "written by " + filepath.Base(tool),
+		Output: strings.TrimSpace(buf.String()),
 	}, nil
+}
+
+// toolAvailable reports whether a dump tool can actually be executed. An
+// absolute path is one postgresTool already found on disk; a bare name has to
+// be looked up, and not finding it is the ordinary case on a machine that never
+// installed it rather than an error worth reporting.
+func toolAvailable(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsRune(name, os.PathSeparator) {
+		st, err := os.Stat(name)
+		return err == nil && !st.IsDir()
+	}
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// validateDumpDatabase refuses only what cannot be handled safely rather than a
+// conservative character class.
+//
+// The old rule was identifierRe, which requires an ASCII letter first and
+// permits nothing but letters, digits, underscore and dollar — so a database
+// called "my-app" or "café" could not be dumped at all, despite being a name
+// every engine here accepts. Nothing needs that strictness now: the name goes
+// into argv (never a shell), into a quoted SQL identifier, or into a filename
+// that dumpFilename sanitises separately.
+func validateDumpDatabase(database string) error {
+	if strings.TrimSpace(database) == "" {
+		return fmt.Errorf("no database named in the connection string; specify one explicitly")
+	}
+	return validateIdent(database)
 }
 
 // Restore loads a dump back into a database. This overwrites live data, which
 // is why the handler in front of it requires a typed confirmation naming the
 // target database.
+//
+// Which reader to use is decided by the file rather than by the engine: a
+// Postgres connection may hold either a pg_dump archive or the SQL text this
+// package writes, and picking by driver would refuse one of them for no reason.
 func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string) (string, error) {
 	info, err := ParseDSN(driver, dsn)
 	if err != nil {
@@ -221,18 +353,38 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 	if database == "" {
 		database = info.Database
 	}
-	if !identifierRe.MatchString(database) {
-		return "", fmt.Errorf("invalid database name %q", database)
+	if driver == DriverRedis {
+		return restoreRedis(ctx, dsn, database, dumpPath)
+	}
+	if err := validateDumpDatabase(database); err != nil {
+		return "", err
+	}
+	switch dumpFormatOf(dumpPath) {
+	case dumpFormatArchive:
+		if driver != DriverMongo {
+			return "", fmt.Errorf("this is a Mongo archive; the connection is %s", driver)
+		}
+		return restoreMongoDriver(ctx, dsn, database, dumpPath)
+	case dumpFormatSQLText:
+		return restoreGenericSQL(ctx, driver, dsn, database, dumpPath)
 	}
 
 	var cmd *exec.Cmd
 	switch driver {
 	case DriverPostgres:
-		cmd = exec.CommandContext(ctx, postgresTool("pg_restore", postgresServerMajor(ctx, dsn)),
+		tool := postgresTool("pg_restore", postgresServerMajor(ctx, dsn))
+		if !toolAvailable(tool) {
+			return "", fmt.Errorf("this is a pg_dump custom-format archive and pg_restore is not installed; " +
+				"re-take the backup to get one this dashboard can restore on its own")
+		}
+		cmd = exec.CommandContext(ctx, tool,
 			"--host", info.Host, "--port", info.Port, "--username", info.User,
 			"--no-password", "--clean", "--if-exists", "--dbname", database, dumpPath)
 		cmd.Env = append(os.Environ(), "PGPASSWORD="+info.Password)
 	case DriverMySQL:
+		if !toolAvailable("mysql") {
+			return restoreGenericSQL(ctx, driver, dsn, database, dumpPath)
+		}
 		defaults, cleanup, err := mysqlDefaultsFile(info)
 		if err != nil {
 			return "", err
@@ -246,6 +398,10 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 		cmd = exec.CommandContext(ctx, "mysql", "--defaults-extra-file="+defaults, database)
 		cmd.Stdin = f
 	case DriverMongo:
+		if !toolAvailable("mongorestore") {
+			return "", fmt.Errorf("this is a mongodump archive and mongorestore is not installed; " +
+				"re-take the backup to get one this dashboard can restore on its own")
+		}
 		conf, cleanup, err := mongoConfigFile(dsn)
 		if err != nil {
 			return "", err
@@ -267,6 +423,52 @@ func Restore(ctx context.Context, driver Driver, dsn, database, dumpPath string)
 		return buf.String(), fmt.Errorf("restore failed: %w", err)
 	}
 	return strings.TrimSpace(buf.String()), nil
+}
+
+// dumpFormat is what a dump file turns out to be.
+type dumpFormat int
+
+const (
+	// dumpFormatNative is a tool's own format — a pg_dump custom archive, a
+	// mongodump archive, a mysqldump script — and is replayed by that tool.
+	dumpFormatNative dumpFormat = iota
+	// dumpFormatSQLText is the SQL this package writes.
+	dumpFormatSQLText
+	// dumpFormatArchive is the gzipped JSON Lines this package writes for the
+	// engines that are not SQL.
+	dumpFormatArchive
+)
+
+// dumpFormatOf reads the first bytes of the file rather than trusting its name.
+// A dump gets renamed, and restoring a file with the wrong reader produces an
+// error about syntax that says nothing about the actual mistake.
+func dumpFormatOf(path string) dumpFormat {
+	f, err := os.Open(path)
+	if err != nil {
+		return dumpFormatNative
+	}
+	defer f.Close()
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	head = head[:n]
+	switch {
+	case bytes.HasPrefix(head, []byte("PGDMP")):
+		// pg_dump's custom format, which only pg_restore reads.
+		return dumpFormatNative
+	case bytes.HasPrefix(head, []byte("-- Just Dashboard dump")):
+		return dumpFormatSQLText
+	case bytes.HasPrefix(head, []byte{0x1f, 0x8b}):
+		// gzip: either this package's JSON Lines archive or a gzipped
+		// mongodump. Only the first has a header naming itself, and reading it
+		// means decompressing, so the cheap discriminator is the extension the
+		// writer chose alongside it.
+		if strings.HasSuffix(path, ".jsonl.gz") {
+			return dumpFormatArchive
+		}
+		return dumpFormatNative
+	default:
+		return dumpFormatNative
+	}
 }
 
 // dumpSQLite writes a consistent snapshot of a SQLite file with VACUUM INTO,
@@ -305,9 +507,14 @@ func dumpSQLite(ctx context.Context, dsn, path, outDir string) (*DumpResult, err
 	if err != nil {
 		return nil, err
 	}
+	var tables int
+	_ = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`).
+		Scan(&tables)
 	return &DumpResult{
 		Path: out, Size: st.Size(), Driver: DriverSQLite, Database: filepath.Base(path),
 		Duration: time.Since(start).Round(time.Millisecond).String(), StartedAt: start.UTC(),
+		Summary: fmt.Sprintf("%d tables", tables),
 	}, nil
 }
 

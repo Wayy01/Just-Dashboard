@@ -199,7 +199,8 @@ func fetchFirstLimit(d Dialect, limit, offset, argStart int) (string, []any) {
 // which Postgres, MySQL, SQL Server and ClickHouse all provide in compatible
 // enough form. Only the bind marker differs, so the dialect supplies that.
 func infoSchemaColumns(ctx context.Context, db *sql.DB, d Dialect, schema, table string) ([]Column, error) {
-	query := `SELECT column_name, data_type, is_nullable, COALESCE(column_default, ''), ordinal_position
+	query := `SELECT column_name, data_type, is_nullable, COALESCE(column_default, ''), ordinal_position,
+	                 character_maximum_length, numeric_precision, numeric_scale
 	          FROM information_schema.columns
 	          WHERE table_schema = ` + d.Placeholder(1) + `
 	            AND table_name = ` + d.Placeholder(2) + `
@@ -212,18 +213,54 @@ func infoSchemaColumns(ctx context.Context, db *sql.DB, d Dialect, schema, table
 	out := []Column{}
 	for rows.Next() {
 		var (
-			c        Column
-			nullable string
+			c                        Column
+			nullable                 string
+			length, precision, scale sql.NullInt64
 		)
-		if err := rows.Scan(&c.Name, &c.Type, &nullable, &c.Default, &c.Position); err != nil {
+		if err := rows.Scan(&c.Name, &c.Type, &nullable, &c.Default, &c.Position,
+			&length, &precision, &scale); err != nil {
 			return nil, err
 		}
 		// information_schema spells this as the text 'YES'/'NO' rather than a
 		// boolean, and ClickHouse answers 0/1, so both forms are accepted.
 		c.Nullable = strings.EqualFold(nullable, "YES") || nullable == "1"
+		c.Type = withTypeSize(c.Type, length, precision, scale)
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// withTypeSize puts the length or precision back onto a type name.
+//
+// information_schema splits `nvarchar(255)` into a data_type of `nvarchar` and
+// a separate length column, and the bare name is not the same type: SQL Server
+// reads `NVARCHAR` with no length in a CREATE TABLE as NVARCHAR(1). So the DDL
+// the Structure tab shows, and the DDL a dump replays, silently truncated every
+// string column to one character — a restore that "succeeded" into a table that
+// could not hold the data.
+func withTypeSize(name string, length, precision, scale sql.NullInt64) string {
+	lower := strings.ToLower(name)
+	if strings.ContainsRune(name, '(') {
+		return name
+	}
+	holdsText := strings.Contains(lower, "char") || strings.Contains(lower, "binary")
+	isDecimal := strings.Contains(lower, "numeric") || strings.Contains(lower, "decimal")
+	switch {
+	case length.Valid && holdsText:
+		if length.Int64 < 0 {
+			// SQL Server reports -1 for the MAX variants.
+			return name + "(MAX)"
+		}
+		if length.Int64 > 0 {
+			return name + "(" + itoa(int(length.Int64)) + ")"
+		}
+	case precision.Valid && isDecimal:
+		if scale.Valid && scale.Int64 > 0 {
+			return name + "(" + itoa(int(precision.Int64)) + "," + itoa(int(scale.Int64)) + ")"
+		}
+		return name + "(" + itoa(int(precision.Int64)) + ")"
+	}
+	return name
 }
 
 // infoSchemaPrimaryKey reads the ordered primary-key columns from the standard
