@@ -215,6 +215,15 @@ func stream(ctx context.Context, dir string, out io.Writer, name string, args ..
 		"COMPOSE_PROGRESS=plain",
 		"BUILDKIT_PROGRESS=plain",
 		"DOCKER_CLI_HINTS=false",
+		// Asked for explicitly rather than relied upon. Compose picks BuildKit
+		// on its own when buildx is installed, and silently builds with the
+		// classic builder when it is not — which is exactly how this feature
+		// shipped an updater that could not build the project it updates. The
+		// image now carries buildx; saying so here means the day somebody sets
+		// DOCKER_BUILDKIT=0 in the environment, the failure is theirs and
+		// visible rather than ours and silent.
+		"DOCKER_BUILDKIT=1",
+		"COMPOSE_DOCKER_CLI_BUILD=1",
 	)
 	return streamEnv(ctx, dir, env, out, name, args...)
 }
