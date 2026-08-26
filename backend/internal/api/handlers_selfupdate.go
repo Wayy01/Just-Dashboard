@@ -1,0 +1,141 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
+	"github.com/go-chi/chi/v5"
+)
+
+// The dashboard's own version, its changelog, and the button that moves it on
+// to the next one.
+//
+// Mounted under /dashboard rather than /system because it is the one part of
+// this API that is not about the server: /updates is the host's packages, and
+// the two being confusable is exactly why they are named apart.
+func (s *Server) mountSelfUpdateRoutes(r chi.Router) {
+	r.Route("/dashboard", func(r chi.Router) {
+		// Readable by every role. What version this is and what changed in it
+		// is not privileged information — it is on the sign-in page — and a
+		// read-only operator seeing "0.6 is out" is how the person who *can*
+		// install it finds out.
+		r.Method(http.MethodGet, "/update", s.handle(s.handleSelfUpdateStatus))
+
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			// Installing an update replaces every container in this stack with
+			// one built from code that is not on the machine yet, and restarts
+			// the dashboard doing it. It is destructive by any reading, and it
+			// is nested here for the reason every other admin-only destructive
+			// route is: admin holds every capability, so "which routes are
+			// destructive" keeps one answer.
+			s.destructive(r, func(r chi.Router) {
+				r.Method(http.MethodPost, "/update/install", s.handle(s.handleSelfUpdateInstall))
+			})
+			// Clearing a finished run is not destructive: it forgets a notice,
+			// and the version it describes is still installed.
+			r.Method(http.MethodDelete, "/update/run", s.handle(s.handleSelfUpdateDismiss))
+		})
+	})
+}
+
+// handleSelfUpdateStatus answers everything the update panel and the sidebar
+// notice need in one request, because they are on screen together and two
+// endpoints would mean two polls of the same three facts.
+//
+// refresh=true is the operator pressing "check now"; without it this reads the
+// cache and never waits on the network.
+func (s *Server) handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request) error {
+	rep := s.modules.selfUpdate.Report(r.Context(), r.URL.Query().Get("refresh") == "true")
+	httpx.JSON(w, http.StatusOK, rep)
+	return nil
+}
+
+// handleSelfUpdateInstall starts the upgrade and answers before it finishes.
+//
+// It has to: the work replaces the process serving this request, so a handler
+// that waited for the outcome would be waiting for its own termination. 202
+// with the run record is the honest shape — the browser then follows the
+// record, which is on disk and survives everything that is about to happen.
+func (s *Server) handleSelfUpdateInstall(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		// Version is what the browser believed was newest when the operator
+		// pressed the button. It is a check, not an instruction: the only
+		// version that can be installed is whatever the tracked branch carries
+		// now, and a stale tab asking for a superseded one has to be told
+		// rather than quietly given something else.
+		Version string `json:"version"`
+	}
+	if r.ContentLength > 0 {
+		if err := httpx.DecodeJSON(r, &body); err != nil {
+			return err
+		}
+	}
+
+	rep := s.modules.selfUpdate.Report(r.Context(), false)
+	if !rep.Install.Supported {
+		return httpx.Err(http.StatusServiceUnavailable, "update_unsupported", rep.Install.Reason)
+	}
+	if !rep.Available {
+		if rep.Check.Error != "" {
+			return httpx.Err(http.StatusBadGateway, "check_failed",
+				"the newest version could not be looked up: "+rep.Check.Error)
+		}
+		return httpx.BadRequest("this dashboard is already on %s, which is the newest published version", rep.Version)
+	}
+	target := rep.Latest
+	if body.Version != "" && selfupdate.Compare(body.Version, target) != 0 {
+		return httpx.Err(http.StatusConflict, "version_moved",
+			"the newest version is now "+target+", not "+body.Version+"; reload and read what changed before installing")
+	}
+
+	// The phrase is the version being installed.
+	//
+	// It is short, which is the point: what has to be read here is *which*
+	// version, and a phrase that names the object is the convention every
+	// other typed route in this codebase follows — a stack's name for compose
+	// down, a table's name for drop table. The frequency test that governs
+	// which routes ask at all puts this firmly inside: a release lands every
+	// few weeks, and an install that comes back broken is recovered over ssh,
+	// not from here.
+	if err := httpx.RequireTypedConfirmation(w, r, target); err != nil {
+		return err
+	}
+
+	actor := httpx.MustPrincipal(r).Username()
+	run, err := s.modules.selfUpdate.Install(r.Context(), target, actor)
+	httpx.SetAudit(r, "dashboard.update.install", target, map[string]any{
+		"from": rep.Version, "to": target, "dir": rep.Install.Dir, "ok": err == nil,
+	})
+	switch {
+	case errors.Is(err, selfupdate.ErrInProgress):
+		return httpx.Err(http.StatusConflict, "update_running", "an update is already running")
+	case errors.Is(err, selfupdate.ErrNotNewer):
+		return httpx.BadRequest("%s is not newer than the installed %s", target, rep.Version)
+	case errors.Is(err, selfupdate.ErrNoLocation):
+		return httpx.Err(http.StatusServiceUnavailable, "update_unsupported", "this install cannot update itself in place")
+	case err != nil:
+		return httpx.Err(http.StatusBadGateway, "update_failed", err.Error())
+	}
+	// 202: the work has been handed to a container that outlives this process.
+	httpx.JSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+// handleSelfUpdateDismiss forgets a finished run, which is what clears the
+// "updated to 0.6" notice for everyone once somebody has read it.
+func (s *Server) handleSelfUpdateDismiss(w http.ResponseWriter, r *http.Request) error {
+	if err := s.modules.selfUpdate.Dismiss(); err != nil {
+		if errors.Is(err, selfupdate.ErrInProgress) {
+			return httpx.Err(http.StatusConflict, "update_running",
+				"the update is still running; it can be dismissed once it has finished")
+		}
+		return httpx.Internal(err)
+	}
+	httpx.SetAudit(r, "dashboard.update.dismiss", "", nil)
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}

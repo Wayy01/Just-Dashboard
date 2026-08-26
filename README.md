@@ -6,9 +6,9 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-**Version 0.5** · Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.5.1** · Go backend · Next.js frontend · one `docker compose` stack
 
-[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version) · [Configuration](#configuration-reference) · [Licence](#licence)
+[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
 </div>
 
@@ -207,7 +207,7 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 | **Proxy & TLS** | nginx and Caddy config editing, validated with the server's own test binary before writing or reloading. Vhost toggles, certificate inventory with expiry, listening ports joined to the processes that own them. |
 | **Databases** | Eight engines: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis — all on pure-Go drivers, so the image still needs no CGO. A data grid that edits rows through forms (always scoped to a primary key), server-side sort and filtering, schema editing with the statement shown before it runs, CSV/JSON import inside one transaction, a structure view and an entity diagram, a query runner that classifies a statement as destructive before it runs with schema-aware completion, history and saved snippets, CSV/JSON export, one-click Prisma, Drizzle, TypeScript or Zod generation from the live database, and a value search that finds which table an id lives in without knowing where to look. A Monitor tab lists what the server is running right now — with the blocking session named — and stops a stuck query, next to a per-table size breakdown for when the disk alert fires. Any row copies out as JSON or as a runnable INSERT in that engine's own syntax, or duplicates into a pre-filled form. MongoDB gets document editing, an aggregation runner, and its own export and import; Redis gets a SCAN-based key browser with full collection editing. Plus a dump that downloads to the browser as it is written, restores, and a typed-confirmation delete of the database itself, for every one of the eight — the three with a client-side tool use it, the rest are dumped over the connection the dashboard already has, so no engine's backup depends on a binary that may not be installed. Passwords never appear in argv. Everything but Oracle is covered by tests that run against the real engines. |
 | **Security** | How the dashboard is exposed and what to do about it, firewall rules, fail2ban jails and what they have actually banned, active SSH sessions, and the host's own login record: who got in, who tried and failed, and when the machine restarted. |
-| **Updates** | What is behind, which of it is security, and whether a reboot is due. Upgrades only. It never installs or removes packages. |
+| **Updates** | Two things that can be behind. The dashboard itself — with the release notes for every version between yours and the newest, and a one-click pull-rebuild-restart that runs in its own container so it survives replacing the dashboard. And the host's packages: what is behind, which of it is security, and whether a reboot is due. Upgrades only; it never installs or removes packages. |
 | **Deployments** | Git pull plus `compose up -d --build`, by hand or by signed webhook, with history and rollback. Encrypted per-project environment rendered into `.env` at deploy time. |
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
 | **System users** | Host accounts, SSH keys, lock and unlock. |
@@ -216,30 +216,63 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 
 ---
 
-## Version
+## Version, and updating
 
-This is **0.5**: the panel as a finished single-server product — every page in the tour above
-is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it stops.
+This is **0.5.1**: the panel as a finished single-server product — every page in the tour
+above is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it
+stops. Every release is in [CHANGELOG.md](CHANGELOG.md), and in the dashboard itself.
 
-The number is on screen, beside the wordmark in the sidebar and on the sign-in page, because
-this is software you upgrade by pulling and rebuilding, and "which one is this machine
-running" is a question with consequences. The server says so at boot as well:
+The number is on screen beside the wordmark in the sidebar and on the sign-in page, and the
+server says so at boot as well:
 
 ```bash
 docker compose logs backend | grep listening
 ```
 
-Moving to 0.6 when the next batch of features lands, or to 1.0 when the API settles, is two
-lines and nothing else:
+### The dashboard updates itself
 
-| File | Line |
-| --- | --- |
-| `backend/internal/version/version.go` | `const Version = "0.5"` |
-| `frontend/src/lib/version.ts` | `export const VERSION = "0.5"` |
+When a newer version is published, a notice appears above your account at the foot of the
+sidebar: the version, what the release is called, **Update now**, and **View changes**. The
+last of those opens the release notes for every version between yours and the newest — not
+just the newest, because an install three releases behind is upgrading past three sets of
+changes.
 
-Every place that displays or logs a version reads one of those two constants, and
-`go test ./internal/version/` fails if they disagree — so a release cannot half-happen and
-leave a UI claiming a version the server has never heard of.
+**Update now** pulls this repository, rebuilds every image in your stack and restarts it.
+It runs in a container of its own, so it survives the dashboard being rebuilt underneath it;
+the page keeps watching across the restart and shows you the build output as it happens.
+Then it waits for the dashboard to answer again before calling itself done — `compose up -d`
+returning is not the same as your panel being back. It asks you to type the version first,
+which is the same guard the handful of other irreversible actions use.
+
+Two things it deliberately will not do. It **fast-forwards rather than resetting**, so an
+edited `docker-compose.yml` or Caddyfile survives; if your edit collides with the release,
+the update stops and tells you what is in the way instead of discarding it. And it never
+touches your data, accounts, sessions or settings — those live in `JD_DATA_DIR`, which the
+upgrade does not go near.
+
+If your install cannot be updated this way — you run it from a binary, or from a directory
+the dashboard cannot identify — it says so, with the reason, on the Updates page. The
+release notes still work; they are compiled into the build.
+
+The check itself is the only outbound request Just Dashboard ever makes on its own: one
+unauthenticated GET of one small file from GitHub, four times a day, carrying a version
+number in the user agent and nothing else. No telemetry, no install id, nothing reported
+anywhere. `JD_UPDATE_CHECK=false` turns it off entirely.
+
+### Cutting a release
+
+If you are working on Just Dashboard rather than running it, a release is one command:
+
+```bash
+# 1. Write the notes in backend/internal/selfupdate/changelog.json
+# 2. Then:
+scripts/release.sh 0.6
+```
+
+That bumps the version in the three places it appears, regenerates `CHANGELOG.md` from the
+changelog, and runs the tests that pin all four together. It refuses to cut a version the
+changelog does not describe — every install decides whether to update by comparing itself
+against that file, so a release with no entry is a release nobody hears about.
 
 ---
 
@@ -308,6 +341,10 @@ The installer writes the ones that matter. These are for tuning afterwards.
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
 | `JD_METRICS_INTERVAL` | `15s` | How often the backend samples the host, and every running container, into its own history. Clamped to 5s and 5m. |
 | `JD_METRICS_RETENTION` | `7d` | How long that history is kept. Accepts days. `0` records nothing and leaves only the live feed. |
+| `JD_UPDATE_CHECK` | `true` | Whether the dashboard may ask GitHub whether a newer version of *itself* exists — one unauthenticated GET of one file, four times a day, carrying nothing but a version number. `false` turns it off; the release notes for the version you run stay readable, since they are compiled in. |
+| `JD_UPDATE_REPO` | `Wayy01/Just-Dashboard` | The repository releases are read from. Change it to follow a fork. |
+| `JD_UPDATE_BRANCH` | `main` | The branch whose changelog decides what "newest" means, and which an in-app update fast-forwards to. |
+| `JD_UPDATE_DIR` | discovered | The directory you cloned into. Normally empty: the dashboard asks Docker where its own stack was deployed from. Set it only if the Updates page says that failed. |
 | `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
 | `JD_DEV` | `false` | Development only. Drops `Secure` from the session cookie so the UI works over plain HTTP. Never set it on a real host. |
 | `JD_LOG_LEVEL` | `info` | `debug` for verbose logs. |
