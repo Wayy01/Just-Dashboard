@@ -6,7 +6,7 @@ import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { DbConnection, DbDriverInfo } from "@/lib/types"
+import type { DbConnection, DbDriverInfo, DbSyncResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -86,13 +86,26 @@ export default function DatabasesPage() {
   useEffect(() => {
     if (synced.current || !can("system.admin")) return
     synced.current = true
-    post<{ added: string[] }>("/databases/sync", {})
+    post<DbSyncResult>("/databases/sync", {})
       .then((res) => {
-        if (res.added.length === 0) return
-        connections.refresh()
-        notify.success(`Connected ${plural(res.added.length, "database")} on this server`, {
-          description: res.added.join(", "),
-        })
+        if (res.added.length > 0) {
+          connections.refresh()
+          notify.success(`Connected ${plural(res.added.length, "database")} on this server`, {
+            description: res.added.join(", "),
+          })
+        }
+        // A database that was recognised and could not be reached is the one
+        // case worth interrupting for: it is running, it is on the Docker page,
+        // and without this the reconcile appears to have done nothing about it.
+        // Warned rather than errored — nothing is broken, something is
+        // unpublished — and left up until dismissed, because the reason names
+        // the fix and is longer than a glance.
+        for (const server of res.unreachable ?? []) {
+          notify.warning(`${server.container} is running but cannot be reached`, {
+            description: server.reason,
+            duration: Infinity,
+          })
+        }
       })
       // A host with no Docker socket has nothing to reconcile, which is not
       // worth saying on every page load.

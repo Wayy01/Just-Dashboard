@@ -1,6 +1,24 @@
 {
-  "latest": "0.5.2",
+  "latest": "0.5.3",
   "releases": [
+    {
+      "version": "0.5.3",
+      "date": "2026-08-26",
+      "title": "Say why a database was not connected",
+      "summary": "A database running on this server that the dashboard recognises but cannot reach \u2014 almost always a container on a Docker network with no published port \u2014 used to be skipped in silence. The reconcile now names it and says what is in the way.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A database that cannot be reached is named instead of silently skipped",
+          "detail": "Its credentials were read and its container recognised, then it was dropped without a word \u2014 so the Databases page appeared to do nothing about a database sitting in plain sight on the Docker page."
+        },
+        {
+          "kind": "added",
+          "text": "The reason a database was not connected, on the Databases page",
+          "detail": "Most often that its port is published only inside its own Docker network. Publish it on 127.0.0.1 and it connects itself on the next visit."
+        }
+      ]
+    },
     {
       "version": "0.5.2",
       "date": "2026-08-26",

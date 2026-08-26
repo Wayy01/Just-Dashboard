@@ -1596,6 +1596,26 @@ export type DbDetectedServer = {
 
 export type DbDetected = { servers: DbDetectedServer[] }
 
+/**
+ * What POST /databases/sync did.
+ *
+ * `unreachable` is the half that has to be shown: a database this host is
+ * running that was recognised and could not be connected to — almost always a
+ * container on a compose network with no published port. Dropping it silently
+ * is what made the reconcile look like it did nothing.
+ */
+export type DbUnreachableServer = {
+  container: string
+  driver: string
+  reason: string
+}
+
+export type DbSyncResult = {
+  added: string[]
+  already: string[]
+  unreachable?: DbUnreachableServer[]
+}
+
 export type DbProvisionOption = {
   engine: string
   label: string
