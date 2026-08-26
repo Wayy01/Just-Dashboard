@@ -284,6 +284,16 @@ func (s *Server) saveConnection(
 // Adopting is idempotent — a server already covered by a connection is skipped
 // by address, so calling this on every page load converges rather than
 // accumulating duplicates.
+//
+// It also reports what it recognised and could *not* adopt, which it used to
+// drop on the floor. A Postgres on a compose network with no published port is
+// the commonest database on any server this runs on, and the old behaviour was
+// the worst available: the container was detected, its credentials were read,
+// `Connectable()` came back false, and the loop moved on — so the operator
+// pressed a button that appeared to do nothing at all, about a database
+// sitting in plain sight on their own Docker page. The reason string had
+// existed the whole time and had nowhere to go. Silence is the one answer a
+// reconcile must never give about a server it can see.
 func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 	if s.modules.docker == nil {
 		return httpx.Err(http.StatusServiceUnavailable, "docker_unavailable",
@@ -302,6 +312,7 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	added, skipped := []string{}, []string{}
+	unreachable := []unreachableServer{}
 	for _, c := range containers {
 		if cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports)); cand == nil {
 			continue
@@ -311,7 +322,11 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 			continue
 		}
 		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports))
-		if cand == nil || !cand.Connectable() {
+		if cand == nil {
+			continue
+		}
+		if row, ok := unreachableFrom(cand); ok {
+			unreachable = append(unreachable, row)
 			continue
 		}
 		if name, ok := existing[addressKey(cand.Host, cand.Port)]; ok {
@@ -348,8 +363,46 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 		httpx.SetAudit(r, "database.connection.sync", strings.Join(added, ", "),
 			map[string]any{"added": added})
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"added": added, "already": skipped})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"added": added, "already": skipped, "unreachable": unreachable,
+	})
 	return nil
+}
+
+// unreachableServer is a database this host is running that could be
+// recognised but not connected to, and why.
+//
+// The reason comes from dbx.Detect and is phrased for the operator rather than
+// for a log — it names the fix, because the only useful thing to say about a
+// container with no published port is which one it is and what to do.
+type unreachableServer struct {
+	Container string `json:"container"`
+	Driver    string `json:"driver"`
+	Reason    string `json:"reason"`
+}
+
+// unreachableFrom projects a detected candidate into the row the sync response
+// carries, reporting false for one that can simply be adopted.
+//
+// A pure function, and tested as one, for the reason updaterArgs is: the whole
+// defect this replaces was a branch that fell through to `continue`, and a
+// test that needed a Docker daemon to notice it coming back is a test nobody
+// runs. The fallback reason matters too — a candidate that is unconnectable
+// for a reason dbx did not name would otherwise be reported as a blank line,
+// which is the same silence in a different shape.
+func unreachableFrom(c *dbx.Candidate) (unreachableServer, bool) {
+	if c == nil || c.Connectable() {
+		return unreachableServer{}, false
+	}
+	reason := c.Reason
+	if strings.TrimSpace(reason) == "" {
+		reason = "this container was recognised but does not expose a port this dashboard can reach"
+	}
+	return unreachableServer{
+		Container: c.Container,
+		Driver:    string(c.Driver),
+		Reason:    reason,
+	}, true
 }
 
 // uniqueConnectionName keeps a second container whose name collides with an

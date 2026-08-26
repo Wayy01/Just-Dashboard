@@ -4,6 +4,22 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.3 — 26 August 2026
+
+**Say why a database was not connected**
+
+A database running on this server that the dashboard recognises but cannot reach — almost always a container on a Docker network with no published port — used to be skipped in silence. The reconcile now names it and says what is in the way.
+
+### Added
+
+- The reason a database was not connected, on the Databases page
+  - Most often that its port is published only inside its own Docker network. Publish it on 127.0.0.1 and it connects itself on the next visit.
+
+### Fixed
+
+- A database that cannot be reached is named instead of silently skipped
+  - Its credentials were read and its container recognised, then it was dropped without a word — so the Databases page appeared to do nothing about a database sitting in plain sight on the Docker page.
+
 ## 0.5.2 — 26 August 2026
 
 **Ports that do not collide**
