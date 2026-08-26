@@ -4,6 +4,24 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.4 — 26 August 2026
+
+**A taken port fails loudly**
+
+A port already in use now stops the stack with a message naming it, instead of leaving the dashboard quietly serving whatever already held the port. Upgrading installs get their ports filled in automatically.
+
+### Changed
+
+- Re-running install.sh fills in ports missing from an older .env
+  - No hand-editing to upgrade an install made before the ports were settings. A port already recorded is never moved — that was a deliberate choice, and guessing whether the process holding it is this dashboard is how a working install gets broken.
+
+### Fixed
+
+- A port already in use stops the stack instead of serving the wrong application
+  - The frontend runs on its own network with its port published, so Docker refuses to start it and names the port. Previously it failed to bind, restarted in a loop, and the proxy forwarded to whatever already held the port.
+- install.sh no longer exits early on an .env without the port settings
+  - Reading an absent variable aborted the script under set -euo pipefail, so a re-run stopped before printing how to connect.
+
 ## 0.5.3 — 26 August 2026
 
 **Say why a database was not connected**

@@ -107,25 +107,39 @@ services:
       context: ./frontend
     image: just-dashboard-frontend:latest
     restart: unless-stopped
-    # Shares the host namespace so the proxy can reach it on loopback, but
-    # binds to loopback only — it is never reachable from outside the machine.
-    # It has no host access of its own and is the one service that runs
-    # unprivileged.
-    network_mode: host
+    # The one service with no host access of its own, and the only one that
+    # runs unprivileged — so it is also the only one that does not need the
+    # host's network namespace. It gets its own, and a published port on
+    # loopback that the proxy dials exactly as before.
+    #
+    # That is what makes a taken port survivable. On the host namespace, Next
+    # failed to bind, the container went into a restart loop, and the proxy's
+    # catch-all forwarded to whatever already held 3000 — so the operator
+    # opened the dashboard and got a stranger's application over the
+    # dashboard's own certificate, with nothing anywhere saying why. With the
+    # port published instead, Docker itself refuses: `docker compose up` stops
+    # with "Bind for 127.0.0.1:3000 failed: port is already allocated", naming
+    # the port, before anything is serving. A loud failure at the moment of
+    # the mistake beats a quiet one discovered days later.
+    #
+    # Inside the container the port is always 3000; only the host side is a
+    # variable, because only the host side can collide.
+    networks:
+      - internal
+    ports:
+      - "127.0.0.1:${JD_FRONTEND_PORT:-3000}:3000"
     environment:
-      HOSTNAME: 127.0.0.1
-      # 3000 is the single most contested port on any server that has ever run
-      # a Node process. When it is taken, this container cannot bind and the
-      # proxy's catch-all forwards to whatever did — which is why the number
-      # is a variable rather than a constant.
-      PORT: "${JD_FRONTEND_PORT:-3000}"
+      # 0.0.0.0 within its own namespace, which is reachable only through the
+      # loopback-bound mapping above. It is not exposed to the network.
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:${JD_FRONTEND_PORT:-3000}/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s
@@ -155,6 +169,12 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+
+# The frontend's own network. It exists so that service can be off the host
+# namespace — nothing else joins it, and nothing on it can reach the host.
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   caddy-data:
