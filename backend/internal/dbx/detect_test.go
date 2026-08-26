@@ -99,7 +99,7 @@ func TestDetectBuildsAUsableDSN(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, password := Detect("db", c.image, c.env, c.published)
+			got, password := Detect("db", c.image, c.env, c.published, nil)
 			if got == nil {
 				t.Fatalf("image %q was not recognised", c.image)
 			}
@@ -126,26 +126,67 @@ func TestDetectIgnoresWhatItDoesNotKnow(t *testing.T) {
 		"caddy:2-alpine",
 		"bet-bot-high-market-tracker",
 	} {
-		if got, _ := Detect("c", image, nil, ports(5432, 5432)); got != nil {
+		if got, _ := Detect("c", image, nil, ports(5432, 5432), nil); got != nil {
 			t.Errorf("image %q was taken for a %s", image, got.Driver)
 		}
 	}
 	// And the registry-with-a-port case must not be mistaken for a tag.
-	if got, _ := Detect("c", "registry.example.com:5000/postgres:16", nil, ports(5432, 5432)); got == nil {
+	if got, _ := Detect("c", "registry.example.com:5000/postgres:16", nil, ports(5432, 5432), nil); got == nil {
 		t.Error("a private-registry postgres should still be recognised")
 	}
 }
 
-// A container with nothing published is running and unreachable from here.
-// Saying so beats omitting it: it is the commonest reason a database somebody
-// can see in the Docker page is one they cannot connect to.
-func TestDetectExplainsAnUnreachableContainer(t *testing.T) {
-	got, _ := Detect("db", "postgres:16", map[string]string{"POSTGRES_PASSWORD": "pw"}, nil)
+// A database on a compose network with nothing published is the commonest
+// database on any server this runs on — an application shipping its own
+// Postgres, reachable by the app beside it and by nothing else.
+//
+// It is reachable from here. The backend shares the host's network namespace
+// and a Docker bridge is routable from there, so the container's own address
+// on the engine's standard port is a real destination. Refusing it was the bug:
+// the one database an operator most wanted connected was the one the dashboard
+// declined, while psql from the same namespace worked.
+func TestDetectReachesAContainerOnItsOwnNetwork(t *testing.T) {
+	got, password := Detect("db", "postgres:16",
+		map[string]string{"POSTGRES_PASSWORD": "pw"}, nil, []string{"172.18.0.4"})
 	if got == nil {
-		t.Fatal("a postgres with no published port should still be reported")
+		t.Fatal("a postgres with no published port should still be recognised")
+	}
+	if !got.Connectable() {
+		t.Fatalf("should be reachable at its container address: %s", got.Reason)
+	}
+	if got.Host != "172.18.0.4" || got.Port != 5432 {
+		t.Errorf("address = %s:%d, want 172.18.0.4:5432", got.Host, got.Port)
+	}
+	if !got.ViaContainerNetwork {
+		t.Error("a candidate reached this way must say so: the address changes when the container is recreated")
+	}
+	if dsn := BuildDSN(*got, password); !strings.Contains(dsn, "172.18.0.4:5432") {
+		t.Errorf("dsn = %q, want it to dial the container address", dsn)
+	}
+}
+
+// A published port is still preferred, because it survives a recreate and a
+// container address does not.
+func TestDetectPrefersAPublishedPortOverTheContainerAddress(t *testing.T) {
+	got, _ := Detect("db", "postgres:16", nil, ports(5432, 5433), []string{"172.18.0.4"})
+	if got.Host != "127.0.0.1" || got.Port != 5433 {
+		t.Errorf("address = %s:%d, want the published 127.0.0.1:5433", got.Host, got.Port)
+	}
+	if got.ViaContainerNetwork {
+		t.Error("this was reached at a published port, not a container address")
+	}
+}
+
+// Neither a published port nor an address of its own — a container sharing
+// another's namespace. There is nothing to dial, and saying so beats omitting
+// it: it is a database the operator can see running.
+func TestDetectExplainsAContainerWithNowhereToDial(t *testing.T) {
+	got, _ := Detect("db", "postgres:16", map[string]string{"POSTGRES_PASSWORD": "pw"}, nil, nil)
+	if got == nil {
+		t.Fatal("it should still be recognised")
 	}
 	if got.Connectable() {
-		t.Error("a container with no published port is not connectable")
+		t.Error("no port and no address is not connectable")
 	}
 	if got.Reason == "" {
 		t.Error("it should say why")
@@ -156,7 +197,7 @@ func TestDetectExplainsAnUnreachableContainer(t *testing.T) {
 // machine, and that keeps the connection off the network.
 func TestDetectDialsLoopback(t *testing.T) {
 	got, _ := Detect("db", "postgres:16", nil,
-		[]PublishedPort{{ContainerPort: 5432, HostIP: "0.0.0.0", HostPort: 5432}})
+		[]PublishedPort{{ContainerPort: 5432, HostIP: "0.0.0.0", HostPort: 5432}}, nil)
 	if got.Host != "127.0.0.1" {
 		t.Errorf("host = %q, want 127.0.0.1", got.Host)
 	}
@@ -165,7 +206,7 @@ func TestDetectDialsLoopback(t *testing.T) {
 // The description handed to a browser must never carry the secret.
 func TestCandidateCarriesNoPassword(t *testing.T) {
 	got, password := Detect("db", "postgres:16",
-		map[string]string{"POSTGRES_USER": "u", "POSTGRES_PASSWORD": "hunter2"}, ports(5432, 5432))
+		map[string]string{"POSTGRES_USER": "u", "POSTGRES_PASSWORD": "hunter2"}, ports(5432, 5432), nil)
 	if password != "hunter2" {
 		t.Fatalf("password = %q", password)
 	}
