@@ -298,7 +298,7 @@ func TestProvisionTemplatesAreCoherent(t *testing.T) {
 		// server it creates cannot be adopted afterwards — which is the whole
 		// point of creating it from here.
 		cand, password := dbx.Detect("probe", tmpl.image, envPairs(tmpl.env("s3cret", "app")),
-			[]dbx.PublishedPort{{ContainerPort: tmpl.port, HostIP: "127.0.0.1", HostPort: tmpl.port}})
+			[]dbx.PublishedPort{{ContainerPort: tmpl.port, HostIP: "127.0.0.1", HostPort: tmpl.port}}, nil)
 		if cand == nil {
 			t.Errorf("%s: image %q is not recognised by dbx.Detect", engine, tmpl.image)
 			continue

@@ -71,14 +71,14 @@ func (s *Server) handleDBDetected(w http.ResponseWriter, r *http.Request) error 
 
 	out := detectedResponse{Servers: []detectedServer{}}
 	for _, c := range containers {
-		cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports))
+		cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports), nil)
 		if cand == nil {
 			continue
 		}
 		// The environment is only read once the image is known to be a
 		// database, so an inspect is not paid for every container on the host.
 		if detail, err := s.modules.docker.Inspect(ctx, c.ID); err == nil {
-			cand, _ = dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports))
+			cand, _ = dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports), containerIPs(detail))
 		}
 		if cand == nil {
 			continue
@@ -227,7 +227,7 @@ func (s *Server) candidateFor(ctx context.Context, name string) (*dbx.Candidate,
 		if err != nil {
 			return nil, "", httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
 		}
-		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports))
+		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports), containerIPs(detail))
 		if cand == nil {
 			return nil, "", httpx.BadRequest("%s is not a database image this dashboard recognises", name)
 		}
@@ -314,14 +314,14 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 	added, skipped := []string{}, []string{}
 	unreachable := []unreachableServer{}
 	for _, c := range containers {
-		if cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports)); cand == nil {
+		if cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports), nil); cand == nil {
 			continue
 		}
 		detail, err := s.modules.docker.Inspect(ctx, c.ID)
 		if err != nil {
 			continue
 		}
-		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports))
+		cand, password := dbx.Detect(c.Name, c.Image, envMap(detail.Env), publishedPorts(c.Ports), containerIPs(detail))
 		if cand == nil {
 			continue
 		}
@@ -651,4 +651,21 @@ func (s *Server) connectionByName(ctx context.Context, name string) (*dbConnecti
 	}
 	conn, _, err := s.dbConnRow(ctx, id)
 	return conn, err
+}
+
+// containerIPs is every address this container answers on, for the fallback in
+// dbx.Detect when nothing is published. The dashboard shares the host's
+// network namespace and a bridge network is routable from there, so these are
+// addresses it can actually dial.
+func containerIPs(detail *dockerx.ContainerDetail) []string {
+	if detail == nil {
+		return nil
+	}
+	out := make([]string, 0, len(detail.NetworkList))
+	for _, n := range detail.NetworkList {
+		if n.IPAddress != "" {
+			out = append(out, n.IPAddress)
+		}
+	}
+	return out
 }

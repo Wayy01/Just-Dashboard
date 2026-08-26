@@ -40,6 +40,12 @@ type Candidate struct {
 	// Reason explains a container that was recognised as a database but cannot
 	// be connected to, so the UI can say why rather than silently omitting it.
 	Reason string `json:"reason,omitempty"`
+	// ViaContainerNetwork marks a candidate reached at its container address
+	// rather than a published port. It matters because that address is not
+	// stable: Docker hands out a new one when the container is recreated, so a
+	// connection made this way needs re-detecting after a redeploy, where one
+	// made to a published port does not.
+	ViaContainerNetwork bool `json:"viaContainerNetwork,omitempty"`
 }
 
 // Connectable reports whether this candidate has everything a DSN needs.
@@ -151,7 +157,7 @@ type PublishedPort struct {
 // The password is returned separately from the Candidate so a caller can hand
 // the description to a browser and keep the secret. There is no path that puts
 // them in the same value.
-func Detect(container, image string, env map[string]string, ports []PublishedPort) (*Candidate, string) {
+func Detect(container, image string, env map[string]string, ports []PublishedPort, ips []string) (*Candidate, string) {
 	rule, ok := ruleFor(image)
 	if !ok {
 		return nil, ""
@@ -168,13 +174,47 @@ func Detect(container, image string, env map[string]string, ports []PublishedPor
 		c.Host, c.Port = hostAddress(p.HostIP), p.HostPort
 		break
 	}
+	// Nothing published is not the same as nothing reachable, and treating it
+	// as such was wrong for the deployment this product is built around.
+	//
+	// The backend runs in the host's network namespace, and a Docker bridge
+	// network is routable from there — the bridge interface belongs to the
+	// host. So a database on a compose network with no published port, which
+	// is how nearly every application ships its own Postgres, is reachable at
+	// its container address on the engine's standard port. Refusing it meant
+	// the commonest database on any server this runs on was the one database
+	// it would not connect to, while `psql` from the same namespace worked.
+	//
+	// The published port is still preferred where there is one: it is stable
+	// across a recreate, and a container address is not.
 	if c.Port == 0 {
-		// A container on a private network with nothing published is running
-		// and unreachable from here, which is worth saying: it is the commonest
-		// reason a database somebody can see is one they cannot connect to.
-		c.Reason = "no published port — this container is only reachable from inside its Docker network"
+		if ip := firstRoutable(ips); ip != "" {
+			c.Host, c.Port, c.ViaContainerNetwork = ip, rule.port, true
+		}
+	}
+	if c.Port == 0 {
+		// Genuinely nowhere to dial: no published port and no address of its
+		// own, which is what a container sharing another's namespace looks
+		// like. Worth saying rather than omitting, since it is a database the
+		// operator can see running.
+		c.Reason = "no published port and no container address — nothing here can be dialled"
 	}
 	return c, password
+}
+
+// firstRoutable picks the container address to dial.
+//
+// A container on several networks has several addresses and any of them
+// reaches it, so the first usable one is as good as a choice between them.
+// The empty string is what Docker reports for a container that has no address
+// of its own, which is not an address and must not become "".
+func firstRoutable(ips []string) string {
+	for _, ip := range ips {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
 // ruleFor matches the repository part of an image reference, ignoring the tag

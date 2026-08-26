@@ -4,6 +4,22 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.6 — 26 August 2026
+
+**Connect the database your application already uses**
+
+A database on a Docker network with no published port — how nearly every application ships its own Postgres — was refused as unreachable. It was never unreachable: the dashboard shares the host's network namespace, and a Docker bridge is routable from there.
+
+### Changed
+
+- A published port is still preferred where there is one
+  - It survives the container being recreated. A container address does not, so a connection made that way needs reconnecting after a redeploy — the Databases page marks which is which.
+
+### Fixed
+
+- A database with no published port now connects at its container address
+  - The commonest database on any server this runs on was the one database the dashboard declined, while psql from the same machine worked fine.
+
 ## 0.5.5 — 26 August 2026
 
 **The updater can build again**

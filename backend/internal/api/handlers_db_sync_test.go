@@ -24,7 +24,7 @@ func TestSyncReportsADatabaseItCannotReach(t *testing.T) {
 	cand, _ := dbx.Detect(
 		"main-backend-postgres-1", "postgres:16-alpine",
 		map[string]string{"POSTGRES_PASSWORD": "secret", "POSTGRES_DB": "main"},
-		nil, // nothing published: the compose-network case
+		nil, nil, // nothing published and no address of its own: nowhere to dial
 	)
 	if cand == nil {
 		t.Fatal("postgres:16-alpine should be recognised whether or not it publishes a port")
@@ -52,6 +52,7 @@ func TestSyncSaysNothingAboutADatabaseItCanAdopt(t *testing.T) {
 		"pg", "postgres:16",
 		map[string]string{"POSTGRES_PASSWORD": "secret"},
 		[]dbx.PublishedPort{{ContainerPort: 5432, HostIP: "127.0.0.1", HostPort: 5432}},
+		nil,
 	)
 	if cand == nil || password != "secret" {
 		t.Fatalf("detect returned %+v / %q", cand, password)
