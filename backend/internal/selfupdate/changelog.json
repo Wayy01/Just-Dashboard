@@ -1,6 +1,34 @@
 {
-  "latest": "0.5.6",
+  "latest": "0.5.7",
   "releases": [
+    {
+      "version": "0.5.7",
+      "date": "2026-08-26",
+      "title": "Selecting and copying in the terminal, as everywhere else",
+      "summary": "Text dragged in a terminal pane unhighlighted itself the moment the mouse came up, and the Copy button and its shortcut both answered that nothing was selected. tmux owned the pointer; it now owns only the wheel.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A plain drag selects text, and it stays selected",
+          "detail": "tmux's mouse mode was taking the drag, drawing its own selection and clearing it on mouse-up \u2014 so the browser never had one, which is why every way of copying reported an empty selection."
+        },
+        {
+          "kind": "added",
+          "text": "Ctrl+C copies the selection, and interrupts when there is nothing selected",
+          "detail": "Copying clears the selection as it goes, so the next Ctrl+C is an interrupt again. Ctrl+Shift+C still works and is still rebindable."
+        },
+        {
+          "kind": "added",
+          "text": "Ctrl+V pastes",
+          "detail": "It used to send a literal ^V instead. The multi-line paste confirmation still sees it."
+        },
+        {
+          "kind": "changed",
+          "text": "Hold Alt to hand the mouse to the program in the pane",
+          "detail": "For vim, htop, less and anything else that wants to be clicked. The wheel still scrolls the session's history with no modifier at all."
+        }
+      ]
+    },
     {
       "version": "0.5.6",
       "date": "2026-08-26",

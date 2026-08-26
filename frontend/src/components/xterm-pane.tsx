@@ -317,6 +317,17 @@ export function XtermPane({
       term.loadAddon(search)
       term.loadAddon(new WebLinksAddon())
       term.open(host)
+      // A plain drag selects, the way it does in every other application.
+      //
+      // tmux's mouse mode is on — that is what makes the wheel scroll the
+      // session's history — and with it on xterm hands every button and drag
+      // to tmux instead of selecting. tmux then draws its own selection, copies
+      // it into its own buffer and clears it on mouse-up, so from the page's
+      // side the text highlighted and unhighlighted inside one gesture and
+      // `getSelection()` stayed empty: the Copy button and the copy shortcut
+      // both said nothing was selected, because as far as the browser was
+      // concerned nothing was.
+      forcePointerToSelect(term)
       fit.fit()
 
       const disposables: IDisposable[] = []
@@ -494,7 +505,7 @@ export function XtermPane({
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== "keydown") return true
         const action = actionFor(event, "terminal", keymapRef.current)
-        if (!action) return true
+        if (!action) return clipboardKey(event, term)
         event.preventDefault()
         event.stopPropagation()
         switch (action) {
@@ -1310,12 +1321,74 @@ async function copySelection(term: Terminal) {
     notify.info("Nothing is selected")
     return
   }
+  await writeClipboard(selection)
+}
+
+async function writeClipboard(text: string) {
   try {
-    await navigator.clipboard.writeText(selection)
+    await navigator.clipboard.writeText(text)
     notify.success("Copied")
   } catch {
     notify.error("The browser refused clipboard access")
   }
+}
+
+/**
+ * Gives the pointer back to the page while the program in the pane is asking
+ * for mouse reports.
+ *
+ * `shouldForceSelection` is xterm's own decision point for "this drag belongs
+ * to the browser" — its selection service and its mouse-report forwarding both
+ * ask it the same question, so answering once is what keeps the two from
+ * disagreeing. Normally the answer is "only with Shift held"; here it is
+ * inverted, because a plain drag selecting is the whole point and **Alt** is
+ * left as the way through to the programs that want a mouse of their own
+ * (vim, htop, less). The wheel is bound separately inside xterm and does not
+ * consult this, so scrolling the history is untouched.
+ *
+ * It is reached through `_core` because xterm publishes no option for it. The
+ * property names survive minification and have been there for years; if a
+ * later xterm renames either, selection falls back to needing Shift rather
+ * than breaking.
+ */
+function forcePointerToSelect(term: Terminal) {
+  const selection = (
+    term as unknown as {
+      _core?: { _selectionService?: { shouldForceSelection?: (event: MouseEvent) => boolean } }
+    }
+  )._core?._selectionService
+  if (!selection) return
+  selection.shouldForceSelection = (event: MouseEvent) => !event.altKey
+}
+
+/**
+ * Ctrl+C and Ctrl+V, as they behave everywhere else, without taking Ctrl+C
+ * away from the shell.
+ *
+ * Ctrl+Shift+C and Ctrl+Shift+V are the terminal convention and stay bound,
+ * but they are not what anybody's hands reach for, and a copy that has to be
+ * found with the mouse is not copy. So Ctrl+C copies **only when something is
+ * selected**, and clears the selection as it goes: the interrupt is never more
+ * than one keypress away, and the next Ctrl+C is one.
+ *
+ * Ctrl+V returns false without calling `preventDefault`, which is the whole
+ * trick — xterm then leaves the key alone instead of sending ^V, and the
+ * browser's own paste runs, arriving through `onData` where the multi-line
+ * confirmation still sees it. Reading the clipboard here instead would need a
+ * permission Firefox does not grant at all.
+ */
+function clipboardKey(event: KeyboardEvent, term: Terminal): boolean {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return true
+  if (event.code === "KeyC") {
+    const selection = term.getSelection()
+    if (!selection) return true
+    event.preventDefault()
+    term.clearSelection()
+    void writeClipboard(selection)
+    return false
+  }
+  if (event.code === "KeyV") return false
+  return true
 }
 
 /**

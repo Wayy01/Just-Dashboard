@@ -559,11 +559,26 @@ screen for the whole session, and xterm translates a wheel tick in the
 alternate screen into a cursor key, so scrolling up in a shell walked backwards
 through command history instead of showing what had scrolled past. The
 scrollback that matters is tmux's in any case; xterm's own stays empty because
-tmux repaints the viewport rather than emitting lines. The cost is that a plain
-drag selects into tmux's copy buffer instead of the browser's; **Shift+drag**
-restores the browser's selection, which is the convention every terminal
-emulator uses, and the shortcut sheet lists it because it is exactly the sort
-of thing discovered by finding it broken.
+tmux repaints the viewport rather than emitting lines. The cost used to be that a plain
+drag selected into tmux's copy buffer instead of the browser's — tmux clears
+its own selection on mouse-up, so text highlighted and unhighlighted inside one
+gesture and `getSelection()` stayed empty, which is what made the Copy button
+and the copy shortcut both report that nothing was selected.
+
+`forcePointerToSelect` in `xterm-pane.tsx` takes the pointer back. xterm gates
+mouse-report forwarding on one predicate — `shouldForceSelection`, which its
+selection service and its forwarding both ask, so answering it once is what
+keeps the two from disagreeing — and the pane inverts it: the drag belongs to
+the page unless **Alt** is held, which is left as the way through for a program
+that wants a mouse of its own (vim, htop, less). The wheel is bound separately
+inside xterm and does not consult it, so scrolling still belongs to tmux.
+`clipboardKey` is the other half: Ctrl+C copies **only when something is
+selected** and clears the selection as it goes, so the interrupt is never more
+than one keypress away; Ctrl+V returns false *without* `preventDefault`, so
+xterm leaves the key alone instead of sending ^V and the browser's own paste
+runs — arriving through `onData`, where the multi-line confirmation still sees
+it. Reading the clipboard there instead would need a permission Firefox does
+not grant at all.
 
 ### Databases: eight engines behind one shape
 
