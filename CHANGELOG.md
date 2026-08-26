@@ -4,6 +4,22 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.5 — 26 August 2026
+
+**The updater can build again**
+
+Installing an update failed while building, with "the --mount option requires BuildKit". The updater's image was missing the buildx plugin, so it quietly built with the classic builder — which cannot read this project's own Dockerfile.
+
+### Changed
+
+- Builds are slower the first time and correct every time
+  - The Go build cache mounts are gone, because they are a BuildKit extension the classic builder refuses outright rather than ignores.
+
+### Fixed
+
+- Installing an update no longer fails with "the --mount option requires BuildKit"
+  - Compose delegates builds to buildx and falls back to the classic builder without saying so when it is absent. The image now carries buildx, and the Dockerfile no longer needs it — so an install already stuck on this can update its way out.
+
 ## 0.5.4 — 26 August 2026
 
 **A taken port fails loudly**

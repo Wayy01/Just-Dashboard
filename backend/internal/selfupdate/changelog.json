@@ -1,6 +1,24 @@
 {
-  "latest": "0.5.4",
+  "latest": "0.5.5",
   "releases": [
+    {
+      "version": "0.5.5",
+      "date": "2026-08-26",
+      "title": "The updater can build again",
+      "summary": "Installing an update failed while building, with \"the --mount option requires BuildKit\". The updater's image was missing the buildx plugin, so it quietly built with the classic builder \u2014 which cannot read this project's own Dockerfile.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "Installing an update no longer fails with \"the --mount option requires BuildKit\"",
+          "detail": "Compose delegates builds to buildx and falls back to the classic builder without saying so when it is absent. The image now carries buildx, and the Dockerfile no longer needs it \u2014 so an install already stuck on this can update its way out."
+        },
+        {
+          "kind": "changed",
+          "text": "Builds are slower the first time and correct every time",
+          "detail": "The Go build cache mounts are gone, because they are a BuildKit extension the classic builder refuses outright rather than ignores."
+        }
+      ]
+    },
     {
       "version": "0.5.4",
       "date": "2026-08-26",
