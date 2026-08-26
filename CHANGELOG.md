@@ -4,6 +4,29 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.7 — 26 August 2026
+
+**Selecting and copying in the terminal, as everywhere else**
+
+Text dragged in a terminal pane unhighlighted itself the moment the mouse came up, and the Copy button and its shortcut both answered that nothing was selected. tmux owned the pointer; it now owns only the wheel.
+
+### Added
+
+- Ctrl+C copies the selection, and interrupts when there is nothing selected
+  - Copying clears the selection as it goes, so the next Ctrl+C is an interrupt again. Ctrl+Shift+C still works and is still rebindable.
+- Ctrl+V pastes
+  - It used to send a literal ^V instead. The multi-line paste confirmation still sees it.
+
+### Changed
+
+- Hold Alt to hand the mouse to the program in the pane
+  - For vim, htop, less and anything else that wants to be clicked. The wheel still scrolls the session's history with no modifier at all.
+
+### Fixed
+
+- A plain drag selects text, and it stays selected
+  - tmux's mouse mode was taking the drag, drawing its own selection and clearing it on mouse-up — so the browser never had one, which is why every way of copying reported an empty selection.
+
 ## 0.5.6 — 26 August 2026
 
 **Connect the database your application already uses**
