@@ -29,8 +29,8 @@ go run ./cmd/server                 # needs JD_MASTER_KEY set and JD_DATA_DIR wr
 `go.mod` declares `go 1.25.0`; an older local toolchain will try to auto-download 1.25 and
 fail on a network-restricted machine. Check `go version` before blaming the code.
 
-Fourteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
-`httpx`, `metrics`, `netsec`, `procs`, `safepath`, `term`, `updates`). They are all fast and
+Fifteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
+`httpx`, `metrics`, `netsec`, `procs`, `safepath`, `selfupdate`, `term`, `updates`). They are all fast and
 hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
 to run on every change. There are two exceptions, and both take the same shape: they drive a
 real thing outside this process and *skip* when it is absent, so the suite stays green on a
@@ -80,6 +80,8 @@ this repo keeps its own instructions and the generated ones are noise.
 sudo ./install.sh                   # interactive first install; re-runnable, keeps .env
 docker compose up -d --build
 docker compose logs backend | grep "bootstrap admin"   # generated password, printed once
+
+scripts/release.sh 0.6              # cut a release — see "Cutting a release" below
 ```
 
 CONTRIBUTING requires `go build ./...` and `bun run build` to pass before a PR.
@@ -170,7 +172,7 @@ place. Shared request plumbing that belongs to no feature (`atoiDefault`, `timeo
 logger, authenticator, WS upgrader, the three limiters, and in agent mode the `agent.Identity`.
 `api/modules.go` (`moduleSet`) holds the feature backends: `sys`, `metrics`, `docker`,
 `dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `updates`,
-`proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
+`selfUpdate`, `proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
 `backupSched`) and the two deploy pieces (`deployStore`, `deployer`).
 
 Each module is optional by design: a host with no Docker socket, no systemd or no fail2ban
@@ -180,7 +182,9 @@ host" code that the frontend renders as information rather than an error (see `E
 
 `Server.Start(ctx)` is separate from `New` so a failure to schedule background work is
 reported by `main` rather than swallowed during construction. It starts the metrics recorder,
-the Docker event log and the backup scheduler; the recorder is started here rather than lazily on first request
+the Docker event log, the self-update check and the backup scheduler — and it is also where
+`selfupdate.Installer.Reconcile` settles an upgrade that was in flight when this process
+began, which after a successful upgrade is every time. The recorder is started here rather than lazily on first request
 precisely because nothing may ever request it — its whole purpose is to have been running
 while nobody was looking. `Shutdown` releases what outlives a request: metrics sampler,
 backup scheduler, live PTYs, database pools, the Docker client.
@@ -723,6 +727,106 @@ backend module still tests on its own. `frontend/package.json` carries a third c
 npm demands the field; the same test pins it to the same release, loosely, since npm wants
 three components and the product version has two.
 
+A fourth file now joins them, and it is the one that cannot be skipped:
+`backend/internal/selfupdate/changelog.json` says what the release *contains*.
+`TestChangelogHeadIsTheProductVersion` pins its newest entry to `version.Version` in both
+directions, because both directions are wrong in a way that reaches every install in the
+world — see the next section.
+
+### Cutting a release
+
+**When the user asks for a new version, they name it: "make this 0.6", "release 0.6.1".
+That is the trigger, and this is what it means.** It is one command, and it is not
+`git tag` — a release here is a commit on the tracked branch, because that is what every
+install compares itself against.
+
+```bash
+# 1. Write the release notes FIRST, in backend/internal/selfupdate/changelog.json.
+#    Anywhere in the array; it is sorted on read.
+# 2. Then:
+scripts/release.sh 0.6
+```
+
+`scripts/release.sh` bumps `internal/version/version.go`, `frontend/src/lib/version.ts` and
+`frontend/package.json`, regenerates the root `CHANGELOG.md` from the same JSON, and runs the
+two tests that pin all four together. It refuses — before touching anything — if the
+changelog does not already describe the version being cut, and prints the entry skeleton to
+fill in. `CHANGELOG.md` is **generated**; never edit it by hand.
+
+The ordering is deliberate and is the whole point of the rule. Every install in the world
+decides whether to offer itself an update by comparing its own `version.Version` against the
+changelog at the head of the tracked branch, so:
+
+- a version bumped with no changelog entry is a release nobody is told about, and
+- a changelog entry with no version bump is every existing install permanently offering
+  itself an update it already has.
+
+Both are caught by the test run rather than by an operator. Writing the notes first is what
+makes "0.6" a release with something to say rather than a number.
+
+A changelog entry is written for the person deciding whether to upgrade a root-equivalent
+panel on their own server, not for the person who wrote the code. Each change carries a
+`kind` (`added`, `changed`, `fixed`, `removed`, `security`, `deprecated` — a closed set the
+parser enforces) and reads as what they can now do; `detail` is for where the consequence is
+not obvious, and most changes do not need one. `breaking: true` requires a `breakingNote`
+saying what has to be done by hand, and the UI refuses to fold it away.
+
+### Updating the dashboard itself
+
+`internal/selfupdate` is the one module that manages the product rather than the server, and
+it exists because the honest answer to "how do I upgrade this" used to be an ssh session.
+Four pieces:
+
+**The changelog is data, not prose.** `changelog.json` is embedded with `go:embed` *and*
+fetched from `raw.githubusercontent.com` at the tracked branch, parsed by the same function
+both times — so a malformed file fails the test run before it can be a malformed file every
+install downloads. Markdown would have needed a parser and could not answer the questions
+the UI actually asks: which releases sit between this install and the newest, and what kind
+is each line. Reading it needs no network: the compiled-in copy is what an install with
+`JD_UPDATE_CHECK=false` still shows.
+
+**The check is the only outbound request this product makes on its own initiative**, and it
+is kept deliberately small: one unauthenticated GET, four times a day, a user agent carrying
+the product and version and nothing else, and a switch to turn it off. A failure keeps the
+previous good answer rather than blanking the banner, because a dropped tunnel is a normal
+Tuesday here and a notice that flickers is one nobody trusts.
+
+**Where the install lives is discovered, not configured.** The dashboard asks Docker which
+container bind-mounts its own data directory — the directory holding the database this
+process has open, which is decisive where a service name is not — and reads the compose
+`working_dir` label off it. `JD_UPDATE_DIR` is the escape hatch, and an install that cannot
+be identified says so precisely instead of showing a button that fails.
+
+**The upgrade runs in a sibling container, and that is the load-bearing decision.**
+`docker compose up -d --build` on this stack rebuilds three images and recreates three
+containers, one of which is the process that ran the command. A child process is killed
+with the backend's cgroup somewhere in the middle, leaving the frontend and proxy never
+recreated and no way to report it. So the backend creates a *separate container* through the
+Docker socket — running its own image, which already carries git, the docker CLI and the
+compose plugin, so there is nothing to pull — and that container is untouched by its own
+stack being rebuilt around it. It writes progress to `self-update.json` and a transcript to
+`self-update.log` in `JD_DATA_DIR`, which both halves mount, so the *new* backend can read
+what the old one was doing. `Installer.Reconcile` runs at boot and is the other half: the
+updater still alive means leave it, gone with the version moved means it worked (this
+process running at all is the proof), gone with the version unchanged means it stopped.
+
+Two details inside the upgrade are worth keeping. It **fast-forwards, never resets** —
+unlike `internal/deploy`, whose target's working tree is disposable, this is the operator's
+own checkout and an edited compose file is the normal case, so a local change survives
+unless it genuinely collides and git says exactly what is in the way. And it **waits for the
+dashboard to answer** on its own health URL before calling itself finished, because
+`compose up -d` returns as soon as containers start and a backend that starts and then dies
+looks identical from there.
+
+On the frontend, `hooks/use-self-update.tsx` is one poll for the whole shell and its gotcha
+is the feature's whole design problem: **the API goes away in the middle of the thing it is
+watching**. A poll that fails while a run is in flight is rendered as "restarting", never as
+an error, and the cadence is set from the fetch rather than from an effect so a failed fetch
+does not drop back to the five-minute interval. `components/update/` is the notice in the
+sidebar footer (which renders *nothing* when there is nothing to say), the release-notes
+sheet, and the panel at the top of `/updates` — where the dashboard's own version sits above
+the host's packages, because "what can be updated on this machine" is one question.
+
 ### Deployment topology
 
 ```
@@ -749,10 +853,14 @@ App Router, all pages `"use client"`, one page per feature under
 
 ### The shell
 
-`(dashboard)/layout.tsx` is the authenticated shell and owns four things:
-`CommandPaletteProvider`, `SidebarProvider` + `AppSidebar`, `TopBar`, and `MetricsStream`
+`(dashboard)/layout.tsx` is the authenticated shell and owns five things:
+`CommandPaletteProvider`, `SelfUpdateProvider`, `SidebarProvider` + `AppSidebar`, `TopBar`,
+and `MetricsStream`
 (which renders nothing and exists to hold the metrics socket open for the whole shell, so the
-Overview charts and the top bar's vitals keep filling while you are on another page). Its
+Overview charts and the top bar's vitals keep filling while you are on another page).
+`SelfUpdateProvider` is one poll of the dashboard's own version for the sidebar notice and
+the Updates page together, and is what keeps that poll alive across the moment the backend
+restarts itself. Its
 redirect to `/login` is convenience, not a control — every API call behind it is
 independently authenticated by the server.
 
@@ -1073,7 +1181,16 @@ A change that weakens any of these has to say so explicitly:
    Mongo pipeline with `$out`/`$merge`, a `critical` statement in the query runner, restoring
    a database or a backup over live data, `compose down`, removing a Docker volume, any prune,
    deleting a dashboard or Linux account, a recursive directory delete, `git discard` and
-   `git reset --hard`, toggling the firewall, applying package updates.
+   `git reset --hard`, toggling the firewall, applying package updates, and installing a new
+   version of the dashboard itself.
+
+   That last one is worth spelling out, because it is the newest and the most tempting to
+   soften: the phrase is the **version being installed** (`0.6`), not a fixed sentence. It
+   names the object, which is what every other typed route here does — a stack's name for
+   `compose down`, a table's name for `DROP TABLE` — and what has to be read before pressing
+   a button in the sidebar is *which* version. A release lands every few weeks, and an
+   install that comes back broken is recovered over ssh rather than from here, so it sits
+   squarely on the rare-and-unrecoverable side of the frequency test.
 
    Not typed, because they are routine or recoverable or both: deleting rows and documents and
    Redis keys, dropping an index, forgetting a connection, stopping a database session,

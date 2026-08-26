@@ -94,6 +94,7 @@ func (s *Server) Routes() http.Handler {
 			s.mountFileRoutes(r)
 			s.mountGitRoutes(r)
 			s.mountUpdateRoutes(r)
+			s.mountSelfUpdateRoutes(r)
 			s.mountProxyRoutes(r)
 			s.mountDatabaseRoutes(r)
 			s.mountLinuxUserRoutes(r)

@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { MetricsStream } from "@/hooks/use-metrics"
+import { SelfUpdateProvider } from "@/hooks/use-self-update"
 import { AppSidebar } from "@/components/app-sidebar"
 import { Logo } from "@/components/logo"
 import { TopBar } from "@/components/top-bar"
@@ -24,20 +25,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <CommandPaletteProvider>
-      <SidebarProvider style={{ "--sidebar-width": "15.5rem" } as React.CSSProperties}>
-        {/* Owns the metrics socket for the whole shell, so the Overview charts
+      {/* One poll of the dashboard's own version for the whole shell: the
+          sidebar notice and the Updates page are on screen together, and the
+          provider is also what keeps the poll alive across the moment the
+          backend restarts itself during an upgrade. */}
+      <SelfUpdateProvider>
+        <SidebarProvider style={{ "--sidebar-width": "15.5rem" } as React.CSSProperties}>
+          {/* Owns the metrics socket for the whole shell, so the Overview charts
             and the top bar's vitals keep filling while you are on another
             page. Renders nothing. */}
-        <MetricsStream />
-        <AppSidebar />
-        <SidebarInset className="h-svh min-w-0 overflow-hidden">
-          <TopBar />
-          {/* The scroll lives here rather than on the document, which is what
+          <MetricsStream />
+          <AppSidebar />
+          <SidebarInset className="h-svh min-w-0 overflow-hidden">
+            <TopBar />
+            {/* The scroll lives here rather than on the document, which is what
               keeps the top bar pinned and lets a page ask for the remaining
               height (`<Page fill>`) instead of growing past the viewport. */}
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
-        </SidebarInset>
-      </SidebarProvider>
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+              {children}
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </SelfUpdateProvider>
     </CommandPaletteProvider>
   )
 }

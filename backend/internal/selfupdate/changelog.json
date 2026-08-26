@@ -1,0 +1,61 @@
+{
+  "latest": "0.5.1",
+  "releases": [
+    {
+      "version": "0.5.1",
+      "date": "2026-08-26",
+      "title": "Updates, in the dashboard",
+      "summary": "Just Dashboard now tells you when a new version exists, shows you exactly what is in it, and installs it for you. Until now the only way to find out was to visit the repository, and the only way to upgrade was to ssh in and rebuild by hand.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "A notice above your account in the sidebar when a newer version is out",
+          "detail": "It carries the version, what the release is called, and two buttons: install it, or read what changed first. It is not there at all when you are up to date."
+        },
+        {
+          "kind": "added",
+          "text": "Release notes for every version between the one you run and the newest",
+          "detail": "An install three versions behind is upgrading past three sets of changes, so all three are shown rather than only the last."
+        },
+        {
+          "kind": "added",
+          "text": "One-click install: pull, rebuild and restart the whole stack",
+          "detail": "The upgrade runs in a separate container so it survives the dashboard being rebuilt underneath it, and it waits for the dashboard to answer again before calling itself finished."
+        },
+        {
+          "kind": "added",
+          "text": "A live transcript of the upgrade, and the outcome once it is done",
+          "detail": "The page keeps watching while the backend restarts, so you see the build output rather than a spinner and a guess."
+        },
+        {
+          "kind": "added",
+          "text": "The dashboard's own version and history on the Updates page, beside the host's packages"
+        },
+        {
+          "kind": "changed",
+          "text": "Local changes in the install directory are kept, not discarded",
+          "detail": "The upgrade fast-forwards rather than resetting, so an edited compose file or Caddyfile survives — and when one genuinely collides, the upgrade stops and says what is in the way instead of deleting it."
+        },
+        {
+          "kind": "added",
+          "text": "JD_UPDATE_CHECK, JD_UPDATE_REPO, JD_UPDATE_BRANCH and JD_UPDATE_DIR",
+          "detail": "Turn the online check off entirely, follow a fork, follow a different branch, or name the directory you installed into."
+        }
+      ]
+    },
+    {
+      "version": "0.5",
+      "date": "2026-08-22",
+      "title": "One panel for one server",
+      "summary": "Metrics with history, Docker, processes, logs, a real terminal, files, git, eight database engines, the reverse proxy, the firewall, backups and deploys — behind one login with mandatory two-factor and a network allowlist in front of it.",
+      "changes": [
+        { "kind": "added", "text": "Overview with recorded history, saturation signals and a health verdict" },
+        { "kind": "added", "text": "Docker: containers, stacks, images, volumes, networks, events and a diagnosis for each container" },
+        { "kind": "added", "text": "A persistent terminal with tmux windows, panes, folders and colours" },
+        { "kind": "added", "text": "Databases for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis" },
+        { "kind": "added", "text": "Files, git, logs, processes, proxy and TLS, firewall, backups and deployments" },
+        { "kind": "added", "text": "Capability-based roles, API tokens, an audit trail and twelve themes" }
+      ]
+    }
+  ]
+}

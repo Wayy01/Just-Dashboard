@@ -57,6 +57,12 @@ carries no licensing question at all.
   `s.destructive` is dangerous, and adding a phrase to something done several
   times a sitting is what teaches operators to type phrases without reading
   them.
+- Never edit `CHANGELOG.md` by hand — it is generated from
+  `backend/internal/selfupdate/changelog.json`, which is also the file every
+  install in the world reads to find out whether it is behind. If your change
+  is worth a release, add the entry there and run `scripts/release.sh <version>`;
+  it bumps the version everywhere it appears and regenerates the markdown. The
+  Go test run fails if the two ever disagree, in either direction.
 - Match the surrounding code. Comments explain *why*, not *what*.
 
 ## Security issues

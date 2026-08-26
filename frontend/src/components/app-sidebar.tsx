@@ -27,6 +27,7 @@ import {
 import { useAuth } from "@/hooks/use-auth"
 import { useCommandPalette } from "@/components/command-palette"
 import { Logo, LogoMark } from "@/components/logo"
+import { UpdateNotice } from "@/components/update/update-notice"
 import type { Capability } from "@/lib/types"
 import {
   Sidebar,
@@ -190,7 +191,14 @@ export function AppSidebar() {
         })}
       </SidebarContent>
 
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="gap-2 p-2">
+        {/* Above the account card, not below it and not in the nav. It is the
+            one thing in this shell that is about the dashboard rather than
+            about the server, and it has to be seen without being looked for —
+            a page for it would be a page nobody visits, which is how a
+            self-hosted panel ends up eighteen months behind. It renders
+            nothing when there is nothing to say. */}
+        <UpdateNotice collapsed={collapsed} />
         <UserCard collapsed={collapsed} />
       </SidebarFooter>
       <SidebarRail />

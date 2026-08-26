@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/metrics"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
@@ -47,6 +48,24 @@ type Config struct {
 	// nothing to show for the time nobody was watching.
 	MetricsInterval  time.Duration
 	MetricsRetention time.Duration
+
+	// UpdateCheck is whether the dashboard may ask the repository whether a
+	// newer version exists. It is the only outbound request this product makes
+	// on its own initiative, which is worth a switch of its own: plenty of
+	// these installs sit on machines that deliberately reach nothing. Turning
+	// it off leaves the changelog for the installed version readable, because
+	// that half is compiled in.
+	UpdateCheck bool
+	// UpdateRepo is the GitHub repository releases are read from, as
+	// owner/name. A fork sets it and starts describing its own releases.
+	UpdateRepo string
+	// UpdateBranch is the ref the changelog is read from and the checkout is
+	// fast-forwarded to.
+	UpdateBranch string
+	// UpdateDir is the checkout this dashboard was installed from. Empty is
+	// the normal case: it is discovered by asking Docker where this stack was
+	// deployed from, which is a fact nobody has to keep in step with reality.
+	UpdateDir string
 }
 
 func Load() (*Config, error) {
@@ -79,6 +98,10 @@ func Load() (*Config, error) {
 		Dev:              l.boolean("JD_DEV", false),
 		MetricsInterval:  l.window("JD_METRICS_INTERVAL", metrics.DefaultInterval),
 		MetricsRetention: l.optionalWindow("JD_METRICS_RETENTION", metrics.DefaultRetention),
+		UpdateCheck:      l.boolean("JD_UPDATE_CHECK", true),
+		UpdateRepo:       env("JD_UPDATE_REPO", selfupdate.DefaultRepo),
+		UpdateBranch:     env("JD_UPDATE_BRANCH", selfupdate.DefaultRef),
+		UpdateDir:        env("JD_UPDATE_DIR", ""),
 	}
 
 	// The dashboard is root-equivalent. It must never be reachable from the

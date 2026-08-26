@@ -1,5 +1,10 @@
 export type Capability =
-  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
+  | "read"
+  | "service.control"
+  | "file.write"
+  | "terminal"
+  | "destructive"
+  | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -899,7 +904,14 @@ export type Listener = {
 }
 
 export type DbDriver =
-  "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "oracle" | "mongodb" | "redis"
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse"
+  | "oracle"
+  | "mongodb"
+  | "redis"
 
 /**
  * What one engine can do, as the server reports it.
@@ -1625,4 +1637,88 @@ export type DbSchemaGraph = {
   tables: DbGraphTable[]
   edges: DbGraphEdge[]
   truncated: boolean
+}
+
+// ---------------------------------------------------------------------------
+// The dashboard's own version, its changelog, and updating it in place.
+//
+// These mirror internal/selfupdate. The changelog is structured rather than
+// markdown for the reason that package gives: the UI has to select the
+// releases between the installed version and the newest, and paint a tag
+// against each change — neither of which is a thing you can do to a paragraph.
+// ---------------------------------------------------------------------------
+
+export type ChangeKind = "added" | "changed" | "fixed" | "removed" | "security" | "deprecated"
+
+export type ReleaseChange = {
+  kind: ChangeKind
+  text: string
+  /** The sentence under the line, where the consequence is not obvious. */
+  detail?: string
+}
+
+export type Release = {
+  version: string
+  /** A calendar day, YYYY-MM-DD. */
+  date: string
+  title: string
+  summary?: string
+  changes: ReleaseChange[]
+  /** Needs the operator to do something by hand; never hidden behind a click. */
+  breaking?: boolean
+  breakingNote?: string
+}
+
+export type UpdateRunStatus = "pending" | "running" | "success" | "failed"
+export type UpdatePhase = "queued" | "fetching" | "building" | "restarting" | "finished"
+
+/** One upgrade attempt, as recorded on disk by the container that ran it. */
+export type UpdateRun = {
+  id: string
+  status: UpdateRunStatus
+  phase: UpdatePhase
+  fromVersion: string
+  toVersion: string
+  ref: string
+  dir: string
+  compose: string
+  image: string
+  container: string
+  health?: string
+  fromCommit?: string
+  toCommit?: string
+  actor: string
+  startedAt: string
+  updatedAt: string
+  finishedAt?: string
+  error?: string
+}
+
+export type SelfUpdateReport = {
+  version: string
+  latest?: string
+  available: boolean
+  /** Releases newer than the installed version, newest first. */
+  releases: Release[]
+  /** Everything this build knows about its own past; needs no network. */
+  history: Release[]
+  breaking: boolean
+  check: {
+    enabled: boolean
+    checkedAt?: string
+    error?: string
+    source?: string
+    repo: string
+    ref: string
+  }
+  install: {
+    supported: boolean
+    reason?: string
+    dir?: string
+    compose?: string
+    /** Uncommitted changes in the checkout, in `git status --porcelain` form. */
+    dirty?: string[]
+  }
+  run?: UpdateRun
+  log?: string
 }
