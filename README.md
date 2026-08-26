@@ -325,7 +325,10 @@ The installer writes the ones that matter. These are for tuning afterwards.
 | `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
 | `JD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. Use `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale, and keep loopback or you lose the tunnel. |
 | `JD_TRUSTED_PROXIES` | none | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof its way past the allowlist. One hop is supported: the bundled Caddy replaces the header with the client's real address, so anything placed *in front* of Caddy becomes the client as far as the allowlist is concerned. |
-| `JD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave it on loopback; the proxy is the entry point. |
+| `JD_PORT` | `8443` | The port you connect to — the only one the proxy publishes. |
+| `JD_BACKEND_PORT` | `8080` | The API's loopback port, behind the proxy. |
+| `JD_FRONTEND_PORT` | `3000` | The UI's loopback port, behind the proxy. |
+| `JD_ADDR` | `127.0.0.1:$JD_BACKEND_PORT` | Where the API binds, if you need to override the host as well as the port. Leave it on loopback; the proxy is the entry point. |
 | `JD_ALLOWED_ORIGINS` | none | Extra browser origins allowed to open WebSockets. Only needed if the UI is served from a different origin. |
 
 **Behaviour**

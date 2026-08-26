@@ -835,6 +835,16 @@ browser ──(Tailscale / SSH tunnel)──▶ Caddy :8443
                                         └─ /*     ─▶ frontend :3000 (loopback)
 ```
 
+All three ports are variables — `JD_PORT` (8443), `JD_BACKEND_PORT` (8080), `JD_FRONTEND_PORT`
+(3000) — read by `docker-compose.yml` and `deploy/Caddyfile` from the same `.env`, and chosen
+from what is free by `install.sh`. The defaults are the three most contested numbers on a
+Linux server, and the collision they used to produce was the worst kind to debug: only the
+frontend and backend fail to bind, while the proxy comes up clean and forwards to whatever
+already held the port — so the operator reaches somebody else's application over the
+dashboard's own certificate, with nothing in any log saying so. The variables must stay
+readable from one place; a proxy forwarding to a port its service did not bind is exactly the
+failure they exist to remove.
+
 Caddy (`deploy/Caddyfile`) is the only listener bound to anything but loopback, and it binds
 `{$JD_SITE}` **plus** loopback explicitly — site addresses alone would leave Caddy listening
 on every interface. Serving UI and API from one origin is load-bearing: `SameSite=Strict`

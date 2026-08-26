@@ -1,6 +1,34 @@
 {
-  "latest": "0.5.1",
+  "latest": "0.5.2",
   "releases": [
+    {
+      "version": "0.5.2",
+      "date": "2026-08-26",
+      "title": "Ports that do not collide",
+      "summary": "The dashboard's three ports \u2014 8443, 8080 and 3000 \u2014 are the three most contested numbers on a Linux server, and a machine already using one of them got a dashboard that silently served somebody else's application. All three are now settings, and the installer picks free ones.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A port already in use no longer serves you the wrong application",
+          "detail": "Only the frontend and backend failed to bind; the proxy came up clean and forwarded to whatever already held the port, so you reached another app over the dashboard's own certificate with nothing anywhere saying why."
+        },
+        {
+          "kind": "added",
+          "text": "JD_PORT, JD_BACKEND_PORT and JD_FRONTEND_PORT",
+          "detail": "Change any of the three in .env. The compose file and the proxy read the same variables, so they cannot drift apart."
+        },
+        {
+          "kind": "changed",
+          "text": "install.sh checks all three ports and picks free ones",
+          "detail": "It says which port was taken and what it used instead, and the connection details it prints at the end carry the ports it actually chose."
+        },
+        {
+          "kind": "changed",
+          "text": "`bun dev` follows JD_BACKEND_PORT",
+          "detail": "A developer who moved the backend off 8080 no longer has to find a second variable to keep the dev proxy working."
+        }
+      ]
+    },
     {
       "version": "0.5.1",
       "date": "2026-08-26",
@@ -34,7 +62,7 @@
         {
           "kind": "changed",
           "text": "Local changes in the install directory are kept, not discarded",
-          "detail": "The upgrade fast-forwards rather than resetting, so an edited compose file or Caddyfile survives — and when one genuinely collides, the upgrade stops and says what is in the way instead of deleting it."
+          "detail": "The upgrade fast-forwards rather than resetting, so an edited compose file or Caddyfile survives \u2014 and when one genuinely collides, the upgrade stops and says what is in the way instead of deleting it."
         },
         {
           "kind": "added",
@@ -47,14 +75,32 @@
       "version": "0.5",
       "date": "2026-08-22",
       "title": "One panel for one server",
-      "summary": "Metrics with history, Docker, processes, logs, a real terminal, files, git, eight database engines, the reverse proxy, the firewall, backups and deploys — behind one login with mandatory two-factor and a network allowlist in front of it.",
+      "summary": "Metrics with history, Docker, processes, logs, a real terminal, files, git, eight database engines, the reverse proxy, the firewall, backups and deploys \u2014 behind one login with mandatory two-factor and a network allowlist in front of it.",
       "changes": [
-        { "kind": "added", "text": "Overview with recorded history, saturation signals and a health verdict" },
-        { "kind": "added", "text": "Docker: containers, stacks, images, volumes, networks, events and a diagnosis for each container" },
-        { "kind": "added", "text": "A persistent terminal with tmux windows, panes, folders and colours" },
-        { "kind": "added", "text": "Databases for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis" },
-        { "kind": "added", "text": "Files, git, logs, processes, proxy and TLS, firewall, backups and deployments" },
-        { "kind": "added", "text": "Capability-based roles, API tokens, an audit trail and twelve themes" }
+        {
+          "kind": "added",
+          "text": "Overview with recorded history, saturation signals and a health verdict"
+        },
+        {
+          "kind": "added",
+          "text": "Docker: containers, stacks, images, volumes, networks, events and a diagnosis for each container"
+        },
+        {
+          "kind": "added",
+          "text": "A persistent terminal with tmux windows, panes, folders and colours"
+        },
+        {
+          "kind": "added",
+          "text": "Databases for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis"
+        },
+        {
+          "kind": "added",
+          "text": "Files, git, logs, processes, proxy and TLS, firewall, backups and deployments"
+        },
+        {
+          "kind": "added",
+          "text": "Capability-based roles, API tokens, an audit trail and twelve themes"
+        }
       ]
     }
   ]

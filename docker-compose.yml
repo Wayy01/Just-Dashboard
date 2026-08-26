@@ -7,6 +7,11 @@
 #                                                     ├─ /api  ─▶ backend:8080
 #                                                     └─ /*    ─▶ frontend:3000
 #
+# All three ports are JD_PORT / JD_BACKEND_PORT / JD_FRONTEND_PORT, because
+# those defaults are the three most contested numbers on a Linux server and a
+# host already using one is the normal case. Change them in .env; the proxy
+# reads the same variables, so the three files cannot drift.
+#
 # The proxy binds to 127.0.0.1 by default, so nothing is exposed until you
 # deliberately publish it on a private interface. Serving both halves from one
 # origin is also what lets the SameSite=Strict session cookie and the
@@ -32,7 +37,10 @@ services:
     # with backend/internal/config, .env.example and the README table.
     environment:
       # Loopback only. The proxy in front of it is the single entry point.
-      JD_ADDR: 127.0.0.1:8080
+      # The port is a variable for the reason the header gives: 8080 is taken
+      # on a great many servers, and the collision used to surface as a
+      # dashboard that proxied you to somebody else's application.
+      JD_ADDR: 127.0.0.1:${JD_BACKEND_PORT:-8080}
       JD_DATA_DIR: /var/lib/just-dashboard
       # Required. Generate once with: openssl rand -hex 32
       JD_MASTER_KEY: ${JD_MASTER_KEY:?set JD_MASTER_KEY in .env}
@@ -106,14 +114,18 @@ services:
     network_mode: host
     environment:
       HOSTNAME: 127.0.0.1
-      PORT: "3000"
+      # 3000 is the single most contested port on any server that has ever run
+      # a Node process. When it is taken, this container cannot bind and the
+      # proxy's catch-all forwards to whatever did — which is why the number
+      # is a variable rather than a constant.
+      PORT: "${JD_FRONTEND_PORT:-3000}"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:${JD_FRONTEND_PORT:-3000}/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s
@@ -133,6 +145,12 @@ services:
     network_mode: host
     environment:
       JD_SITE: ${JD_SITE:-localhost}
+      # The same three numbers the other two services bind, read from one
+      # place. A proxy listening on one port while the service it forwards to
+      # binds another is exactly the failure these variables exist to remove.
+      JD_PORT: ${JD_PORT:-8443}
+      JD_BACKEND_PORT: ${JD_BACKEND_PORT:-8080}
+      JD_FRONTEND_PORT: ${JD_FRONTEND_PORT:-3000}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
