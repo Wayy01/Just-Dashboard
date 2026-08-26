@@ -171,7 +171,7 @@ place. Shared request plumbing that belongs to no feature (`atoiDefault`, `timeo
 `api.Server` holds the dependency graph — config, logger, store, auth service, sealer, audit
 logger, authenticator, WS upgrader, the three limiters, and in agent mode the `agent.Identity`.
 `api/modules.go` (`moduleSet`) holds the feature backends: `sys`, `metrics`, `docker`,
-`dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `updates`,
+`dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `github`, `updates`,
 `selfUpdate`, `proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
 `backupSched`) and the two deploy pieces (`deployStore`, `deployer`).
 
@@ -579,6 +579,52 @@ xterm leaves the key alone instead of sending ^V and the browser's own paste
 runs — arriving through `onData`, where the multi-line confirmation still sees
 it. Reading the clipboard there instead would need a permission Firefox does
 not grant at all.
+
+### Signing in to GitHub
+
+`internal/ghx` is the GitHub half of the git page, and it exists because the honest answer
+to "why did my push ask for a password" used to be an ssh session.
+
+**Everything is per repository, and that is not a detail.** gh stores its token under the
+home of whichever account runs it, and writes a credential helper into that account's git
+config; gitx already runs git as the account that *owns the checkout* (`hostexec.AsOwner`),
+so ghx runs gh the same way. Sign in as root and push as `deploy` and the push is anonymous
+again. Every route therefore takes `?path=`, and the account chip says which host account
+the credential belongs to rather than implying the answer is global.
+
+**gh is in the image, not borrowed from the host.** The host's copy would run as the host's
+root in the host's namespaces, and the account that actually pushes would see neither the
+token nor the helper. Signed in from this image both halves land in the same account's
+home — which is bind-mounted from the host, so a shell over ssh finds the same credential.
+
+**The login is the CLI's own device flow, performed here.** `gh auth login` is a series of
+prompts and a web request has nobody to answer one, so `device.go` runs the OAuth device
+flow itself — against the GitHub CLI's own public client id, which is what makes the token
+indistinguishable from one gh minted, and what the operator sees named on the authorisation
+screen — and hands the finished token to `gh auth login --with-token`, which is
+non-interactive by design. The device code stays on the server and the access token never
+reaches the browser: the page holds an opaque flow id and polls with that. GitHub's polling
+interval is enforced server-side from the flow's own clock, because its remedy for polling
+too fast is to slow the whole flow down. `LoginWithToken` is three steps that are one
+operation — store the token, `gh auth setup-git`, and write a committer identity if the
+account has none — since any two without the third is a state nobody can see: a token with
+no helper pushes anonymously, a helper with no identity fails at the commit instead. The
+pasted-token path is the way in for a GitHub Enterprise host or a machine account.
+
+**`gh auth status` is parsed, because it has no `--json` and never will.** It is written for
+a person, so the wording is the contract; `parseAuthStatus` matches both the wordings gh has
+shipped (`as <name>` and `account <name>`) and `ghx_test.go` pins them, because the sign-in
+state of the whole page hangs off it. Every field it reads is optional, so a future rewording
+costs a missing scope list rather than a broken page.
+
+**Pull requests are the one thing git has no verb for.** `CreatePull` shells to `gh pr
+create`; the handler pushes the branch first, because gh refuses a branch the remote has
+never seen and its remedy is an interactive prompt. That is also why `gitx.Push` now sets the
+upstream when there is none rather than repeating git's "no upstream branch" advice, which is
+a command to copy into a terminal the operator is trying not to open. `gitConfigured` answers
+one question with one dot — would a commit and a push from this page be this account's — and
+knows that an **ssh** remote never asks a credential helper anything, so it reports the
+identity and stays quiet about the token.
 
 ### Databases: eight engines behind one shape
 

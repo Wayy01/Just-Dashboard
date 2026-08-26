@@ -14,6 +14,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/dbx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
 )
 
 // Finding and making database servers, so nobody has to write a DSN by hand.
@@ -51,18 +52,24 @@ type detectedServer struct {
 	Status  string `json:"status,omitempty"`
 }
 
+// handleDBDetected lists what is running here, from both places it can be.
+//
+// Docker is no longer required. A server with no Docker socket at all still
+// runs databases — that is what a VPS with an apt-installed Postgres is — and
+// answering "unavailable" to the whole question because one of its two halves
+// is missing was how a native database became invisible.
 func (s *Server) handleDBDetected(w http.ResponseWriter, r *http.Request) error {
 	httpx.SkipAudit(r)
-	if s.modules.docker == nil {
-		return httpx.Err(http.StatusServiceUnavailable, "docker_unavailable",
-			"this host has no Docker socket, so there is nothing to detect")
-	}
 	ctx, cancel := timeoutCtx(r, 30*time.Second)
 	defer cancel()
 
-	containers, err := s.modules.docker.ListContainers(ctx, false)
-	if err != nil {
-		return httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
+	var containers []dockerx.Container
+	if s.modules.docker != nil {
+		var err error
+		containers, err = s.modules.docker.ListContainers(ctx, false)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
+		}
 	}
 	existing, err := s.existingDSNs(ctx)
 	if err != nil {
@@ -90,8 +97,52 @@ func (s *Server) handleDBDetected(w http.ResponseWriter, r *http.Request) error 
 			Status:    c.Status,
 		})
 	}
+	for _, cand := range s.hostCandidates(ctx, out.Servers) {
+		out.Servers = append(out.Servers, detectedServer{
+			Candidate: cand,
+			Adopted:   existing[addressKey(cand.Host, cand.Port)],
+		})
+	}
 	httpx.JSON(w, http.StatusOK, out)
 	return nil
+}
+
+// hostCandidates finds the database servers installed on the machine itself,
+// as opposed to the ones in containers.
+//
+// A container published to the host is owned by `docker-proxy`, which matches
+// no rule, so the two halves do not normally overlap. One case does: a
+// container on the host's network namespace, which looks from here exactly
+// like a native server. Those are dropped by address, because the Docker half
+// knows their credentials and this one does not — reporting the same server
+// twice, once connectable and once asking for a password, would be worse than
+// either answer alone.
+func (s *Server) hostCandidates(ctx context.Context, known []detectedServer) []dbx.Candidate {
+	listeners, err := proxysvc.ListListeners(ctx)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, k := range known {
+		seen[addressKey(k.Host, k.Port)] = true
+	}
+	out := []dbx.Candidate{}
+	for _, l := range listeners {
+		cand := dbx.DetectHost(dbx.HostListener{
+			Protocol: l.Protocol, Address: l.Address, Port: int(l.Port),
+			Process: l.Process, User: l.User,
+		})
+		if cand == nil {
+			continue
+		}
+		key := addressKey(cand.Host, cand.Port)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, *cand)
+	}
+	return out
 }
 
 // existingDSNs maps a host:port already covered by a saved connection to that
@@ -295,16 +346,16 @@ func (s *Server) saveConnection(
 // existed the whole time and had nowhere to go. Silence is the one answer a
 // reconcile must never give about a server it can see.
 func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
-	if s.modules.docker == nil {
-		return httpx.Err(http.StatusServiceUnavailable, "docker_unavailable",
-			"this host has no Docker socket, so there is nothing to connect")
-	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
 
-	containers, err := s.modules.docker.ListContainers(ctx, false)
-	if err != nil {
-		return httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
+	var containers []dockerx.Container
+	if s.modules.docker != nil {
+		var err error
+		containers, err = s.modules.docker.ListContainers(ctx, false)
+		if err != nil {
+			return httpx.Err(http.StatusBadGateway, "docker_failed", err.Error())
+		}
 	}
 	existing, err := s.existingDSNs(ctx)
 	if err != nil {
@@ -355,6 +406,45 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 		added = append(added, name)
 	}
 
+	// The databases installed on the machine itself, which the loop above
+	// cannot see because they are in no container.
+	needsCredentials := []credentialServer{}
+	for _, cand := range s.hostCandidates(ctx, detectedFrom(containers)) {
+		if name, ok := existing[addressKey(cand.Host, cand.Port)]; ok {
+			skipped = append(skipped, name)
+			continue
+		}
+		dsn := dbx.BuildDSN(cand, "")
+		// An engine that ships with no credentials at all is simply tried, and
+		// kept if it answers. Everything else is asked about rather than
+		// guessed at: a wrong password against the operator's own server is an
+		// authentication failure in their logs, and on a host running fail2ban
+		// it is a step towards banning this dashboard.
+		if cand.NeedsCredentials || dsn == "" || s.probeConnection(ctx, cand.Driver, dsn) != nil {
+			needsCredentials = append(needsCredentials, credentialServer{
+				Driver: string(cand.Driver), Host: cand.Host, Port: cand.Port,
+				Process: cand.Process, Name: dbx.HostConnectionName(cand), DSN: dsn,
+			})
+			continue
+		}
+		name := uniqueConnectionName(dbx.HostConnectionName(cand), existing)
+		contained, err := s.containDSN(cand.Driver, dsn)
+		if err != nil {
+			continue
+		}
+		sealed, err := s.Sealer.Seal(contained)
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		if _, err := s.Store.DB.ExecContext(ctx,
+			`INSERT INTO db_connections(name, driver, dsn_enc, created_at) VALUES(?,?,?,?)`,
+			name, string(cand.Driver), sealed, time.Now().Unix()); err != nil {
+			continue
+		}
+		existing[addressKey(cand.Host, cand.Port)] = name
+		added = append(added, name)
+	}
+
 	if len(added) == 0 {
 		// Nothing happened, so nothing is worth a line in the audit log. The
 		// alternative is an entry every time somebody opens the page.
@@ -365,8 +455,69 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"added": added, "already": skipped, "unreachable": unreachable,
+		"needsCredentials": needsCredentials,
 	})
 	return nil
+}
+
+// credentialServer is a database running on this machine that the dashboard
+// can see but cannot sign in to.
+//
+// It carries the connection string it would use, with the password left out,
+// because that is the difference between "there is a Postgres here somewhere"
+// and a form the operator finishes in one field. Nothing secret is in it: the
+// whole point is that this process does not know the secret.
+type credentialServer struct {
+	Driver  string `json:"driver"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	Process string `json:"process,omitempty"`
+	Name    string `json:"name"`
+	DSN     string `json:"dsn"`
+}
+
+// detectedFrom is the addresses the Docker half already accounts for, so the
+// host half does not report the same server a second time. It reads the
+// published ports only — an inspect per container is what the caller pays for
+// when it actually needs the credentials, and this needs nothing but addresses.
+func detectedFrom(containers []dockerx.Container) []detectedServer {
+	out := []detectedServer{}
+	for _, c := range containers {
+		cand, _ := dbx.Detect(c.Name, c.Image, nil, publishedPorts(c.Ports), nil)
+		if cand != nil {
+			out = append(out, detectedServer{Candidate: *cand})
+		}
+	}
+	return out
+}
+
+// probeConnection dials a DSN once, without keeping anything. Every engine
+// answers something, including the two that are not SQL — a Redis reported as
+// unreachable because the SQL path refused it would be exactly the silence
+// this whole file exists to remove.
+func (s *Server) probeConnection(ctx context.Context, driver dbx.Driver, dsn string) error {
+	contained, err := s.containDSN(driver, dsn)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	switch driver {
+	case dbx.DriverMongo:
+		client, err := dbx.MongoClient(ctx, contained)
+		if err != nil {
+			return err
+		}
+		return client.Disconnect(context.Background())
+	case dbx.DriverRedis:
+		client, err := dbx.RedisClient(ctx, contained, 0)
+		if err != nil {
+			return err
+		}
+		return client.Close()
+	}
+	_, err = dbx.Probe(ctx, driver, contained)
+	return err
 }
 
 // unreachableServer is a database this host is running that could be

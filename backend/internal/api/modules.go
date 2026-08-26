@@ -11,6 +11,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/deploy"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/dockerx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/files"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/ghx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/gitx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/linuxusers"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/logsx"
@@ -42,6 +43,7 @@ type moduleSet struct {
 	term         *term.Manager
 	files        *files.Service
 	git          *gitx.Service
+	github       *ghx.Service
 	updates      *updates.Service
 	selfUpdate   *selfupdate.Service
 	proxy        *proxysvc.Service
@@ -78,6 +80,7 @@ func (s *Server) initModules() {
 	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell, s.Cfg.TerminalUser)
 	s.modules.files = files.New(s.Cfg.FileRoots)
 	s.modules.git = gitx.New(s.Cfg.GitRoots)
+	s.modules.github = ghx.New()
 	s.modules.updates = updates.New()
 	// The one module that manages the dashboard rather than the server. It is
 	// given a *function* for listing containers rather than the Docker client,

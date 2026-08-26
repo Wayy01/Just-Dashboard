@@ -113,6 +113,27 @@ https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.lis
        docker-ce-cli docker-compose-plugin docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
 
+# The GitHub CLI, from GitHub rather than from Debian, which packages it two
+# years behind.
+#
+# It is here rather than being borrowed from the host because of where it puts
+# things. gh stores the token under the home of whichever account runs it and
+# writes a credential helper naming the binary's own path; git then runs as the
+# account owning the repository and asks that helper for the token. The host's
+# gh would run as the host's root in the host's namespaces, and the account
+# that actually pushes would never see either half. Signed in from this image,
+# both halves land in the same account's home — which is bind-mounted from the
+# host, so a shell over ssh finds the same credential.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /etc/apt/keyrings/githubcli.gpg \
+    && chmod a+r /etc/apt/keyrings/githubcli.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli.gpg] \
+https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/just-dashboard /usr/local/bin/just-dashboard
 
 # Runs as root deliberately: managing systemd units, the firewall, host

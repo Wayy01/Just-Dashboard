@@ -32,6 +32,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelToolbar } from "@/components/panel"
+import { GitHubAccountControl } from "@/components/git/github-account"
 import { FileEditorSheet } from "@/components/files/file-editor"
 import { FileRow } from "@/components/files/file-row"
 import { FileTree } from "@/components/files/file-tree"
@@ -364,6 +365,9 @@ export default function FilesPage() {
         description="Browse, edit, organise and transfer files on the host"
         actions={
           <>
+            {/* Edits made here are committed somewhere else, so the account
+                those commits will carry belongs on this page too. */}
+            <GitHubAccountControl />
             <SearchDialog path={path} onOpen={(p, isDir) => (isDir ? setPath(p) : setEditing(p))} />
             <Tooltip>
               <TooltipTrigger asChild>

@@ -6,7 +6,7 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-**Version 0.5.1** · Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.5.8** · Go backend · Next.js frontend · one `docker compose` stack
 
 [Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
@@ -198,6 +198,12 @@ counts, branches, and fetch, pull, push and stash.
 Each command runs as the account that owns the repository, so a pull on a repo owned by
 `deploy` does not leave root-owned files behind for you to find later.
 
+Sign in to GitHub from the page itself: the same device-code flow `gh auth login` uses,
+rendered as a screen rather than a series of prompts. The token is stored where `gh` keeps
+its own — under the home of the account that owns the checkout, which is the account that
+pushes — so commits are recorded as you, pushes are authenticated, and pull requests can be
+opened from the branch you are on without leaving for a browser tab.
+
 ### And the rest
 
 | | |
@@ -218,7 +224,7 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 
 ## Version, and updating
 
-This is **0.5.1**: the panel as a finished single-server product — every page in the tour
+This is **0.5.8**: the panel as a finished single-server product — every page in the tour
 above is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it
 stops. Every release is in [CHANGELOG.md](CHANGELOG.md), and in the dashboard itself.
 

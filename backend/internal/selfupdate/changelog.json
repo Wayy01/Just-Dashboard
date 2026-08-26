@@ -1,6 +1,58 @@
 {
-  "latest": "0.5.7",
+  "latest": "0.5.8",
   "releases": [
+    {
+      "version": "0.5.8",
+      "date": "2026-08-26",
+      "title": "Sign in to GitHub from the page that does the pushing",
+      "summary": "The git page can now hold a GitHub account: the same one-time code flow gh auth login uses, rendered as a screen. Commits are recorded as you, pushes are authenticated, and a pull request can be opened from the branch you are on. A database installed on the server itself is no longer invisible beside the ones in containers, and the commit box stopped disappearing under a long list of changes.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "Sign in to GitHub from the git page",
+          "detail": "The same device-code flow as `gh auth login`, as a screen rather than a series of prompts: a one-time code, github.com, done. The token is stored where gh keeps its own \u2014 under the account that owns the repository, which is the account that pushes \u2014 so it is the same credential a shell on the server would use. A pasted token is the way in for GitHub Enterprise or a machine account."
+        },
+        {
+          "kind": "added",
+          "text": "Commits and pushes are made as the signed-in account",
+          "detail": "Signing in sets git's credential helper and, when the account has none, a committer name and address from your GitHub profile. The account chip in the header says whether git here will actually use it \u2014 including the case where the remote is SSH and the push uses the server's key instead."
+        },
+        {
+          "kind": "added",
+          "text": "Open a pull request without leaving the page",
+          "detail": "A Pulls tab beside Changes and History: what is open, which one belongs to the branch you are on, and a form that pushes the branch and opens the request as your account."
+        },
+        {
+          "kind": "fixed",
+          "text": "The commit box stays visible however many files have changed",
+          "detail": "The changes list scrolls inside its own panel now. It used to push the commit box off the bottom of a page that does not scroll, which put committing out of reach exactly when there was most to commit."
+        },
+        {
+          "kind": "changed",
+          "text": "Pushing a new branch publishes it instead of refusing",
+          "detail": "A branch with no upstream used to be answered with git's advice to run a command in a terminal. It now sets the upstream, which is also what makes a pull request possible from a branch created here."
+        },
+        {
+          "kind": "removed",
+          "text": "The \u201cAmend last commit\u201d checkbox on the git page"
+        },
+        {
+          "kind": "added",
+          "text": "Databases installed on the server itself are found, not just the ones in containers",
+          "detail": "A Postgres, MySQL, MongoDB, Redis, ClickHouse or SQL Server that apt installed is recognised from the process listening for it, on whatever port it actually uses. The ones that ship with no credentials connect themselves; the rest say they are there and open the connection form with everything except the password already filled in \u2014 a container states its credentials in its environment, a native server keeps them in its own catalogue, and guessing at them would be an authentication failure in your own logs."
+        },
+        {
+          "kind": "fixed",
+          "text": "A host with no Docker socket can still find its databases",
+          "detail": "Detection answered \u201cunavailable\u201d for the whole question when Docker was missing, which on a plain VPS meant every database on it."
+        },
+        {
+          "kind": "fixed",
+          "text": "The search button sits on the same line as every other icon in the collapsed sidebar",
+          "detail": "The rail is 3rem and its buttons are 2rem; the header kept a wider padding than the nav below it, so the one button in it overflowed half a rem to the right."
+        }
+      ]
+    },
     {
       "version": "0.5.7",
       "date": "2026-08-26",

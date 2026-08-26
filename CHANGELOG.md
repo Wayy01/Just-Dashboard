@@ -4,6 +4,41 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.8 — 26 August 2026
+
+**Sign in to GitHub from the page that does the pushing**
+
+The git page can now hold a GitHub account: the same one-time code flow gh auth login uses, rendered as a screen. Commits are recorded as you, pushes are authenticated, and a pull request can be opened from the branch you are on. A database installed on the server itself is no longer invisible beside the ones in containers, and the commit box stopped disappearing under a long list of changes.
+
+### Added
+
+- Sign in to GitHub from the git page
+  - The same device-code flow as `gh auth login`, as a screen rather than a series of prompts: a one-time code, github.com, done. The token is stored where gh keeps its own — under the account that owns the repository, which is the account that pushes — so it is the same credential a shell on the server would use. A pasted token is the way in for GitHub Enterprise or a machine account.
+- Commits and pushes are made as the signed-in account
+  - Signing in sets git's credential helper and, when the account has none, a committer name and address from your GitHub profile. The account chip in the header says whether git here will actually use it — including the case where the remote is SSH and the push uses the server's key instead.
+- Open a pull request without leaving the page
+  - A Pulls tab beside Changes and History: what is open, which one belongs to the branch you are on, and a form that pushes the branch and opens the request as your account.
+- Databases installed on the server itself are found, not just the ones in containers
+  - A Postgres, MySQL, MongoDB, Redis, ClickHouse or SQL Server that apt installed is recognised from the process listening for it, on whatever port it actually uses. The ones that ship with no credentials connect themselves; the rest say they are there and open the connection form with everything except the password already filled in — a container states its credentials in its environment, a native server keeps them in its own catalogue, and guessing at them would be an authentication failure in your own logs.
+
+### Changed
+
+- Pushing a new branch publishes it instead of refusing
+  - A branch with no upstream used to be answered with git's advice to run a command in a terminal. It now sets the upstream, which is also what makes a pull request possible from a branch created here.
+
+### Fixed
+
+- The commit box stays visible however many files have changed
+  - The changes list scrolls inside its own panel now. It used to push the commit box off the bottom of a page that does not scroll, which put committing out of reach exactly when there was most to commit.
+- A host with no Docker socket can still find its databases
+  - Detection answered “unavailable” for the whole question when Docker was missing, which on a plain VPS meant every database on it.
+- The search button sits on the same line as every other icon in the collapsed sidebar
+  - The rail is 3rem and its buttons are 2rem; the header kept a wider padding than the nav below it, so the one button in it overflowed half a rem to the right.
+
+### Removed
+
+- The “Amend last commit” checkbox on the git page
+
 ## 0.5.7 — 26 August 2026
 
 **Selecting and copying in the terminal, as everywhere else**

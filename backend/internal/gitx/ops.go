@@ -51,8 +51,46 @@ func (s *Service) Pull(ctx context.Context, path string) (*Result, error) {
 // Push sends the current branch to its upstream. No force, ever: this runs
 // unattended behind a web request, which is the worst possible place to
 // discard someone else's commits.
+//
+// A branch with no upstream is published rather than refused. Plain `git push`
+// answers that case with "the current branch has no upstream branch" and a
+// command to copy — which is fine in a terminal and useless here, where the
+// operator has just made a branch in this very page and the only thing they
+// can do about it is open a shell. Setting the upstream is what they would
+// have typed, and it is what makes a pull request possible at all: gh needs
+// the branch to exist on the remote before it can open one against it.
 func (s *Service) Push(ctx context.Context, path string) (*Result, error) {
-	return s.op(ctx, path, 3*time.Minute, "push")
+	if s.hasUpstream(ctx, path) {
+		return s.op(ctx, path, 3*time.Minute, "push")
+	}
+	branch, err := s.CurrentBranch(ctx, path)
+	if err != nil {
+		// Detached, or no commits yet. Let plain push produce git's own
+		// diagnosis rather than inventing one.
+		return s.op(ctx, path, 3*time.Minute, "push")
+	}
+	return s.op(ctx, path, 3*time.Minute, "push", "--set-upstream", "origin", branch)
+}
+
+// CurrentBranch is the branch HEAD is on, and an error when it is on none.
+func (s *Service) CurrentBranch(ctx context.Context, path string) (string, error) {
+	out, err := s.run(ctx, path, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSpace(out)
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("%w: HEAD is not on a branch", ErrInvalidRef)
+	}
+	if err := ValidateRef(branch); err != nil {
+		return "", err
+	}
+	return branch, nil
+}
+
+func (s *Service) hasUpstream(ctx context.Context, path string) bool {
+	_, err := s.run(ctx, path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	return err == nil
 }
 
 // Checkout switches branches. It does not use --force, so git refuses when the

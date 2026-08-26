@@ -48,6 +48,9 @@ func (s *Server) mountGitRoutes(r chi.Router) {
 			r.Method(http.MethodPost, "/commit", s.handle(s.handleGitCommit))
 		})
 
+		// Signing in to GitHub, and the one operation git has no verb for.
+		s.mountGitHubRoutes(r)
+
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodPost, "/discard", s.handle(s.handleGitDiscard))
 			r.Method(http.MethodPost, "/reset", s.handle(s.handleGitReset))
