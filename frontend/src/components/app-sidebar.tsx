@@ -131,7 +131,12 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="gap-3 p-3">
+      {/* Collapsed, the header's padding has to be the nav's, not its own.
+          The rail is 3rem and a rail button is 2rem: at p-3 the header's
+          content box is only 1.5rem, so the search button — which keeps its
+          full 2rem — overflowed half a rem to the right and sat visibly off
+          the line every icon below it is on. */}
+      <SidebarHeader className="gap-3 p-3 group-data-[collapsible=icon]:p-2">
         {/* The wordmark alone: no tile, and no "Control panel" strapline under
             it. The strapline named the product category to somebody already
             inside the product, and the tile spent a third of the header's

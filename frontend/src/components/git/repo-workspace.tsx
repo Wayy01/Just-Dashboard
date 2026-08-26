@@ -17,6 +17,7 @@ import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { GitFileChange, GitRepo, GitResult, GitStatus } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { useGitHubAccount } from "@/hooks/use-github"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { FileTree, type ConfirmRequest as TreeConfirmRequest } from "@/components/files/file-tree"
@@ -25,6 +26,8 @@ import { GitHelp } from "@/components/git/help"
 import { ChangesPanel } from "@/components/git/changes-panel"
 import { HistoryPanel } from "@/components/git/history-panel"
 import { BranchesPanel } from "@/components/git/branches-panel"
+import { GitHubAccountControl } from "@/components/git/github-account"
+import { PullsPanel } from "@/components/git/pulls-panel"
 import { PreviewPanel, type GitPreview } from "@/components/git/preview-panel"
 import { Panel } from "@/components/panel"
 import { Page } from "@/components/page"
@@ -84,6 +87,10 @@ export function RepoWorkspace({
   )
   const head = status.data?.repo ?? repo
   const changeCount = status.data?.files.length ?? 0
+
+  // One poll for the whole workspace: the header chip, the identity the commit
+  // box shows, and the pull request tab are three views of the same answer.
+  const github = useGitHubAccount(repo.path)
 
   const run = useCallback(
     async (label: string, fn: () => Promise<GitResult>) => {
@@ -247,12 +254,19 @@ export function RepoWorkspace({
             />
           </>
         )}
+        <GitHubAccountControl repoPath={repo.path} status={github} />
         <GitHelp />
       </div>
 
-      {/* The three columns. They stack on small screens, each keeping a usable height. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
-        <Panel className="min-h-[13rem] lg:h-auto lg:min-h-0 lg:w-60 lg:shrink-0 xl:w-64">
+      {/* The three columns.
+          Side by side they share the page's height and each scrolls inside
+          itself. Stacked on a small screen they cannot — three panels do not
+          fit in a phone's viewport — so there the column scrolls and each panel
+          keeps a *definite* height of its own. Definite is the load-bearing
+          word: a panel sized by its content puts the commit box below the fold
+          of a page that does not scroll, which is exactly where it went. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <Panel className="h-[15rem] shrink-0 lg:h-auto lg:min-h-0 lg:w-60 xl:w-64">
           <FileTree
             // Remount on a branch switch: a different branch can be a different
             // set of files, and a cached tree would keep showing the old one.
@@ -269,7 +283,7 @@ export function RepoWorkspace({
           />
         </Panel>
 
-        <Panel className="flex min-h-[16rem] flex-col lg:h-auto lg:min-h-0 lg:w-[23rem] lg:shrink-0">
+        <Panel className="flex h-[30rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-[24rem] xl:w-[26rem]">
           <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
             <TabsList className="m-2 w-auto shrink-0 self-start">
               <TabsTrigger value="changes">
@@ -282,8 +296,16 @@ export function RepoWorkspace({
               </TabsTrigger>
               <TabsTrigger value="history">History</TabsTrigger>
               <TabsTrigger value="branches">Branches</TabsTrigger>
+              <TabsTrigger value="pulls">Pulls</TabsTrigger>
             </TabsList>
-            <TabsContent value="changes" className="min-h-0 flex-1">
+            {/* data-[state=active]:flex, not flex: the tab content is the
+                column that gives the commit box a bottom to sit on, and a
+                plain display:flex would also override the hidden attribute
+                Radix puts on the inactive ones. */}
+            <TabsContent
+              value="changes"
+              className="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col"
+            >
               <ChangesPanel
                 repoPath={repo.path}
                 status={status}
@@ -294,9 +316,13 @@ export function RepoWorkspace({
                 confirm={confirm}
                 onSelectDiff={setPreview}
                 activePath={preview?.kind === "diff" ? preview.title : undefined}
+                committer={github.data?.account?.committerName}
               />
             </TabsContent>
-            <TabsContent value="history" className="min-h-0 flex-1">
+            <TabsContent
+              value="history"
+              className="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col"
+            >
               {tab === "history" && (
                 <HistoryPanel
                   repoPath={repo.path}
@@ -310,7 +336,10 @@ export function RepoWorkspace({
                 />
               )}
             </TabsContent>
-            <TabsContent value="branches" className="min-h-0 flex-1">
+            <TabsContent
+              value="branches"
+              className="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col"
+            >
               {tab === "branches" && (
                 <BranchesPanel
                   repoPath={repo.path}
@@ -326,10 +355,27 @@ export function RepoWorkspace({
                 />
               )}
             </TabsContent>
+            <TabsContent
+              value="pulls"
+              className="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col"
+            >
+              {tab === "pulls" && (
+                <PullsPanel
+                  repoPath={repo.path}
+                  branch={head.branch}
+                  github={github.data}
+                  canControl={canControl}
+                  onChanged={() => {
+                    status.refresh()
+                    onRepoChanged()
+                  }}
+                />
+              )}
+            </TabsContent>
           </Tabs>
         </Panel>
 
-        <Panel className="flex min-h-[18rem] flex-1 flex-col lg:h-auto lg:min-h-0">
+        <Panel className="flex h-[26rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink">
           <PreviewPanel
             preview={preview}
             canWrite={canWrite}

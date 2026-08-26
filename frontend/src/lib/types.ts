@@ -1440,6 +1440,75 @@ export type GitResult = {
 }
 
 /**
+ * Who this server is, to GitHub, in one repository.
+ *
+ * The answer is per repository and not global, and `owner` is why: gh keeps
+ * the token under the home of the host account that owns the checkout, which
+ * is the same account git runs as when it pushes. Signing in for /srv/app does
+ * not sign in for a repository owned by somebody else.
+ */
+export type GitHubAccount = {
+  loggedIn: boolean
+  host?: string
+  login?: string
+  name?: string
+  avatarUrl?: string
+  profileUrl?: string
+  scopes?: string[]
+  protocol?: string
+  owner?: string
+  /** Whether a push and a commit would actually use the account. */
+  gitConfigured: boolean
+  committerName?: string
+  committerEmail?: string
+  /** How origin is reached: an ssh remote never asks the token for anything. */
+  remoteProtocol?: string
+  /** gh's own words for why nobody is signed in. */
+  reason?: string
+}
+
+export type GitHubStatus = {
+  available: boolean
+  account?: GitHubAccount
+}
+
+export type GitHubRepo = {
+  nameWithOwner: string
+  defaultBranch: string
+  url: string
+  private: boolean
+  permission?: string
+}
+
+/** The code to type into github.com, and where to type it. */
+export type GitHubDeviceStart = {
+  id: string
+  userCode: string
+  verificationUri: string
+  expiresIn: number
+  interval: number
+}
+
+export type GitHubDeviceState = {
+  status: "pending" | "complete" | "denied" | "expired"
+  account?: GitHubAccount
+  message?: string
+}
+
+export type GitPullRequest = {
+  number: number
+  title: string
+  url: string
+  state: string
+  draft: boolean
+  head: string
+  base: string
+  author?: string
+  createdAt?: string
+  comments: number
+}
+
+/**
  * The answer to "is this shell sitting inside a checkout" for a terminal's
  * working directory. `inRoots` is false for a real repository that falls
  * outside JD_GIT_ROOTS: it can be named but not operated on, since every other
@@ -1614,6 +1683,26 @@ export type DbSyncResult = {
   added: string[]
   already: string[]
   unreachable?: DbUnreachableServer[]
+  /** Servers running on the host itself, which nothing here can sign in to. */
+  needsCredentials?: DbCredentialServer[]
+}
+
+/**
+ * A database installed on the machine rather than in a container.
+ *
+ * It carries the connection string the dashboard would use with the password
+ * left out — which is the whole difference between "there is a Postgres here
+ * somewhere" and a form finished in one field. A container states its
+ * credentials in its environment; an apt-installed server keeps them in its
+ * own catalogue, and no amount of reading the process reveals them.
+ */
+export type DbCredentialServer = {
+  driver: string
+  host: string
+  port: number
+  process?: string
+  name: string
+  dsn: string
 }
 
 export type DbProvisionOption = {

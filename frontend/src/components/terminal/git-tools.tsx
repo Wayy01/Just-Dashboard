@@ -29,6 +29,7 @@ import type {
   GitStatus,
 } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { GitHubAccountControl } from "@/components/git/github-account"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
@@ -229,6 +230,10 @@ function RepoHeader({
       </Tooltip>
       <AheadBehind ahead={repo.ahead} behind={repo.behind} />
       <span className="flex-1" />
+      {/* Whose push this would be. Compact, because the rest of this strip is
+          single-icon buttons and a full chip would push them onto a second
+          line in a panel that is already narrow. */}
+      <GitHubAccountControl repoPath={repo.path} compact />
       <GitButton
         label="Fetch from all remotes"
         busy={busy === "Fetched"}

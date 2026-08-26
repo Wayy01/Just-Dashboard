@@ -6,7 +6,7 @@ import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { DbConnection, DbDriverInfo, DbSyncResult } from "@/lib/types"
+import type { DbConnection, DbCredentialServer, DbDriverInfo, DbSyncResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -43,6 +43,9 @@ export default function DatabasesPage() {
   // simply not this connection's and is treated as none.
   const [selection, setSelection] = useState<(TableSelection & { connId: number }) | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  // A server found on this host, waiting for the one thing the dashboard
+  // cannot know about it.
+  const [credentialsFor, setCredentialsFor] = useState<DbCredentialServer | null>(null)
   const [newOpen, setNewOpen] = useState(false)
   // A database that was just created is not in the connection list yet, so its
   // name is held until a refresh brings it in and then selected.
@@ -104,6 +107,20 @@ export default function DatabasesPage() {
           notify.warning(`${server.container} is running but cannot be reached`, {
             description: server.reason,
             duration: Infinity,
+          })
+        }
+        // A database installed on the machine itself rather than in a
+        // container. Its credentials are in the server's own catalogue, not in
+        // an environment this process can read, so the reconcile can go no
+        // further on its own — but it can say the server is there and open the
+        // form with everything except the password already in it. Saying
+        // nothing was the old behaviour, and it read as "the dashboard only
+        // sees Docker".
+        for (const server of res.needsCredentials ?? []) {
+          notify.info(`${server.driver} is running on this server`, {
+            description: `On port ${server.port}. Connecting it needs a username and password — this dashboard cannot read them the way it can from a container.`,
+            duration: Infinity,
+            action: { label: "Connect", onClick: () => setCredentialsFor(server) },
           })
         }
       })
@@ -367,6 +384,19 @@ export default function DatabasesPage() {
           />
           <ConnectionDialog open={addOpen} onOpenChange={setAddOpen} onDone={connections.refresh} />
         </>
+      )}
+      {credentialsFor && (
+        <ConnectionDialog
+          key={`${credentialsFor.host}:${credentialsFor.port}`}
+          open
+          onOpenChange={(o) => !o && setCredentialsFor(null)}
+          onDone={connections.refresh}
+          prefill={{
+            name: credentialsFor.name,
+            driver: credentialsFor.driver as DbConnection["driver"],
+            dsn: credentialsFor.dsn,
+          }}
+        />
       )}
       {editConn && (
         <ConnectionDialog

@@ -40,6 +40,16 @@ type Candidate struct {
 	// Reason explains a container that was recognised as a database but cannot
 	// be connected to, so the UI can say why rather than silently omitting it.
 	Reason string `json:"reason,omitempty"`
+	// Source is "docker" or "host". The two are found differently and adopted
+	// differently — a container states its credentials and a native server
+	// does not — so the page has to be able to tell them apart.
+	Source string `json:"source,omitempty"`
+	// Process is the listening program, for a server found on the host.
+	Process string `json:"process,omitempty"`
+	// NeedsCredentials marks a server this dashboard can see but cannot sign
+	// in to on its own. It is never true for a container, whose environment
+	// says everything, and usually true for one installed on the host.
+	NeedsCredentials bool `json:"needsCredentials,omitempty"`
 	// ViaContainerNetwork marks a candidate reached at its container address
 	// rather than a published port. It matters because that address is not
 	// stable: Docker hands out a new one when the container is recreated, so a
@@ -165,7 +175,7 @@ func Detect(container, image string, env map[string]string, ports []PublishedPor
 	user, password, database := rule.read(env)
 	c := &Candidate{
 		Driver: rule.driver, Container: container, Image: image,
-		User: user, Database: database,
+		User: user, Database: database, Source: SourceDocker,
 	}
 	for _, p := range ports {
 		if p.ContainerPort != rule.port || p.HostPort == 0 {
@@ -247,8 +257,14 @@ func ruleFor(image string) (engineRule, bool) {
 // off the network whatever the port is bound to.
 func hostAddress(ip string) string {
 	switch ip {
-	case "", "0.0.0.0", "::", "[::]":
+	case "", "0.0.0.0", "::", "[::]", "*":
 		return "127.0.0.1"
+	}
+	// A bare IPv6 literal has to be bracketed before anything can join a port
+	// to it: "fd00::1:5432" is not an address, it is a parse error waiting for
+	// whichever driver reads it first.
+	if strings.Contains(ip, ":") && !strings.HasPrefix(ip, "[") {
+		return "[" + ip + "]"
 	}
 	return ip
 }

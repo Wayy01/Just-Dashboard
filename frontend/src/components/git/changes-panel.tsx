@@ -35,6 +35,7 @@ export function ChangesPanel({
   confirm,
   onSelectDiff,
   activePath,
+  committer,
 }: {
   repoPath: string
   status: ReturnType<typeof usePoll<GitStatus>>
@@ -45,9 +46,10 @@ export function ChangesPanel({
   confirm: (req: ConfirmRequest) => void
   onSelectDiff: (p: GitPreview) => void
   activePath?: string
+  /** The identity git will record, when the page knows it. */
+  committer?: string
 }) {
   const [message, setMessage] = useState("")
-  const [amend, setAmend] = useState(false)
   const q = { path: repoPath }
 
   const showDiff = async (file: GitFileChange, staged: boolean) => {
@@ -80,16 +82,13 @@ export function ChangesPanel({
 
   const commit = async (thenPush: boolean) => {
     const msg = message.trim()
-    if (!msg && !amend) {
+    if (!msg) {
       notify.error("Write a short message describing your changes first")
       return
     }
     try {
-      await run("Committed", () =>
-        post<GitResult>("/git/commit", { message: msg, amend }, { query: q }),
-      )
+      await run("Committed", () => post<GitResult>("/git/commit", { message: msg }, { query: q }))
       setMessage("")
-      setAmend(false)
       if (thenPush) await run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))
     } catch {
       /* run already surfaced it */
@@ -136,7 +135,7 @@ export function ChangesPanel({
   const files = status.data?.files ?? []
   const staged = files.filter((f) => f.staged)
   const unstaged = files.filter((f) => !f.staged)
-  const canCommit = staged.length > 0 && (message.trim().length > 0 || amend)
+  const canCommit = staged.length > 0 && message.trim().length > 0
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -269,24 +268,16 @@ export function ChangesPanel({
                 void commit(false)
               }
             }}
-            placeholder={
-              amend
-                ? "New message (leave blank to keep the previous one)"
-                : "Describe what you changed…"
-            }
+            placeholder="Describe what you changed…"
             rows={3}
             className="resize-none font-mono text-[12px]"
           />
           <div className="flex items-center gap-2">
-            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={amend}
-                onChange={(e) => setAmend(e.target.checked)}
-                className="size-3 accent-[var(--primary)]"
-              />
-              Amend last commit
-            </label>
+            {committer && (
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                as {committer}
+              </span>
+            )}
             <span className="flex-1" />
             <Tooltip>
               <TooltipTrigger asChild>

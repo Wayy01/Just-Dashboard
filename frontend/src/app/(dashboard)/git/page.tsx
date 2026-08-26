@@ -11,6 +11,7 @@ import { Page, PageHeader, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { AheadBehind } from "@/components/git/ahead-behind"
 import { GitHelp } from "@/components/git/help"
+import { GitHubAccountControl } from "@/components/git/github-account"
 import { RepoWorkspace } from "@/components/git/repo-workspace"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
@@ -84,6 +85,10 @@ export default function GitPage() {
         description="Every repository on this server — open one to browse its files, stage and commit changes, and manage branches"
         actions={
           <>
+            {/* Who this dashboard is to GitHub, before a repository is chosen:
+                the question "will my push be mine" is asked here as often as
+                inside a checkout, and the answer used to be a click away. */}
+            <GitHubAccountControl />
             <GitHelp />
             <Button variant="outline" size="sm" onClick={() => repos.refresh()}>
               <RefreshCw className="size-4" />

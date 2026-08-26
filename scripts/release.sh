@@ -4,14 +4,15 @@
 #
 #   scripts/release.sh 0.6
 #
-# A version of Just Dashboard lives in four files, and every install in the
+# A version of Just Dashboard lives in five files, and every install in the
 # world decides whether to offer itself an update by comparing two of them. So
-# this exists to make bumping a release one action rather than four, and the Go
+# this exists to make bumping a release one action rather than five, and the Go
 # test suite fails the build if any of them ever drift apart:
 #
 #   backend/internal/version/version.go          what the server logs and reports
 #   frontend/src/lib/version.ts                  what the wordmark shows
 #   frontend/package.json                        because npm demands the field
+#   README.md                                    what the repository claims to be
 #   backend/internal/selfupdate/changelog.json   what the release *contains*
 #
 # The changelog is the one this cannot write for you, and it is deliberately
@@ -65,12 +66,19 @@ sed -i.bak "s/^export const VERSION = \".*\"$/export const VERSION = \"$VERSION\
 	frontend/src/lib/version.ts
 sed -i.bak "0,/\"version\": \".*\"/s//\"version\": \"$NPM_VERSION\"/" \
 	frontend/package.json
-rm -f backend/internal/version/version.go.bak frontend/src/lib/version.ts.bak frontend/package.json.bak
+# The README is the version somebody reads before they install anything, and
+# it is the one nothing used to write — which is how the front page of the
+# repository sat at 0.5.1 while the product shipped 0.5.8. Both mentions are
+# rewritten here and pinned by the version test, so it cannot drift again.
+sed -i.bak -e "s/^\*\*Version [0-9][0-9.]*\*\*/**Version $VERSION**/" \
+	-e "s/^This is \*\*[0-9][0-9.]*\*\*/This is **$VERSION**/" README.md
+rm -f backend/internal/version/version.go.bak frontend/src/lib/version.ts.bak \
+	frontend/package.json.bak README.md.bak
 ok "version constants bumped"
 
 # The tests are the enforcement, not this script: they are what fails on a
-# release cut by hand, or by an agent that edited three files and forgot the
-# fourth.
+# release cut by hand, or by an agent that edited four files and forgot the
+# fifth.
 ( cd backend && go test ./internal/version/ ./internal/selfupdate/ >/dev/null ) \
 	|| die "the version tests do not pass; run: cd backend && go test ./internal/version/ ./internal/selfupdate/"
 ok "version and changelog agree"
@@ -79,7 +87,7 @@ cat <<EOF
 
 ${BOLD}Released $VERSION locally.${RESET} What is left:
 
-  ${DIM}# read the diff — four files and the generated changelog${RESET}
+  ${DIM}# read the diff — five files and the generated changelog${RESET}
   git diff --stat
 
   ${DIM}# build both halves, as CONTRIBUTING requires${RESET}

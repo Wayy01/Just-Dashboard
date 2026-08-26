@@ -29,6 +29,30 @@ func TestVersionMatchesFrontend(t *testing.T) {
 	}
 }
 
+// The README says which version this repository is, twice, and it is the
+// version somebody reads before they install anything. Nothing linked it to
+// the constant, so it sat at 0.5.1 through seven releases — the front page of
+// the project describing a build nobody was running. Checked here for the same
+// reason as the frontend: a release that forgets it should fail a test run
+// rather than mislead a reader.
+func TestReadmeMatchesRelease(t *testing.T) {
+	const path = "../../../README.md"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("no README to compare against: %v", err)
+	}
+	claims := regexp.MustCompile(`(?m)^(?:\*\*Version|This is \*\*)\s*\*?\*?([0-9]+\.[0-9]+(?:\.[0-9]+)?)`).
+		FindAllSubmatch(b, -1)
+	if len(claims) == 0 {
+		t.Fatalf("%s no longer states a version; release.sh writes two, and this is the check on them", path)
+	}
+	for _, m := range claims {
+		if got := string(m[1]); got != Version {
+			t.Errorf("README says %q, the release is %q — scripts/release.sh writes both", got, Version)
+		}
+	}
+}
+
 // package.json is the one other file carrying a version, because npm demands
 // the field. It is checked loosely: the product version has two components and
 // npm insists on three, so what must agree is the release, not the string.
