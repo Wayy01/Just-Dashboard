@@ -4,6 +4,29 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.2 — 26 August 2026
+
+**Ports that do not collide**
+
+The dashboard's three ports — 8443, 8080 and 3000 — are the three most contested numbers on a Linux server, and a machine already using one of them got a dashboard that silently served somebody else's application. All three are now settings, and the installer picks free ones.
+
+### Added
+
+- JD_PORT, JD_BACKEND_PORT and JD_FRONTEND_PORT
+  - Change any of the three in .env. The compose file and the proxy read the same variables, so they cannot drift apart.
+
+### Changed
+
+- install.sh checks all three ports and picks free ones
+  - It says which port was taken and what it used instead, and the connection details it prints at the end carry the ports it actually chose.
+- `bun dev` follows JD_BACKEND_PORT
+  - A developer who moved the backend off 8080 no longer has to find a second variable to keep the dev proxy working.
+
+### Fixed
+
+- A port already in use no longer serves you the wrong application
+  - Only the frontend and backend failed to bind; the proxy came up clean and forwarded to whatever already held the port, so you reached another app over the dashboard's own certificate with nothing anywhere saying why.
+
 ## 0.5.1 — 26 August 2026
 
 **Updates, in the dashboard**
