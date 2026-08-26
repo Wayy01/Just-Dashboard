@@ -837,7 +837,21 @@ browser ──(Tailscale / SSH tunnel)──▶ Caddy :8443
 
 All three ports are variables — `JD_PORT` (8443), `JD_BACKEND_PORT` (8080), `JD_FRONTEND_PORT`
 (3000) — read by `docker-compose.yml` and `deploy/Caddyfile` from the same `.env`, and chosen
-from what is free by `install.sh`. The defaults are the three most contested numbers on a
+from what is free by `install.sh`, which also fills them in on a re-run against an `.env`
+written before they existed. It never *moves* a recorded port: on a re-run against a dashboard
+that is up, the process holding the port is this dashboard, and every way of telling that apart
+from a squatter is a guess that moves the ports out from under a working install when it is
+wrong.
+
+**The frontend is the one service not on the host network**, and that is what makes a taken
+port survivable rather than silent. It has no host access of its own, so it gets its own bridge
+network and a port published on loopback that the proxy dials exactly as before. On the host
+namespace, Next failed to bind, the container restart-looped, and the proxy's catch-all
+forwarded to whatever already held 3000 — the operator got a stranger's application over the
+dashboard's own certificate. Published, Docker refuses first: `docker compose up` stops with
+*"failed to bind host port 127.0.0.1:3000/tcp: address already in use"*, before anything
+serves. Inside the container the port is always 3000; only the host side is a variable, because
+only the host side can collide. The defaults are the three most contested numbers on a
 Linux server, and the collision they used to produce was the worst kind to debug: only the
 frontend and backend fail to bind, while the proxy comes up clean and forwards to whatever
 already held the port — so the operator reaches somebody else's application over the

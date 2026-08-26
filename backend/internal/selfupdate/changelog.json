@@ -1,6 +1,29 @@
 {
-  "latest": "0.5.3",
+  "latest": "0.5.4",
   "releases": [
+    {
+      "version": "0.5.4",
+      "date": "2026-08-26",
+      "title": "A taken port fails loudly",
+      "summary": "A port already in use now stops the stack with a message naming it, instead of leaving the dashboard quietly serving whatever already held the port. Upgrading installs get their ports filled in automatically.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A port already in use stops the stack instead of serving the wrong application",
+          "detail": "The frontend runs on its own network with its port published, so Docker refuses to start it and names the port. Previously it failed to bind, restarted in a loop, and the proxy forwarded to whatever already held the port."
+        },
+        {
+          "kind": "changed",
+          "text": "Re-running install.sh fills in ports missing from an older .env",
+          "detail": "No hand-editing to upgrade an install made before the ports were settings. A port already recorded is never moved \u2014 that was a deliberate choice, and guessing whether the process holding it is this dashboard is how a working install gets broken."
+        },
+        {
+          "kind": "fixed",
+          "text": "install.sh no longer exits early on an .env without the port settings",
+          "detail": "Reading an absent variable aborted the script under set -euo pipefail, so a re-run stopped before printing how to connect."
+        }
+      ]
+    },
     {
       "version": "0.5.3",
       "date": "2026-08-26",

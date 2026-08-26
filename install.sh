@@ -427,6 +427,62 @@ ok ".env written (mode 600)"
 
 fi  # KEEP_ENV
 
+# ── ports, on an install that kept its .env ─────────────────────────────────
+#
+# A re-run that keeps an existing .env skipped the port checks entirely, which
+# left the one case that most needs them unserved: an install made before the
+# ports were settings at all, on a machine that has since started using 3000
+# for something else. That operator had to be told to hand-edit .env, which is
+# not a fix, it is a workaround with a person in the middle of it.
+#
+# So the same checks run here, and the file is amended rather than rewritten:
+# a variable missing from an older .env is appended, and one whose port is now
+# held by something else is rewritten to a free one. A port that is merely
+# non-default is left exactly as it is — it was a deliberate choice, and this
+# is not the place to second-guess it.
+if [ "$KEEP_ENV" -eq 1 ]; then
+	step "Ports"
+
+	# set_env_port writes NAME=value into .env, replacing the line if it is
+	# there and appending it if it is not.
+	set_env_port() {
+		if grep -qE "^$1=" .env; then
+			sed -i "s|^$1=.*|$1=$2|" .env
+		else
+			printf '%s=%s\n' "$1" "$2" >> .env
+		fi
+	}
+
+	# Fills a gap; never moves a port that is already recorded.
+	#
+	# The tempting version of this also re-checks an existing value and moves
+	# it when something else has taken the port. It cannot: on a re-run against
+	# a dashboard that is currently up, the thing holding the port *is* this
+	# dashboard, and every way of telling that apart from a squatter is a guess
+	# — one that, when it guesses wrong, moves the ports out from under a
+	# working install. That is a worse failure than the one being fixed.
+	#
+	# A recorded port was chosen deliberately, by a previous run or by the
+	# operator. If something else really has taken it, `docker compose up` now
+	# stops and names it, which is the honest answer and needs no guessing.
+	check_kept_port() {
+		local var="$1" default="$2" name="$3" current
+		# `|| true` for the reason env_port carries one: absent is normal here.
+		current="$(grep -E "^$var=" .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)"
+		if [ -n "$current" ]; then
+			ok "$name: $current (already set)"
+			return
+		fi
+		pick_port "$default" "$name"
+		set_env_port "$var" "$PICKED"
+		ok "$var was not set; using $PICKED"
+	}
+
+	check_kept_port JD_PORT 8443 "dashboard (the port you connect to)"
+	check_kept_port JD_BACKEND_PORT 8080 "backend API"
+	check_kept_port JD_FRONTEND_PORT 3000 "frontend"
+fi
+
 # ── build and start ─────────────────────────────────────────────────────────
 
 step "Building and starting the stack"
@@ -443,7 +499,12 @@ SITE_ADDR="$(grep -E '^JD_SITE=' .env | cut -d= -f2-)"
 # .env never entered the block that chose them, and printing the defaults at
 # an install that is not using the defaults is how somebody ends up tunnelling
 # to the wrong port and concluding the dashboard is broken.
-env_port() { grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]'; }
+# The `|| true` is load-bearing under `set -euo pipefail`: grep exits non-zero
+# when the variable is absent, pipefail promotes that to the pipeline's status,
+# and a bare assignment consuming it aborts the script. Absent is the normal
+# case on an .env written before these variables existed — which is precisely
+# the install being re-run.
+env_port() { grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true; }
 JD_PORT="$(env_port JD_PORT)";                   JD_PORT="${JD_PORT:-8443}"
 JD_BACKEND_PORT="$(env_port JD_BACKEND_PORT)";   JD_BACKEND_PORT="${JD_BACKEND_PORT:-8080}"
 JD_FRONTEND_PORT="$(env_port JD_FRONTEND_PORT)"; JD_FRONTEND_PORT="${JD_FRONTEND_PORT:-3000}"
