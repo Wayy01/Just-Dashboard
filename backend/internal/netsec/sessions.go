@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,39 +67,121 @@ func parseWho(ctx context.Context) []LoginSession {
 	// them under /run/systemd/sessions rather than utmp, and a container's
 	// own view of both is empty. Running who on the host is what makes this
 	// list the server's sessions instead of this container's.
-	out, err := hostexec.CommandOnHost(ctx, "who", "-u").Output()
+	cmd := hostexec.CommandOnHost(ctx, "who", "-u")
+	// The date is being parsed, so the locale that formats it has to be the
+	// one this code expects.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
 	if err != nil {
 		return []LoginSession{}
 	}
 	sessions := []LoginSession{}
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
 	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 4 {
-			continue
+		if sess, ok := parseWhoLine(sc.Text()); ok {
+			sessions = append(sessions, sess)
 		}
-		sess := LoginSession{User: fields[0], TTY: fields[1]}
-		// who -u prints: user tty date time idle pid (comment)
-		if ts, err := time.Parse("2006-01-02 15:04", fields[2]+" "+fields[3]); err == nil {
-			t := ts.UTC()
-			sess.LoginTime = &t
-		}
-		if len(fields) >= 5 {
-			sess.Idle = fields[4]
-		}
-		if len(fields) >= 6 {
-			if pid, err := strconv.Atoi(fields[5]); err == nil {
-				sess.PID = int32(pid)
-			}
-		}
-		for _, f := range fields[4:] {
-			if strings.HasPrefix(f, "(") && strings.HasSuffix(f, ")") {
-				sess.From = strings.Trim(f, "()")
-			}
-		}
-		sessions = append(sessions, sess)
 	}
 	return sessions
+}
+
+var (
+	// The two date shapes `who` prints. Which one appears is the locale's
+	// choice: C gives `Aug 27`, and the C.UTF-8 that Ubuntu and Debian
+	// default to gives `2026-08-27`. LC_ALL=C is set for determinism and both
+	// are accepted anyway, because a locale is the kind of thing that is set
+	// somewhere else on somebody's server.
+	whoISODateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	whoMonthRe   = regexp.MustCompile(`^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$`)
+	whoDayRe     = regexp.MustCompile(`^\d{1,2}$`)
+)
+
+// whoDateAt reports whether a date starts at i, and how many fields it spans.
+func whoDateAt(fields []string, i int) (int, bool) {
+	if whoISODateRe.MatchString(fields[i]) {
+		return 1, true
+	}
+	if whoMonthRe.MatchString(fields[i]) && i+1 < len(fields) && whoDayRe.MatchString(fields[i+1]) {
+		return 2, true
+	}
+	return 0, false
+}
+
+// whoTime parses the timestamp out of the fields the date spans plus the one
+// after it. The C locale's form carries no year, so the current one is assumed
+// and rolled back if that puts the login in the future — a session that began
+// in December is otherwise reported as one that has not happened yet.
+func whoTime(fields []string, start, span int, now time.Time) (time.Time, bool) {
+	clock := fields[start+span]
+	if span == 1 {
+		ts, err := time.Parse("2006-01-02 15:04", fields[start]+" "+clock)
+		return ts.UTC(), err == nil
+	}
+	ts, err := time.Parse("2006 Jan 2 15:04",
+		fmt.Sprintf("%d %s %s %s", now.Year(), fields[start], fields[start+1], clock))
+	if err != nil {
+		return time.Time{}, false
+	}
+	if ts.After(now.Add(24 * time.Hour)) {
+		ts = ts.AddDate(-1, 0, 0)
+	}
+	return ts.UTC(), true
+}
+
+// parseWhoLine reads one row of `who -u`, finding the columns by the date
+// rather than by counting from the left.
+//
+// The nominal shape is `user line date time idle pid (comment)`, and counting
+// works right up until the line column is two words — which is what OpenSSH 9
+// writes on a current Ubuntu:
+//
+//	ubuntu   sshd pts/3   2026-08-27 02:07   .       2392157 (77.89.203.46)
+//	ubuntu   pts/2        2026-08-26 21:33 03:03     2262305
+//
+// Read positionally, the first row's terminal is "sshd", its login time is
+// unparseable, and its PID lands nowhere — so the one session an operator
+// would ever want to end was the one with no process to end. The date is the
+// only field with a shape of its own, so it is what the row is read around.
+func parseWhoLine(line string) (LoginSession, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 4 {
+		return LoginSession{}, false
+	}
+	date, span := -1, 0
+	for i := 1; i < len(fields)-1; i++ {
+		if n, ok := whoDateAt(fields, i); ok && i+n < len(fields) {
+			date, span = i, n
+			break
+		}
+	}
+	if date < 2 {
+		return LoginSession{}, false
+	}
+	// Everything between the user and the date is the line column. The last
+	// word of it is the terminal; anything before it is what wrote the entry.
+	sess := LoginSession{User: fields[0], TTY: fields[date-1]}
+	if ts, ok := whoTime(fields, date, span, time.Now()); ok {
+		sess.LoginTime = &ts
+	}
+	rest := fields[date+span+1:]
+	if len(rest) > 0 {
+		// "." is who's word for "active now", which is worth saying rather
+		// than showing a full stop in a column headed Idle.
+		if rest[0] == "." {
+			sess.Idle = "active"
+		} else if rest[0] != "old" {
+			sess.Idle = rest[0]
+		}
+	}
+	for _, f := range rest {
+		if pid, err := strconv.Atoi(f); err == nil && sess.PID == 0 {
+			sess.PID = int32(pid)
+		}
+		if strings.HasPrefix(f, "(") && strings.HasSuffix(f, ")") {
+			sess.From = strings.Trim(f, "()")
+		}
+	}
+	return sess, true
 }
 
 type sshdProc struct {
