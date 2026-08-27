@@ -4,11 +4,12 @@
 // Editing firewall rules from a web UI carries an obvious hazard: a bad rule
 // can lock the operator out of the very machine they are administering — and
 // out of this dashboard with it. Rules that would drop the caller's own
-// connection are therefore refused rather than applied.
+// connection are therefore refused rather than applied, and that guard lives
+// here rather than in any one backend so it cannot be forgotten by the next
+// one somebody adds.
 package netsec
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -16,7 +17,6 @@ import (
 	"net"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,25 +24,77 @@ import (
 )
 
 var (
-	ErrNoFirewall = errors.New("neither ufw nor iptables was found on this host")
+	ErrNoFirewall = errors.New("no supported firewall was found on this host")
 	ErrLockout    = errors.New("this rule would cut off your own connection to the dashboard")
+	// ErrReadOnly is returned when the host's firewall can be read but not
+	// safely written from here. Reporting it as a distinct condition is the
+	// point: "this dashboard will not edit iptables directly" is information,
+	// and a greyed-out button with no reason is not.
+	ErrReadOnly = errors.New("this firewall backend is read-only from the dashboard")
 )
 
 type Backend string
 
 const (
-	BackendUFW      Backend = "ufw"
-	BackendIPTables Backend = "iptables"
+	BackendUFW       Backend = "ufw"
+	BackendFirewalld Backend = "firewalld"
+	BackendIPTables  Backend = "iptables"
 )
+
+// FirewallCapabilities says what this host's firewall can actually be told to
+// do from here.
+//
+// Every backend answers the same questions and they answer them differently:
+// ufw has an on/off switch and firewalld has a service, firewalld has named
+// zones and ufw has none, and raw iptables has no persistence story at all.
+// Rather than pretend one shape fits, the status carries what is possible and
+// the UI hides the rest — with a reason, so a missing control is explained
+// rather than merely absent.
+type FirewallCapabilities struct {
+	// Editable covers adding and deleting rules.
+	Editable bool `json:"editable"`
+	// Toggle is turning the whole firewall on and off.
+	Toggle bool `json:"toggle"`
+	// DefaultPolicy is changing what happens to unmatched traffic.
+	DefaultPolicy bool `json:"defaultPolicy"`
+	Logging       bool `json:"logging"`
+	Reset         bool `json:"reset"`
+	// Profiles reports whether the host defines named service bundles.
+	Profiles bool `json:"profiles"`
+	// ReadOnlyReason explains a backend that can only be read.
+	ReadOnlyReason string `json:"readOnlyReason,omitempty"`
+}
 
 type FirewallStatus struct {
 	Backend   Backend `json:"backend"`
 	Available bool    `json:"available"`
 	Enabled   bool    `json:"enabled"`
-	Default   string  `json:"defaultPolicy,omitempty"`
-	Rules     []Rule  `json:"rules"`
-	Raw       string  `json:"raw,omitempty"`
-	Error     string  `json:"error,omitempty"`
+	// Default is the policy line verbatim, kept because it is what the tool
+	// itself prints and an operator may want to read it unmediated.
+	Default string `json:"defaultPolicy,omitempty"`
+	// Policy is the same thing split into the three directions, so the UI can
+	// show "inbound: deny" as a control rather than as prose to be re-read.
+	Policy DefaultPolicy `json:"policy"`
+	// Logging is the tool's own level ("on (low)", "off"). A firewall that
+	// drops silently leaves nothing to look at after an incident, which is
+	// why it is worth a line of its own rather than being buried in the raw
+	// output.
+	Logging string `json:"logging,omitempty"`
+	// Zone is firewalld's active zone. Empty for backends with no such idea.
+	Zone         string               `json:"zone,omitempty"`
+	Capabilities FirewallCapabilities `json:"capabilities"`
+	Rules        []Rule               `json:"rules"`
+	Raw          string               `json:"raw,omitempty"`
+	Error        string               `json:"error,omitempty"`
+}
+
+// DefaultPolicy is the three default verdicts. Routed is "disabled" on a host
+// that is not forwarding, which is not the same as "deny" and is worth
+// reporting as itself.
+type DefaultPolicy struct {
+	Incoming string `json:"incoming,omitempty"`
+	Outgoing string `json:"outgoing,omitempty"`
+	Routed   string `json:"routed,omitempty"`
 }
 
 type Rule struct {
@@ -54,146 +106,122 @@ type Rule struct {
 	Port      string `json:"port,omitempty"`
 	Direction string `json:"direction,omitempty"`
 	Comment   string `json:"comment,omitempty"`
-	Raw       string `json:"raw"`
+	// IPv6 marks a backend's duplicate of a rule for the v6 table. ufw prints
+	// both and distinguishes them only by a "(v6)" suffix, so a rule list that
+	// does not carry the flag reads as every rule having been added twice.
+	IPv6 bool `json:"ipv6,omitempty"`
+	// Service names the port from the catalogue, so a list of numbers reads
+	// as a list of things.
+	Service string `json:"service,omitempty"`
+	// Danger is the catalogue's warning for a port that is open to everyone
+	// and should not be. Attached to the rule rather than computed in the UI
+	// so that "which of my rules are the dangerous ones" has one answer.
+	Danger string `json:"danger,omitempty"`
+	// Handle is how the owning backend identifies this rule when removing it.
+	// ufw deletes by number; firewalld has no numbers at all and needs the
+	// exact thing back. Never shown, never accepted from a client — the
+	// delete route takes the listed number and the backend resolves it.
+	Handle string `json:"-"`
+	Raw    string `json:"raw"`
+}
+
+// fwBackend is one firewall this dashboard knows how to drive.
+//
+// Validation and the lockout guards deliberately do *not* live here: they are
+// applied by Service before dispatching, so a new backend cannot be added
+// without them.
+type fwBackend interface {
+	Kind() Backend
+	Detect() bool
+	Status(ctx context.Context) (*FirewallStatus, error)
+	AddRule(ctx context.Context, req RuleRequest) (string, error)
+	DeleteRule(ctx context.Context, number int) (string, error)
+	SetEnabled(ctx context.Context, enabled bool) (string, error)
+	SetDefaultPolicy(ctx context.Context, direction, policy string) (string, error)
+	SetLogging(ctx context.Context, level string) (string, error)
+	Reset(ctx context.Context) (string, error)
+	Profiles(ctx context.Context) ([]AppProfile, error)
+	Capabilities() FirewallCapabilities
 }
 
 type Service struct{}
 
 func New() *Service { return &Service{} }
 
-func (s *Service) Backend() Backend {
-	if hostexec.AvailableOnHost("ufw") {
-		return BackendUFW
+// backends are tried in order. ufw first because a host with both installed is
+// almost always a Debian machine where ufw is the one in charge; iptables last
+// because it is present everywhere and would otherwise mask the others.
+func backends() []fwBackend {
+	return []fwBackend{ufwBackend{}, firewalldBackend{}, iptablesBackend{}}
+}
+
+func (s *Service) backend() fwBackend {
+	for _, b := range backends() {
+		if b.Detect() {
+			return b
+		}
 	}
-	return BackendIPTables
+	return nil
+}
+
+func (s *Service) Backend() Backend {
+	if b := s.backend(); b != nil {
+		return b.Kind()
+	}
+	return ""
 }
 
 func (s *Service) Status(ctx context.Context) (*FirewallStatus, error) {
-	if hostexec.AvailableOnHost("ufw") {
-		return s.ufwStatus(ctx)
+	b := s.backend()
+	if b == nil {
+		return &FirewallStatus{Rules: []Rule{}, Error: ErrNoFirewall.Error()}, nil
 	}
-	if hostexec.AvailableOnHost("iptables") {
-		return s.iptablesStatus(ctx)
-	}
-	return &FirewallStatus{Rules: []Rule{}, Error: ErrNoFirewall.Error()}, nil
-}
-
-// ufwNumberedRe matches ufw's numbered status output:
-//
-//	[ 1] 22/tcp   ALLOW IN  Anywhere   # ssh
-var ufwNumberedRe = regexp.MustCompile(`^\[\s*(\d+)\]\s+(.*)$`)
-
-func (s *Service) ufwStatus(ctx context.Context) (*FirewallStatus, error) {
-	out, err := run(ctx, "ufw", "status", "numbered", "verbose")
-	st := &FirewallStatus{Backend: BackendUFW, Available: true, Rules: []Rule{}, Raw: out}
+	st, err := b.Status(ctx)
 	if err != nil {
-		st.Error = err.Error()
-		return st, nil
+		return &FirewallStatus{Backend: b.Kind(), Rules: []Rule{}, Error: err.Error()}, nil
 	}
-	sc := bufio.NewScanner(strings.NewReader(out))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
+	st.Capabilities = b.Capabilities()
+	// Numbers are positional and assigned here rather than by each backend, so
+	// "delete rule 4" means the same thing whichever tool is underneath. ufw
+	// supplies its own and they are left alone; the others have no notion of
+	// one at all.
+	for i := range st.Rules {
+		if st.Rules[i].Number == 0 {
+			st.Rules[i].Number = i + 1
 		}
-		if after, ok := strings.CutPrefix(line, "Status:"); ok {
-			st.Enabled = strings.TrimSpace(after) == "active"
-			continue
-		}
-		if after, ok := strings.CutPrefix(line, "Default:"); ok {
-			st.Default = strings.TrimSpace(after)
-			continue
-		}
-		m := ufwNumberedRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		num, _ := strconv.Atoi(m[1])
-		st.Rules = append(st.Rules, parseUFWRule(num, m[2]))
+		annotateRule(&st.Rules[i])
 	}
 	return st, nil
 }
 
-func parseUFWRule(num int, body string) Rule {
-	r := Rule{Number: num, Raw: strings.TrimSpace(body)}
-	if idx := strings.Index(body, "#"); idx >= 0 {
-		r.Comment = strings.TrimSpace(body[idx+1:])
-		body = body[:idx]
+// annotateRule attaches the catalogue's name and warning. Done centrally so
+// every backend's rules are read the same way.
+func annotateRule(r *Rule) {
+	if r.Service != "" && r.Danger != "" {
+		return
 	}
-	fields := strings.Fields(body)
-	// ufw's layout is: <to> <ACTION> <IN|OUT> <from>
-	for i, f := range fields {
-		upper := strings.ToUpper(f)
-		if upper == "ALLOW" || upper == "DENY" || upper == "REJECT" || upper == "LIMIT" {
-			r.Action = upper
-			r.To = strings.Join(fields[:i], " ")
-			rest := fields[i+1:]
-			if len(rest) > 0 && (rest[0] == "IN" || rest[0] == "OUT") {
-				r.Direction = rest[0]
-				rest = rest[1:]
-			}
-			r.From = strings.Join(rest, " ")
-			break
-		}
+	preset, ok := PresetFor(r.Port, r.Protocol)
+	if !ok {
+		return
 	}
-	if r.Action == "" {
-		r.Action = "UNKNOWN"
-		r.To = strings.TrimSpace(body)
+	if r.Service == "" {
+		r.Service = preset.Name
 	}
-	if to, proto, ok := strings.Cut(r.To, "/"); ok {
-		r.Port, r.Protocol = to, proto
+	// Only a rule that admits everyone earns the warning. The same port
+	// restricted to a private source is the arrangement being recommended,
+	// and flagging it would train the operator to ignore the flag.
+	if preset.Danger != "" && r.Action == "ALLOW" && isAnywhere(r.From) {
+		r.Danger = preset.Danger
 	}
-	return r
 }
 
-func (s *Service) iptablesStatus(ctx context.Context) (*FirewallStatus, error) {
-	out, err := run(ctx, "iptables", "-L", "-n", "-v", "--line-numbers")
-	st := &FirewallStatus{Backend: BackendIPTables, Available: true, Rules: []Rule{}, Raw: out}
-	if err != nil {
-		st.Error = err.Error()
-		return st, nil
+// isAnywhere reports a source that restricts nothing.
+func isAnywhere(from string) bool {
+	switch strings.ToLower(strings.TrimSpace(from)) {
+	case "", "anywhere", "anywhere (v6)", "0.0.0.0/0", "::/0", "any":
+		return true
 	}
-	chain := ""
-	sc := bufio.NewScanner(strings.NewReader(out))
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "Chain ") {
-			fields := strings.Fields(trimmed)
-			if len(fields) > 1 {
-				chain = fields[1]
-			}
-			if strings.Contains(trimmed, "policy") && chain == "INPUT" {
-				if idx := strings.Index(trimmed, "policy "); idx >= 0 {
-					st.Default = strings.Trim(strings.Fields(trimmed[idx+7:])[0], "()")
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "num ") || strings.HasPrefix(trimmed, "pkts ") {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) < 9 {
-			continue
-		}
-		num, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		st.Rules = append(st.Rules, Rule{
-			Number: num, Action: fields[3], Protocol: fields[4],
-			From: fields[7], To: fields[8], Direction: chain,
-			Raw: trimmed,
-		})
-	}
-	// A default DROP with rules present is the practical definition of
-	// "enabled" for raw iptables, which has no on/off switch of its own.
-	st.Enabled = st.Default == "DROP" || len(st.Rules) > 0
-	return st, nil
+	return false
 }
 
 type RuleRequest struct {
@@ -202,64 +230,121 @@ type RuleRequest struct {
 	Port      string `json:"port"`
 	Protocol  string `json:"protocol"`
 	From      string `json:"from"`
+	To        string `json:"to"`
 	Comment   string `json:"comment"`
+	// Position inserts the rule at a given number instead of appending. ufw
+	// evaluates in order and stops at the first match, so a deny added after
+	// a broad allow does nothing at all — which looks, from the rule list,
+	// exactly like a deny that is working.
+	Position int `json:"position,omitempty"`
+	// App names an application profile ("Nginx Full", "postgresql") instead
+	// of a port. The host's own packages define these, and a rule written in
+	// their terms keeps meaning what it says when a package adds a port.
+	App string `json:"app,omitempty"`
 }
 
 var (
-	portRe    = regexp.MustCompile(`^\d{1,5}(:\d{1,5})?$`)
+	// A single port, a range, or a comma-separated list — the last only
+	// together with a protocol, which is enforced below rather than in the
+	// pattern so the error can say why.
+	portRe    = regexp.MustCompile(`^\d{1,5}(:\d{1,5})?(,\d{1,5}(:\d{1,5})?)*$`)
 	commentRe = regexp.MustCompile(`^[A-Za-z0-9 ._:\-]{0,64}$`)
+	// A profile name is free text in a package's own file, so it may contain
+	// spaces — but not the characters that would make it something other than
+	// a name.
+	appNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._/+-]{0,63}$`)
 )
 
-// AddRule appends a ufw rule. Every component is validated against a strict
-// pattern and passed as a separate argument, so nothing the operator types can
-// become part of a different command.
+// AddRule validates, guards, and hands the request to whichever firewall this
+// host runs. Every component is checked against a strict pattern and passed as
+// a separate argument, so nothing the operator types can become part of a
+// different command.
 func (s *Service) AddRule(ctx context.Context, req RuleRequest, callerIP string) (string, error) {
-	action := strings.ToLower(strings.TrimSpace(req.Action))
-	switch action {
-	case "allow", "deny", "reject", "limit":
-	default:
-		return "", fmt.Errorf("action must be allow, deny, reject or limit")
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
 	}
-	direction := strings.ToLower(strings.TrimSpace(req.Direction))
-	if direction == "" {
-		direction = "in"
+	if !b.Capabilities().Editable {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
 	}
-	if direction != "in" && direction != "out" {
-		return "", fmt.Errorf("direction must be in or out")
-	}
-	if req.Port != "" && !portRe.MatchString(req.Port) {
-		return "", fmt.Errorf("port must be a number or a range like 8000:8010")
-	}
-	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
-	if proto != "" && proto != "tcp" && proto != "udp" {
-		return "", fmt.Errorf("protocol must be tcp or udp")
-	}
-	if !commentRe.MatchString(req.Comment) {
-		return "", fmt.Errorf("comment may only contain letters, digits, spaces and . _ : -")
-	}
-	if req.From != "" {
-		if _, _, err := net.ParseCIDR(req.From); err != nil && net.ParseIP(req.From) == nil {
-			return "", fmt.Errorf("from must be an IP address or CIDR")
-		}
-	}
-	if err := guardLockout(action, direction, req.From, callerIP); err != nil {
+	clean, err := normaliseRule(req)
+	if err != nil {
 		return "", err
 	}
-
-	args := []string{action, direction}
-	if req.From != "" {
-		args = append(args, "from", req.From)
+	if err := guardLockout(clean.Action, clean.Direction, clean.From, callerIP); err != nil {
+		return "", err
 	}
-	if req.Port != "" {
-		args = append(args, "to", "any", "port", req.Port)
-		if proto != "" {
-			args = append(args, "proto", proto)
+	return b.AddRule(ctx, clean)
+}
+
+// normaliseRule validates a request and returns it in canonical form.
+//
+// Separate from AddRule so the rules are one thing to read and one thing to
+// test, and so every backend receives the same already-checked shape.
+func normaliseRule(req RuleRequest) (RuleRequest, error) {
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	switch req.Action {
+	case "allow", "deny", "reject", "limit":
+	default:
+		return req, fmt.Errorf("action must be allow, deny, reject or limit")
+	}
+	req.Direction = strings.ToLower(strings.TrimSpace(req.Direction))
+	if req.Direction == "" {
+		req.Direction = "in"
+	}
+	if req.Direction != "in" && req.Direction != "out" {
+		return req, fmt.Errorf("direction must be in or out")
+	}
+	if req.Port != "" && !portRe.MatchString(req.Port) {
+		return req, fmt.Errorf("port must be a number, a range like 8000:8010, or a list like 80,443")
+	}
+	req.Protocol = strings.ToLower(strings.TrimSpace(req.Protocol))
+	if req.Protocol != "" && req.Protocol != "tcp" && req.Protocol != "udp" {
+		return req, fmt.Errorf("protocol must be tcp or udp")
+	}
+	// A list becomes a multiport match, and iptables has no multiport without
+	// a protocol. Saying so beats letting the tool reject it three layers down.
+	if strings.Contains(req.Port, ",") && req.Protocol == "" {
+		return req, fmt.Errorf("a list of ports needs a protocol")
+	}
+	if req.App != "" {
+		if !appNameRe.MatchString(req.App) {
+			return req, fmt.Errorf("invalid application profile name")
+		}
+		if req.Port != "" {
+			return req, fmt.Errorf("an application profile already names its ports")
 		}
 	}
-	if req.Comment != "" {
-		args = append(args, "comment", req.Comment)
+	if req.Port == "" && req.App == "" && req.From == "" {
+		return req, fmt.Errorf("a rule needs a port, a profile or a source address")
 	}
-	return run(ctx, "ufw", args...)
+	if !commentRe.MatchString(req.Comment) {
+		return req, fmt.Errorf("comment may only contain letters, digits, spaces and . _ : -")
+	}
+	if err := validAddress(req.From, "from"); err != nil {
+		return req, err
+	}
+	if err := validAddress(req.To, "to"); err != nil {
+		return req, err
+	}
+	if req.Position < 0 || req.Position > 9999 {
+		return req, fmt.Errorf("position must be a rule number")
+	}
+	return req, nil
+}
+
+// validAddress accepts an IP, a CIDR, or the word for "no restriction".
+func validAddress(addr, field string) error {
+	if addr == "" || strings.EqualFold(addr, "any") {
+		return nil
+	}
+	if _, _, err := net.ParseCIDR(addr); err == nil {
+		return nil
+	}
+	if net.ParseIP(addr) != nil {
+		return nil
+	}
+	return fmt.Errorf("%s must be an IP address or CIDR", field)
 }
 
 // guardLockout refuses a deny rule that covers the address the operator is
@@ -288,27 +373,284 @@ func guardLockout(action, direction, from, callerIP string) error {
 	return nil
 }
 
-func (s *Service) DeleteRule(ctx context.Context, number int) (string, error) {
+// ReplaceRule edits a rule, which on a firewall means replacing it.
+//
+// Neither ufw nor firewalld has an edit: a rule is a line, and changing one
+// means removing it and putting another in its place. The order here is the
+// part worth getting right — the replacement goes in *first*, so a failure
+// leaves the original rule doing its job. Deleting first and then failing to
+// add would leave a hole in the firewall, which is the one outcome an edit
+// must never produce.
+func (s *Service) ReplaceRule(ctx context.Context, number int, req RuleRequest, callerIP string) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	return replaceRule(ctx, b, number, req, callerIP)
+}
+
+// replaceRule is the ordering itself, separated from backend detection so it
+// can be driven against a backend that records what it was asked to do. The
+// sequence is the whole point of the function and a host with no firewall
+// installed is no place to find out it is wrong.
+func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, callerIP string) (string, error) {
+	if !b.Capabilities().Editable {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
 	if number <= 0 {
 		return "", fmt.Errorf("rule number must be positive")
 	}
-	// ufw prompts before deleting; --force answers it. The rule number comes
-	// from our own parsed listing, never from free text.
-	return run(ctx, "ufw", "--force", "delete", strconv.Itoa(number))
+	clean, err := normaliseRule(req)
+	if err != nil {
+		return "", err
+	}
+	if err := guardLockout(clean.Action, clean.Direction, clean.From, callerIP); err != nil {
+		return "", err
+	}
+
+	// The rule being replaced is read *before* anything is added, whichever
+	// backend this is: adding changes both the positions firewalld's listing
+	// implies and the numbers ufw prints, so a rule identified afterwards is
+	// not necessarily the rule that was asked for.
+	st, err := b.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	old, ok := ruleNumbered(st.Rules, number)
+	if !ok {
+		return "", fmt.Errorf("no rule %d", number)
+	}
+	// firewalld has no ordering and no numbers of its own, so the handle it
+	// was given is what removes it. ufw is ordered, so the replacement is
+	// inserted where the original sits and the original is found again by what
+	// it says — never by arithmetic on the number, which is wrong the moment
+	// ufw declines to insert anything.
+	oldHandle := old.Handle
+	if b.Kind() == BackendUFW {
+		clean.Position = number
+		oldHandle = ""
+	}
+
+	added, err := b.AddRule(ctx, clean)
+	if err != nil {
+		// An add that changed nothing must not be followed by a delete. ufw
+		// answers a duplicate with "Skipping adding existing rule" and exit 0,
+		// and the delete that used to follow removed the rule *below* the one
+		// being edited.
+		return "", err
+	}
+
+	var removed string
+	if oldHandle != "" {
+		remover, ok := b.(handleRemover)
+		if !ok {
+			return added, fmt.Errorf("the new rule was added, but this backend cannot remove the old one")
+		}
+		removed, err = remover.removeHandle(ctx, oldHandle)
+	} else {
+		locator, ok := b.(ruleLocator)
+		if !ok {
+			return added, fmt.Errorf("the new rule was added, but this backend cannot find the old one to remove it")
+		}
+		target, found := locator.findRule(ctx, old, old.IPv6)
+		if !found {
+			// Already gone. Nothing to undo and nothing to report as a
+			// half-finished edit.
+			return added, nil
+		}
+		removed, err = b.DeleteRule(ctx, target)
+	}
+	if err != nil {
+		// Both rules exist now. That is visible in the list and harmless — the
+		// firewall is at least as strict as it was — which is why this is the
+		// order to fail in.
+		return added, fmt.Errorf("the replacement was added but the original rule could not be removed: %w", err)
+	}
+	return strings.TrimSpace(added + "\n" + removed), nil
+}
+
+// ruleNumbered finds the rule a client's number refers to. Backends that print
+// their own numbers are matched on those; the rest are numbered by position,
+// exactly as Service.Status hands them out.
+func ruleNumbered(rules []Rule, number int) (Rule, bool) {
+	for _, r := range rules {
+		if r.Number == number {
+			return r, true
+		}
+	}
+	if number >= 1 && number <= len(rules) {
+		return rules[number-1], true
+	}
+	return Rule{}, false
+}
+
+// sameRule reports whether two listed rules say the same thing.
+//
+// Everything an operator chose is compared and everything the listing computed
+// — the number, the raw line, the catalogue's annotations — is not, so the
+// answer survives the renumbering a delete causes.
+func sameRule(a, b Rule) bool {
+	return a.Action == b.Action &&
+		strings.EqualFold(a.Direction, b.Direction) &&
+		a.To == b.To && a.From == b.From &&
+		a.Port == b.Port && a.Protocol == b.Protocol &&
+		a.Comment == b.Comment
+}
+
+// ruleLocator is a backend that can find a rule again after the list beneath it
+// has moved. Discovered by assertion for the same reason handleRemover is: only
+// the numbered backend needs it.
+type ruleLocator interface {
+	findRule(ctx context.Context, want Rule, ipv6 bool) (int, bool)
+}
+
+// handleRemover is a backend that identifies rules by something other than
+// their position. Discovered by assertion rather than added to fwBackend,
+// because only firewalld needs it and ufw's answer would be a lie.
+type handleRemover interface {
+	removeHandle(ctx context.Context, handle string) (string, error)
+}
+
+func (s *Service) DeleteRule(ctx context.Context, number int) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	if !b.Capabilities().Editable {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
+	if number <= 0 {
+		return "", fmt.Errorf("rule number must be positive")
+	}
+	return b.DeleteRule(ctx, number)
 }
 
 func (s *Service) SetEnabled(ctx context.Context, enabled bool) (string, error) {
-	if enabled {
-		return run(ctx, "ufw", "--force", "enable")
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
 	}
-	return run(ctx, "ufw", "--force", "disable")
+	if !b.Capabilities().Toggle {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
+	return b.SetEnabled(ctx, enabled)
 }
 
-func run(ctx context.Context, name string, args ...string) (string, error) {
+// SetDefaultPolicy changes what happens to a packet no rule matched.
+//
+// This is the single most consequential control on the page: switching the
+// inbound default to deny on a host whose rule list admits nobody takes the
+// machine off the network, this dashboard included, in one command. The guard
+// below refuses exactly that case, and leaves the ambiguous ones to the typed
+// confirmation — a rule list that admits *something* cannot be judged from
+// here without knowing which port the operator's browser arrived on.
+func (s *Service) SetDefaultPolicy(ctx context.Context, direction, policy string) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	if !b.Capabilities().DefaultPolicy {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
+	direction = strings.ToLower(strings.TrimSpace(direction))
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	switch direction {
+	case "incoming", "outgoing", "routed":
+	default:
+		return "", fmt.Errorf("direction must be incoming, outgoing or routed")
+	}
+	switch policy {
+	case "allow", "deny", "reject":
+	default:
+		return "", fmt.Errorf("policy must be allow, deny or reject")
+	}
+	if direction == "incoming" && policy != "allow" {
+		st, err := s.Status(ctx)
+		if err == nil && st.Enabled && !admitsAnything(st.Rules) {
+			return "", fmt.Errorf("%w: no inbound allow rule exists, so a default of %s would refuse every connection to this host",
+				ErrLockout, policy)
+		}
+	}
+	return b.SetDefaultPolicy(ctx, direction, policy)
+}
+
+// admitsAnything reports whether any inbound rule lets a connection in. A rule
+// printed without a direction is inbound — the listings only mark exceptions.
+func admitsAnything(rules []Rule) bool {
+	for _, r := range rules {
+		if r.Action == "ALLOW" || r.Action == "LIMIT" {
+			if r.Direction == "" || strings.EqualFold(r.Direction, "in") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// SetLogging changes how much the firewall writes about what it dropped.
+//
+// Worth exposing because the default is quiet and the difference matters after
+// the fact: a firewall that logs nothing leaves an incident with no record of
+// what was refused, and "off" is a choice somebody should have made on purpose
+// rather than inherited.
+func (s *Service) SetLogging(ctx context.Context, level string) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	if !b.Capabilities().Logging {
+		return "", fmt.Errorf("%w: %s", ErrReadOnly, b.Capabilities().ReadOnlyReason)
+	}
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "off", "on", "low", "medium", "high", "full":
+	default:
+		return "", fmt.Errorf("logging level must be off, on, low, medium, high or full")
+	}
+	return b.SetLogging(ctx, level)
+}
+
+// Reset removes every rule and returns the firewall to its installed state.
+func (s *Service) Reset(ctx context.Context) (string, error) {
+	b := s.backend()
+	if b == nil {
+		return "", ErrNoFirewall
+	}
+	if !b.Capabilities().Reset {
+		return "", fmt.Errorf("%w: this firewall has no reset that is safe to offer", ErrReadOnly)
+	}
+	return b.Reset(ctx)
+}
+
+// AppProfiles lists the named service bundles this host defines — ufw's
+// application profiles, firewalld's services.
+//
+// They are worth surfacing because they are the form the host's own packages
+// speak: a rule added as "Nginx Full" keeps meaning what it says if the
+// package later adds a port, and reads better in the rule list than 80,443.
+func (s *Service) AppProfiles(ctx context.Context) ([]AppProfile, error) {
+	b := s.backend()
+	if b == nil {
+		return []AppProfile{}, nil
+	}
+	return b.Profiles(ctx)
+}
+
+// run invokes a firewall tool on the host. These manage host services, so they
+// run there: a copy of ufw or firewall-cmd inside this image would report on
+// the container.
+//
+// A variable rather than a function so a test can put a recorded transcript
+// behind it. The parsers in this package read output whose exact shape — ufw's
+// "(v6)" suffix, firewalld's tab-indented rich rules, the column order of
+// `iptables -L -n -v --line-numbers` — is the thing most likely to be wrong,
+// and a host that happens to run one of the three is no way to check the other
+// two.
+var run = runOnHost
+
+func runOnHost(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	// These manage host services, so they run on the host. A copy of ufw or
-	// fail2ban inside this image would otherwise report on the container.
 	cmd := hostexec.CommandOnHost(ctx, name, args...)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

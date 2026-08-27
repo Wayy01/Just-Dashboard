@@ -107,3 +107,120 @@ func parseBanLine(line string) (BanEvent, bool) {
 		At:     at,
 	}, true
 }
+
+// Offender is one address, summarised across the whole ban record.
+//
+// A ban list answers "who is banned"; the log answers "who keeps coming
+// back", which is the more useful question and the one no panel in this class
+// asks. An address banned eleven times in a week is not a passing scanner —
+// it is somebody working through your host, and it is worth a permanent
+// firewall rule rather than another ten-minute ban.
+type Offender struct {
+	IP    string    `json:"ip"`
+	Bans  int       `json:"bans"`
+	Jails []string  `json:"jails"`
+	First time.Time `json:"first"`
+	Last  time.Time `json:"last"`
+}
+
+// BanSummary is the ban record turned into something to read.
+type BanSummary struct {
+	Total     int        `json:"total"`
+	Bans      int        `json:"bans"`
+	Unbans    int        `json:"unbans"`
+	Offenders []Offender `json:"offenders"`
+	// ByJail counts bans per jail, so a jail that is doing all the work — or
+	// none of it — is visible without reading the list.
+	ByJail map[string]int `json:"byJail"`
+	// PerDay is the ban count per calendar day, oldest first, for a sparkline.
+	// A histogram of a week says "this started on Tuesday", which the list
+	// cannot.
+	PerDay []DayCount `json:"perDay"`
+	Since  *time.Time `json:"since,omitempty"`
+}
+
+type DayCount struct {
+	Day   string `json:"day"`
+	Count int    `json:"count"`
+}
+
+// SummariseBans folds the ban log. Unbans are counted but do not contribute to
+// an offender's tally: every ban is eventually followed by one, so counting
+// both would double every number and make an expired ban look like a second
+// attack.
+func SummariseBans(events []BanEvent, topN int) BanSummary {
+	if topN <= 0 {
+		topN = 10
+	}
+	sum := BanSummary{Offenders: []Offender{}, ByJail: map[string]int{}, PerDay: []DayCount{}}
+	sum.Total = len(events)
+	byIP := map[string]*Offender{}
+	byDay := map[string]int{}
+	for _, e := range events {
+		if e.Action != "ban" {
+			sum.Unbans++
+			continue
+		}
+		sum.Bans++
+		sum.ByJail[e.Jail]++
+		byDay[e.At.Format("2006-01-02")]++
+		o, ok := byIP[e.IP]
+		if !ok {
+			o = &Offender{IP: e.IP, Jails: []string{}, First: e.At, Last: e.At}
+			byIP[e.IP] = o
+		}
+		o.Bans++
+		if e.At.Before(o.First) {
+			o.First = e.At
+		}
+		if e.At.After(o.Last) {
+			o.Last = e.At
+		}
+		if !slicesContains(o.Jails, e.Jail) {
+			o.Jails = append(o.Jails, e.Jail)
+		}
+	}
+	for _, o := range byIP {
+		sort.Strings(o.Jails)
+		sum.Offenders = append(sum.Offenders, *o)
+	}
+	// Most persistent first, then most recent, then by address so the order
+	// is stable between polls rather than map-random.
+	sort.Slice(sum.Offenders, func(i, j int) bool {
+		a, b := sum.Offenders[i], sum.Offenders[j]
+		if a.Bans != b.Bans {
+			return a.Bans > b.Bans
+		}
+		if !a.Last.Equal(b.Last) {
+			return a.Last.After(b.Last)
+		}
+		return a.IP < b.IP
+	})
+	if len(sum.Offenders) > topN {
+		sum.Offenders = sum.Offenders[:topN]
+	}
+	days := make([]string, 0, len(byDay))
+	for d := range byDay {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	for _, d := range days {
+		sum.PerDay = append(sum.PerDay, DayCount{Day: d, Count: byDay[d]})
+	}
+	for _, e := range events {
+		if sum.Since == nil || e.At.Before(*sum.Since) {
+			at := e.At
+			sum.Since = &at
+		}
+	}
+	return sum
+}
+
+func slicesContains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

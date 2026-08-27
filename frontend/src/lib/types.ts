@@ -1214,17 +1214,68 @@ export type FirewallRule = {
   port?: string
   direction?: string
   comment?: string
+  /** ufw's duplicate of the rule for the v6 table, not a second rule. */
+  ipv6?: boolean
+  service?: string
+  /** Why this rule is dangerous, when it opens a sensitive port to everyone. */
+  danger?: string
   raw: string
 }
 
+export type DefaultPolicy = {
+  incoming?: string
+  outgoing?: string
+  routed?: string
+}
+
+/**
+ * What this host's firewall can actually be told to do.
+ *
+ * ufw, firewalld and raw iptables answer the same questions differently — one
+ * has an on/off switch, one has a service, one has no persistence at all — so
+ * the status says what is possible and the UI hides the rest, with a reason.
+ */
+export type FirewallCapabilities = {
+  editable: boolean
+  toggle: boolean
+  defaultPolicy: boolean
+  logging: boolean
+  reset: boolean
+  profiles: boolean
+  readOnlyReason?: string
+}
+
 export type FirewallStatus = {
-  backend: "ufw" | "iptables"
+  backend: "ufw" | "firewalld" | "iptables"
   available: boolean
   enabled: boolean
   defaultPolicy?: string
+  policy: DefaultPolicy
+  logging?: string
+  /** firewalld's active zone. Absent for backends with no such idea. */
+  zone?: string
+  capabilities: FirewallCapabilities
   rules: FirewallRule[]
   raw?: string
   error?: string
+}
+
+/** A named port from the server's catalogue, with its warning attached. */
+export type ServicePreset = {
+  key: string
+  name: string
+  port: string
+  protocol: string
+  detail: string
+  danger?: string
+}
+
+/** A ufw application profile, as the host's own packages define it. */
+export type AppProfile = {
+  name: string
+  title?: string
+  description?: string
+  ports: string[]
 }
 
 export type Fail2banJail = {
@@ -1235,6 +1286,44 @@ export type Fail2banJail = {
   totalBanned: number
   bannedIps: string[]
   fileList: string[]
+}
+
+/** A jail's working policy: this many failures in this window earns this ban. */
+/** What happened to a jail parameter change, in both halves. */
+export type JailParamResult = {
+  applied: boolean
+  persisted: boolean
+  file?: string
+  output?: string
+  warning?: string
+}
+
+export type JailConfig = {
+  name: string
+  banTime: number
+  findTime: number
+  maxRetry: number
+  ignoreIp: string[]
+  actions: string[]
+  error?: string
+}
+
+export type Offender = {
+  ip: string
+  bans: number
+  jails: string[]
+  first: string
+  last: string
+}
+
+export type BanSummary = {
+  total: number
+  bans: number
+  unbans: number
+  offenders: Offender[]
+  byJail: Record<string, number>
+  perDay: { day: string; count: number }[]
+  since?: string
 }
 
 export type LoginSession = {
@@ -1537,6 +1626,12 @@ export type UpdateReport = {
   manager?: string
   packages: UpdatePackage[]
   securityCount: number
+  /**
+   * Whether this manager can tell a security update from any other. Alpine
+   * and Arch publish no advisory data, so a zero count there means "cannot
+   * tell", not "none outstanding".
+   */
+  securityFiltering: boolean
   rebootRequired: boolean
   rebootPackages?: string[]
   lastChecked: string
@@ -1831,4 +1926,379 @@ export type SelfUpdateReport = {
   }
   run?: UpdateRun
   log?: string
+}
+
+/**
+ * The security verdict. Mirrors netsec.Posture: the same three-field shape as
+ * a health finding, because what was measured, what it means and what to do
+ * are three different things and the UI renders them differently.
+ */
+export type SecurityFinding = {
+  id: string
+  level: "critical" | "warning" | "notice"
+  title: string
+  detail: string
+  advice?: string
+  area: "exposure" | "firewall" | "ssh" | "intrusion" | "ports" | "tls" | "updates"
+  /** A remedy the dashboard can carry out itself, rendered as a button. */
+  fix?: string
+  fixLabel?: string
+}
+
+export type Posture = {
+  status: "ok" | "notice" | "warning" | "critical"
+  findings: SecurityFinding[]
+  checkedAt: string
+  checks: number
+  /** Checks that could not run, because a check that did not run is not a pass. */
+  skipped: string[]
+}
+
+export type SSHSetting = {
+  key: string
+  label: string
+  value: string
+  recommended: string
+  secure: boolean
+  detail: string
+  risk?: string
+  options?: string[]
+  /** "list" is a space-separated set of account names; empty means unrestricted. */
+  kind: "choice" | "number" | "list"
+}
+
+export type KeyedAccount = { user: string; keys: number }
+
+/**
+ * A systemd socket unit standing in front of sshd.
+ *
+ * Where one is active it owns the listener and sshd_config's Port is read and
+ * ignored — the default on Ubuntu since 22.10. The page has to say so, because
+ * otherwise the port control is the one setting that reports success and
+ * changes nothing.
+ */
+export type SSHSocket = {
+  unit?: string
+  ports?: string[]
+  dropIn?: string
+}
+
+export type SSHDConfig = {
+  available: boolean
+  source: string
+  settings: SSHSetting[]
+  ports: string[]
+  managedFile?: string
+  keyedAccounts: KeyedAccount[]
+  hasMatchBlocks: boolean
+  socket?: SSHSocket
+  error?: string
+}
+
+export type SSHApplyResult = {
+  written: boolean
+  file: string
+  valid: boolean
+  output?: string
+  reloaded: boolean
+  reloadError?: string
+  applied: string[]
+  /** Whether the socket unit was moved onto the new port as well. */
+  socketMoved?: boolean
+  socketUnit?: string
+  socketError?: string
+}
+
+export type Peer = {
+  address: string
+  count: number
+  established: number
+  ports: number[]
+  processes: string[]
+  private: boolean
+  service?: string
+}
+
+export type Connections = {
+  peers: Peer[]
+  total: number
+  listening: number
+  loopback: number
+}
+
+export type NetInterface = {
+  name: string
+  addresses: string[]
+  mac?: string
+  mtu: number
+  up: boolean
+  loopback: boolean
+  kind: "physical" | "tunnel" | "bridge" | "virtual" | "loopback"
+  bytesSent: number
+  bytesRecv: number
+  public: boolean
+}
+
+export type Route = {
+  destination: string
+  gateway?: string
+  interface?: string
+  source?: string
+  metric?: string
+  family: "ipv4" | "ipv6"
+  raw: string
+}
+
+export type NetworkInfo = {
+  interfaces: NetInterface[]
+  routes: Route[]
+  resolvers: string[]
+  search: string[]
+}
+
+export type ProbeResult = {
+  tool: string
+  target: string
+  ok: boolean
+  output: string
+  records?: string[]
+  duration: string
+  error?: string
+}
+
+/** The live TLS report: what a visitor actually gets, not what is on disk. */
+export type ProtocolResult = {
+  name: string
+  status: "offered" | "refused" | "unknown"
+  detail?: string
+}
+
+export type ChainLink = {
+  subject: string
+  issuer: string
+  notAfter: string
+  isCa: boolean
+  keyType?: string
+  keyBits?: number
+  selfIssued: boolean
+}
+
+export type HSTS = {
+  maxAge: number
+  includeSubDomains: boolean
+  preload: boolean
+  raw: string
+}
+
+export type HeaderCheck = {
+  name: string
+  value?: string
+  present: boolean
+  level: "important" | "optional"
+  detail: string
+}
+
+export type HTTPScan = {
+  statusCode: number
+  server?: string
+  plainRedirects: boolean
+  plainStatus?: number
+  plainLocation?: string
+  plainError?: string
+  hsts?: HSTS
+  headers: HeaderCheck[]
+}
+
+export type ScanFinding = {
+  id: string
+  level: "critical" | "warning" | "notice"
+  title: string
+  detail: string
+  advice?: string
+}
+
+export type TLSScan = {
+  domain: string
+  port: number
+  checkedAt: string
+  reachable: boolean
+  error?: string
+  grade: string
+  summary: string
+  negotiated?: string
+  cipherSuite?: string
+  protocols: ProtocolResult[]
+  certificate?: Certificate
+  chain: ChainLink[]
+  chainComplete: boolean
+  trusted: boolean
+  trustError?: string
+  nameMatches: boolean
+  keyType?: string
+  keyBits?: number
+  signatureAlgorithm?: string
+  fingerprint?: string
+  serial?: string
+  ocspStapled: boolean
+  http?: HTTPScan
+  findings: ScanFinding[]
+}
+
+export type DomainCheck = {
+  domain: string
+  addresses: string[]
+  hostAddresses: string[]
+  pointsHere: boolean
+  behindProxy: boolean
+  summary: string
+  error?: string
+}
+
+export type CertbotCert = {
+  name: string
+  domains: string[]
+  expiry: string
+  daysLeft: number
+  valid: boolean
+  certPath?: string
+  keyPath?: string
+  serial?: string
+}
+
+export type CertbotState = {
+  available: boolean
+  version?: string
+  certs: CertbotCert[]
+  /** Whether anything is scheduled to renew these, and what. */
+  autoRenew: boolean
+  renewSource?: string
+  raw?: string
+  error?: string
+}
+
+/** A site as the dashboard describes it, not as nginx does. */
+export type SiteLocation = {
+  path: string
+  upstream?: string
+  root?: string
+  webSockets: boolean
+}
+
+export type SiteSpec = {
+  name: string
+  domains: string[]
+  kind: "proxy" | "static" | "redirect"
+  upstream?: string
+  root?: string
+  redirectTo?: string
+  permanent?: boolean
+  tls: boolean
+  certPath?: string
+  keyPath?: string
+  forceHttps: boolean
+  hsts: boolean
+  http2: boolean
+  webSockets: boolean
+  gzip: boolean
+  blockExploits: boolean
+  securityHeaders: boolean
+  clientMaxBody?: string
+  proxyTimeout?: number
+  allowFrom: string[]
+  denyFrom: string[]
+  basicAuthFile?: string
+  basicAuthRealm?: string
+  accessLog: boolean
+  locations: SiteLocation[]
+  custom?: string
+}
+
+export type SiteResult = {
+  name: string
+  path: string
+  content: string
+  warnings: string[]
+  validation?: { valid: boolean; output: string; command: string }
+  enabled: boolean
+  reloaded: boolean
+  output?: string
+}
+
+/** A certbot DNS plugin — the only way to a wildcard, or past a CDN. */
+export type DNSProvider = {
+  key: string
+  name: string
+  plugin: string
+  installed: boolean
+  credentials: string
+  defaultWait: number
+}
+
+export type ImportResult = {
+  name: string
+  certPath: string
+  keyPath: string
+  certificate: Certificate
+  chainComplete: boolean
+  warnings: string[]
+}
+
+/** One forwarded port for something that does not speak HTTP. */
+export type StreamSpec = {
+  name: string
+  listen: number
+  protocol: "tcp" | "udp"
+  upstream: string
+  proxyProtocol: boolean
+  timeout?: number
+  allowFrom: string[]
+}
+
+export type StreamStatus = {
+  /** Whether nginx.conf actually pulls these in. Without it they are ignored. */
+  included: boolean
+  snippet: string
+  dir: string
+  streams: StreamSpec[]
+}
+
+/** An htpasswd file and who is in it. */
+export type AuthFile = {
+  name: string
+  path: string
+  users: string[]
+}
+
+/**
+ * One long-running operation — a certificate issuance, a package upgrade, an
+ * sshd apply.
+ *
+ * Unlike the compose runner's socket, a job is not owned by the console
+ * watching it: closing the tab does not stop it, and reopening picks it up
+ * where it is rather than starting it again.
+ */
+export type JobStatus = "running" | "succeeded" | "failed" | "cancelled"
+
+export type Job = {
+  id: string
+  kind: string
+  title: string
+  target?: string
+  status: JobStatus
+  exitCode: number
+  error?: string
+  startedAt: string
+  endedAt?: string
+  startedBy?: string
+  /** Every line produced, including any the buffer has dropped. */
+  lines: number
+}
+
+export type JobLine = {
+  /** Assigned by the job, and what a reconnecting console resumes from. */
+  seq: number
+  /** stdout, stderr, or status for the runner's own headings. */
+  stream: string
+  text: string
+  at: string
 }

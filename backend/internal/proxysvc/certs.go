@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -68,6 +67,17 @@ func (s *Service) ListCertificates(ctx context.Context) ([]Certificate, error) {
 				continue
 			}
 			add(filepath.Join("/etc/letsencrypt/live", e.Name(), "fullchain.pem"), "certbot")
+		}
+	}
+	// Imported certificates live outside certbot's tree on purpose — a
+	// renewal run must never be able to prune one it did not issue — which
+	// means they have to be looked for separately or they would be invisible
+	// until a vhost happened to reference one.
+	if entries, err := os.ReadDir(importedDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				add(filepath.Join(importedDir, e.Name(), "fullchain.pem"), "imported")
+			}
 		}
 	}
 	for _, v := range s.nginxVHosts() {
@@ -165,16 +175,4 @@ func intermediates(chain []*x509.Certificate) *x509.CertPool {
 		pool.AddCert(c)
 	}
 	return pool
-}
-
-// CertbotCertificates asks certbot itself, which knows about renewal
-// configuration that the PEM files alone do not reveal.
-func CertbotCertificates(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	out, err := execOutput(ctx, "certbot", "certificates")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
 }

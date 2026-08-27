@@ -19,13 +19,25 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 
 	r.Route("/firewall", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFirewallStatus))
+		r.Method(http.MethodGet, "/apps", s.handle(s.handleFirewallApps))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/rules", s.handle(s.handleFirewallAddRule))
+			// Editing is a replace, and it is not in the destructive group:
+			// the new rule goes in before the old one comes out, so the worst
+			// failure leaves the firewall exactly as strict as it was.
+			r.Method(http.MethodPut, "/rules/{number}", s.handle(s.handleFirewallReplaceRule))
+			// Logging is the one firewall setting that cannot cost anybody
+			// their access, so it is the one that stays out of the
+			// destructive group.
+			r.Method(http.MethodPost, "/logging", s.handle(s.handleFirewallLogging))
 			s.destructive(r, func(r chi.Router) {
-				// Turning the firewall off, or deleting the rule that admits
-				// you, is how an operator locks themselves out of the box.
+				// Turning the firewall off, deleting the rule that admits
+				// you, flipping the inbound default or wiping every rule is
+				// how an operator locks themselves out of the box.
 				r.Method(http.MethodPost, "/enabled", s.handle(s.handleFirewallToggle))
+				r.Method(http.MethodPost, "/policy", s.handle(s.handleFirewallPolicy))
+				r.Method(http.MethodPost, "/reset", s.handle(s.handleFirewallReset))
 				r.Method(http.MethodDelete, "/rules/{number}", s.handle(s.handleFirewallDeleteRule))
 			})
 		})
@@ -34,14 +46,20 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 	r.Route("/fail2ban", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleFail2banStatus))
 		r.Method(http.MethodGet, "/history", s.handle(s.handleBanHistory))
+		r.Method(http.MethodGet, "/offenders", s.handle(s.handleBanOffenders))
+		r.Method(http.MethodGet, "/{jail}/config", s.handle(s.handleJailConfig))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/{jail}/unban", s.handle(s.handleFail2banUnban))
 			r.Method(http.MethodPost, "/{jail}/ban", s.handle(s.handleFail2banBan))
+			r.Method(http.MethodPost, "/{jail}/config", s.handle(s.handleJailParam))
+			r.Method(http.MethodPost, "/{jail}/ignore", s.handle(s.handleJailIgnore))
+			// Releasing every ban is undone by the jail itself within
+			// minutes — whoever earned a ban earns the next one — so it is
+			// not in the destructive group despite reading like it should be.
+			r.Method(http.MethodPost, "/{jail}/unban-all", s.handle(s.handleJailUnbanAll))
 		})
 	})
-
-	r.Method(http.MethodGet, "/ssh-sessions", s.handle(s.handleSSHSessions))
 
 	r.Route("/logins", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleLoginHistory))
@@ -55,6 +73,11 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 			r.Method(http.MethodGet, "/failed", s.handle(s.handleFailedLogins))
 		})
 	})
+
+	// The posture verdict, SSH hardening, the connection table and the
+	// diagnostic tools. Kept in handlers_security.go, mounted from here so
+	// the security route map still has one place to be read.
+	s.mountSecurityRoutes(r)
 }
 
 // handleBanHistory answers what fail2ban has actually been doing.
@@ -138,9 +161,45 @@ func (s *Server) handleFirewallAddRule(w http.ResponseWriter, r *http.Request) e
 			httpx.SetAudit(r, "firewall.rule.add", req.Port, map[string]any{"result": "refused_lockout"})
 			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
 		}
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.rule.add", req.Port, req)
+	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	return nil
+}
+
+// mapFirewallError distinguishes "this host's firewall cannot do that" from
+// "you asked for something invalid". They deserve different words, and only
+// the first is worth a code the UI keys off.
+func mapFirewallError(err error) error {
+	if errors.Is(err, netsec.ErrReadOnly) {
+		return httpx.Err(http.StatusNotImplemented, "firewall_read_only", err.Error())
+	}
+	if errors.Is(err, netsec.ErrNoFirewall) {
+		return httpx.Err(http.StatusServiceUnavailable, "no_firewall", err.Error())
+	}
+	return httpx.BadRequest("%v", err)
+}
+
+func (s *Server) handleFirewallReplaceRule(w http.ResponseWriter, r *http.Request) error {
+	number, err := strconv.Atoi(chi.URLParam(r, "number"))
+	if err != nil {
+		return httpx.BadRequest("invalid rule number")
+	}
+	var req netsec.RuleRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	out, err := s.modules.netsec.ReplaceRule(r.Context(), number, req, httpx.ClientIP(r))
+	if err != nil {
+		if errors.Is(err, netsec.ErrLockout) {
+			httpx.SetAudit(r, "firewall.rule.replace", strconv.Itoa(number),
+				map[string]any{"result": "refused_lockout"})
+			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
+		}
+		return mapFirewallError(err)
+	}
+	httpx.SetAudit(r, "firewall.rule.replace", strconv.Itoa(number), req)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
 	return nil
 }
@@ -155,7 +214,7 @@ func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request
 	// firewall off entirely is the route below, and that still asks.
 	out, err := s.modules.netsec.DeleteRule(r.Context(), number)
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.rule.delete", strconv.Itoa(number), nil)
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
@@ -182,7 +241,7 @@ func (s *Server) handleFirewallToggle(w http.ResponseWriter, r *http.Request) er
 	}
 	out, err := s.modules.netsec.SetEnabled(r.Context(), req.Enabled)
 	if err != nil {
-		return httpx.BadRequest("%v", err)
+		return mapFirewallError(err)
 	}
 	httpx.SetAudit(r, "firewall.toggle", "", map[string]any{"enabled": req.Enabled})
 	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})

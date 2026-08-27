@@ -10,7 +10,9 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -31,63 +33,146 @@ type Package struct {
 
 // Report is the answer to "how far behind is this server".
 type Report struct {
-	Available      bool      `json:"available"`
-	Manager        string    `json:"manager,omitempty"`
-	Packages       []Package `json:"packages"`
-	SecurityCount  int       `json:"securityCount"`
-	RebootRequired bool      `json:"rebootRequired"`
-	RebootPackages []string  `json:"rebootPackages,omitempty"`
-	LastChecked    time.Time `json:"lastChecked"`
-	Error          string    `json:"error,omitempty"`
+	Available     bool      `json:"available"`
+	Manager       string    `json:"manager,omitempty"`
+	Packages      []Package `json:"packages"`
+	SecurityCount int       `json:"securityCount"`
+	// SecurityFiltering reports whether this manager can tell a security
+	// update from any other. Alpine and Arch cannot, and a UI that offered
+	// the switch anyway would be promising something it does not do.
+	SecurityFiltering bool      `json:"securityFiltering"`
+	RebootRequired    bool      `json:"rebootRequired"`
+	RebootPackages    []string  `json:"rebootPackages,omitempty"`
+	LastChecked       time.Time `json:"lastChecked"`
+	Error             string    `json:"error,omitempty"`
 }
 
+// Report is produced by whichever manager claims the host.
 type Service struct{}
 
 func New() *Service { return &Service{} }
 
-func (s *Service) Available() bool { return hostexec.AvailableOnHost("apt-get") }
+// Available reports whether *any* supported package manager was found. It used
+// to mean "apt is installed", which made every RPM, Alpine and Arch host look
+// like a machine with nothing to update rather than one that was never
+// checked — the worst possible failure for a security signal.
+func (s *Service) Available() bool { return detect() != nil }
+
+// Manager names what runs this host, so the UI can say apt or dnf rather than
+// "packages".
+func (s *Service) Manager() string {
+	if m := detect(); m != nil {
+		return m.Name()
+	}
+	return ""
+}
 
 // Check lists what could be upgraded right now.
 //
-// It simulates rather than refreshing the package index: a simulation reads
-// the database already on disk and takes milliseconds, while `apt-get update`
-// hits the network and takes the request's whole budget. The index is refreshed
-// by the host's own timer, which is where that job belongs.
+// It reads the package database already on disk rather than refreshing it: a
+// refresh hits the network and takes the request's whole budget, and keeping
+// the index current is the host's own timer's job. pacman is the documented
+// exception and says so at its Upgrade.
 func (s *Service) Check(ctx context.Context) (*Report, error) {
 	rep := &Report{Packages: []Package{}, LastChecked: time.Now().UTC()}
-	if !s.Available() {
+	m := detect()
+	if m == nil {
 		return rep, ErrNotSupported
 	}
 	rep.Available = true
-	rep.Manager = "apt"
+	rep.Manager = m.Name()
+	rep.SecurityFiltering = m.SupportsSecurityOnly()
 
+	packages, err := m.List(ctx)
+	if err != nil {
+		rep.Error = strings.TrimSpace(err.Error())
+		return rep, nil
+	}
+	for _, p := range packages {
+		if p.Security {
+			rep.SecurityCount++
+		}
+	}
+	rep.Packages = packages
+	rep.RebootRequired, rep.RebootPackages = s.rebootState(ctx)
+	return rep, nil
+}
+
+// UpgradeCommand returns the command that applies pending updates.
+//
+// Only the non-interactive, no-new-packages form is offered: this runs
+// unattended behind a web request, and a dist-upgrade that wants to remove
+// something should be a decision somebody makes at a real terminal.
+//
+// It returns the command rather than running it because an upgrade is watched
+// rather than waited for — apt on a machine two hundred packages behind takes
+// long enough that a request holding the connection open is indistinguishable
+// from a broken dashboard.
+func (s *Service) UpgradeCommand(securityOnly bool) (string, []string, []string, error) {
+	m := detect()
+	if m == nil {
+		return "", nil, nil, ErrNotSupported
+	}
+	if err := guardSecurityOnly(m, securityOnly); err != nil {
+		return "", nil, nil, err
+	}
+	name, args, env := m.UpgradeCommand(securityOnly)
+	return name, args, env, nil
+}
+
+// guardSecurityOnly refuses a narrowed upgrade where narrowing means nothing.
+//
+// Alpine and Arch publish no advisory data, so a manager that quietly applied
+// everything would be doing the opposite of what the switch says. The UI hides
+// the control for the same reason; this is the half that holds when somebody
+// calls the API directly.
+func guardSecurityOnly(m manager, securityOnly bool) error {
+	if securityOnly && !m.SupportsSecurityOnly() {
+		return fmt.Errorf("%s publishes no security metadata, so a security-only upgrade is not something it can do", m.Name())
+	}
+	return nil
+}
+
+// aptManager is Debian, Ubuntu and their derivatives.
+type aptManager struct{}
+
+func (aptManager) Name() string               { return "apt" }
+func (aptManager) Detect() bool               { return hostexec.AvailableOnHost("apt-get") }
+func (aptManager) SupportsSecurityOnly() bool { return true }
+
+func (aptManager) List(ctx context.Context) ([]Package, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-
 	// Debug::NoLocking lets this run while something else holds the apt lock,
 	// which matters because it is only ever reading.
 	cmd := hostexec.CommandOnHost(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade")
 	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive", "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
-		rep.Error = strings.TrimSpace(err.Error())
-		return rep, nil
+		return nil, err
 	}
-
+	packages := []Package{}
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
 	for sc.Scan() {
-		p, ok := parseInstLine(sc.Text())
-		if !ok {
-			continue
+		if p, ok := parseInstLine(sc.Text()); ok {
+			packages = append(packages, p)
 		}
-		if p.Security {
-			rep.SecurityCount++
-		}
-		rep.Packages = append(rep.Packages, p)
 	}
+	return packages, nil
+}
 
-	rep.RebootRequired, rep.RebootPackages = s.rebootState()
-	return rep, nil
+func (aptManager) UpgradeCommand(securityOnly bool) (string, []string, []string) {
+	args := []string{"-y", "--no-install-recommends", "-o", "Dpkg::Options::=--force-confold", "upgrade"}
+	if securityOnly {
+		// Restricting to the security pocket keeps a routine patch run from
+		// pulling in every unrelated version bump.
+		args = append([]string{"-t", detectSecuritySuite()}, args...)
+	}
+	// NEEDRESTART_MODE=a stops needrestart opening a full-screen prompt on
+	// Ubuntu, which in a non-interactive run is a command that never returns.
+	return "apt-get", args, []string{
+		"DEBIAN_FRONTEND=noninteractive", "LC_ALL=C", "NEEDRESTART_MODE=a",
+	}
 }
 
 // parseInstLine reads one simulated-install line, which looks like:
@@ -134,9 +219,14 @@ func parseInstLine(line string) (Package, bool) {
 	return p, true
 }
 
-// rebootState reads the flag Debian and Ubuntu drop when an upgraded package
-// cannot take effect until the machine restarts.
-func (s *Service) rebootState() (bool, []string) {
+// rebootState answers whether the running kernel and libraries are still the
+// ones on disk.
+//
+// Debian drops a flag file; the RPM world has a tool that answers directly and
+// nothing to read otherwise. Where neither exists the answer is "cannot tell",
+// reported as false — an invented "no reboot needed" and a real one look the
+// same, so the check that can answer is tried first.
+func (s *Service) rebootState(ctx context.Context) (bool, []string) {
 	// The container sees the host root at /host; check both so this works
 	// whether or not it is containerised.
 	for _, base := range []string{"", "/host"} {
@@ -155,37 +245,20 @@ func (s *Service) rebootState() (bool, []string) {
 		}
 		return true, pkgs
 	}
+	// dnf's needs-restarting exits 1 when a reboot is required, which is the
+	// RPM world's equivalent of the flag file above. Exactly 1 — every other
+	// non-zero code is the tool failing, and reading those as "yes" puts a
+	// permanent reboot warning on a host that never asked for one.
+	if hostexec.AvailableOnHost("needs-restarting") {
+		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		err := hostexec.CommandOnHost(runCtx, "needs-restarting", "-r").Run()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return true, nil
+		}
+	}
 	return false, nil
-}
-
-// Upgrade applies pending updates.
-//
-// Only the non-interactive, no-new-packages form is offered: this runs
-// unattended behind a web request, and a dist-upgrade that wants to remove
-// something should be a decision someone makes at a real terminal. security
-// narrows it to the security pocket, which is the upgrade most operators
-// actually want to apply without thinking about it.
-func (s *Service) Upgrade(ctx context.Context, securityOnly bool) (string, error) {
-	if !s.Available() {
-		return "", ErrNotSupported
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-
-	args := []string{"-y", "--no-install-recommends", "-o", "Dpkg::Options::=--force-confold", "upgrade"}
-	if securityOnly {
-		// Restricting to the security pocket keeps a routine patch run from
-		// pulling in every unrelated version bump.
-		args = append([]string{"-t", detectSecuritySuite()}, args...)
-	}
-	cmd := hostexec.CommandOnHost(ctx, "apt-get", args...)
-	cmd.Env = append(os.Environ(),
-		"DEBIAN_FRONTEND=noninteractive",
-		"LC_ALL=C",
-		"NEEDRESTART_MODE=a",
-	)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }
 
 // detectSecuritySuite guesses the security pocket name from the host's release.

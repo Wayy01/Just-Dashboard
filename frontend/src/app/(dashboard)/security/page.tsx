@@ -1,9 +1,22 @@
 "use client"
 
 import { useState } from "react"
-import { Ban, History, Plus, Shield, ShieldAlert, ShieldCheck, Trash2, Users } from "lucide-react"
+import {
+  Ban,
+  Cable,
+  History,
+  LogOut,
+  Radar,
+  Network,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Siren,
+  TerminalSquare,
+  Users,
+} from "lucide-react"
 import { notify } from "@/lib/toast"
-import { del, get, post, ApiError } from "@/lib/api"
+import { get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type {
   BanEvent,
@@ -12,6 +25,8 @@ import type {
   FirewallStatus,
   LoginRecord,
   LoginSession,
+  Posture,
+  SecurityFinding,
 } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -19,23 +34,19 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { ConnectionsPanel } from "@/components/security/connections-panel"
+import { FirewallPanel } from "@/components/security/firewall-panel"
+import { JailPanel } from "@/components/security/jail-panel"
+import { NetworkPanel } from "@/components/security/network-panel"
+import { OffendersPanel } from "@/components/security/offenders-panel"
+import { PosturePanel } from "@/components/security/posture-panel"
+import { SSHPanel } from "@/components/security/ssh-panel"
+import { ToolsPanel } from "@/components/security/tools-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { IconAction } from "@/components/icon-action"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  stickyTableHeader,
   Table,
   TableBody,
   TableCell,
@@ -43,40 +54,151 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
 
 export default function SecurityPage() {
+  const { confirm, dialog } = useConfirm()
+  const posture = usePoll<Posture>(
+    (signal) => get("/security/posture", undefined, signal),
+    120000,
+  )
+  const firewall = usePoll<FirewallStatus>(
+    (signal) => get("/firewall/", undefined, signal),
+    20000,
+  )
+
+  /**
+   * A finding's one-click remedy.
+   *
+   * The whole difference between a warning and a fix. The server names the
+   * action; the page maps it to the request that carries it out, and to the
+   * confirmation it deserves — the two that can cost access to the machine
+   * both go through the typed phrase rather than round it.
+   */
+  const applyFix = async (finding: SecurityFinding) => {
+    const fix = finding.fix ?? ""
+    if (fix === "firewall.enable") {
+      confirm({
+        title: "Enable firewall",
+        phrase: "enable firewall",
+        confirmLabel: "Enable",
+        description: (
+          <p className="text-destructive">
+            ufw applies its default-deny policy immediately. If the port this dashboard listens on
+            is not already allowed, you will lose access.
+          </p>
+        ),
+        action: async (c) => {
+          await post("/firewall/enabled", { enabled: true }, { confirm: c })
+          firewall.refresh()
+          posture.refresh()
+        },
+      })
+      return
+    }
+    if (fix.startsWith("ssh.")) {
+      const [key, value] = fix.slice(4).split("=")
+      confirm({
+        title: finding.fixLabel ?? "Apply SSH change",
+        phrase: "change ssh",
+        confirmLabel: "Test and apply",
+        description: (
+          <div className="space-y-2">
+            <p>
+              Sets <code className="font-mono">{key}</code> to{" "}
+              <code className="font-mono">{value}</code>, tests it with sshd&rsquo;s own parser and
+              puts the file back if the test fails.
+            </p>
+            <p className="text-destructive">
+              Keep this session open and confirm you can still log in from a second terminal before
+              closing it.
+            </p>
+          </div>
+        ),
+        action: async (c) => {
+          await post("/ssh/config", { settings: { [key]: value } }, { confirm: c })
+          notify.success("Applied")
+          posture.refresh()
+        },
+      })
+      return
+    }
+    notify.info("Fix this from the tab below", { description: finding.advice })
+  }
+
   return (
     <Page>
       <PageHeader
         eyebrow="Network"
         title="Security"
-        description="Firewall, intrusion prevention and active logins"
+        description="Exposure, firewall, SSH, intrusion prevention and who is connected"
       />
       <ExposurePanel />
+      <PosturePanel posture={posture.data} loading={posture.loading} onFix={applyFix} />
+
       <Tabs defaultValue="firewall" className="min-w-0 gap-4">
         <TabsList>
-          <TabsTrigger value="firewall">Firewall</TabsTrigger>
-          <TabsTrigger value="fail2ban">fail2ban</TabsTrigger>
-          <TabsTrigger value="sessions">SSH sessions</TabsTrigger>
+          <TabsTrigger value="firewall">
+            <Shield className="size-3.5" />
+            Firewall
+          </TabsTrigger>
+          <TabsTrigger value="ssh">
+            <TerminalSquare className="size-3.5" />
+            SSH
+          </TabsTrigger>
+          <TabsTrigger value="fail2ban">
+            <Siren className="size-3.5" />
+            Intrusion
+          </TabsTrigger>
+          <TabsTrigger value="connections">
+            <Network className="size-3.5" />
+            Connections
+          </TabsTrigger>
+          <TabsTrigger value="sessions">
+            <Users className="size-3.5" />
+            Logins
+          </TabsTrigger>
+          <TabsTrigger value="network">
+            <Cable className="size-3.5" />
+            Network
+          </TabsTrigger>
+          <TabsTrigger value="tools">
+            <Radar className="size-3.5" />
+            Tools
+          </TabsTrigger>
         </TabsList>
+
         <TabsContent value="firewall" className="min-w-0">
-          <FirewallTab />
+          <FirewallPanel
+            status={firewall.data}
+            posture={posture.data}
+            loading={firewall.loading}
+            error={firewall.error}
+            refresh={() => {
+              firewall.refresh()
+              posture.refresh()
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="ssh" className="min-w-0">
+          <SSHPanel />
         </TabsContent>
         <TabsContent value="fail2ban" className="min-w-0">
-          <Fail2banTab />
+          <Fail2banTab posture={posture.data} />
+        </TabsContent>
+        <TabsContent value="connections" className="min-w-0">
+          <ConnectionsPanel />
         </TabsContent>
         <TabsContent value="sessions" className="min-w-0">
           <SessionsTab />
         </TabsContent>
+        <TabsContent value="network" className="min-w-0">
+          <NetworkPanel />
+        </TabsContent>
+        <TabsContent value="tools" className="min-w-0">
+          <ToolsPanel />
+        </TabsContent>
       </Tabs>
+      {dialog}
     </Page>
   )
 }
@@ -141,235 +263,7 @@ function ExposurePanel() {
   )
 }
 
-function FirewallTab() {
-  const { can } = useAuth()
-  const { confirm, dialog } = useConfirm()
-  const { data, error, loading, refresh } = usePoll(
-    (signal) => get<FirewallStatus>("/firewall/", undefined, signal),
-    20000,
-  )
-
-  if (loading) return <LoadingPanel />
-  if (error) return <ErrorState error={error} />
-  if (!data?.available) {
-    return <EmptyState icon={Shield} title="No firewall tool found" description={data?.error} />
-  }
-
-  return (
-    <>
-      <div className="flex min-w-0 flex-col gap-4">
-        <Notice icon={ShieldAlert} title="Lockout protection">
-          A rule that would block the address you are connected from is refused before it is applied
-          — a firewall change should never be the thing that costs you access to the box.
-        </Notice>
-
-        <Panel>
-          <PanelHeader
-            icon={Shield}
-            title={`${data.backend} · ${data.enabled ? "active" : "inactive"}`}
-            description={data.defaultPolicy ?? "no default policy reported"}
-            actions={
-              can("system.admin") &&
-              data.backend === "ufw" && (
-                <>
-                  <AddRuleDialog onDone={refresh} />
-                  <Switch
-                    checked={data.enabled}
-                    onCheckedChange={(enabled) =>
-                      confirm({
-                        title: enabled ? "Enable firewall" : "Disable firewall",
-                        phrase: enabled ? "enable firewall" : "disable firewall",
-                        confirmLabel: enabled ? "Enable" : "Disable",
-                        description: enabled ? (
-                          <p className="text-destructive">
-                            ufw applies its default-deny policy immediately. If the port this
-                            dashboard listens on is not already allowed, you will lose access.
-                          </p>
-                        ) : (
-                          <p className="text-destructive">
-                            Every rule stops being enforced and the host is left unfiltered.
-                          </p>
-                        ),
-                        action: async (c) => {
-                          await post("/firewall/enabled", { enabled }, { confirm: c })
-                          refresh()
-                        },
-                      })
-                    }
-                  />
-                </>
-              )
-            }
-          />
-          <PanelBody flush>
-            <Table containerClassName="max-h-[calc(100svh-26rem)]">
-              <TableHeader className={stickyTableHeader}>
-                <TableRow>
-                  <TableHead className="w-12">#</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>To</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead className="w-full">Comment</TableHead>
-                  <TableHead className="w-px" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.rules.map((rule, i) => (
-                  <TableRow key={`${rule.number}-${i}`} className="group">
-                    <TableCell className="numeric font-mono text-xs">{rule.number}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={rule.action === "ALLOW" ? "success" : "destructive"}
-                        className="font-normal"
-                      >
-                        {rule.action}
-                      </Badge>
-                      {rule.direction && (
-                        <span className="ml-1 text-[11px] text-muted-foreground">
-                          {rule.direction}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{rule.to || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{rule.from || "anywhere"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{rule.comment}</TableCell>
-                    <TableCell>
-                      {can("system.admin") && rule.number !== undefined && (
-                        <IconAction
-                          label="Delete rule"
-                          className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-                          onClick={() =>
-                            confirm({
-                              title: "Delete firewall rule",
-                              confirmLabel: "Delete",
-                              description: <p className="font-mono text-xs">{rule.raw}</p>,
-                              action: async (c) => {
-                                await del(`/firewall/rules/${rule.number}`, { confirm: c })
-                                refresh()
-                              },
-                            })
-                          }
-                        >
-                          <Trash2 />
-                        </IconAction>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {data.rules.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="p-0">
-                      <EmptyState icon={Shield} title="No rules configured" />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </PanelBody>
-        </Panel>
-      </div>
-      {dialog}
-    </>
-  )
-}
-
-function AddRuleDialog({ onDone }: { onDone: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [action, setAction] = useState("allow")
-  const [port, setPort] = useState("")
-  const [protocol, setProtocol] = useState("tcp")
-  const [from, setFrom] = useState("")
-  const [comment, setComment] = useState("")
-
-  const submit = async () => {
-    try {
-      await post("/firewall/rules", { action, direction: "in", port, protocol, from, comment })
-      notify.success("Rule added")
-      setOpen(false)
-      setPort("")
-      setFrom("")
-      setComment("")
-      onDone()
-    } catch (err) {
-      notify.error("Rule rejected", err)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline">
-          <Plus className="size-4" />
-          Add rule
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>New inbound rule</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Action</Label>
-              <Select value={action} onValueChange={setAction}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="allow">allow</SelectItem>
-                  <SelectItem value="deny">deny</SelectItem>
-                  <SelectItem value="reject">reject</SelectItem>
-                  <SelectItem value="limit">limit</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Protocol</Label>
-              <Select value={protocol} onValueChange={setProtocol}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tcp">tcp</SelectItem>
-                  <SelectItem value="udp">udp</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rule-port">Port or range</Label>
-            <Input
-              id="rule-port"
-              value={port}
-              onChange={(e) => setPort(e.target.value)}
-              placeholder="443 or 8000:8010"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rule-from">Source (optional)</Label>
-            <Input
-              id="rule-from"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              placeholder="10.0.0.0/8"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="rule-comment">Comment</Label>
-            <Input id="rule-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button onClick={submit} disabled={!port}>
-            Add rule
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function Fail2banTab() {
+function Fail2banTab({ posture }: { posture: Posture | undefined }) {
   const { can } = useAuth()
   const { data, error, loading, refresh } = usePoll(
     (signal) =>
@@ -383,82 +277,74 @@ function Fail2banTab() {
 
   if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
-  if (!data?.available) return <EmptyState icon={Ban} title="fail2ban is not installed" />
+  if (!data?.available) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={Ban}
+          title="fail2ban is not installed"
+          description="It turns an endless brute-force against a port that has to stay open into a few attempts and a ban, which is the one thing a firewall cannot do for SSH."
+        />
+      </div>
+    )
+  }
   if (!data.running) {
     return (
       <EmptyState
         icon={Ban}
         title="fail2ban is installed but not responding"
-        description={data.error}
+        description={data.error ?? "Installed and stopped is the state that looks protected and is not."}
       />
     )
   }
 
-  const unban = async (jail: string, ip: string) => {
-    try {
-      await post(`/fail2ban/${encodeURIComponent(jail)}/unban`, { ip })
-      notify.success(`${ip} unbanned from ${jail}`)
-      refresh()
-    } catch (err) {
-      notify.error("Could not unban", err)
-    }
-  }
-
   return (
     <div className="space-y-4">
+      {/* The findings for this area, above the jails that fix them. */}
+      {posture?.findings.some((f) => f.area === "intrusion") && (
+        <div className="space-y-2">
+          {posture.findings
+            .filter((f) => f.area === "intrusion")
+            .map((f) => (
+              <Notice
+                key={f.id}
+                tone={f.level === "critical" ? "danger" : f.level === "warning" ? "warning" : "default"}
+                icon={Siren}
+                title={f.title}
+              >
+                <p>{f.detail}</p>
+                {f.advice && <p className="mt-1 text-foreground/80">{f.advice}</p>}
+              </Notice>
+            ))}
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {data.jails.map((jail) => (
-          <JailPanel key={jail.name} jail={jail} onUnban={unban} canUnban={can("system.admin")} />
+          <JailPanel
+            key={jail.name}
+            jail={jail}
+            canManage={can("system.admin")}
+            onChanged={refresh}
+          />
         ))}
-        {data.jails.length === 0 && <EmptyState icon={Ban} title="No jails configured" />}
+        {data.jails.length === 0 && (
+          <EmptyState
+            icon={Ban}
+            title="No jails configured"
+            description="A running fail2ban with no jails bans nobody. Enable at least the sshd jail."
+          />
+        )}
       </div>
+
+      <OffendersPanel onBlocked={refresh} />
+
       {/* Under the current bans, what fail2ban has actually been doing. A ban
           expires, so a jail's list is empty again by morning however busy the
           night was — and "nothing currently banned" reads as "nothing
           happened". */}
       <BanHistoryPanel />
     </div>
-  )
-}
-
-function JailPanel({
-  jail,
-  onUnban,
-  canUnban,
-}: {
-  jail: Fail2banJail
-  onUnban: (jail: string, ip: string) => void
-  canUnban: boolean
-}) {
-  return (
-    <Panel>
-      <PanelHeader
-        icon={Ban}
-        title={jail.name}
-        description={`${jail.currentlyBanned} banned now · ${jail.totalBanned} total · ${jail.currentlyFailed} failing`}
-      />
-      <PanelBody>
-        {jail.bannedIps.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">Nothing currently banned.</p>
-        ) : (
-          <div className="space-y-0.5">
-            {jail.bannedIps.map((ip) => (
-              <div
-                key={ip}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-[var(--row-hover)]"
-              >
-                <span className="font-mono text-xs">{ip}</span>
-                {canUnban && (
-                  <Button size="xs" variant="ghost" onClick={() => onUnban(jail.name, ip)}>
-                    Unban
-                  </Button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </PanelBody>
-    </Panel>
   )
 }
 
@@ -498,7 +384,7 @@ function BanHistoryPanel() {
         ) : !data?.length ? (
           <EmptyState icon={History} title="No ban activity recorded" />
         ) : (
-          <Table>
+          <Table containerClassName="max-h-[24rem]">
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -547,7 +433,9 @@ function SessionsTab() {
 }
 
 function CurrentSessions() {
-  const { data, error, loading } = usePoll(
+  const { can } = useAuth()
+  const { confirm, dialog } = useConfirm()
+  const { data, error, loading, refresh } = usePoll(
     (signal) => get<LoginSession[]>("/ssh-sessions", undefined, signal),
     10000,
   )
@@ -556,6 +444,7 @@ function CurrentSessions() {
   if (!data?.length) return <EmptyState icon={Users} title="No interactive logins" />
 
   return (
+    <>
     <Panel>
       <PanelHeader
         icon={Users}
@@ -572,11 +461,12 @@ function CurrentSessions() {
               <TableHead>Logged in</TableHead>
               <TableHead>Idle</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead className="w-px" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.map((session, i) => (
-              <TableRow key={`${session.user}-${session.tty}-${i}`}>
+              <TableRow key={`${session.user}-${session.tty}-${i}`} className="group">
                 <TableCell className="text-[13px] font-medium">{session.user}</TableCell>
                 <TableCell className="font-mono text-xs">{session.tty}</TableCell>
                 <TableCell className="font-mono text-xs">{session.from || "local"}</TableCell>
@@ -591,12 +481,49 @@ function CurrentSessions() {
                     {session.isSsh ? "ssh" : "local"}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  {can("system.admin") && session.pid ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                      onClick={() =>
+                        confirm({
+                          title: `Disconnect ${session.user}`,
+                          phrase: `disconnect ${session.pid}`,
+                          confirmLabel: "Disconnect",
+                          description: (
+                            <p>
+                              The session on <b>{session.tty}</b> from{" "}
+                              <b>{session.from || "local"}</b> is hung up. Anything it is running
+                              in the foreground stops with it — a long job that was not started
+                              under tmux or nohup will not survive.
+                            </p>
+                          ),
+                          action: async (c) => {
+                            await post(
+                              `/ssh-sessions/${session.pid}/disconnect`,
+                              {},
+                              { confirm: c },
+                            )
+                            refresh()
+                          },
+                        })
+                      }
+                    >
+                      <LogOut className="size-3.5" />
+                      Disconnect
+                    </Button>
+                  ) : null}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </PanelBody>
     </Panel>
+    {dialog}
+    </>
   )
 }
 
@@ -668,7 +595,7 @@ function LoginHistoryPanel() {
             title={showFailed ? "No failed attempts recorded" : "No logins recorded"}
           />
         ) : (
-          <Table>
+          <Table containerClassName="max-h-[28rem]">
             <TableHeader>
               <TableRow>
                 <TableHead>User</TableHead>

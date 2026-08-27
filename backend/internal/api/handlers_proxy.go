@@ -36,14 +36,30 @@ func (s *Server) mountProxyRoutes(r chi.Router) {
 	r.Route("/certificates", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleCertList))
 		r.Method(http.MethodGet, "/check", s.handle(s.handleCertCheck))
+		r.Method(http.MethodGet, "/scan", s.handle(s.handleTLSScan))
+		r.Method(http.MethodGet, "/dns", s.handle(s.handleDomainDNS))
 		r.Method(http.MethodGet, "/certbot", s.handle(s.handleCertbot))
+		r.Method(http.MethodGet, "/dns-providers", s.handle(s.handleDNSProviders))
 		r.Method(http.MethodGet, "/watched", s.handle(s.handleWatchedDomains))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
 			r.Method(http.MethodPost, "/watched", s.handle(s.handleWatchDomain))
 			r.Method(http.MethodDelete, "/watched/{id}", s.handle(s.handleUnwatchDomain))
+			r.Method(http.MethodPost, "/issue", s.handle(s.handleCertIssue))
+			r.Method(http.MethodPost, "/import", s.handle(s.handleCertImport))
+			r.Method(http.MethodPost, "/dns-credentials", s.handle(s.handleDNSCredentials))
+			r.Method(http.MethodPost, "/renew", s.handle(s.handleCertRenew))
+			s.destructive(r, func(r chi.Router) {
+				// Revocation cannot be undone: the authority publishes that
+				// the certificate is no longer to be trusted, and every
+				// client holding it starts refusing the site.
+				r.Method(http.MethodPost, "/revoke", s.handle(s.handleCertRevoke))
+			})
 		})
 	})
+
+	// The site builder and the live TLS report, in handlers_proxy_sites.go.
+	s.mountSiteRoutes(r)
 
 	r.Method(http.MethodGet, "/ports", s.handle(s.handlePortList))
 }
@@ -222,12 +238,21 @@ func (s *Server) handleCertCheck(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// handleCertbot answers with certbot's own view, parsed.
+//
+// It knows things the PEM files do not: which lineage a certificate belongs
+// to, and whether anything is scheduled to renew it. The second is the one
+// that matters — an expired Let's Encrypt certificate is almost never a
+// forgotten renewal, it is a renewal timer that stopped and told nobody.
 func (s *Server) handleCertbot(w http.ResponseWriter, r *http.Request) error {
-	out, err := proxysvc.CertbotCertificates(r.Context())
-	if err != nil {
-		return httpx.Err(http.StatusServiceUnavailable, "certbot_unavailable", err.Error())
+	ctx, cancel := timeoutCtx(r, 90*time.Second)
+	defer cancel()
+	state := s.modules.proxy.CertbotState(ctx)
+	if !state.Available {
+		return httpx.Err(http.StatusServiceUnavailable, "certbot_unavailable",
+			"certbot is not installed on this host")
 	}
-	httpx.JSON(w, http.StatusOK, map[string]string{"output": out})
+	httpx.JSON(w, http.StatusOK, state)
 	return nil
 }
 
