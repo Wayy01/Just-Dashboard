@@ -134,6 +134,9 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 	// twice under different names.
 	byTmux := map[string]*workspace{}
 	out := []*workspace{}
+	// Kept beside the workspaces so a session whose directory tmux did not
+	// answer for can be asked directly, below.
+	live := map[*workspace]*term.Session{}
 
 	for _, sess := range s.modules.term.List() {
 		meta := sess.Meta()
@@ -145,6 +148,7 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 			Owner: sess.Owner, Windows: 1,
 		}
 		out = append(out, ws)
+		live[ws] = sess
 		if sess.TmuxName != "" {
 			byTmux[sess.TmuxName] = ws
 		}
@@ -165,7 +169,13 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 	// session it is never behind and is sometimes ahead.
 	for _, t := range s.modules.term.TmuxSessions(r.Context()) {
 		if ws, ok := byTmux[t.Name]; ok {
-			ws.CWD, ws.Windows = t.CWD, t.Windows
+			ws.Windows = t.Windows
+			// Only when tmux actually answered. A blank from a tmux that is
+			// there but has not caught up must not erase a directory this
+			// process can read for itself.
+			if t.CWD != "" {
+				ws.CWD = t.CWD
+			}
 			continue
 		}
 		out = append(out, &workspace{
@@ -173,6 +183,25 @@ func (s *Server) handleTerminalList(w http.ResponseWriter, r *http.Request) erro
 			Favourite: t.Favourite, Colour: t.Colour, Persisted: true, CWD: t.CWD,
 			Windows: t.Windows, CreatedAt: t.CreatedAt,
 		})
+	}
+
+	// Where a session is now, for the ones tmux did not answer for.
+	//
+	// tmux reports every session's directory in the one `list-sessions` call
+	// above, so on a host that has it this loop does nothing. On a host that
+	// does not — Debian installs no tmux by default — that call returns
+	// nothing at all, and the listing used to carry no directory for any
+	// session. The files and git panel beside the terminal is rooted at
+	// exactly that value, so both of them silently had nowhere to look: the
+	// panel opened empty and stayed empty, on a shell sitting in a repository.
+	//
+	// Session.CWD reads it from /proc, which needs no multiplexer, and it is
+	// asked only where the answer is still missing so a tmux host pays nothing
+	// for it.
+	for ws, sess := range live {
+		if ws.CWD == "" {
+			ws.CWD = sess.CWD()
+		}
 	}
 
 	// Who a new session will belong to, and where it will start. The page

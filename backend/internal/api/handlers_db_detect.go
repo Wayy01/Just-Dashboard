@@ -263,6 +263,87 @@ func (s *Server) handleDBAdopt(w http.ResponseWriter, r *http.Request) error {
 		map[string]any{"container": cand.Container, "image": cand.Image})
 }
 
+type hostConnectRequest struct {
+	Driver   dbx.Driver `json:"driver"`
+	Host     string     `json:"host"`
+	Port     int        `json:"port"`
+	User     string     `json:"user"`
+	Password string     `json:"password"`
+	Database string     `json:"database"`
+	Name     string     `json:"name"`
+}
+
+// handleDBConnectHost saves a connection to a database installed on the
+// machine rather than in a container.
+//
+// It dials before it stores, and that ordering is the whole point. The first
+// version of this handed the browser a connection string with the password
+// left out and let it be saved as it stood, which produced a connection row
+// that existed, looked connected, and answered "password authentication failed
+// for user postgres" to every request made of it afterwards. A credential the
+// dashboard cannot verify is one it must not keep: the engine's own refusal
+// belongs in the dialog the operator is still looking at, where it names the
+// user it refused, not in a red badge on a row they have to delete.
+//
+// The password arrives in the body and goes no further than dbx.BuildDSN,
+// which is the one place a secret joins a DSN, and it is sealed like every
+// other stored one.
+func (s *Server) handleDBConnectHost(w http.ResponseWriter, r *http.Request) error {
+	var req hostConnectRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if !req.Driver.Valid() {
+		return httpx.BadRequest("driver must be one of %s", driverNames())
+	}
+	if strings.TrimSpace(req.Host) == "" || req.Port <= 0 {
+		return httpx.BadRequest("a host and port are required")
+	}
+	cand := dbx.Candidate{
+		Driver: req.Driver, Source: dbx.SourceHost, Host: strings.TrimSpace(req.Host),
+		Port: req.Port, User: strings.TrimSpace(req.User), Database: strings.TrimSpace(req.Database),
+	}
+	dsn := dbx.BuildDSN(cand, req.Password)
+	if dsn == "" {
+		return httpx.BadRequest("no connection string could be built for %s", req.Driver)
+	}
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	if err := s.probeConnection(ctx, req.Driver, dsn); err != nil {
+		httpx.SetAudit(r, "database.connection.host", cand.Host, map[string]any{
+			"ok": false, "driver": string(req.Driver), "user": cand.User,
+		})
+		// The engine's own words. "password authentication failed for user
+		// postgres" is the entire diagnosis and names the account it refused;
+		// anything this layer said instead would be a worse version of it.
+		return httpx.BadRequest("%v", err)
+	}
+
+	existing, err := s.existingDSNs(ctx)
+	if err != nil {
+		return err
+	}
+	if have, ok := existing[addressKey(cand.Host, cand.Port)]; ok {
+		conn, err := s.connectionByName(ctx, have)
+		if err != nil {
+			return err
+		}
+		httpx.SkipAudit(r)
+		httpx.JSON(w, http.StatusOK, conn)
+		return nil
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = dbx.HostConnectionName(cand)
+	}
+	if !connNameRe.MatchString(name) {
+		return httpx.BadRequest("name may contain letters, digits, spaces, dots, dashes and underscores")
+	}
+	name = uniqueConnectionName(name, existing)
+	return s.saveConnection(w, r, name, cand.Driver, dsn, "database.connection.host",
+		map[string]any{"process": cand.Process, "port": cand.Port})
+}
+
 // candidateFor re-detects one container by name, so an adopt acts on what is
 // true now rather than on what a listing said some time ago.
 func (s *Server) candidateFor(ctx context.Context, name string) (*dbx.Candidate, string, error) {
@@ -423,7 +504,8 @@ func (s *Server) handleDBSync(w http.ResponseWriter, r *http.Request) error {
 		if cand.NeedsCredentials || dsn == "" || s.probeConnection(ctx, cand.Driver, dsn) != nil {
 			needsCredentials = append(needsCredentials, credentialServer{
 				Driver: string(cand.Driver), Host: cand.Host, Port: cand.Port,
-				Process: cand.Process, Name: dbx.HostConnectionName(cand), DSN: dsn,
+				Process: cand.Process, Name: dbx.HostConnectionName(cand),
+				User: cand.User, Database: cand.Database,
 			})
 			continue
 		}
@@ -473,7 +555,11 @@ type credentialServer struct {
 	Port    int    `json:"port"`
 	Process string `json:"process,omitempty"`
 	Name    string `json:"name"`
-	DSN     string `json:"dsn"`
+	// User and Database are the engine's own conventions — the account a
+	// Postgres always has, the database a MySQL does not need — so the form
+	// opens with everything filled in but the password.
+	User     string `json:"user,omitempty"`
+	Database string `json:"database,omitempty"`
 }
 
 // detectedFrom is the addresses the Docker half already accounts for, so the

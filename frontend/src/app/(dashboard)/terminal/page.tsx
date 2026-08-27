@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
+  Layers,
   Maximize2,
   Minimize2,
   PanelLeft,
@@ -583,6 +584,24 @@ export default function TerminalPage() {
         <Notice icon={ShieldAlert} tone="danger" title="No account to log in as">
           {data.login.error} Set <code className="font-mono">JD_TERMINAL_USER</code> to an account
           that exists on this server.
+        </Notice>
+      )}
+
+      {/*
+        The second banner, and it is here for the same reason as the first: a
+        feature that is quietly absent looks like a feature that is broken.
+        Windows, panes, and a session that survives closing the tab are all
+        tmux's, and this page used to say nothing at all on a host without it —
+        so the split button did nothing, the window strip stayed empty, and
+        there was no way to find out why. Debian installs no tmux by default,
+        which makes that half of the world commoner than it sounds.
+      */}
+      {!data.tmux && (
+        <Notice icon={Layers} tone="warning" title="tmux is not installed on this server">
+          Shells still work, but they end when you close the tab, and windows and panes are
+          unavailable — all three are tmux&apos;s. Install it with{" "}
+          <code className="font-mono">apt install tmux</code> (or your package manager&apos;s
+          equivalent) and reload this page.
         </Notice>
       )}
 

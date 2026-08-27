@@ -33,6 +33,7 @@ import { ErDiagram } from "@/components/database/er-diagram"
 import { RedisBrowser } from "@/components/database/redis-browser"
 import { MongoBrowser } from "@/components/database/mongo-browser"
 import { ConnectionDialog } from "@/components/database/connection-dialog"
+import { HostConnectDialog } from "@/components/database/host-connect-dialog"
 
 export default function DatabasesPage() {
   const { can } = useAuth()
@@ -118,7 +119,7 @@ export default function DatabasesPage() {
         // sees Docker".
         for (const server of res.needsCredentials ?? []) {
           notify.info(`${server.driver} is running on this server`, {
-            description: `On port ${server.port}. Connecting it needs a username and password — this dashboard cannot read them the way it can from a container.`,
+            description: `On port ${server.port}. It is not in a container, so its password is the one thing this dashboard cannot read for itself.`,
             duration: Infinity,
             action: { label: "Connect", onClick: () => setCredentialsFor(server) },
           })
@@ -386,15 +387,13 @@ export default function DatabasesPage() {
         </>
       )}
       {credentialsFor && (
-        <ConnectionDialog
+        <HostConnectDialog
           key={`${credentialsFor.host}:${credentialsFor.port}`}
-          open
+          server={credentialsFor}
           onOpenChange={(o) => !o && setCredentialsFor(null)}
-          onDone={connections.refresh}
-          prefill={{
-            name: credentialsFor.name,
-            driver: credentialsFor.driver as DbConnection["driver"],
-            dsn: credentialsFor.dsn,
+          onConnected={(name) => {
+            connections.refresh()
+            setPendingSelect(name)
           }}
         />
       )}

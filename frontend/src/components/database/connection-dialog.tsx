@@ -38,20 +38,11 @@ export function ConnectionDialog({
   onOpenChange,
   onDone,
   existing,
-  prefill,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onDone: () => void
   existing?: DbConnection
-  /**
-   * A connection the dashboard found but cannot finish on its own — a database
-   * installed on the host, whose password lives in the server's own catalogue.
-   * Everything but the password is filled in, so what is left is the one field
-   * that genuinely needs a person. Mount this with a `key` so a second server
-   * opens with its own values rather than the first one's.
-   */
-  prefill?: { name?: string; driver?: DbDriver; dsn?: string }
 }) {
   const editing = Boolean(existing)
   // The engine list comes from the server, which is the only thing that knows
@@ -61,12 +52,10 @@ export function ConnectionDialog({
     (signal) => get<DbDriverInfo[]>("/databases/drivers", undefined, signal),
     0,
   )
-  const [name, setName] = useState(existing?.name ?? prefill?.name ?? "")
-  const [driver, setDriver] = useState<DbDriver>(
-    existing?.driver ?? prefill?.driver ?? "postgres",
-  )
+  const [name, setName] = useState(existing?.name ?? "")
+  const [driver, setDriver] = useState<DbDriver>(existing?.driver ?? "postgres")
   const info = drivers.data?.find((d) => d.id === driver)
-  const [dsn, setDsn] = useState(prefill?.dsn ?? "")
+  const [dsn, setDsn] = useState("")
   const [testResult, setTestResult] = useState<{
     ok: boolean
     version?: string

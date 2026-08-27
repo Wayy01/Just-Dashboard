@@ -4,6 +4,24 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.5.9 — 27 August 2026
+
+**The parts of the last release that only worked on the machine they were written on**
+
+Connecting a database installed on the server asked for nothing and then saved a connection that could not authenticate. The terminal's files and git panel needed tmux to know where the shell was, and said nothing on a host that has none — which is every stock Debian.
+
+### Added
+
+- The terminal says when tmux is missing, and what that costs
+  - Windows, panes and a session that survives closing the tab are all tmux's. Without it the split button did nothing and the window strip stayed empty, with nothing on screen explaining why. Debian installs no tmux by default, so the page now says so and names the one command that fixes it.
+
+### Fixed
+
+- Connecting a database that is not in a container asks for its password, and dials before it saves
+  - It used to hand you a connection string with the password missing, which could be saved as it stood — the result was a connection that existed, looked connected, and answered "password authentication failed for user postgres" to everything afterwards. Now nothing is stored unless the engine accepts it, and its refusal is shown next to the field that caused it. If the account has never had a password, the dialog names the one command that gives it one.
+- The terminal's files and git panel works on a host without tmux
+  - The panel is rooted at the shell's current directory, which was only ever read from tmux — so on a machine without it the panel had nowhere to look and stayed empty beside a shell sitting in a repository. The directory is read from the process itself when tmux cannot answer.
+
 ## 0.5.8 — 26 August 2026
 
 **Sign in to GitHub from the page that does the pushing**

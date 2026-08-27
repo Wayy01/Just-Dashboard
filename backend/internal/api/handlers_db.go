@@ -46,6 +46,10 @@ func (s *Server) mountDatabaseRoutes(r chi.Router) {
 			// connection by hand rather than on the read surface beside them.
 			r.Method(http.MethodGet, "/detected", s.handle(s.handleDBDetected))
 			r.Method(http.MethodPost, "/adopt", s.handle(s.handleDBAdopt))
+			// The same act for a server that is not in a container: everything
+			// but the password is already known, so the request is the
+			// password and nothing else is typed.
+			r.Method(http.MethodPost, "/host", s.handle(s.handleDBConnectHost))
 			r.Method(http.MethodPost, "/sync", s.handle(s.handleDBSync))
 			r.Method(http.MethodGet, "/provision/options", s.handle(s.handleDBProvisionOptions))
 			r.Method(http.MethodPost, "/provision", s.handle(s.handleDBProvision))
