@@ -208,13 +208,29 @@ func renderAccess(l *lines, spec *SiteSpec) {
 		wrote = true
 	}
 	if len(spec.AllowFrom) > 0 || len(spec.DenyFrom) > 0 {
-		l.add("    # nginx reads these in order and stops at the first match. Anything")
-		l.add("    # not matched is allowed, which is why a deny all belongs last.")
+		l.add("    # nginx reads these in order and stops at the first match, so the")
+		l.add("    # exceptions come first and the fence goes last.")
+		// Denials first, because first match wins: an address that is inside
+		// an allowed range and named on the deny list is meant to be refused,
+		// and the other order would let the range answer for it.
+		for _, entry := range spec.DenyFrom {
+			entry = strings.TrimSpace(entry)
+			if entry == "all" {
+				continue
+			}
+			l.add("    deny %s;", entry)
+		}
 		for _, entry := range spec.AllowFrom {
 			l.add("    allow %s;", strings.TrimSpace(entry))
 		}
-		for _, entry := range spec.DenyFrom {
-			l.add("    deny %s;", strings.TrimSpace(entry))
+		// An allow list with nothing after it allows everybody: nginx falls
+		// through to its default, which is to permit. The operator used to
+		// have to know that and write the fence themselves, in a box labelled
+		// "deny from" — and the address they would reach for, 0.0.0.0/0, lets
+		// in every IPv6 client on the internet. A control labelled "only these
+		// addresses" has to mean it, so the fence is written here.
+		if len(spec.AllowFrom) > 0 || containsDenyAll(spec.DenyFrom) {
+			l.add("    deny all;")
 		}
 		wrote = true
 	}

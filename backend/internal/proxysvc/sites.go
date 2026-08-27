@@ -245,9 +245,18 @@ func SpecWarnings(spec *SiteSpec) []string {
 		warnings = append(warnings,
 			"A short read timeout closes idle WebSocket connections. Sixty seconds or more is usual for anything long-lived.")
 	}
-	if len(spec.AllowFrom) > 0 && !containsDenyAll(spec.DenyFrom) {
+	if len(spec.AllowFrom) > 0 {
 		warnings = append(warnings,
-			"An allow list with no \"deny all\" after it allows everybody: nginx falls through to the default, which is to permit.")
+			"Only the listed addresses will reach this site. Everything else is refused — check the list includes however you reach it yourself.")
+		if spec.Kind == "redirect" {
+			// nginx runs `return` in the rewrite phase, which is before the
+			// access phase allow and deny live in, so a redirect answers
+			// before the address is ever checked. Said plainly rather than
+			// rendered anyway: an access control that is silently skipped is
+			// worse than one the operator was told not to rely on.
+			warnings = append(warnings,
+				"Except on a redirect: nginx answers a redirect before it checks the address, so the allow list will not restrict this site. Put the restriction on whatever the redirect points at.")
+		}
 	}
 	return warnings
 }

@@ -418,13 +418,14 @@ function SiteFormBody({
             placeholder="10.0.0.0/8"
             values={spec.allowFrom}
             onChange={(v) => set("allowFrom", v)}
-            hint="nginx allows anything not matched, so an allow list needs a deny below it."
+            hint="Filling this in refuses everything else. Include however you reach the site yourself."
           />
           <ListField
             label="Deny"
-            placeholder="all"
+            placeholder="203.0.113.0/24"
             values={spec.denyFrom}
             onChange={(v) => set("denyFrom", v)}
+            hint="Exceptions, checked before the allow list. The fence at the end is written for you."
           />
           <Field label="Password file" hint="An htpasswd file. Leave empty for no password.">
             <Input

@@ -201,10 +201,13 @@ func TestSpecWarnings(t *testing.T) {
 		t.Error("TLS without a redirect should warn")
 	}
 
-	danglingAllow := proxySpec()
-	danglingAllow.AllowFrom = []string{"10.0.0.0/8"}
-	if !containsSubstring(SpecWarnings(danglingAllow), "allows everybody") {
-		t.Error("an allow list with no deny all allows everybody, and should say so")
+	// The fence is written for the operator now rather than demanded of them,
+	// so what is left to say is what the list does — including that it has to
+	// contain however they reach the site themselves.
+	restricted := proxySpec()
+	restricted.AllowFrom = []string{"10.0.0.0/8"}
+	if !containsSubstring(SpecWarnings(restricted), "Only the listed addresses") {
+		t.Error("an allow list should say what it now refuses")
 	}
 
 	if len(SpecWarnings(proxySpec())) != 0 {
@@ -315,4 +318,83 @@ func containsSubstring(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// An allow list with nothing after it allows everybody: nginx falls through to
+// its default, which is to permit. The operator used to have to know that and
+// write the fence into a box labelled "deny from" — and 0.0.0.0/0, the address
+// they would reach for, lets in every IPv6 client on the internet.
+func TestAllowListIsFencedWithDenyAll(t *testing.T) {
+	spec := proxySpec()
+	spec.AllowFrom = []string{"10.0.0.0/8", "192.168.1.5"}
+	out, err := RenderNginx(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "deny all;") {
+		t.Fatalf("an allow list with no fence after it:\n%s", out)
+	}
+	// Order is the whole of nginx's access model: first match wins, so the
+	// fence has to come after everything it is fencing.
+	if strings.Index(out, "allow 10.0.0.0/8;") > strings.Index(out, "\n    deny all;") {
+		t.Error("the fence is above the allow rules, so nothing gets in at all")
+	}
+}
+
+// A named denial has to beat a range that would otherwise admit it, which
+// under first-match means the denials go first.
+func TestExplicitDenialsComeBeforeTheAllowList(t *testing.T) {
+	spec := proxySpec()
+	spec.AllowFrom = []string{"10.0.0.0/8"}
+	spec.DenyFrom = []string{"10.0.0.5"}
+	out, err := RenderNginx(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny, allow := strings.Index(out, "deny 10.0.0.5;"), strings.Index(out, "allow 10.0.0.0/8;")
+	if deny < 0 || allow < 0 {
+		t.Fatalf("entries missing:\n%s", out)
+	}
+	if deny > allow {
+		t.Error("the range answers first, so the denied address is let in")
+	}
+}
+
+// A file that already carries the fence reads back and renders again as one
+// fence, not two.
+func TestDenyAllRoundTripsWithoutDoubling(t *testing.T) {
+	spec := proxySpec()
+	spec.AllowFrom = []string{"10.0.0.0/8"}
+	first, err := RenderNginx(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, ok := ParseSiteSpec(spec.Name, first)
+	if !ok {
+		t.Fatal("the rendered file did not parse back")
+	}
+	second, err := RenderNginx(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(second, "\n    deny all;"); n != 1 {
+		t.Fatalf("%d fences after a round trip:\n%s", n, second)
+	}
+}
+
+// Only the site's own access block is fenced. The exploit-shape locations have
+// their own deny and are not access control for the site.
+func TestNoFenceWithoutAnAllowList(t *testing.T) {
+	spec := proxySpec()
+	spec.DenyFrom = []string{"203.0.113.0/24"}
+	out, err := RenderNginx(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\n    deny all;") {
+		t.Fatalf("a blocklist became an allowlist:\n%s", out)
+	}
+	if !strings.Contains(out, "deny 203.0.113.0/24;") {
+		t.Error("the blocklist entry is missing")
+	}
 }
