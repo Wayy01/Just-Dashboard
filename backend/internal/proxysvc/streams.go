@@ -314,7 +314,12 @@ func streamDanger(port int) (string, bool) {
 	return "", false
 }
 
-// DeleteStream removes one.
+// DeleteStream removes one, keeping the previous content as .bak.
+//
+// nginx includes stream.d/*.conf, so the backup is inert — and a forwarding
+// rule somebody spent ten minutes getting right is worth a file left behind,
+// since the delete itself is the only thing this dashboard does to a stream
+// that cannot be undone from the form.
 func (s *Service) DeleteStream(ctx context.Context, name string) error {
 	if !streamNameRe.MatchString(name) {
 		return fmt.Errorf("invalid stream name")

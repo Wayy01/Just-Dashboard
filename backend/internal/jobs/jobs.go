@@ -352,6 +352,12 @@ func (e *entry) appendLine(stream, text string) {
 	}
 }
 
+func (e *entry) setExitCode(code int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.job.ExitCode = code
+}
+
 func (e *entry) markCancelled() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -390,7 +396,13 @@ func (e *entry) finish(runErr, ctxErr error) {
 	}
 }
 
-type emitter struct{ entry *entry }
+type emitter struct {
+	entry *entry
+	// lastCode is what the most recent command exited with. A job that runs
+	// several — a pull and then an up — is reported by the one that decided
+	// the outcome, which is the last one to run.
+	lastCode int
+}
 
 func (em *emitter) Status(format string, args ...any) {
 	em.entry.appendLine("status", fmt.Sprintf(format, args...))
@@ -411,6 +423,15 @@ func (em *emitter) Run(ctx context.Context, name string, args ...string) (int, e
 // pieces.
 func (em *emitter) RunEnv(ctx context.Context, env []string, name string, args ...string) (int, error) {
 	em.Status("$ %s %s", name, strings.Join(args, " "))
+	// The code the last command exited with is recorded on the job, because
+	// it is a field the API has always carried and nothing ever wrote: every
+	// failed job reported "exit 0", which next to "failed" is a contradiction
+	// the reader has to resolve by ignoring one of them.
+	// -1 up front so a command that never started — a missing binary, a pipe
+	// that could not be opened — is not reported with whatever the previous
+	// one exited with.
+	em.lastCode = -1
+	defer func() { em.entry.setExitCode(em.lastCode) }()
 	cmd := hostexec.CommandOnHost(ctx, name, args...)
 	if len(env) > 0 {
 		cmd.Env = append(cmd.Environ(), env...)
@@ -450,6 +471,7 @@ func (em *emitter) RunEnv(ctx context.Context, env []string, name string, args .
 	if waitErr != nil && code == 0 {
 		code = -1
 	}
+	em.lastCode = code
 	if waitErr != nil {
 		if friendly := friendlyExecError(name, waitErr); friendly != waitErr {
 			return code, friendly
