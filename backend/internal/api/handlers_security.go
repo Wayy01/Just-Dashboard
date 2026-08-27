@@ -34,13 +34,22 @@ func (s *Server) mountSecurityRoutes(r chi.Router) {
 	r.Method(http.MethodGet, "/connections", s.handle(s.handleConnections))
 	r.Method(http.MethodGet, "/network", s.handle(s.handleNetworkInfo))
 
-	// Ending somebody's session is destructive and rare — a handful of times
-	// a year, not a dozen a day — so it takes a typed phrase by the same
-	// frequency test the terminal close routes fail.
+	// Listing the logins and ending one are the same subtree, and they have to
+	// be registered in the same place: chi mounts a Route as a subrouter, so a
+	// Route and a Method on the same pattern are not two routes — the second
+	// takes the path and the first quietly stops existing. Split across two
+	// mount functions, that is exactly what happened, and `GET /ssh-sessions`
+	// answered 404 while the page went on polling it.
 	r.Route("/ssh-sessions", func(r chi.Router) {
-		r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
-		s.destructive(r, func(r chi.Router) {
-			r.Method(http.MethodPost, "/{pid}/disconnect", s.handle(s.handleDisconnectSession))
+		r.Method(http.MethodGet, "/", s.handle(s.handleSSHSessions))
+		// Ending somebody's session is destructive and rare — a handful of
+		// times a year, not a dozen a day — so it takes a typed phrase by the
+		// same frequency test the terminal close routes fail.
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			s.destructive(r, func(r chi.Router) {
+				r.Method(http.MethodPost, "/{pid}/disconnect", s.handle(s.handleDisconnectSession))
+			})
 		})
 	})
 

@@ -111,6 +111,8 @@ func TestSecurityReadRoutesSurviveABareHost(t *testing.T) {
 		"/api/v1/connections",
 		"/api/v1/network",
 		"/api/v1/ssh/config",
+		"/api/v1/ssh-sessions",
+		"/api/v1/ssh-sessions/",
 		"/api/v1/fail2ban/",
 		"/api/v1/proxy/streams/",
 		"/api/v1/proxy/auth-files/",
@@ -470,5 +472,36 @@ func TestFirewallRuleEditIsMountedAndNeedsNoPhrase(t *testing.T) {
 	// A malformed number is the route's own answer and proves the handler ran.
 	if w := c.do(http.MethodPut, "/api/v1/firewall/rules/two", `{"action":"allow","port":"22"}`, nil); w.Code != http.StatusBadRequest {
 		t.Fatalf("non-numeric rule number = %d, want 400", w.Code)
+	}
+}
+
+// The session list and the route that ends a session are the same subtree, and
+// they have to be registered in the same place.
+//
+// chi mounts a Route as a subrouter, so a Route and a Method on the same
+// pattern are not two routes — the second takes the path and the first quietly
+// stops existing. Registered from two different mount functions, that is what
+// happened: `GET /ssh-sessions` answered 404 while the page went on polling it,
+// so the Connections tab showed no sessions and the one thing an operator would
+// want to end had nothing to end it by. Nothing failed and nothing was logged;
+// the list was simply always empty.
+func TestSessionListAndDisconnectCoexist(t *testing.T) {
+	c, _ := newClient(t)
+	// Both spellings, because the page asks without the trailing slash and chi
+	// routes a mounted subrouter's "/" for either.
+	for _, path := range []string{"/api/v1/ssh-sessions", "/api/v1/ssh-sessions/"} {
+		w := c.do(http.MethodGet, path, "", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, w.Code, strings.TrimSpace(w.Body.String()))
+		}
+		var sessions []netsec.LoginSession
+		if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+			t.Fatalf("GET %s: body is not a session list: %v", path, err)
+		}
+	}
+	// And the sibling still answers rather than having been displaced in turn.
+	w := c.do(http.MethodPost, "/api/v1/ssh-sessions/4242/disconnect", "{}", nil)
+	if w.Code == http.StatusNotFound {
+		t.Fatal("the disconnect route is not mounted")
 	}
 }

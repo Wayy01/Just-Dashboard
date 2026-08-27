@@ -61,8 +61,6 @@ func (s *Server) mountNetSecRoutes(r chi.Router) {
 		})
 	})
 
-	r.Method(http.MethodGet, "/ssh-sessions", s.handle(s.handleSSHSessions))
-
 	r.Route("/logins", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleLoginHistory))
 		// btmp records whatever was typed at a login prompt, and what people
