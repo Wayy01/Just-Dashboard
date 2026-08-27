@@ -49,6 +49,11 @@ type SSHSocket struct {
 	// "which port is SSH on" wherever it is non-empty — sshd_config's Port is
 	// not.
 	Ports []string `json:"ports,omitempty"`
+	// Listen is the same thing unreduced: the full addresses, so a move can
+	// rewrite the port and keep everything else. A socket bound to one
+	// interface must not become one bound to every interface because somebody
+	// changed the port.
+	Listen []string `json:"listen,omitempty"`
 	// DropIn is the file a port change would be written to.
 	DropIn string `json:"dropIn,omitempty"`
 }
@@ -75,30 +80,42 @@ func readSSHSocket(ctx context.Context) SSHSocket {
 		}
 		sock := SSHSocket{Unit: unit, DropIn: socketDropInPath(unit)}
 		if props, err := hostexec.CommandOnHost(ctx, "systemctl", "show", unit, "-p", "Listen").Output(); err == nil {
-			sock.Ports = parseListenPorts(string(props))
+			sock.Listen = parseListenAddresses(string(props))
+			sock.Ports = portsOf(sock.Listen)
 		}
 		return sock
 	}
 	return SSHSocket{}
 }
 
-// parseListenPorts reads the addresses out of `systemctl show <unit> -p Listen`:
+// parseListenAddresses reads the stream addresses out of
+// `systemctl show <unit> -p Listen`:
 //
 //	Listen=0.0.0.0:22 (Stream)
 //	Listen=[::]:22 (Stream)
 //
-// Only the port is kept, de-duplicated, because a dual-stack socket names the
-// same port twice and a page reporting "22, 22" reads as a misconfiguration.
-func parseListenPorts(out string) []string {
-	seen := map[string]bool{}
-	ports := []string{}
+// Only the stream sockets: a unit may also carry a unix socket, which has no
+// port and is not what "which port is SSH on" is asking about.
+func parseListenAddresses(out string) []string {
+	addrs := []string{}
 	sc := bufio.NewScanner(strings.NewReader(out))
 	for sc.Scan() {
 		m := listenStreamRe.FindStringSubmatch(strings.TrimSpace(sc.Text()))
-		if m == nil {
+		if m == nil || !strings.Contains(m[1], ":") {
 			continue
 		}
-		addr := m[1]
+		addrs = append(addrs, m[1])
+	}
+	return addrs
+}
+
+// portsOf reduces addresses to the ports they name, de-duplicated: a
+// dual-stack socket names the same port twice, and "22, 22" on the page reads
+// as a misconfiguration rather than as one listener.
+func portsOf(addrs []string) []string {
+	seen := map[string]bool{}
+	ports := []string{}
+	for _, addr := range addrs {
 		idx := strings.LastIndex(addr, ":")
 		if idx < 0 {
 			continue
@@ -111,6 +128,28 @@ func parseListenPorts(out string) []string {
 		ports = append(ports, port)
 	}
 	return ports
+}
+
+// rewritePort puts each listening address back with a different port, so a
+// socket bound to one interface stays bound to that interface. Where nothing
+// could be read, both families are named explicitly — which is what the
+// packaged ssh.socket does, and what a single bare `ListenStream=<port>` does
+// not: that binds the IPv6 wildcard, and under the `BindIPv6Only=ipv6-only`
+// the same unit sets, IPv4 stops being listened on at all. Moving the port
+// would have taken IPv4 SSH off the machine.
+func rewritePort(addrs []string, port string) []string {
+	out := []string{}
+	for _, addr := range addrs {
+		idx := strings.LastIndex(addr, ":")
+		if idx <= 0 {
+			continue
+		}
+		out = append(out, addr[:idx+1]+port)
+	}
+	if len(out) == 0 {
+		out = []string{"0.0.0.0:" + port, "[::]:" + port}
+	}
+	return out
 }
 
 func socketDropInPath(unit string) string {
@@ -126,17 +165,28 @@ func socketDropInPath(unit string) string {
 // so the empty assignment is not decoration: without it the socket listens on
 // the new port and on 22, and an operator who moved SSH to quiet the logs has
 // achieved nothing at all.
-func socketDropIn(unit, port string) string {
-	return fmt.Sprintf(`# Written by Just Dashboard.
+func socketDropIn(unit, port string, addrs []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `# Written by Just Dashboard.
 #
 # This host runs socket-activated SSH: the port belongs to %s, not to
-# sshd_config, and sshd never binds a listener of its own. The empty
-# ListenStream clears the packaged unit's list first — systemd appends
-# otherwise, and the socket would go on answering on 22 as well.
+# sshd_config, and sshd never binds a listener of its own.
+#
+# The empty ListenStream clears the packaged unit's list first, because systemd
+# appends — without it the socket would go on answering on the old port as
+# well. Both families are then named explicitly: a bare "ListenStream=<port>"
+# binds the IPv6 wildcard, and under the BindIPv6Only=ipv6-only this unit sets,
+# that leaves IPv4 unlistened. BindIPv6Only is repeated here so the pair is
+# legal whether or not the base unit set it — without it the two addresses
+# collide and the socket fails to start.
 [Socket]
+BindIPv6Only=ipv6-only
 ListenStream=
-ListenStream=%s
-`, unit, port)
+`, unit)
+	for _, addr := range rewritePort(addrs, port) {
+		fmt.Fprintf(&b, "ListenStream=%s\n", addr)
+	}
+	return b.String()
 }
 
 // applySocketPort writes the drop-in and restarts the socket.
@@ -154,7 +204,7 @@ func applySocketPort(ctx context.Context, sock SSHSocket, port string, out LineW
 	if err := os.MkdirAll(filepath.Dir(sock.DropIn), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(sock.DropIn, []byte(socketDropIn(sock.Unit, port)), 0o644); err != nil {
+	if err := os.WriteFile(sock.DropIn, []byte(socketDropIn(sock.Unit, port, sock.Listen)), 0o644); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
