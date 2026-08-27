@@ -1,6 +1,104 @@
 {
-  "latest": "0.5.9",
+  "latest": "0.6",
   "releases": [
+    {
+      "version": "0.6",
+      "date": "2026-08-27",
+      "title": "The security and proxy pages say what the machine's posture is, on whatever distribution it runs",
+      "summary": "The Security and Proxy pages showed you facts and left the reading to somebody who already knew how. They now grade the machine and say what to do about it \u2014 and they work on Fedora, Rocky, openSUSE, Arch and Alpine as well as on Debian and Ubuntu, where before the firewall reported inactive on every host that had one and every non-apt server was told it had nothing to update.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "The Security page grades the machine instead of only showing its settings",
+          "detail": "Exposure, firewall, sshd, intrusion prevention, open ports, certificates and pending patches become findings that carry what was measured, what it means, what to do about it, and \u2014 where the dashboard can carry out the remedy itself \u2014 a button. The rules are deliberately conservative: an exposed database behind a default-deny firewall is a warning rather than a critical, and \"turn off password authentication\" stops being offered when no account holds a key, because there it is not advice, it is a lockout."
+        },
+        {
+          "kind": "added",
+          "text": "The firewall page writes firewalld as well as ufw, and says plainly when it can only read",
+          "detail": "firewalld's model is genuinely different \u2014 zones, services and rich rules rather than numbered lines \u2014 so a rule with a source becomes a rich rule, everything is written --permanent and reloaded, and the page numbers rules positionally. Raw iptables stays read-only on purpose: it has no persistence of its own, so a rule added from here would work until the reboot and then vanish, leaving a page that says protected in front of a host that is not."
+        },
+        {
+          "kind": "added",
+          "text": "Package updates work on dnf, yum, zypper, pacman and apk, not only apt",
+          "detail": "Every RPM, Arch and Alpine host used to report no package manager, which renders as \"nothing to update\" rather than \"never checked\" \u2014 so the posture audit's patch check was silently dead on half the servers this runs on. Alpine and Arch publish no advisory data, so they now say the security count cannot be told rather than reporting zero, and a security-only upgrade is refused there instead of quietly applying everything."
+        },
+        {
+          "kind": "added",
+          "text": "A site builder that writes the nginx for you, shown live beside the form",
+          "detail": "Proxy targets, static roots, redirects, extra paths, WebSocket upgrades, basic auth and address restrictions, rendered on the server so there is one implementation of what a site means. The symlink goes in before nginx -t, because a file not yet in the include tree is one the test has nothing to say about."
+        },
+        {
+          "kind": "added",
+          "text": "Certificates can be issued over DNS-01 with eight provider plugins, and one you bought can be imported",
+          "detail": "DNS-01 is the only route to a wildcard and the only thing that works behind a CDN. An imported key is checked against its certificate first, because a mismatched pair is accepted by every text editor and refused by nginx at reload \u2014 on a live server, during an outage."
+        },
+        {
+          "kind": "added",
+          "text": "A live TLS report grading what a visitor actually gets",
+          "detail": "Each protocol version is probed on a connection of its own, and reported as unknown where this client would not ask \u2014 calling it absent would be a false reassurance about exactly the versions that matter most."
+        },
+        {
+          "kind": "added",
+          "text": "Streams forward the services that do not speak HTTP, and password files are managed here",
+          "detail": "nginx's stream is a top-level context a server file cannot reach, so these live in their own directory and the page says plainly when nginx.conf does not include it; nginx.conf itself is never edited from here. Passwords are hashed with bcrypt in process, so the credential never becomes an argv that /proc/*/cmdline makes world-readable."
+        },
+        {
+          "kind": "added",
+          "text": "Long operations run as jobs you can leave and come back to",
+          "detail": "Issuing a certificate, upgrading every package and reloading sshd used to hold a browser request open for the length of the run, so a dropped connection left you with no idea whether your SSH configuration had been applied. The work now descends from the process rather than the request: closing the tab, navigating away and losing the connection all leave it running and the transcript complete, and a finished run can be reopened from a recent list. What stays synchronous is the refusal \u2014 a bad email, a wildcard asked for over HTTP, an sshd change that would lock you out \u2014 so it answers the click that caused it rather than arriving a minute later as a failed run."
+        },
+        {
+          "kind": "added",
+          "text": "fail2ban jails can be tuned in place and survive a restart, with a fold of the repeat offenders",
+          "detail": "Settings are written to jail.d/*.local and merged rather than regenerated, so no other jail or hand-written line is lost. The repeat-offenders view answers what a ban list cannot: who keeps coming back."
+        },
+        {
+          "kind": "fixed",
+          "text": "The firewall no longer reports itself inactive on every host that has one",
+          "detail": "ufw's parser takes exactly one of `status numbered` and `status verbose`, so asking for both returned an error and no rules \u2014 which the page rendered as a firewall that was not running."
+        },
+        {
+          "kind": "fixed",
+          "text": "Deleting or editing a firewall rule affects that rule and nothing else",
+          "detail": "A ufw rule written without an address family becomes two entries and deleting by number took only one, leaving its IPv6 twin behind on a page that said the rule was gone. Editing a rule to an unchanged value was worse: ufw answers a duplicate add with \"Skipping\" and the old number was then deleted anyway, so the rule that vanished was the next one down. Rules are now found again by what they are, in a listing read after the change."
+        },
+        {
+          "kind": "fixed",
+          "text": "Moving the SSH port works on Ubuntu 22.10 and later, where systemd owns the listener",
+          "detail": "Socket activation is the default on 24.04: sshd_config's Port is read, resolved and reported back by sshd -T, and ignored, so the control passed validation, reloaded successfully, read back the new value \u2014 and the machine went on answering on 22. The socket unit is now read and written alongside the daemon, on both address families, and restarted rather than reloaded, because systemd rebinds a socket's addresses only on restart. The page says which unit holds the port and which port it is actually on."
+        },
+        {
+          "kind": "fixed",
+          "text": "The root login setting shows the value sshd reported on a stock Ubuntu",
+          "detail": "OpenSSH 9.9 prints the deprecated spelling of exactly the value the distributions ship as their default, which the control had no entry for \u2014 so a security setting read as \"not set\" on a host where it was set correctly."
+        },
+        {
+          "kind": "fixed",
+          "text": "The fail2ban allowlist is readable again",
+          "detail": "Fail2Ban 1.x draws its answer as a tree where 0.x printed a list, so a jail with one allowlisted address showed six entries beginning \"These\", and a jail with none showed five beginning \"No\". That is every fail2ban shipping today."
+        },
+        {
+          "kind": "fixed",
+          "text": "A check that could not be answered says so, rather than reporting a reassuring zero",
+          "detail": "`last` and `lastb` come from util-linux-extra, which minimal cloud images leave out, so the failed-login count stayed at zero and the verdict called the host quiet. Zero attempts and \"the tool that counts them is not installed\" are the same number and opposite facts. The check is now listed as skipped, with the package named."
+        },
+        {
+          "kind": "fixed",
+          "text": "A failed job reports the code the command exited with",
+          "detail": "The exit code was in every response and nothing ever assigned it, so every failure read \"exit 0\" \u2014 which next to \"failed\" is a contradiction the reader resolves by ignoring one of the two."
+        },
+        {
+          "kind": "security",
+          "text": "An nginx address restriction is now a fence rather than a suggestion",
+          "detail": "nginx reads its access directives in order, stops at the first match, and falls through to permit \u2014 so a site restricted to a private range was reachable from anywhere on the internet. The list is now closed with `deny all`, with explicit denials above it so first-match still means what it reads as. One case it still cannot cover is stated rather than papered over: nginx answers a redirect in the rewrite phase, before the access phase runs at all."
+        },
+        {
+          "kind": "security",
+          "text": "An account list written into sshd_config can no longer carry a directive of its own",
+          "detail": "A newline inside a list of allowed users would have written a setting of the caller's choosing onto the next line of the file."
+        }
+      ]
+    },
     {
       "version": "0.5.9",
       "date": "2026-08-27",
