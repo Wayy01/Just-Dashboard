@@ -1969,6 +1969,20 @@ export type SSHSetting = {
 
 export type KeyedAccount = { user: string; keys: number }
 
+/**
+ * A systemd socket unit standing in front of sshd.
+ *
+ * Where one is active it owns the listener and sshd_config's Port is read and
+ * ignored — the default on Ubuntu since 22.10. The page has to say so, because
+ * otherwise the port control is the one setting that reports success and
+ * changes nothing.
+ */
+export type SSHSocket = {
+  unit?: string
+  ports?: string[]
+  dropIn?: string
+}
+
 export type SSHDConfig = {
   available: boolean
   source: string
@@ -1977,6 +1991,7 @@ export type SSHDConfig = {
   managedFile?: string
   keyedAccounts: KeyedAccount[]
   hasMatchBlocks: boolean
+  socket?: SSHSocket
   error?: string
 }
 
@@ -1988,6 +2003,10 @@ export type SSHApplyResult = {
   reloaded: boolean
   reloadError?: string
   applied: string[]
+  /** Whether the socket unit was moved onto the new port as well. */
+  socketMoved?: boolean
+  socketUnit?: string
+  socketError?: string
 }
 
 export type Peer = {

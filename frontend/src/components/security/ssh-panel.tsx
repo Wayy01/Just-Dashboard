@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, CheckCircle2, KeyRound, TerminalSquare } from "lucide-react"
+import { AlertTriangle, CheckCircle2, KeyRound, Network, TerminalSquare } from "lucide-react"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Job, SSHDConfig, SSHSetting } from "@/lib/types"
@@ -141,6 +141,16 @@ export function SSHPanel() {
             that reason. Add a key from the Users page first.
           </Notice>
         )}
+        {data.socket?.unit && (
+          <Notice icon={Network} title={`The port belongs to ${data.socket.unit}, not to sshd_config`}>
+            This host runs socket-activated SSH — systemd holds the listener and hands sshd a
+            connection, so sshd never binds a port of its own and the Port directive is read and
+            ignored. Changing it here writes the directive <em>and</em> a drop-in for{" "}
+            <code className="font-mono">{data.socket.unit}</code>, then restarts the socket, which
+            is the half that actually moves where connections land. Existing sessions are separate
+            processes and are not disconnected.
+          </Notice>
+        )}
         {data.hasMatchBlocks && (
           <Notice icon={AlertTriangle} title="This configuration has Match blocks">
             Some of these values are overridden for particular users or addresses. What is shown
@@ -153,7 +163,11 @@ export function SSHPanel() {
           <PanelHeader
             icon={TerminalSquare}
             title="SSH server"
-            description={`Port ${data.ports.join(", ")} · read from ${data.source}`}
+            description={
+              data.socket?.unit
+                ? `Port ${data.ports.join(", ")} (held by ${data.socket.unit}) · read from ${data.source}`
+                : `Port ${data.ports.join(", ")} · read from ${data.source}`
+            }
             actions={
               <>
               <RecentJobs kinds={["ssh."]} onOpen={console_.open} />

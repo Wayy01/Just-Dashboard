@@ -40,6 +40,11 @@ type SSHApplyPlan struct {
 	Content string
 	// Applied lists the directives being set, for the audit entry.
 	Applied []string
+	// Socket is the systemd socket unit that owns SSH's listener, where one
+	// does. SocketPort is the port it has to be moved onto — writing the
+	// directive alone on such a host changes a value sshd never consults.
+	Socket     SSHSocket
+	SocketPort string
 
 	original string
 	existed  bool
@@ -58,6 +63,12 @@ type SSHApplyResult struct {
 	// operator believing a setting is in force when it is not.
 	ReloadError string   `json:"reloadError,omitempty"`
 	Applied     []string `json:"applied"`
+	// SocketMoved reports that the systemd socket unit was moved onto the new
+	// port as well, which on a socket-activated host is the half that actually
+	// changes where SSH answers.
+	SocketMoved bool   `json:"socketMoved,omitempty"`
+	SocketUnit  string `json:"socketUnit,omitempty"`
+	SocketError string `json:"socketError,omitempty"`
 }
 
 var (
@@ -108,6 +119,7 @@ func (s *Service) PlanSSHSettings(ctx context.Context, changes map[string]string
 	if err := guardSSHLockout(current, clean); err != nil {
 		return nil, err
 	}
+	socketPort := ""
 	if port, ok := clean["port"]; ok && port != first(current.Ports, "22") {
 		// Moving the port with no firewall rule for the new one is the same
 		// class of mistake as turning off passwords with no key: the change
@@ -118,16 +130,26 @@ func (s *Service) PlanSSHSettings(ctx context.Context, changes map[string]string
 				return nil, err
 			}
 		}
+		// On a socket-activated host the directive is not what decides where
+		// SSH answers, so the socket unit is moved too. Refusing instead would
+		// leave the control broken on Ubuntu 24.04, which is the commonest
+		// server this runs on; writing only the directive is worse still,
+		// because it reports success and moves nothing.
+		if current.Socket.Active() {
+			socketPort = port
+		}
 	}
 
 	target := current.ManagedFile
 	original, existed := readFileOrEmpty(target)
 	return &SSHApplyPlan{
-		File:     target,
-		Content:  applyDirectives(original, clean, filepath.Base(target) == managedDropIn),
-		Applied:  sortedKeys(clean),
-		original: original,
-		existed:  existed,
+		File:       target,
+		Content:    applyDirectives(original, clean, filepath.Base(target) == managedDropIn),
+		Applied:    sortedKeys(clean),
+		Socket:     current.Socket,
+		SocketPort: socketPort,
+		original:   original,
+		existed:    existed,
 	}, nil
 }
 
@@ -157,6 +179,20 @@ func (s *Service) ApplySSHPlan(ctx context.Context, plan *SSHApplyPlan, out Line
 		out.Status("Rejected — putting the previous file back")
 		restoreSSHFile(plan.File, plan.original, plan.existed)
 		return res, ErrSSHInvalid
+	}
+
+	// The socket first, because it is the half that decides where connections
+	// land. Failing here leaves sshd_config saying one thing and the machine
+	// doing another, which is a state the operator has to be told about rather
+	// than one to report as a clean apply.
+	if plan.SocketPort != "" {
+		res.SocketUnit = plan.Socket.Unit
+		if err := applySocketPort(ctx, plan.Socket, plan.SocketPort, out); err != nil {
+			res.SocketError = err.Error()
+			out.Line("stderr", err.Error())
+		} else {
+			res.SocketMoved = true
+		}
 	}
 
 	out.Status("Reloading sshd")
@@ -522,15 +558,38 @@ func reloadSSH(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var last string
-	for _, unit := range []string{"ssh", "sshd", "ssh.socket"} {
-		out, err := hostexec.CommandOnHost(ctx, "systemctl", "reload-or-restart", unit).CombinedOutput()
+	try := func(name string, args ...string) bool {
+		if !hostexec.AvailableOnHost(name) {
+			return false
+		}
+		out, err := hostexec.CommandOnHost(ctx, name, args...).CombinedOutput()
 		if err == nil {
+			return true
+		}
+		if text := strings.TrimSpace(string(out)); text != "" {
+			last = text
+		}
+		return false
+	}
+	for _, unit := range []string{"ssh", "sshd", "ssh.socket"} {
+		if try("systemctl", "reload-or-restart", unit) {
 			return nil
 		}
-		last = strings.TrimSpace(string(out))
+	}
+	// Not every server runs systemd. Alpine and Devuan are the ones this
+	// dashboard is most likely to meet — an OpenRC or SysV host would
+	// otherwise be told its configuration was written and could not be picked
+	// up, which is true only because nothing looked for the right command.
+	for _, unit := range []string{"sshd", "ssh"} {
+		if try("rc-service", unit, "reload") {
+			return nil
+		}
+		if try("service", unit, "reload") {
+			return nil
+		}
 	}
 	if last == "" {
-		last = "no ssh unit responded to a reload"
+		last = "no ssh service responded to a reload"
 	}
 	return fmt.Errorf("%s", last)
 }

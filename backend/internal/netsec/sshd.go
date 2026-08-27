@@ -49,8 +49,13 @@ type SSHDConfig struct {
 	KeyedAccounts []KeyedAccount `json:"keyedAccounts"`
 	// HasMatchBlocks warns that some of these values are overridden for some
 	// users, which this page does not attempt to render.
-	HasMatchBlocks bool   `json:"hasMatchBlocks"`
-	Error          string `json:"error,omitempty"`
+	HasMatchBlocks bool `json:"hasMatchBlocks"`
+	// Socket is a systemd socket unit holding SSH's listener. Where one is
+	// active it owns the port and sshd_config's does nothing, which is the
+	// difference between the port control working and reporting success while
+	// changing nothing.
+	Socket SSHSocket `json:"socket"`
+	Error  string    `json:"error,omitempty"`
 }
 
 // SSHSetting is one directive, carrying the reasoning next to the value the
@@ -135,9 +140,25 @@ func (s *Service) SSHDStatus(ctx context.Context) *SSHDConfig {
 		cfg.Source = filepath.Join(sshConfigDir, "sshd_config")
 	}
 
+	// A Match block makes some of these values conditional. `sshd -T` reports
+	// the global answer and says nothing about the exceptions, so the files
+	// are read for that fact whichever source supplied the values — reading it
+	// only on the fallback path meant the warning never appeared on the host
+	// where it mattered, since that is the path that almost never runs.
+	if !cfg.HasMatchBlocks {
+		if _, match, err := parseSSHDFiles(sshConfigDir); err == nil {
+			cfg.HasMatchBlocks = match
+		}
+	}
+
+	cfg.Socket = readSSHSocket(ctx)
 	cfg.Ports = values["port"]
 	if len(cfg.Ports) == 0 {
 		cfg.Ports = []string{"22"}
+	}
+	// The socket's port is the one connections actually arrive on.
+	if len(cfg.Socket.Ports) > 0 {
+		cfg.Ports = cfg.Socket.Ports
 	}
 	for _, def := range sshDirectives {
 		value := first(values[def.Key], def.Default)
