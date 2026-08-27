@@ -1690,11 +1690,10 @@ export type DbSyncResult = {
 /**
  * A database installed on the machine rather than in a container.
  *
- * It carries the connection string the dashboard would use with the password
- * left out — which is the whole difference between "there is a Postgres here
- * somewhere" and a form finished in one field. A container states its
- * credentials in its environment; an apt-installed server keeps them in its
- * own catalogue, and no amount of reading the process reveals them.
+ * Everything about it is known except the password: a container states its
+ * credentials in its environment, and an apt-installed server keeps them in
+ * its own catalogue, where no amount of reading the machine finds them. So the
+ * page asks for that one thing, and the server dials before it saves anything.
  */
 export type DbCredentialServer = {
   driver: string
@@ -1702,7 +1701,9 @@ export type DbCredentialServer = {
   port: number
   process?: string
   name: string
-  dsn: string
+  /** The engine's own conventional account and database, to open the form with. */
+  user?: string
+  database?: string
 }
 
 export type DbProvisionOption = {

@@ -6,7 +6,7 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-**Version 0.5.8** · Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.5.9** · Go backend · Next.js frontend · one `docker compose` stack
 
 [Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
@@ -224,7 +224,7 @@ opened from the branch you are on without leaving for a browser tab.
 
 ## Version, and updating
 
-This is **0.5.8**: the panel as a finished single-server product — every page in the tour
+This is **0.5.9**: the panel as a finished single-server product — every page in the tour
 above is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it
 stops. Every release is in [CHANGELOG.md](CHANGELOG.md), and in the dashboard itself.
 
