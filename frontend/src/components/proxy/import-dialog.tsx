@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, CheckCircle2, Loader2, Upload } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import type { ImportResult } from "@/lib/types"
 import { Notice } from "@/components/state"
@@ -48,12 +48,12 @@ export function ImportDialog({ onDone }: { onDone: () => void }) {
         key,
       })
       setResult(res)
-      toast.success(`${res.name} imported`, {
+      notify.success(`${res.name} imported`, {
         description: "Point a site at the paths below to start serving it.",
       })
       onDone()
     } catch (err) {
-      toast.error("Not imported", { description: String(err) })
+      notify.error("Not imported", err)
     } finally {
       setBusy(false)
     }

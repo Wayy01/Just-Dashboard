@@ -2,24 +2,39 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Plus, ShieldAlert, TerminalSquare } from "lucide-react"
-import { toast } from "sonner"
+import {
+  Layers,
+  Maximize2,
+  Minimize2,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  ShieldAlert,
+  TerminalSquare,
+} from "lucide-react"
+import { notify } from "@/lib/toast"
 import { del, get, patch, post, put } from "@/lib/api"
-import type {
-  TerminalFolder,
-  TerminalPane,
-  TerminalWindow,
-  TerminalWorkspace,
-} from "@/lib/types"
+import type { TerminalFolder, TerminalPane, TerminalWindow, TerminalWorkspace } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { actionFor, keymap, type ShortcutAction } from "@/lib/terminal-keymap"
+import {
+  actionFor,
+  formatChord,
+  keymap,
+  useKeymap,
+  type ShortcutAction,
+} from "@/lib/terminal-keymap"
+import { usePanelSize } from "@/lib/panel-size"
+import { cn } from "@/lib/utils"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
 import { SessionRail } from "@/components/terminal/session-rail"
 import { PaneBar, WindowStrip } from "@/components/terminal/window-strip"
+import { WorkspaceTools } from "@/components/terminal/workspace-tools"
+import { ResizeHandle } from "@/components/resize-handle"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 type TerminalList = {
   enabled: boolean
@@ -33,10 +48,44 @@ type TerminalList = {
 /** Every persistent-session route is addressed by tmux name. */
 const persistent = (name: string) => `/terminal/persistent/${encodeURIComponent(name)}`
 
+/**
+ * What the two side panels may be dragged to.
+ *
+ * The maxima are not decoration. A rail and a file tree that may grow without
+ * limit can leave the terminal a column of hyphens on a laptop — and the pane
+ * is not a panel that looks wrong when it is small, it is eighty columns of
+ * output that stop being eighty columns. So each panel has a ceiling, and
+ * `fitPanels` applies the one that actually binds: whatever is left after the
+ * other panel and TERMINAL_MIN have taken their share of the row.
+ */
+const RAIL = { min: 208, max: 480, base: 288 }
+const TOOLS = { min: 256, max: 640, base: 336 }
+const TERMINAL_MIN = 360
+/** The two grab strips, which are part of the row's width like anything else. */
+const HANDLE = 8
+
 export default function TerminalPage() {
   const { confirm, dialog } = useConfirm()
   const router = useRouter()
   const [picked, setPicked] = useState<string | null>(null)
+  // The session rail and the Files+Git companion can each be toggled, and the
+  // whole workspace can go fullscreen. These are page state, not the pane's, so
+  // that fullscreen keeps the rail, the strips *and* the tools — the previous
+  // fullscreen zoomed only the terminal, which is exactly what put the file
+  // tree and git out of reach the moment you maximised. Toggling a panel is
+  // pure React state and never touches the Fullscreen API, so it works without
+  // dropping out of fullscreen.
+  const [showRail, setShowRail] = useState(true)
+  const [showTools, setShowTools] = useState(true)
+  const [immersive, setImmersive] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  // How wide each panel was dragged, and how much row there is to divide. The
+  // stored width is a preference, not a layout: it is clamped against the row
+  // on every render rather than written back, so a width that was reasonable
+  // on a monitor gives way on a laptop and comes back when the window grows.
+  const [railWidth, setRailWidth, resetRailWidth] = usePanelSize("terminal.rail", RAIL.base)
+  const [toolsWidth, setToolsWidth, resetToolsWidth] = usePanelSize("terminal.tools", TOOLS.base)
+  const [rowWidth, setRowWidth] = useState(0)
   // Deep link: a compose stack, a repository or a build context can hand the
   // terminal a directory to start in, so "I need a shell here" does not mean
   // opening one and retyping the path. Read above the early returns below,
@@ -71,11 +120,49 @@ export default function TerminalPage() {
         await refresh()
         setPicked(session.id)
       } catch (err) {
-        toast.error("Could not open a terminal", { description: String(err) })
+        notify.error("Could not open a terminal", err)
       }
     },
     [refresh],
   )
+
+  // Fullscreen is the browser's real thing, requested on the whole workspace
+  // rather than on the pane, so the rail, the strips and the tools go with it.
+  // The CSS overlay classes are applied whenever immersive regardless, so a
+  // browser that refuses the request still gives a viewport-filling workspace.
+  const toggleImmersive = useCallback(() => {
+    if (immersive) {
+      setImmersive(false)
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    } else {
+      setImmersive(true)
+      void workspaceRef.current?.requestFullscreen?.().catch(() => {})
+    }
+  }, [immersive])
+
+  // The row's own width, which is what the panel ceilings are measured
+  // against. Observed rather than read from the viewport because the same
+  // element is the fullscreen one: entering fullscreen changes this by the
+  // width of the sidebar and the page gutter, and the panels have to give the
+  // terminal its minimum in both.
+  useEffect(() => {
+    const el = workspaceRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => setRowWidth(el.clientWidth))
+    observer.observe(el)
+    setRowWidth(el.clientWidth)
+    return () => observer.disconnect()
+  }, [loading, error, data?.enabled])
+
+  // Esc leaves native fullscreen through the browser; drop the overlay with it
+  // so the two can never disagree.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setImmersive(false)
+    }
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
 
   // Opening a shell starts a process on the server, so this fires at most once
   // per mount: the ref is set before the call, which is what stops React's
@@ -114,6 +201,38 @@ export default function TerminalPage() {
 
   const activeWindow = (windows.data ?? []).find((w) => w.active)
 
+  /**
+   * A panel's width, given everything else on the row.
+   *
+   * Two ceilings, and the lower wins: the panel's own maximum, and what is
+   * left once the other panel and the terminal have had their minimum. The
+   * floor is the panel's minimum even when that leaves the terminal less than
+   * TERMINAL_MIN — a window too narrow for both is a window too narrow, and
+   * shrinking the tree to nothing to pretend otherwise helps nobody. Below
+   * `lg` this is not applied at all: the layout stacks and each panel is the
+   * full width of the column.
+   */
+  const fitPanel = (want: number, self: { min: number; max: number }, other: number) => {
+    if (!rowWidth) return want
+    const handles = (showRail ? HANDLE : 0) + (showTools ? HANDLE : 0)
+    const room = rowWidth - handles - TERMINAL_MIN - other
+    return Math.max(self.min, Math.min(self.max, room, want))
+  }
+  // The tools panel is fitted first, against the rail's *minimum* rather than
+  // its current width, and the rail is then fitted against the result. Fitting
+  // it against nothing let one panel keep a comfortable width while the other
+  // absorbed the entire shortfall on a narrow window — the rail sat at 208px
+  // next to a 336px file tree and the terminal got what was left. This way a
+  // window too narrow for both walks them down together, and the order only
+  // decides which of the two reaches its minimum first.
+  const toolsPx = fitPanel(toolsWidth, TOOLS, showRail ? RAIL.min : 0)
+  const railPx = fitPanel(railWidth, RAIL, showTools ? toolsPx : 0)
+
+  // Where the tools panel looks: the active window's current directory, which
+  // tmux updates as the shell cds around, falling back to where the session was
+  // opened. This is what the file tree roots at and what git detection runs on.
+  const currentDir = activeWindow?.cwd || activeSession?.cwd || undefined
+
   // Panes, only for the window on screen and only once it has been split.
   // Asking for them unconditionally would be a subprocess on the host every
   // five seconds for the overwhelmingly common case of one pane.
@@ -126,7 +245,11 @@ export default function TerminalPage() {
   const paneWindow = activeWindow?.index
   const panes = usePoll<TerminalPane[]>(
     (signal) =>
-      get<TerminalPane[]>(`${persistent(tmuxName ?? "")}/windows/${paneWindow}/panes`, undefined, signal),
+      get<TerminalPane[]>(
+        `${persistent(tmuxName ?? "")}/windows/${paneWindow}/panes`,
+        undefined,
+        signal,
+      ),
     5000,
     [tmuxName, paneWindow],
     {
@@ -173,7 +296,7 @@ export default function TerminalPage() {
       try {
         await fn()
       } catch (err) {
-        toast.error(failure, { description: String(err) })
+        notify.error(failure, err)
         return
       }
       if (alsoWindows) {
@@ -205,7 +328,7 @@ export default function TerminalPage() {
       await refresh()
       setPicked(res.id)
     } catch (err) {
-      toast.error("Could not pick that session up", { description: String(err) })
+      notify.error("Could not pick that session up", err)
     }
   }
 
@@ -221,7 +344,7 @@ export default function TerminalPage() {
    */
   const setMeta = (tmuxName: string | undefined, next: Partial<TerminalWorkspace>) => {
     if (!tmuxName) {
-      toast.error("This session is not persistent, so it cannot be named")
+      notify.error("This session is not persistent, so it cannot be named")
       return
     }
     return act(
@@ -244,6 +367,9 @@ export default function TerminalPage() {
    * shell is an everyday act, and a phrase in front of an everyday act does
    * not get read — it gets typed. The server dropped the phrase for the same
    * reason and still records the close in the audit log.
+   *
+   * This was the first route to make that argument and it is now the rule the
+   * whole product follows — see ConfirmRequest.phrase.
    */
   const closeSession = async (session: TerminalWorkspace) => {
     try {
@@ -260,7 +386,7 @@ export default function TerminalPage() {
         await del(`/terminal/${res.id}`)
       }
     } catch (err) {
-      toast.error("Could not close that session", { description: String(err) })
+      notify.error("Could not close that session", err)
       return
     }
     if (active === session.id) setPicked(null)
@@ -273,12 +399,15 @@ export default function TerminalPage() {
       confirmLabel: "Delete folder",
       description: (
         <p>
-          The folder goes and the sessions in it move to <b>Unfiled</b>. Nothing running is
-          touched — this is filing, not closing.
+          The folder goes and the sessions in it move to <b>Unfiled</b>. Nothing running is touched
+          — this is filing, not closing.
         </p>
       ),
       action: () =>
-        act(() => del(`/terminal/folders/${encodeURIComponent(folder.name)}`), "Could not delete that folder"),
+        act(
+          () => del(`/terminal/folders/${encodeURIComponent(folder.name)}`),
+          "Could not delete that folder",
+        ),
     })
 
   const windowPatch = (index: number, body: Record<string, unknown>, failure: string) =>
@@ -297,17 +426,16 @@ export default function TerminalPage() {
     activeWindow &&
     tmuxName &&
     act(
-      () => patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, { select: true }),
+      () =>
+        patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
+          select: true,
+        }),
       "Could not focus that pane",
       true,
     )
 
   const closeWindow = (index: number) =>
-    act(
-      () => del(`${persistent(tmuxName!)}/windows/${index}`),
-      "Could not close that window",
-      true,
-    )
+    act(() => del(`${persistent(tmuxName!)}/windows/${index}`), "Could not close that window", true)
 
   const closePane = (pane: number) =>
     activeWindow &&
@@ -331,7 +459,9 @@ export default function TerminalPage() {
    * only ever noticed as the shortcut having failed.
    */
   const step = <T,>(items: T[], current: number, by: number): T | undefined =>
-    items.length === 0 ? undefined : items[(((current + by) % items.length) + items.length) % items.length]
+    items.length === 0
+      ? undefined
+      : items[(((current + by) % items.length) + items.length) % items.length]
 
   const windowList = windows.data ?? []
   const paneList = panes.data ?? []
@@ -383,6 +513,8 @@ export default function TerminalPage() {
         true,
       )
     },
+    "workspace.rail": () => setShowRail((v) => !v),
+    "workspace.tools": () => setShowTools((v) => !v),
     "pane.splitRight": () => splitActive(true),
     "pane.splitDown": () => splitActive(false),
     "pane.close": () => {
@@ -456,6 +588,24 @@ export default function TerminalPage() {
       )}
 
       {/*
+        The second banner, and it is here for the same reason as the first: a
+        feature that is quietly absent looks like a feature that is broken.
+        Windows, panes, and a session that survives closing the tab are all
+        tmux's, and this page used to say nothing at all on a host without it —
+        so the split button did nothing, the window strip stayed empty, and
+        there was no way to find out why. Debian installs no tmux by default,
+        which makes that half of the world commoner than it sounds.
+      */}
+      {!data.tmux && (
+        <Notice icon={Layers} tone="warning" title="tmux is not installed on this server">
+          Shells still work, but they end when you close the tab, and windows and panes are
+          unavailable — all three are tmux&apos;s. Install it with{" "}
+          <code className="font-mono">apt install tmux</code> (or your package manager&apos;s
+          equivalent) and reload this page.
+        </Notice>
+      )}
+
+      {/*
         The rail is always here, even with nothing in it.
 
         It used to be replaced wholesale by an empty state, which read well and
@@ -465,8 +615,24 @@ export default function TerminalPage() {
         filter and its "New folder" button is the more honest picture anyway —
         it shows what this page is.
       */}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+      <div
+        ref={workspaceRef}
+        style={
+          {
+            "--jd-rail": `${railPx}px`,
+            "--jd-tools": `${toolsPx}px`,
+          } as React.CSSProperties
+        }
+        className={cn(
+          "flex min-h-0 flex-1 flex-col gap-3 lg:flex-row",
+          // The overlay is CSS so the panel toggles never touch the
+          // Fullscreen API; the real fullscreen request rides on top of it.
+          immersive && "fixed inset-0 z-50 gap-2 overflow-hidden bg-background p-2",
+        )}
+      >
+        {showRail && (
           <SessionRail
+            className="lg:w-(--jd-rail)"
             sessions={data.sessions}
             folders={data.folders}
             activeId={active}
@@ -510,128 +676,245 @@ export default function TerminalPage() {
               )
             }
           />
+        )}
+        {showRail && (
+          <ResizeHandle
+            side="left"
+            label="Sessions panel width"
+            value={railPx}
+            min={RAIL.min}
+            max={RAIL.max}
+            onChange={(px, commit) => setRailWidth(px, commit)}
+            onReset={resetRailWidth}
+          />
+        )}
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-            {tmuxName && (
-              <WindowStrip
-                windows={windows.data ?? []}
-                sessionName={tmuxName}
-                sessionColour={activeSession?.colour}
-                onSelect={(index) => windowPatch(index, { select: true }, "Could not switch window")}
-                onRename={(index, name) =>
-                  windowPatch(index, { name }, "Could not rename that window")
-                }
-                onColour={(index, colour) =>
-                  windowPatch(index, { colour }, "Could not colour that window")
-                }
-                onReorder={(index, position) =>
-                  windowPatch(index, { position }, "Could not move that window")
-                }
-                onSplit={(_index, vertical) => splitActive(vertical)}
-                onLayout={(index, layout) =>
-                  windowPatch(index, { layout }, "Could not rearrange the panes")
-                }
-                onSynchronize={(index, on) =>
-                  windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
-                }
-                onNew={() =>
-                  act(
-                    () => post(`${persistent(tmuxName)}/windows`, {}),
-                    "Could not open a window",
-                    true,
-                  )
-                }
-                onClose={(index) => closeWindow(index)}
-              />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          {/*
+              The workspace controls. Slim on purpose — every row here is a row
+              of shell output nobody can see — but this is the one place the rail
+              and the tools panel can be shown or hidden, and the whole workspace
+              taken fullscreen. In fullscreen these are the only way back to the
+              sessions list and the file tree, so the bar stays put there too.
+            */}
+          <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-card px-1.5 py-1">
+            <WorkspaceToggle
+              active={showRail}
+              onClick={() => setShowRail((v) => !v)}
+              label={showRail ? "Hide the sessions rail" : "Show the sessions rail"}
+              action="workspace.rail"
+              icon={PanelLeft}
+            />
+            {currentDir && (
+              <span
+                className="min-w-0 truncate px-1 font-mono text-[11px] text-muted-foreground"
+                title={currentDir}
+              >
+                {currentDir}
+              </span>
             )}
-
-            {tmuxName && activeWindow && (
-              <PaneBar
-                panes={panes.data ?? []}
-                onSelect={(pane) =>
-                  act(
-                    () =>
-                      patch(
-                        `${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`,
-                        { select: true },
-                      ),
-                    "Could not focus that pane",
-                    true,
-                  )
-                }
-                onZoom={(pane) =>
-                  act(
-                    () =>
-                      patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
-                        zoom: true,
-                      }),
-                    "Could not zoom that pane",
-                    true,
-                  )
-                }
-                onClose={(pane) => void closePane(pane)}
-              />
-            )}
-
-            {active ? (
-              <XtermPane
-                key={active}
-                path={`/terminal/${active}/attach`}
-                // The prompt inside already says where you are; the header says
-                // who, which is the fact a root-equivalent shell should never
-                // make you go and check.
-                subtitle={`${activeSession?.title ?? ""} · ${
-                  activeSession?.user ?? data.login.user
-                }`}
-                cwd={activeSession?.cwd}
-                onOpenFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
-                // Clicking in a pane focuses it, which is what clicking in
-                // anything does — and until now the only way to move the focus
-                // was the chip in the bar above, which is a long way to go to
-                // type into the half of the screen you are already looking at.
-                //
-                // Nothing happens for a single pane, and nothing happens when
-                // the click was already inside the focused one: every one of
-                // those would be a tmux subprocess per click.
-                onCellClick={({ col, row }) => {
-                  if (paneList.length < 2) return
-                  const hit = paneList.find(
-                    (pane) =>
-                      col >= pane.left && col <= pane.right && row >= pane.top && row <= pane.bottom,
-                  )
-                  if (hit && !hit.active) void selectPane(hit.index)
-                }}
-                // No minimum height: the pane is whatever is left after the
-                // header and the strips, and a floor taller than that would
-                // push the page past the window — which is the one thing a
-                // terminal must never do, because xterm sizes itself from the
-                // box and would latch at the larger size for good.
-                className="min-h-0 flex-1"
-                onExit={refresh}
-              />
-            ) : (
-              <EmptyState
-                className="flex-1"
-                icon={TerminalSquare}
-                title={data.sessions.length === 0 ? "No sessions yet" : "Pick a session"}
-                description={
-                  data.sessions.length === 0
-                    ? "A session is a shell that keeps running — name it, file it in a folder, colour the folder, and come back to it tomorrow exactly as you left it."
-                    : "A hollow dot means it is running on the server with nothing attached — clicking picks it up where you left it."
-                }
-                action={
-                  data.sessions.length === 0 ? (
-                    <Button size="sm" onClick={() => openSession()}>
-                      <Plus className="size-4" />
-                      Open one
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
+            <span className="flex-1" />
+            <WorkspaceToggle
+              active={showTools}
+              onClick={() => setShowTools((v) => !v)}
+              label={showTools ? "Hide files & git" : "Show files & git"}
+              action="workspace.tools"
+              icon={PanelRight}
+            />
+            <WorkspaceToggle
+              active={immersive}
+              onClick={toggleImmersive}
+              label={immersive ? "Leave fullscreen" : "Fullscreen workspace"}
+              action="terminal.fullscreen"
+              icon={immersive ? Minimize2 : Maximize2}
+            />
           </div>
+
+          {tmuxName && (
+            <WindowStrip
+              windows={windows.data ?? []}
+              sessionName={tmuxName}
+              sessionColour={activeSession?.colour}
+              onSelect={(index) => windowPatch(index, { select: true }, "Could not switch window")}
+              onRename={(index, name) =>
+                windowPatch(index, { name }, "Could not rename that window")
+              }
+              onColour={(index, colour) =>
+                windowPatch(index, { colour }, "Could not colour that window")
+              }
+              onReorder={(index, position) =>
+                windowPatch(index, { position }, "Could not move that window")
+              }
+              onSplit={(_index, vertical) => splitActive(vertical)}
+              onLayout={(index, layout) =>
+                windowPatch(index, { layout }, "Could not rearrange the panes")
+              }
+              onSynchronize={(index, on) =>
+                windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
+              }
+              onNew={() =>
+                act(
+                  () => post(`${persistent(tmuxName)}/windows`, {}),
+                  "Could not open a window",
+                  true,
+                )
+              }
+              onClose={(index) => closeWindow(index)}
+            />
+          )}
+
+          {tmuxName && activeWindow && (
+            <PaneBar
+              panes={panes.data ?? []}
+              onSelect={(pane) =>
+                act(
+                  () =>
+                    patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
+                      select: true,
+                    }),
+                  "Could not focus that pane",
+                  true,
+                )
+              }
+              onZoom={(pane) =>
+                act(
+                  () =>
+                    patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
+                      zoom: true,
+                    }),
+                  "Could not zoom that pane",
+                  true,
+                )
+              }
+              onClose={(pane) => void closePane(pane)}
+            />
+          )}
+
+          {active ? (
+            <XtermPane
+              key={active}
+              path={`/terminal/${active}/attach`}
+              // The prompt inside already says where you are; the header says
+              // who, which is the fact a root-equivalent shell should never
+              // make you go and check.
+              subtitle={`${activeSession?.title ?? ""} · ${activeSession?.user ?? data.login.user}`}
+              cwd={activeSession?.cwd}
+              onOpenFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
+              // Clicking in a pane focuses it, which is what clicking in
+              // anything does — and until now the only way to move the focus
+              // was the chip in the bar above, which is a long way to go to
+              // type into the half of the screen you are already looking at.
+              //
+              // Nothing happens for a single pane, and nothing happens when
+              // the click was already inside the focused one: every one of
+              // those would be a tmux subprocess per click.
+              onCellClick={({ col, row }) => {
+                if (paneList.length < 2) return
+                const hit = paneList.find(
+                  (pane) =>
+                    col >= pane.left && col <= pane.right && row >= pane.top && row <= pane.bottom,
+                )
+                if (hit && !hit.active) void selectPane(hit.index)
+              }}
+              // No minimum height: the pane is whatever is left after the
+              // header and the strips, and a floor taller than that would
+              // push the page past the window — which is the one thing a
+              // terminal must never do, because xterm sizes itself from the
+              // box and would latch at the larger size for good.
+              className="min-h-0 flex-1"
+              onExit={refresh}
+              // The pane's fullscreen button and shortcut take the whole
+              // workspace fullscreen instead of the pane, so the rail and the
+              // tools stay reachable while maximised.
+              onToggleFullscreen={toggleImmersive}
+              fullscreenActive={immersive}
+            />
+          ) : (
+            <EmptyState
+              className="flex-1"
+              icon={TerminalSquare}
+              title={data.sessions.length === 0 ? "No sessions yet" : "Pick a session"}
+              description={
+                data.sessions.length === 0
+                  ? "A session is a shell that keeps running — name it, file it in a folder, colour the folder, and come back to it tomorrow exactly as you left it."
+                  : "A hollow dot means it is running on the server with nothing attached — clicking picks it up where you left it."
+              }
+              action={
+                data.sessions.length === 0 ? (
+                  <Button size="sm" onClick={() => openSession()}>
+                    <Plus className="size-4" />
+                    Open one
+                  </Button>
+                ) : undefined
+              }
+            />
+          )}
         </div>
+
+        {showTools && (
+          <ResizeHandle
+            side="right"
+            label="Files and git panel width"
+            value={toolsPx}
+            min={TOOLS.min}
+            max={TOOLS.max}
+            onChange={(px, commit) => setToolsWidth(px, commit)}
+            onReset={resetToolsWidth}
+          />
+        )}
+        {showTools && (
+          <div className="flex min-h-[16rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:w-(--jd-tools)">
+            <WorkspaceTools
+              dir={currentDir}
+              onOpenInFiles={(path) => router.push(`/files?path=${encodeURIComponent(path)}`)}
+              onClose={() => setShowTools(false)}
+            />
+          </div>
+        )}
+      </div>
       {dialog}
     </Page>
+  )
+}
+
+/** A toggle in the workspace control bar: pressed-in when its panel is shown. */
+function WorkspaceToggle({
+  active,
+  onClick,
+  label,
+  action,
+  icon: Icon,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  /** The chord is read from the live keymap and shown with the label: this bar
+   *  is where somebody discovers the panel can be hidden, and the shortcut is
+   *  no use to them anywhere else. */
+  action?: ShortcutAction
+  icon: React.ComponentType<{ className?: string }>
+}) {
+  const map = useKeymap()
+  const chord = action ? map[action] : undefined
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          aria-pressed={active}
+          className={cn(
+            "size-7 shrink-0 p-0",
+            active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={onClick}
+        >
+          <Icon className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{chord ? `${label} · ${formatChord(chord)}` : label}</TooltipContent>
+    </Tooltip>
   )
 }

@@ -249,10 +249,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		// that matters is tmux's anyway; xterm's own is empty, because tmux
 		// repaints the viewport rather than emitting lines.
 		//
-		// The cost is that a plain drag now selects in tmux rather than in the
-		// browser. Holding **Shift** brings the browser's own selection back,
-		// which is the convention every terminal emulator uses for this, and
-		// the pane's Copy button and its copy shortcut are unaffected.
+		// It costs nothing on the pointer, because the page takes that back:
+		// the pane tells xterm to treat a plain drag as a browser selection
+		// rather than forwarding it, so selecting and copying behave as they
+		// do anywhere else and only the wheel is tmux's. Holding Alt is what
+		// hands the mouse to whatever is running in the pane.
 		{"mouse", "on"},
 	}
 	set := make([]option, 0, len(create))

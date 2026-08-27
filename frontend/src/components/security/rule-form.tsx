@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { AlertTriangle, Check, ChevronsUpDown, Plus } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, put } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { AppProfile, FirewallRule, ServicePreset } from "@/lib/types"
@@ -237,14 +237,14 @@ function RuleForm({
     try {
       if (edit?.number !== undefined) {
         await put(`/firewall/rules/${edit.number}`, body)
-        toast.success("Rule replaced")
+        notify.success("Rule replaced")
       } else {
         await post("/firewall/rules", body)
-        toast.success("Rule added")
+        notify.success("Rule added")
       }
       onDone()
     } catch (err) {
-      toast.error("Rule rejected", { description: String(err) })
+      notify.error("Rule rejected", err)
     } finally {
       setBusy(false)
     }

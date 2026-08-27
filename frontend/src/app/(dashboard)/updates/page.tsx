@@ -9,6 +9,7 @@ import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
+import { DashboardUpdatePanel } from "@/components/update/update-panel"
 import { Page, PageHeader, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { StatTile } from "@/components/stat-tile"
@@ -97,7 +98,7 @@ export default function UpdatesPage() {
       <PageHeader
         eyebrow="Operations"
         title="Updates"
-        description="Operating system packages this server is missing"
+        description="The dashboard itself, and the operating system packages this server is missing"
         actions={
           <>
             <RecentJobs kinds={["updates."]} onOpen={console_.open} />
@@ -133,6 +134,12 @@ export default function UpdatesPage() {
           </>
         }
       />
+
+      {/* The dashboard first, the host's packages below. "What can be updated
+          on this machine" is one question, and answering it in two places is
+          how a server ends up current while its panel is a year behind. */}
+      <DashboardUpdatePanel />
+
       <JobConsole
         job={console_.job}
         lines={console_.lines}

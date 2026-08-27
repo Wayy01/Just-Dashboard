@@ -12,9 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Monaco's own minified build, copied in by scripts/sync-monaco.mjs. It is
-    // 24 MB of somebody else's output and linting it takes longer than
-    // everything this repo actually wrote.
+    // The Monaco runtime, copied in from node_modules by
+    // scripts/sync-monaco.mjs. It is a vendored build, not source: linting it
+    // buries every real finding under twenty-five thousand from minified code
+    // nobody here wrote.
     "public/monaco/**",
   ]),
 ]);

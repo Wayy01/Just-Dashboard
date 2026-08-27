@@ -6,9 +6,9 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.5.9** · Go backend · Next.js frontend · one `docker compose` stack
 
-[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Configuration](#configuration-reference) · [Licence](#licence)
+[Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
 </div>
 
@@ -61,8 +61,12 @@ It is built to sit behind a VPN or an SSH tunnel, and that is enforced rather th
   handler at all, let alone guess at it.
 - Two-factor is **mandatory**. A correct password on its own yields a session that every
   route rejects except the 2FA ones.
-- Irreversible actions require a **typed confirmation phrase**, checked on the server, so it
-  cannot be skipped by calling the API directly.
+- Destructive actions pause for a confirmation, and the rare, unrecoverable ones — dropping a
+  table, removing a volume, deleting an account, restoring over live data — additionally
+  require a **typed confirmation phrase**, checked on the server, so it cannot be skipped by
+  calling the API directly. The line is drawn by *frequency*: a phrase in front of something
+  done a dozen times a day gets typed rather than read, which is exactly how it stops working
+  on the routes that need it.
 - Every state-changing request lands in an **audit log**: who, what, when, from where, and
   whether it worked.
 
@@ -148,7 +152,7 @@ A real PTY over a WebSocket, running `su -l` into a host account, not a shell in
 container. Your dotfiles, your PATH, your installed tools.
 
 Backed by tmux, so closing the tab, leaving the page and restarting the dashboard all leave
-the session running. Only closing one stops it, and that takes a typed confirmation. The
+the session running. Only closing one stops it, and that asks first. The
 title, the folder and the favourite flag live on the tmux session itself, which is why a
 session picked up after a restart is still called what you called it.
 
@@ -194,6 +198,12 @@ counts, branches, and fetch, pull, push and stash.
 Each command runs as the account that owns the repository, so a pull on a repo owned by
 `deploy` does not leave root-owned files behind for you to find later.
 
+Sign in to GitHub from the page itself: the same device-code flow `gh auth login` uses,
+rendered as a screen rather than a series of prompts. The token is stored where `gh` keeps
+its own — under the home of the account that owns the checkout, which is the account that
+pushes — so commits are recorded as you, pushes are authenticated, and pull requests can be
+opened from the branch you are on without leaving for a browser tab.
+
 ### And the rest
 
 | | |
@@ -201,14 +211,74 @@ Each command runs as the account that owns the repository, so a pull on a repo o
 | **Processes** | PM2 apps with merged output tailing, systemd units with journal streaming, and an htop-style table sortable by CPU **or** memory, because a leaking service sits at 0% CPU holding gigabytes. Kill is guarded. Crontab editor included. |
 | **Logs** | One viewer over files, container output, PM2 and the journal. Grep and level filters are applied on the server, before the lines are sent. |
 | **Proxy & TLS** | A form that puts a domain in front of a port and writes the nginx for you — TLS, HTTP/2, HSTS, WebSockets, upload limits, IP allow lists, basic auth and extra paths sent somewhere else — /api to a backend while everything else goes to a static build — rendered on the server and shown live next to the form, so the file it produces is ordinary nginx you can commit and edit by hand. Password files managed here too, so the basic-auth option has something to point at. Streams forward the services that do not speak HTTP. Certificates issued, renewed and revoked through certbot in a live console rather than a request that hangs, including wildcards over a DNS challenge with eight provider plugins, and certificates you bought imported with the key checked against them first. A live TLS report grading what a visitor actually gets. |
-| **Databases** | Postgres, MySQL and MongoDB. Schema browsing, a paged table browser, a query runner that classifies a statement as destructive before it runs, plus dumps and restores. Passwords never appear in argv. |
+| **Databases** | Eight engines: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis — all on pure-Go drivers, so the image still needs no CGO. A data grid that edits rows through forms (always scoped to a primary key), server-side sort and filtering, schema editing with the statement shown before it runs, CSV/JSON import inside one transaction, a structure view and an entity diagram, a query runner that classifies a statement as destructive before it runs with schema-aware completion, history and saved snippets, CSV/JSON export, one-click Prisma, Drizzle, TypeScript or Zod generation from the live database, and a value search that finds which table an id lives in without knowing where to look. A Monitor tab lists what the server is running right now — with the blocking session named — and stops a stuck query, next to a per-table size breakdown for when the disk alert fires. Any row copies out as JSON or as a runnable INSERT in that engine's own syntax, or duplicates into a pre-filled form. MongoDB gets document editing, an aggregation runner, and its own export and import; Redis gets a SCAN-based key browser with full collection editing. Plus a dump that downloads to the browser as it is written, restores, and a typed-confirmation delete of the database itself, for every one of the eight — the three with a client-side tool use it, the rest are dumped over the connection the dashboard already has, so no engine's backup depends on a binary that may not be installed. Passwords never appear in argv. Everything but Oracle is covered by tests that run against the real engines. |
 | **Security** | A verdict on the host, not just its settings: exposure, firewall, sshd, intrusion prevention, open ports, certificates and pending security patches, each finding carrying what was measured, what it means, what to do, and where the dashboard can do it, a button. Firewall rules on ufw **or firewalld**, with a named-service catalogue that warns before you open Redis to the world, default policies, logging, ordering, editing (the replacement goes in before the original comes out, so the port is never briefly unprotected) and outbound rules. sshd's own settings — root login, passwords, keys, port, account lists — applied through its parser and rolled back if it objects, refused outright when the change would leave nobody a way in, and streamed step by step so "it said it worked" and "the daemon came back" are not the same claim. fail2ban jails tuned in place and kept across a restart, folded into the one question a ban list cannot answer: who keeps coming back. Live connections by peer, interfaces and routes, the host's login record with the ability to end a session, and ping, DNS, traceroute and port checks on the page the question came from. |
-| **Updates** | What is behind, which of it is security, and whether a reboot is due, on apt, dnf, yum, zypper, pacman or apk. Alpine and Arch publish no advisory data, so they say so rather than reporting zero security updates. Upgrades run as a job with its output streamed, so closing the tab does not abandon a half-finished apt run. Upgrades only — it never installs or removes packages. |
+| **Updates** | Two things that can be behind. The dashboard itself — with the release notes for every version between yours and the newest, and a one-click pull-rebuild-restart that runs in its own container so it survives replacing the dashboard. And the host's packages: what is behind, which of it is security, and whether a reboot is due, on apt, dnf, yum, zypper, pacman or apk. Alpine and Arch publish no advisory data, so they say so rather than reporting zero security updates. Upgrades run as a job with its output streamed, so closing the tab does not abandon a half-finished run. Upgrades only — it never installs or removes packages. |
 | **Deployments** | Git pull plus `compose up -d --build`, by hand or by signed webhook, with history and rollback. Encrypted per-project environment rendered into `.env` at deploy time. |
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
 | **System users** | Host accounts, SSH keys, lock and unlock. |
 | **Audit log** | Every state-changing request, filterable by actor, action and outcome. |
 | **Appearance** | Twelve palettes, nine dark and three light, applied before the page paints so a light theme never flashes black. The choice belongs to the browser you are sitting at, not to the account. |
+
+---
+
+## Version, and updating
+
+This is **0.5.9**: the panel as a finished single-server product — every page in the tour
+above is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it
+stops. Every release is in [CHANGELOG.md](CHANGELOG.md), and in the dashboard itself.
+
+The number is on screen beside the wordmark in the sidebar and on the sign-in page, and the
+server says so at boot as well:
+
+```bash
+docker compose logs backend | grep listening
+```
+
+### The dashboard updates itself
+
+When a newer version is published, a notice appears above your account at the foot of the
+sidebar: the version, what the release is called, **Update now**, and **View changes**. The
+last of those opens the release notes for every version between yours and the newest — not
+just the newest, because an install three releases behind is upgrading past three sets of
+changes.
+
+**Update now** pulls this repository, rebuilds every image in your stack and restarts it.
+It runs in a container of its own, so it survives the dashboard being rebuilt underneath it;
+the page keeps watching across the restart and shows you the build output as it happens.
+Then it waits for the dashboard to answer again before calling itself done — `compose up -d`
+returning is not the same as your panel being back. It asks you to type the version first,
+which is the same guard the handful of other irreversible actions use.
+
+Two things it deliberately will not do. It **fast-forwards rather than resetting**, so an
+edited `docker-compose.yml` or Caddyfile survives; if your edit collides with the release,
+the update stops and tells you what is in the way instead of discarding it. And it never
+touches your data, accounts, sessions or settings — those live in `JD_DATA_DIR`, which the
+upgrade does not go near.
+
+If your install cannot be updated this way — you run it from a binary, or from a directory
+the dashboard cannot identify — it says so, with the reason, on the Updates page. The
+release notes still work; they are compiled into the build.
+
+The check itself is the only outbound request Just Dashboard ever makes on its own: one
+unauthenticated GET of one small file from GitHub, four times a day, carrying a version
+number in the user agent and nothing else. No telemetry, no install id, nothing reported
+anywhere. `JD_UPDATE_CHECK=false` turns it off entirely.
+
+### Cutting a release
+
+If you are working on Just Dashboard rather than running it, a release is one command:
+
+```bash
+# 1. Write the notes in backend/internal/selfupdate/changelog.json
+# 2. Then:
+scripts/release.sh 0.6
+```
+
+That bumps the version in the three places it appears, regenerates `CHANGELOG.md` from the
+changelog, and runs the tests that pin all four together. It refuses to cut a version the
+changelog does not describe — every install decides whether to update by comparing itself
+against that file, so a release with no entry is a release nobody hears about.
 
 ---
 
@@ -261,7 +331,10 @@ The installer writes the ones that matter. These are for tuning afterwards.
 | `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
 | `JD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. Use `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale, and keep loopback or you lose the tunnel. |
 | `JD_TRUSTED_PROXIES` | none | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof its way past the allowlist. One hop is supported: the bundled Caddy replaces the header with the client's real address, so anything placed *in front* of Caddy becomes the client as far as the allowlist is concerned. |
-| `JD_ADDR` | `127.0.0.1:8080` | Where the API binds. Leave it on loopback; the proxy is the entry point. |
+| `JD_PORT` | `8443` | The port you connect to — the only one the proxy publishes. |
+| `JD_BACKEND_PORT` | `8080` | The API's loopback port, behind the proxy. |
+| `JD_FRONTEND_PORT` | `3000` | The UI's loopback port, behind the proxy. |
+| `JD_ADDR` | `127.0.0.1:$JD_BACKEND_PORT` | Where the API binds, if you need to override the host as well as the port. Leave it on loopback; the proxy is the entry point. |
 | `JD_ALLOWED_ORIGINS` | none | Extra browser origins allowed to open WebSockets. Only needed if the UI is served from a different origin. |
 
 **Behaviour**
@@ -277,6 +350,10 @@ The installer writes the ones that matter. These are for tuning afterwards.
 | `JD_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker Engine endpoint. |
 | `JD_METRICS_INTERVAL` | `15s` | How often the backend samples the host, and every running container, into its own history. Clamped to 5s and 5m. |
 | `JD_METRICS_RETENTION` | `7d` | How long that history is kept. Accepts days. `0` records nothing and leaves only the live feed. |
+| `JD_UPDATE_CHECK` | `true` | Whether the dashboard may ask GitHub whether a newer version of *itself* exists — one unauthenticated GET of one file, four times a day, carrying nothing but a version number. `false` turns it off; the release notes for the version you run stay readable, since they are compiled in. |
+| `JD_UPDATE_REPO` | `Wayy01/Just-Dashboard` | The repository releases are read from. Change it to follow a fork. |
+| `JD_UPDATE_BRANCH` | `main` | The branch whose changelog decides what "newest" means, and which an in-app update fast-forwards to. |
+| `JD_UPDATE_DIR` | discovered | The directory you cloned into. Normally empty: the dashboard asks Docker where its own stack was deployed from. Set it only if the Updates page says that failed. |
 | `JD_AGENT_MODE` | `false` | Run as an agent managed by a hub: no login, mutual TLS only. Not useful on its own yet. |
 | `JD_DEV` | `false` | Development only. Drops `Secure` from the session cookie so the UI works over plain HTTP. Never set it on a real host. |
 | `JD_LOG_LEVEL` | `info` | `debug` for verbose logs. |
@@ -403,7 +480,8 @@ Every request passes the same chain:
 network allowlist → rate limit → authenticate → capability → handler
 ```
 
-Destructive routes additionally require a typed confirmation and get a tighter rate budget.
+Destructive routes get a tighter rate budget, and the rare irreversible ones also require a
+typed confirmation phrase.
 
 **On privileges.** The compose file grants the backend `privileged: true`, `pid: host` and
 the Docker socket. That is what makes "restart this unit" and "kill this process" mean

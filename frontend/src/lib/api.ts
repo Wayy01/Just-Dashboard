@@ -16,6 +16,18 @@ export type ApiErrorBody = {
   error: { code: string; message: string; phrase?: string }
 }
 
+/**
+ * The sentence to show a person when a request fails.
+ *
+ * `String(err)` on an Error yields "ApiError: path is outside the permitted
+ * roots" — the class name is a detail of how this client is written, and it
+ * appeared verbatim in toasts and inline error text. Anything that is not an
+ * Error is stringified, because a rejected promise can carry anything.
+ */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export class ApiError extends Error {
   code: string
   status: number

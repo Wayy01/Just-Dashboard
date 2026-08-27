@@ -1,24 +1,37 @@
-// Package dbx provides read-mostly database administration: browsing schemas,
-// running queries, and dumping or restoring data.
+// Package dbx provides database administration across Postgres, MySQL, SQLite
+// and MongoDB: browsing schemas and tables, introspecting a table's full
+// structure, editing rows through safe generated statements, running arbitrary
+// queries, exporting data, generating ORM schemas, and dumping or restoring.
 //
 // Connection strings are secrets — they carry credentials — so they are held
-// encrypted at rest and never returned to a client. A query runner is
-// inherently powerful, so destructive statements are classified before they
-// run and the handler demands a typed confirmation for them.
+// encrypted at rest and never returned to a client. Two rules keep the write
+// paths safe: identifiers (schema, table and column names) are always validated
+// and quoted, never bound, while values are always bound, never interpolated;
+// and a query runner is inherently powerful, so destructive statements are
+// classified before they run and the handler demands the destructive capability
+// for them, plus a typed confirmation once a statement is critical. Row edits go
+// one step further and refuse to run without a primary key,
+// so an UPDATE or DELETE cannot silently touch more than the one row intended.
 package dbx
 
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	_ "github.com/ClickHouse/clickhouse-go/v2"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/microsoft/go-mssqldb"
+	_ "github.com/sijms/go-ora/v2"
+	_ "modernc.org/sqlite"
 )
 
 type Driver string
@@ -27,30 +40,56 @@ const (
 	DriverPostgres Driver = "postgres"
 	DriverMySQL    Driver = "mysql"
 	DriverMongo    Driver = "mongodb"
+	// DriverSQLite treats a single database file as the connection. It uses the
+	// same pure-Go driver (modernc.org/sqlite) the dashboard already stores its
+	// own state in, so it adds no build dependency and needs no CGO.
+	DriverSQLite     Driver = "sqlite"
+	DriverMSSQL      Driver = "sqlserver"
+	DriverClickHouse Driver = "clickhouse"
+	DriverOracle     Driver = "oracle"
+	// DriverRedis is the one key/value engine. It has no tables, no SQL and no
+	// rows, so it shares none of the query path below and is driven entirely
+	// through redis.go.
+	DriverRedis Driver = "redis"
 )
 
 var ErrUnsupported = errors.New("unsupported database driver")
 
-func (d Driver) Valid() bool {
-	switch d {
-	case DriverPostgres, DriverMySQL, DriverMongo:
-		return true
+// Drivers lists every engine the dashboard can connect to, in the order the UI
+// offers them. Deriving the list here rather than repeating it in the handler
+// and again in the frontend is what stops a newly registered dialect being
+// invisible in the connection form.
+func Drivers() []Driver {
+	return []Driver{
+		DriverPostgres, DriverMySQL, DriverSQLite, DriverMSSQL,
+		DriverClickHouse, DriverOracle, DriverMongo, DriverRedis,
 	}
-	return false
 }
 
-// sqlDriverName maps our driver identity onto the registered database/sql
-// driver. pgx registers itself as "pgx" through its stdlib shim.
-func (d Driver) sqlDriverName() (string, error) {
-	switch d {
-	case DriverPostgres:
-		return "pgx", nil
-	case DriverMySQL:
-		return "mysql", nil
-	default:
-		return "", fmt.Errorf("%w: %s", ErrUnsupported, d)
+func (d Driver) Valid() bool {
+	if d == DriverMongo || d == DriverRedis {
+		return true
 	}
+	_, ok := dialects[d]
+	return ok
 }
+
+// IsSQL reports whether the driver goes through database/sql and the dialect
+// layer. Mongo and Redis are the two that do not, so callers branch on this
+// rather than listing engines — a list that was wrong the moment a seventh
+// engine arrived.
+func (d Driver) IsSQL() bool {
+	_, ok := dialects[d]
+	return ok
+}
+
+// itoa is strconv.Itoa without the import, used by the placeholder renderers on
+// a hot enough path that the dialects call it constantly.
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// underscoreToWords turns SQL Server's NO_ACTION into NO ACTION, so referential
+// actions read the same whichever engine reported them.
+func underscoreToWords(s string) string { return strings.ReplaceAll(s, "_", " ") }
 
 // Manager owns the connection pools. Pools are opened lazily and reused: a
 // query runner that dialled a fresh connection per request would exhaust the
@@ -70,11 +109,11 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	if db, ok := m.pools[id]; ok {
 		return db, nil
 	}
-	name, err := driver.sqlDriverName()
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(name, dsn)
+	db, err := sql.Open(d.SQLDriverName(), d.NormaliseDSN(dsn))
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +122,13 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	// And a much shorter idle life on top of it. A dashboard's pool sits unused
+	// between page loads, which is exactly when the server on the other end
+	// gets restarted; a connection idle for longer than this is cheaper to
+	// re-dial than to discover is dead in the middle of somebody's query.
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	// Then whatever the engine needs on top — SQLite's single writer, say.
+	d.TunePool(db)
 
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -92,6 +138,34 @@ func (m *Manager) Pool(ctx context.Context, id int64, driver Driver, dsn string)
 	}
 	m.pools[id] = db
 	return db, nil
+}
+
+// Probe opens a throwaway connection to verify a DSN before it is saved, and
+// returns the server version so the operator gets confirmation they reached the
+// engine they meant to. It never touches the manager's pool cache: a connection
+// being tested may be wrong, and a failed test must not leave a broken pool
+// cached under some id.
+func Probe(ctx context.Context, driver Driver, dsn string) (string, error) {
+	d, err := DialectFor(driver)
+	if err != nil {
+		return "", err
+	}
+	db, err := sql.Open(d.SQLDriverName(), d.NormaliseDSN(dsn))
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		return "", err
+	}
+	// A version string is a courtesy, not the test — the ping already proved the
+	// connection. An engine that refuses the query still reports as reachable.
+	var version string
+	_ = db.QueryRowContext(pingCtx, d.VersionQuery()).Scan(&version)
+	return strings.TrimSpace(version), nil
 }
 
 func (m *Manager) Close(id int64) {
@@ -147,42 +221,11 @@ type Database struct {
 }
 
 func ListDatabases(ctx context.Context, db *sql.DB, driver Driver) ([]Database, error) {
-	var query string
-	switch driver {
-	case DriverPostgres:
-		query = `SELECT d.datname,
-		                pg_database_size(d.datname),
-		                COALESCE(pg_get_userbyid(d.datdba), ''),
-		                pg_encoding_to_char(d.encoding)
-		         FROM pg_database d
-		         WHERE NOT d.datistemplate
-		         ORDER BY 1`
-	case DriverMySQL:
-		query = `SELECT s.SCHEMA_NAME,
-		                COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0),
-		                '',
-		                s.DEFAULT_CHARACTER_SET_NAME
-		         FROM information_schema.SCHEMATA s
-		         LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
-		         GROUP BY s.SCHEMA_NAME, s.DEFAULT_CHARACTER_SET_NAME
-		         ORDER BY 1`
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Database{}
-	for rows.Next() {
-		var d Database
-		if err := rows.Scan(&d.Name, &d.Size, &d.Owner, &d.Encoding); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
+	return d.Databases(ctx, db)
 }
 
 type Table struct {
@@ -195,53 +238,11 @@ type Table struct {
 }
 
 func ListTables(ctx context.Context, db *sql.DB, driver Driver, schema string) ([]Table, error) {
-	var (
-		query string
-		args  []any
-	)
-	switch driver {
-	case DriverPostgres:
-		query = `SELECT n.nspname, c.relname,
-		                CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view'
-		                               WHEN 'm' THEN 'materialized view' ELSE c.relkind::text END,
-		                COALESCE(c.reltuples::bigint, 0),
-		                pg_total_relation_size(c.oid),
-		                COALESCE(obj_description(c.oid), '')
-		         FROM pg_class c
-		         JOIN pg_namespace n ON n.oid = c.relnamespace
-		         WHERE c.relkind IN ('r','v','m','p')
-		           AND n.nspname NOT IN ('pg_catalog','information_schema')
-		           AND ($1 = '' OR n.nspname = $1)
-		         ORDER BY 1, 2`
-		args = []any{schema}
-	case DriverMySQL:
-		query = `SELECT TABLE_SCHEMA, TABLE_NAME,
-		                CASE TABLE_TYPE WHEN 'BASE TABLE' THEN 'table' ELSE LOWER(TABLE_TYPE) END,
-		                COALESCE(TABLE_ROWS, 0),
-		                COALESCE(DATA_LENGTH + INDEX_LENGTH, 0),
-		                COALESCE(TABLE_COMMENT, '')
-		         FROM information_schema.TABLES
-		         WHERE TABLE_SCHEMA NOT IN ('mysql','information_schema','performance_schema','sys')
-		           AND (? = '' OR TABLE_SCHEMA = ?)
-		         ORDER BY 1, 2`
-		args = []any{schema, schema}
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query, args...)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Table{}
-	for rows.Next() {
-		var t Table
-		if err := rows.Scan(&t.Schema, &t.Name, &t.Type, &t.Rows, &t.Size, &t.Comment); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return d.Tables(ctx, db, schema)
 }
 
 type Column struct {
@@ -254,83 +255,37 @@ type Column struct {
 }
 
 func ListColumns(ctx context.Context, db *sql.DB, driver Driver, schema, table string) ([]Column, error) {
-	var (
-		query string
-		args  []any
-	)
-	switch driver {
-	case DriverPostgres:
-		query = `SELECT column_name, data_type, is_nullable = 'YES',
-		                COALESCE(column_default, ''), ordinal_position
-		         FROM information_schema.columns
-		         WHERE table_schema = $1 AND table_name = $2
-		         ORDER BY ordinal_position`
-		args = []any{schema, table}
-	case DriverMySQL:
-		query = `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE = 'YES',
-		                COALESCE(COLUMN_DEFAULT, ''), ORDINAL_POSITION
-		         FROM information_schema.COLUMNS
-		         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-		         ORDER BY ORDINAL_POSITION`
-		args = []any{schema, table}
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupported, driver)
-	}
-	rows, err := db.QueryContext(ctx, query, args...)
+	d, err := DialectFor(driver)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Column{}
-	for rows.Next() {
-		var c Column
-		if err := rows.Scan(&c.Name, &c.Type, &c.Nullable, &c.Default, &c.Position); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return d.Columns(ctx, db, schema, table)
 }
 
-// identifierRe restricts what may be interpolated into a generated query.
-// Table and schema names cannot be bound as parameters, so the only safe
-// option is to reject anything that is not a plain identifier and then quote it.
+// identifierRe is the strict form, used where a name becomes a path segment or
+// a shell argument rather than a quoted SQL identifier — a database name headed
+// for a dump filename, say. SQL identifiers use validateIdent plus the
+// dialect's own quoting, which is both safer and permissive enough for the
+// hyphens and non-ASCII letters real schemas contain.
 var identifierRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
 
-func quoteIdent(driver Driver, name string) (string, error) {
-	if !identifierRe.MatchString(name) {
-		return "", fmt.Errorf("invalid identifier %q", name)
-	}
-	if driver == DriverMySQL {
-		return "`" + name + "`", nil
-	}
-	return `"` + name + `"`, nil
-}
-
-// BrowseTable pages through a table's rows. It builds the statement from
-// validated, quoted identifiers and binds limit and offset as parameters.
-func BrowseTable(ctx context.Context, db *sql.DB, driver Driver, schema, table string, limit, offset int) (*QueryResult, error) {
-	qSchema, err := quoteIdent(driver, schema)
+// qualify renders a validated, quoted schema.table reference for a dialect.
+// An empty schema — the normal case for SQLite, and for an engine where the
+// operator has not narrowed it — yields a bare table name rather than a
+// dangling dot.
+func qualify(d Dialect, schema, table string) (string, error) {
+	qTable, err := d.QuoteIdent(table)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	qTable, err := quoteIdent(driver, table)
+	if schema == "" || d.Driver() == DriverSQLite {
+		return qTable, nil
+	}
+	qSchema, err := d.QuoteIdent(schema)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	var query string
-	if driver == DriverPostgres {
-		query = fmt.Sprintf(`SELECT * FROM %s.%s LIMIT $1 OFFSET $2`, qSchema, qTable)
-	} else {
-		query = fmt.Sprintf(`SELECT * FROM %s.%s LIMIT ? OFFSET ?`, qSchema, qTable)
-	}
-	return RunQuery(ctx, db, query, limit, limit, offset)
+	return qSchema + "." + qTable, nil
 }
 
 type QueryResult struct {
@@ -369,7 +324,19 @@ func RunQuery(ctx context.Context, db *sql.DB, query string, maxRows int, args .
 		return nil, err
 	}
 	defer rows.Close()
+	res, err = collectRows(rows, maxRows, query)
+	if err != nil {
+		return nil, err
+	}
+	res.Duration = time.Since(start).Round(time.Microsecond).String()
+	return res, nil
+}
 
+// collectRows materialises a result set. It is separate from RunQuery because
+// the plan commands on SQL Server and Oracle have to run on a connection they
+// hold themselves, and would otherwise duplicate this loop.
+func collectRows(rows *sql.Rows, maxRows int, statement string) (*QueryResult, error) {
+	res := &QueryResult{Columns: []string{}, Types: []string{}, Rows: [][]any{}, Statement: statement}
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
@@ -403,24 +370,68 @@ func RunQuery(ctx context.Context, db *sql.DB, query string, maxRows int, args .
 		return nil, err
 	}
 	res.RowCount = len(res.Rows)
-	res.Duration = time.Since(start).Round(time.Microsecond).String()
 	return res, nil
 }
 
 // normaliseValue converts driver values into something JSON can carry.
-// []byte in particular would otherwise be base64-encoded and unreadable for
-// what is almost always text.
+//
+// []byte is the interesting one, and it arrives for two completely different
+// reasons. MySQL hands back ordinary text columns as bytes, so encoding every
+// []byte would turn most of a MySQL database into base64; but a bytea, a BLOB
+// or a varbinary really is binary, and `string(t)` on it is both unreadable
+// and *lossy* — invalid UTF-8 becomes U+FFFD, which put mojibake and raw
+// control characters into the grid, into CSV and JSON exports, and into the
+// INSERT statement the row menu copies to the clipboard, where the bytes that
+// came back were no longer the bytes that went in.
+//
+// So the decision is made on the content: bytes that are valid UTF-8 text are
+// the text they are, and anything else becomes the hex form every one of these
+// engines also accepts and prints. Long values are cut off rather than turning
+// a megabyte blob into two megabytes of hex in a row nobody can read anyway.
 func normaliseValue(v any) any {
 	switch t := v.(type) {
 	case nil:
 		return nil
 	case []byte:
-		return string(t)
+		if isPrintableText(t) {
+			return string(t)
+		}
+		return hexPreview(t)
 	case time.Time:
 		return t.UTC().Format(time.RFC3339Nano)
 	default:
 		return v
 	}
+}
+
+// maxHexPreview bounds the rendered form of a binary value. A row is meant to
+// be looked at; an operator who needs the whole blob wants the export, not a
+// cell.
+const maxHexPreview = 256
+
+func isPrintableText(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for _, r := range string(b) {
+		// Tab, newline and carriage return are ordinary in a text column. The
+		// rest of C0, and the NUL in particular, mean this is not text.
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func hexPreview(b []byte) string {
+	if len(b) <= maxHexPreview {
+		return "\\x" + hex.EncodeToString(b)
+	}
+	return "\\x" + hex.EncodeToString(b[:maxHexPreview]) +
+		"… (" + itoa(len(b)) + " bytes)"
 }
 
 func returnsRows(query string) bool {

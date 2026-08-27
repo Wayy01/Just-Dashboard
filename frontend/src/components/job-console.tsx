@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Ban, CheckCircle2, Loader2, XCircle } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -78,7 +78,7 @@ export function useJobConsole() {
       setLines(res.lines)
       setJob(res.job)
     } catch (err) {
-      toast.error("Could not open that operation", { description: String(err) })
+      notify.error("Could not open that operation", err)
     }
   }, [])
 
@@ -93,7 +93,7 @@ export function useJobConsole() {
     try {
       await post(`/jobs/${job.id}/cancel`, {})
     } catch (err) {
-      toast.error("Could not stop it", { description: String(err) })
+      notify.error("Could not stop it", err)
     }
   }, [job])
 

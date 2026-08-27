@@ -17,7 +17,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -144,7 +144,6 @@ function VHostsTab({ hasNginx }: { hasNginx: boolean }) {
     if (!enabled) {
       confirm({
         title: "Disable virtual host",
-        phrase: vhost.name,
         confirmLabel: "Disable and reload",
         description: (
           <p>
@@ -163,10 +162,10 @@ function VHostsTab({ hasNginx }: { hasNginx: boolean }) {
     }
     try {
       await post(`/proxy/vhosts/${encodeURIComponent(vhost.name)}/enabled`, body)
-      toast.success(`${vhost.name} enabled`)
+      notify.success(`${vhost.name} enabled`)
       refresh()
     } catch (err) {
-      toast.error("Could not enable", { description: String(err) })
+      notify.error("Could not enable", err)
     }
   }
 
@@ -385,7 +384,7 @@ function ConfigEditorBody({
         setContent(r.content)
         setOriginal(r.content)
       })
-      .catch((err) => !controller.signal.aborted && toast.error(String(err)))
+      .catch((err) => !controller.signal.aborted && notify.error(String(err)))
     return () => controller.abort()
   }, [vhost])
 
@@ -395,7 +394,7 @@ function ConfigEditorBody({
     try {
       setValidation(await post("/proxy/validate", { kind: vhost.kind, path: vhost.path, content }))
     } catch (err) {
-      toast.error("Validation failed", { description: String(err) })
+      notify.error("Validation failed", err)
     } finally {
       setBusy(false)
     }
@@ -406,11 +405,11 @@ function ConfigEditorBody({
     setBusy(true)
     try {
       await put("/proxy/config", { kind: vhost.kind, path: vhost.path, content, reload })
-      toast.success(reload ? "Saved and reloaded" : "Saved")
+      notify.success(reload ? "Saved and reloaded" : "Saved")
       setOriginal(content)
       onSaved()
     } catch (err) {
-      toast.error("Not applied", { description: String(err) })
+      notify.error("Not applied", err)
     } finally {
       setBusy(false)
     }
@@ -509,7 +508,7 @@ function CertsTab() {
       setDomain("")
       watched.refresh()
     } catch (err) {
-      toast.error("Could not watch domain", { description: String(err) })
+      notify.error("Could not watch domain", err)
     }
   }
 

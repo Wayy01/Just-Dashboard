@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { AlertTriangle, BadgeCheck, Clock, Loader2, RefreshCw, ShieldX } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import type { CertbotState, DNSProvider, Job } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -110,7 +110,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
       })
       console_.attach(job)
     } catch (err) {
-      toast.error(dryRun ? "Dry run refused" : "Renewal refused", { description: String(err) })
+      notify.error(dryRun ? "Dry run refused" : "Renewal refused", err)
     } finally {
       setBusy("")
     }
@@ -337,7 +337,7 @@ function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
       onStarted(job)
       setOpen(false)
     } catch (err) {
-      toast.error("Could not start", { description: String(err) })
+      notify.error("Could not start", err)
     } finally {
       setBusy(false)
     }

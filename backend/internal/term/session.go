@@ -156,28 +156,95 @@ func (s *Session) Write(p []byte) (int, error) {
 	return f.Write(p)
 }
 
-func (s *Session) Resize(rows, cols uint16) error {
+// Resize sets the PTY's window, and reports whether it actually changed.
+//
+// The answer matters to the caller: a size change is what makes a full-screen
+// program redraw, and what leaves the browser's emulator and tmux disagreeing
+// about the result — see Manager.Redraw. A resize frame that says what the PTY
+// already is arrives constantly (every layout nudge in the page sends one) and
+// must not be treated as an event.
+func (s *Session) Resize(rows, cols uint16) (changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return ErrNotFound
+		return false, ErrNotFound
 	}
+	if rows == 0 || cols == 0 {
+		return false, nil
+	}
+	changed = s.Rows != rows || s.Cols != cols
 	s.Rows, s.Cols = rows, cols
-	return pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols})
+	return changed, pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols})
 }
 
-// broadcast delivers output to attached clients. A client that cannot keep up
-// is skipped rather than blocking the reader: a stalled browser must not be
-// able to wedge the PTY for everyone else.
+// maxPending bounds how far behind one attached browser may fall before it is
+// disconnected. A full-screen repaint at a normal size is a few kilobytes, so
+// this is a client that has stopped reading rather than one that is merely
+// slow.
+const maxPending = 4 << 20
+
+// broadcast delivers output to attached clients.
+//
+// A terminal stream is not a sequence of independent messages: every byte is a
+// state transition applied to the screen the previous bytes produced. Dropping
+// a chunk from the middle of one — which is what this used to do when a
+// subscriber's channel was full — does not cost the reader "a frame". It
+// leaves their emulator's grid permanently out of step with what the program
+// thinks it drew, and the program will never send those cells again because as
+// far as it is concerned they arrived. What that looks like from the outside is
+// a prompt stuck on screen that survives `clear`, a line missing from the
+// middle of the output, a pane that has half of another pane's border in it —
+// and it is worst exactly when the burst is biggest, which is a pane being
+// split or a window being resized.
+//
+// So a slow client is never given a corrupted stream. When its queue is full
+// the pending chunks are drained and coalesced with the new one: the bytes and
+// their order are preserved exactly, and the queue goes back to holding one
+// item. Only a client that is not reading at all — more than maxPending
+// buffered — is dropped, and dropped *completely*, by closing its channel.
+// That ends its socket, and the browser reconnects and is sent the scrollback,
+// which is a correct screen rather than a plausible one.
+//
+// The original concern was right, and is still met: a stalled browser cannot
+// wedge the PTY for anybody else. Nothing here blocks the reader.
 func (s *Session) broadcast(chunk []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastActive = time.Now()
 	s.scrollback.Write(chunk)
-	for _, ch := range s.subscribers {
+	for id, ch := range s.subscribers {
 		select {
 		case ch <- chunk:
+			continue
 		default:
+		}
+		// The queue is full. Take everything out of it, in order, and put it
+		// back as one chunk with the new bytes on the end.
+		merged := make([]byte, 0, len(chunk)+cap(ch)*512)
+		for {
+			select {
+			case pending := <-ch:
+				merged = append(merged, pending...)
+				continue
+			default:
+			}
+			break
+		}
+		merged = append(merged, chunk...)
+		if len(merged) > maxPending {
+			// Not slow — gone. A closed channel is what tells its socket to
+			// finish; Unsubscribe on the way out is then a no-op.
+			delete(s.subscribers, id)
+			close(ch)
+			continue
+		}
+		select {
+		case ch <- merged:
+		default:
+			// The reader emptied nothing and the channel is full again, which
+			// can only mean it is not reading. Same answer as above.
+			delete(s.subscribers, id)
+			close(ch)
 		}
 	}
 }

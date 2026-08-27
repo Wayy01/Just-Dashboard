@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { AlertTriangle, Cable, Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { SiteResult, StreamSpec, StreamStatus } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -266,13 +266,13 @@ function StreamForm({
     setBusy(true)
     try {
       const res = await post<SiteResult>("/proxy/streams/", { spec: body, reload: true })
-      toast.success(`${spec.name} forwarding`, {
+      notify.success(`${spec.name} forwarding`, {
         description: res.warnings[0],
       })
       onSaved()
       onOpenChange(false)
     } catch (err) {
-      toast.error("Not applied", { description: String(err) })
+      notify.error("Not applied", err)
     } finally {
       setBusy(false)
     }

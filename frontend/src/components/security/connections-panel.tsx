@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Network, ShieldPlus } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { Connections } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -53,10 +53,10 @@ export function ConnectionsPanel() {
         from: ip,
         comment: "blocked from connections",
       })
-      toast.success(`${ip} blocked`)
+      notify.success(`${ip} blocked`)
       refresh()
     } catch (err) {
-      toast.error("Could not add the rule", { description: String(err) })
+      notify.error("Could not add the rule", err)
     }
   }
 

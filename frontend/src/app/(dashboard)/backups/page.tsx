@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Archive, CloudUpload, HardDriveDownload, Play, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, relativeTime, timestamp } from "@/lib/format"
 import type { BackupJob, BackupRun } from "@/lib/types"
@@ -56,10 +56,10 @@ export default function BackupsPage() {
   const runNow = async (job: BackupJob) => {
     try {
       await post(`/backups/${job.id}/run`)
-      toast.success(`${job.name} started`, { description: "Progress appears in the run history." })
+      notify.success(`${job.name} started`, { description: "Progress appears in the run history." })
       refresh()
     } catch (err) {
-      toast.error("Could not start", { description: String(err) })
+      notify.error("Could not start", err)
     }
   }
 
@@ -149,7 +149,6 @@ export default function BackupsPage() {
                     onClick={() =>
                       confirm({
                         title: "Delete backup job",
-                        phrase: job.name,
                         confirmLabel: "Delete",
                         description: (
                           <p>
@@ -190,8 +189,8 @@ function TestTargetButton({ job }: { job: BackupJob }) {
         setBusy(true)
         try {
           const res = await post<{ ok: boolean; error?: string }>(`/backups/${job.id}/test`)
-          if (res.ok) toast.success("Target is reachable and writable")
-          else toast.error("Target unreachable", { description: res.error })
+          if (res.ok) notify.success("Target is reachable and writable")
+          else notify.error("Target unreachable", res.error)
         } finally {
           setBusy(false)
         }
@@ -364,7 +363,7 @@ function RestoreButton({
                     { destination },
                     { confirm: c },
                   )
-                  toast.success(`Restored ${res.entries} entries (${bytes(res.bytes)})`)
+                  notify.success(`Restored ${res.entries} entries (${bytes(res.bytes)})`)
                   onDone()
                 },
               })
@@ -418,11 +417,11 @@ function JobDialog({ job, onDone }: { job?: BackupJob; onDone: () => void }) {
     try {
       if (job) await put(`/backups/${job.id}`, body)
       else await post("/backups/", body)
-      toast.success(job ? "Job updated" : "Job created")
+      notify.success(job ? "Job updated" : "Job created")
       setOpen(false)
       onDone()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     }
   }
 

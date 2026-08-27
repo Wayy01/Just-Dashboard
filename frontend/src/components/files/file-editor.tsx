@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { FileCode, Loader2, Save, ShieldAlert } from "lucide-react"
-import { toast } from "sonner"
-import { get, post, put } from "@/lib/api"
+import { notify } from "@/lib/toast"
+import { downloadUrl, get, post, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import type { FileContent } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
@@ -72,11 +72,11 @@ function FileEditorPanel({
     setSaving(true)
     try {
       await put("/files/write", { path, content: draft })
-      toast.success("Saved", { description: path })
+      notify.success("Saved", { description: path })
       setFile((f) => (f ? { ...f, content: draft } : f))
       onSaved?.()
     } catch (err) {
-      toast.error("Could not save", { description: String(err) })
+      notify.error("Could not save", err)
     } finally {
       setSaving(false)
     }
@@ -86,10 +86,10 @@ function FileEditorPanel({
     if (!path) return
     try {
       await post("/files/chmod", { path, mode })
-      toast.success(`Mode set to ${mode}`)
+      notify.success(`Mode set to ${mode}`)
       onSaved?.()
     } catch (err) {
-      toast.error("Could not change mode", { description: String(err) })
+      notify.error("Could not change mode", err)
     }
   }
 
@@ -112,31 +112,39 @@ function FileEditorPanel({
       description={path ?? undefined}
       bodyClassName="flex min-h-0 flex-1 flex-col"
       footer={
-        file && can("file.write") ? (
+        file && (can("file.write") || can("system.admin")) ? (
           <>
-            <Label htmlFor="file-mode" className="text-xs text-muted-foreground">
-              Mode
-            </Label>
-            <Input
-              id="file-mode"
-              value={mode}
-              onChange={(e) => setMode(e.target.value)}
-              className="h-8 w-20 font-mono text-xs"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={applyMode}
-              disabled={mode === file.modeOctal}
-            >
-              Apply
-            </Button>
+            {/* chmod is a system.admin route, so the mode control only appears
+                for an admin — showing it to a file.write user guaranteed a 403. */}
+            {can("system.admin") && (
+              <>
+                <Label htmlFor="file-mode" className="text-xs text-muted-foreground">
+                  Mode
+                </Label>
+                <Input
+                  id="file-mode"
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value)}
+                  className="h-8 w-20 font-mono text-xs"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={applyMode}
+                  disabled={mode === file.modeOctal}
+                >
+                  Apply
+                </Button>
+              </>
+            )}
             <span className="flex-1" />
             <span className="numeric text-xs text-muted-foreground">{bytes(draft.length)}</span>
-            <Button size="sm" onClick={save} disabled={!dirty || saving || file.binary}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              Save
-            </Button>
+            {can("file.write") && !isImage(path) && (
+              <Button size="sm" onClick={save} disabled={!dirty || saving || file.binary}>
+                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                Save
+              </Button>
+            )}
           </>
         ) : undefined
       }
@@ -144,9 +152,23 @@ function FileEditorPanel({
       {error && <ErrorState error={error} className="m-4" />}
       {!file && !error && <LoadingRows className="p-4" />}
 
-      {file?.binary && (
+      {/* An image is shown rather than refused: the download endpoint streams
+          the bytes, so the panel that says "binary, not shown" can just show it. */}
+      {file?.binary && isImage(path) && (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-surface-sunken p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={downloadUrl("/files/download", { path: path ?? "" })}
+            alt={path ?? ""}
+            className="max-h-full max-w-full rounded-md object-contain shadow-sm"
+          />
+        </div>
+      )}
+
+      {file?.binary && !isImage(path) && (
         <Notice className="m-4" tone="warning" title="Binary file" icon={ShieldAlert}>
-          This looks like a binary file ({bytes(file.size)}); it is not shown in the editor.
+          This looks like a binary file ({bytes(file.size)}); it is not shown in the editor. Use
+          Download to open it locally.
         </Notice>
       )}
 
@@ -161,4 +183,13 @@ function FileEditorPanel({
       )}
     </SidePanel>
   )
+}
+
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg"])
+
+/** Whether a path names an image the browser can render inline. */
+function isImage(path: string | null): boolean {
+  if (!path) return false
+  const ext = path.split(".").pop()?.toLowerCase()
+  return ext !== undefined && IMAGE_EXTS.has(ext)
 }

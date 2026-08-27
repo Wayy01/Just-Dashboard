@@ -12,7 +12,7 @@ import {
   ShieldAlert,
   XCircle,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -48,7 +48,7 @@ export function TLSReport() {
     try {
       setScan(await get<TLSScan>("/certificates/scan", { domain: domain.trim() }))
     } catch (err) {
-      toast.error("Could not scan", { description: String(err) })
+      notify.error("Could not scan", err)
     } finally {
       setBusy(false)
     }

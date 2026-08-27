@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Loader2, Radar } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { ProbeResult } from "@/lib/types"
@@ -70,7 +70,7 @@ export function ToolsPanel() {
         }),
       )
     } catch (err) {
-      toast.error("Could not run the probe", { description: String(err) })
+      notify.error("Could not run the probe", err)
     } finally {
       setBusy(false)
     }

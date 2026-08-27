@@ -119,6 +119,25 @@
   --tag-blue: oklch(0.65 0.17 255);
   --tag-violet: oklch(0.65 0.18 295);
   --tag-pink: oklch(0.68 0.19 350);
+
+  /* Git status, wherever a changed file is listed: the tree in the terminal's
+     companion, the Files page, the Git page.
+
+     Fixed *hues*, for the same reason the tags above are: green-means-added is
+     a convention the operator brings from every other git client, and one that
+     shifted hue per theme would have to be re-learned twelve times. Lightness
+     is not fixed — these are text, and a value that reads on a near-black card
+     is unreadable on a near-white one — so the three light palettes override
+     them at the foot of themes.css, where the comment explains why that rule
+     needs a specificity these tokens are alone in needing. Every
+     surface drawn from one (the badge, the row tint) is color-mix against the
+     card, so it follows without a second override. */
+  --git-added: oklch(0.68 0.16 152);
+  --git-modified: oklch(0.72 0.14 78);
+  --git-deleted: oklch(0.65 0.19 25);
+  --git-untracked: oklch(0.7 0.11 195);
+  --git-renamed: oklch(0.67 0.15 265);
+  --git-conflict: oklch(0.66 0.21 8);
 }
 
 @theme inline {
@@ -382,4 +401,13 @@
 .monaco-host .monaco-editor-background,
 .monaco-host .monaco-editor .margin {
   background-color: transparent !important;
+}
+
+/* xterm reverts the pointer to an arrow whenever the program in the pane has
+ * asked for mouse reporting, on the assumption that a drag belongs to that
+ * program. Under tmux it never does here — the pane forces the pointer back to
+ * the page so a plain drag selects — so the I-beam is the truthful cursor and
+ * the arrow was the one thing on screen still claiming otherwise. */
+.xterm.enable-mouse-events {
+  cursor: text;
 }

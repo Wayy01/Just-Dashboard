@@ -15,7 +15,7 @@ import {
   TerminalSquare,
   Users,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type {
@@ -116,13 +116,13 @@ export default function SecurityPage() {
         ),
         action: async (c) => {
           await post("/ssh/config", { settings: { [key]: value } }, { confirm: c })
-          toast.success("Applied")
+          notify.success("Applied")
           posture.refresh()
         },
       })
       return
     }
-    toast.info("Fix this from the tab below", { description: finding.advice })
+    notify.info("Fix this from the tab below", { description: finding.advice })
   }
 
   return (

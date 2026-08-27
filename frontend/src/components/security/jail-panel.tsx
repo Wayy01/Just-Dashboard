@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Ban, Settings2, X } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { Fail2banJail, JailConfig, JailParamResult } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -47,10 +47,10 @@ export function JailPanel({
     setBusy(true)
     try {
       await fn()
-      toast.success(ok)
+      notify.success(ok)
       onChanged()
     } catch (err) {
-      toast.error("Could not apply", { description: String(err) })
+      notify.error("Could not apply", err)
     } finally {
       setBusy(false)
     }
@@ -190,9 +190,9 @@ function JailTuning({
         { params },
       )
       if (res.warning) {
-        toast.warning(`${jail} partly updated`, { description: res.warning })
+        notify.warning(`${jail} partly updated`, { description: res.warning })
       } else {
-        toast.success(`${jail} updated`, {
+        notify.success(`${jail} updated`, {
           description: res.persisted
             ? `Applied now and written to ${res.file}, so it survives a restart.`
             : undefined,
@@ -202,7 +202,7 @@ function JailTuning({
       refresh()
       onSaved()
     } catch (err) {
-      toast.error("Could not update the jail", { description: String(err) })
+      notify.error("Could not update the jail", err)
     } finally {
       setBusy(false)
     }
@@ -214,7 +214,7 @@ function JailTuning({
       setIgnore("")
       refresh()
     } catch (err) {
-      toast.error("Could not allowlist", { description: String(err) })
+      notify.error("Could not allowlist", err)
     }
   }
 
@@ -273,7 +273,7 @@ function JailTuning({
                         })
                         refresh()
                       } catch (err) {
-                        toast.error("Could not remove", { description: String(err) })
+                        notify.error("Could not remove", err)
                       }
                     }}
                   >

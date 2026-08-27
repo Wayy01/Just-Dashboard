@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { KeyRound, Plus, Trash2, UserMinus } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { AuthFile } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -45,10 +45,10 @@ export function AuthFilesPanel() {
   const removeUser = async (file: string, user: string) => {
     try {
       await del(`/proxy/auth-files/${encodeURIComponent(file)}/users/${encodeURIComponent(user)}`)
-      toast.success(`${user} removed`)
+      notify.success(`${user} removed`)
       refresh()
     } catch (err) {
-      toast.error("Could not remove", { description: String(err) })
+      notify.error("Could not remove", err)
     }
   }
 
@@ -151,13 +151,13 @@ function AuthUserDialog({ files, onDone }: { files: AuthFile[]; onDone: () => vo
     setBusy(true)
     try {
       await post("/proxy/auth-files/", { file: file.trim(), user: user.trim(), password })
-      toast.success(`${user} can sign in to ${file}`)
+      notify.success(`${user} can sign in to ${file}`)
       setOpen(false)
       setUser("")
       setPassword("")
       onDone()
     } catch (err) {
-      toast.error("Not saved", { description: String(err) })
+      notify.error("Not saved", err)
     } finally {
       setBusy(false)
     }

@@ -211,9 +211,9 @@ func (s *Server) handleFirewallDeleteRule(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return httpx.BadRequest("invalid rule number")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, "delete rule "+strconv.Itoa(number)); err != nil {
-		return err
-	}
+	// No typed phrase: a rule is one line of configuration, visible on the row
+	// being deleted and re-addable from the form beside it. Turning the
+	// firewall off entirely is the route below, and that still asks.
 	out, err := s.modules.netsec.DeleteRule(r.Context(), number)
 	if err != nil {
 		return mapFirewallError(err)

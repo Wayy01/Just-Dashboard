@@ -17,7 +17,7 @@ import {
   Terminal as TerminalIcon,
   Trash2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, percent, truncateMiddle } from "@/lib/format"
 import type {
@@ -144,9 +144,9 @@ export default function DockerPage() {
       await post(`/docker/containers/${container.id}/${action}`, undefined, {
         confirm: confirmText,
       })
-      toast.success(`${container.name} ${action}ed`)
+      notify.success(`${container.name} ${action}ed`)
     } catch (err) {
-      toast.error(`Could not ${action} ${container.name}`, { description: String(err) })
+      notify.error(`Could not ${action} ${container.name}`, err)
       throw err
     }
   }
@@ -171,21 +171,20 @@ export default function DockerPage() {
           if (finding.targetId) {
             post(`/docker/containers/${finding.targetId}/unpause`)
               .then(() => {
-                toast.success(`${finding.target} resumed`)
+                notify.success(`${finding.target} resumed`)
                 health.refresh()
               })
-              .catch((err) => toast.error(String(err)))
+              .catch((err) => notify.error(String(err)))
           }
           break
         case "set-restart":
           // Docker cannot change a restart policy in place, so this is a
-          // recreate with one field edited. It goes through the same typed
-          // confirmation as any other recreate, because it interrupts the
-          // service for as long as the replacement takes to start.
+          // recreate with one field edited. It confirms like any other
+          // recreate — a pause, not a phrase to type: the old container is
+          // renamed aside and put back if the replacement fails to start.
           if (finding.targetId && finding.target) {
             confirm({
               title: "Set a restart policy",
-              phrase: finding.target,
               confirmLabel: "Apply",
               description: (
                 <>
@@ -195,15 +194,13 @@ export default function DockerPage() {
                     exists, so the only way to set it is to rebuild it.
                   </p>
                   <p>
-                    Its volumes and settings come with it; the service is interrupted for as long
-                    as it takes to start.
+                    Its volumes and settings come with it; the service is interrupted for as long as
+                    it takes to start.
                   </p>
                 </>
               ),
               action: async (phrase) => {
-                const spec = await get<ContainerSpec>(
-                  `/docker/containers/${finding.targetId}/spec`,
-                )
+                const spec = await get<ContainerSpec>(`/docker/containers/${finding.targetId}/spec`)
                 await post(
                   `/docker/containers/${finding.targetId}/recreate`,
                   { spec: { ...spec, restartPolicy: "unless-stopped" } },
@@ -310,7 +307,7 @@ export default function DockerPage() {
                         { confirm: c },
                       )
                       const total = reports.reduce((s, r) => s + r.spaceReclaimed, 0)
-                      toast.success(`Reclaimed ${bytes(total)}`)
+                      notify.success(`Reclaimed ${bytes(total)}`)
                       health.refresh()
                     },
                   })
@@ -524,7 +521,6 @@ export default function DockerPage() {
                                       onClick={() =>
                                         confirm({
                                           title: "Restart container",
-                                          phrase: container.name,
                                           confirmLabel: "Restart",
                                           description: (
                                             <p>
@@ -543,7 +539,6 @@ export default function DockerPage() {
                                       onClick={() =>
                                         confirm({
                                           title: "Stop container",
-                                          phrase: container.name,
                                           confirmLabel: "Stop",
                                           description: (
                                             <p>
@@ -581,7 +576,6 @@ export default function DockerPage() {
                                 onClick={() =>
                                   confirm({
                                     title: "Update container",
-                                    phrase: container.name,
                                     confirmLabel: "Update",
                                     description: (
                                       <>
@@ -622,7 +616,6 @@ export default function DockerPage() {
                                 onClick={() =>
                                   confirm({
                                     title: "Remove container",
-                                    phrase: container.name,
                                     confirmLabel: "Remove",
                                     description: (
                                       <p>
@@ -720,7 +713,10 @@ export default function DockerPage() {
 }
 
 /** The most severe thing the diagnosis has to say about one container. */
-function worstFinding(diagnosis: DockerDiagnosis | undefined, id: string): DockerFinding | undefined {
+function worstFinding(
+  diagnosis: DockerDiagnosis | undefined,
+  id: string,
+): DockerFinding | undefined {
   return (diagnosis?.findings ?? []).find(
     (f) => f.targetId === id && (f.level === "critical" || f.level === "warning"),
   )

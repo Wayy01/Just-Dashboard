@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, Loader2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,11 +24,20 @@ export type ConfirmRequest = {
   /**
    * The exact phrase the server expects echoed in X-Confirm.
    *
-   * Optional, and its absence is meaningful: a request without one is a
-   * reversible action that still deserves a pause — deleting a folder, which
-   * loses a grouping and nothing else — and asking somebody to type "delete
-   * folder" for it teaches them to type phrases without reading, which is the
-   * one habit the typed confirmation exists to prevent.
+   * Optional, and most actions leave it out. The test for whether an action
+   * needs one is **frequency, not severity**: a phrase in front of something
+   * done a dozen times a day is not read, it is typed, and that habit is what
+   * empties the phrase of meaning on the routes where it still matters.
+   *
+   * So stopping a container, deleting a row, killing a process, removing an
+   * image and disabling a site all get a plain confirmation — each is either
+   * routine, reversible, or both. Typing is reserved for the rare and
+   * unrecoverable: dropping a table or a column, emptying one, removing a
+   * Docker volume, deleting an account, restoring over live data, turning the
+   * firewall off, upgrading packages.
+   *
+   * Whatever is set here, the server re-decides. This is a guard against a
+   * slip, never the enforcement point.
    */
   phrase?: string
   confirmLabel?: string
@@ -38,9 +47,13 @@ export type ConfirmRequest = {
 }
 
 /**
- * The typed-confirmation dialog. The phrase it collects is sent as X-Confirm
- * and independently re-checked by the server, so this is a usability guard
- * against a mis-click rather than the enforcement point.
+ * The confirmation dialog, in its two forms: a plain "are you sure" for the
+ * ordinary destructive act, and the same dialog with a phrase to type for the
+ * handful that are rare and unrecoverable. See ConfirmRequest.phrase for which
+ * is which and why.
+ *
+ * Either way the server re-decides, so this is a usability guard against a
+ * mis-click rather than the enforcement point.
  */
 export function ConfirmDialog({
   request,
@@ -53,7 +66,11 @@ export function ConfirmDialog({
   // Keyed on the phrase so a second dialog never opens pre-filled with what
   // was typed into the previous one — which would defeat the whole point.
   return (
-    <ConfirmBody key={request.phrase ?? request.title} request={request} onOpenChange={onOpenChange} />
+    <ConfirmBody
+      key={request.phrase ?? request.title}
+      request={request}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
@@ -73,12 +90,12 @@ function ConfirmBody({
     setBusy(true)
     try {
       await request.action(typed)
-      toast.success(`${request.title} completed`)
+      notify.success(`${request.title} completed`)
       onOpenChange(false)
       request.onDone?.()
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err)
-      toast.error(`${request.title} failed`, { description: message })
+      notify.error(`${request.title} failed`, message)
     } finally {
       setBusy(false)
     }
@@ -121,11 +138,17 @@ function ConfirmBody({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button
-            variant={request.phrase ? "destructive" : "default"}
-            onClick={run}
-            disabled={!matches || busy}
-          >
+          {/*
+            Always destructive, not only when a phrase is typed for. This
+            dialog exists at all because the action behind it changes state in
+            a way that is awkward to undo — most of them delete something — and
+            once most deletions stopped asking for a phrase, keying the red
+            button to the phrase meant "Delete row" and "Stop container" came
+            up wearing the same blue as a Save. The typed ones stay louder by
+            the warning icon and the input above, which is the difference that
+            should carry.
+          */}
+          <Button variant="destructive" onClick={run} disabled={!matches || busy}>
             {busy && <Loader2 className="size-4 animate-spin" />}
             {request.confirmLabel ?? request.title}
           </Button>

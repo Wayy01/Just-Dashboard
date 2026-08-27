@@ -174,9 +174,9 @@ func (s *Server) handleContainerRecreate(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return s.dockerErr(err)
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, detail.Name); err != nil {
-		return err
-	}
+	// No typed phrase: Recreate is the one destructive path built to be undone.
+	// The old container is renamed aside and put back if anything after that
+	// point fails, and it is only removed once the replacement is running.
 	var opts dockerx.RecreateOptions
 	if r.ContentLength > 0 {
 		if err := httpx.DecodeJSON(r, &opts); err != nil {
@@ -816,7 +816,7 @@ func (s *Server) handleStackRun(w http.ResponseWriter, r *http.Request) error {
 		// The websocket variant: a browser cannot set a header on an upgrade
 		// request, so the phrase arrives as a query parameter here. wsx's
 		// origin check is what replaces the header's cross-origin guarantee.
-		if err := httpx.RequireTypedConfirmationWS(w, r, name); err != nil {
+		if err := requireComposePhraseWS(w, r, action, name); err != nil {
 			return err
 		}
 	} else if !httpx.MustPrincipal(r).Can(auth.CapServiceControl) {
@@ -843,6 +843,27 @@ func composeIsDestructive(action dockerx.ComposeAction) bool {
 	default:
 		return false
 	}
+}
+
+// composeNeedsPhrase is deliberately narrower than composeIsDestructive.
+//
+// All five interrupt a running service, so all five keep the destructive
+// capability, the tighter budget and the audit entry. Only `down` removes the
+// containers, and only `down` is therefore typed for: stop, restart, update and
+// recreate are the ordinary redeploy cycle, run several times in an afternoon,
+// and asking for the stack's name each time is how an operator learns to type a
+// stack name without reading which stack it is.
+func composeNeedsPhrase(action dockerx.ComposeAction) bool {
+	return action == dockerx.ComposeDown
+}
+
+// requireComposePhraseWS applies the same narrowing on the socket, so the two
+// entry points cannot disagree about which actions ask.
+func requireComposePhraseWS(w http.ResponseWriter, r *http.Request, action dockerx.ComposeAction, name string) error {
+	if !composeNeedsPhrase(action) {
+		return nil
+	}
+	return httpx.RequireTypedConfirmationWS(w, r, name)
 }
 
 // handleStackLogStream follows every container in a stack at once.

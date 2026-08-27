@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { KeyRound, Loader2, Lock, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { ApiToken, DashboardUser, Role, SessionInfo } from "@/lib/types"
@@ -102,18 +102,18 @@ function SecurityTab() {
 
   const change = async () => {
     if (next !== confirmPw) {
-      toast.error("The new passwords do not match")
+      notify.error("The new passwords do not match")
       return
     }
     setBusy(true)
     try {
       await post("/account/password", { currentPassword: current, newPassword: next })
-      toast.success("Password changed", { description: "All sessions were signed out." })
+      notify.success("Password changed", { description: "All sessions were signed out." })
       // The server drops every session on a password change, so the only
       // correct next step is back to the login screen.
       await logout()
     } catch (err) {
-      toast.error("Could not change password", { description: String(err) })
+      notify.error("Could not change password", err)
     } finally {
       setBusy(false)
     }
@@ -213,11 +213,11 @@ function SecurityTab() {
               try {
                 const res = await post<{ recoveryCodes: string[] }>("/account/recovery-codes")
                 setCodes(res.recoveryCodes)
-                toast.success("Recovery codes regenerated", {
+                notify.success("Recovery codes regenerated", {
                   description: "The previous set no longer works.",
                 })
               } catch (err) {
-                toast.error("Could not regenerate", { description: String(err) })
+                notify.error("Could not regenerate", err)
               }
             }}
           >
@@ -281,7 +281,7 @@ function SessionsTab() {
                       className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                       onClick={async () => {
                         await del(`/account/sessions/${session.id}`)
-                        toast.success("Session revoked")
+                        notify.success("Session revoked")
                         refresh()
                       }}
                     >
@@ -366,7 +366,6 @@ function TokensTab() {
                           onClick={() =>
                             confirm({
                               title: "Revoke token",
-                              phrase: token.name,
                               confirmLabel: "Revoke",
                               description: (
                                 <p>
@@ -421,7 +420,7 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
       setSecret(res.secret)
       onDone()
     } catch (err) {
-      toast.error("Could not create token", { description: String(err) })
+      notify.error("Could not create token", err)
     }
   }
 
@@ -529,10 +528,10 @@ function UsersTab() {
   const update = async (user: DashboardUser, body: Record<string, unknown>) => {
     try {
       await patch(`/dashboard-users/${user.id}`, body)
-      toast.success(`${user.username} updated`)
+      notify.success(`${user.username} updated`)
       refresh()
     } catch (err) {
-      toast.error("Could not update", { description: String(err) })
+      notify.error("Could not update", err)
     }
   }
 
@@ -615,7 +614,7 @@ function UsersTab() {
                           title="Clear the 2FA enrollment so this user can re-enroll"
                           onClick={async () => {
                             await post(`/dashboard-users/${user.id}/reset-totp`)
-                            toast.success(`2FA reset for ${user.username}`)
+                            notify.success(`2FA reset for ${user.username}`)
                             refresh()
                           }}
                         >
@@ -669,7 +668,7 @@ function CreateDashboardUserDialog({ onDone }: { onDone: () => void }) {
   const create = async () => {
     try {
       await post("/dashboard-users/", { username, password, role })
-      toast.success(`Created ${username}`, {
+      notify.success(`Created ${username}`, {
         description: "They must change this password and enroll 2FA at first sign in.",
       })
       setOpen(false)
@@ -677,7 +676,7 @@ function CreateDashboardUserDialog({ onDone }: { onDone: () => void }) {
       setPassword("")
       onDone()
     } catch (err) {
-      toast.error("Could not create user", { description: String(err) })
+      notify.error("Could not create user", err)
     }
   }
 

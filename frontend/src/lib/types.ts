@@ -1,5 +1,10 @@
 export type Capability =
-  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
+  | "read"
+  | "service.control"
+  | "file.write"
+  | "terminal"
+  | "destructive"
+  | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -898,10 +903,38 @@ export type Listener = {
   exposed: boolean
 }
 
+export type DbDriver =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse"
+  | "oracle"
+  | "mongodb"
+  | "redis"
+
+/**
+ * What one engine can do, as the server reports it.
+ *
+ * The frontend deliberately keeps no table of its own: a tab that would 400 on
+ * every request should not be offered, and the only thing that actually knows
+ * which those are is the dialect registry on the server.
+ */
+export type DbDriverInfo = {
+  id: DbDriver
+  label: string
+  kind: "sql" | "document" | "keyvalue"
+  placeholder: string
+  sql: boolean
+  ddl: boolean
+  columnTypes?: string[]
+  filterOps?: string[]
+}
+
 export type DbConnection = {
   id: number
   name: string
-  driver: "postgres" | "mysql" | "mongodb"
+  driver: DbDriver
   host: string
   port: string
   user: string
@@ -943,6 +976,206 @@ export type QueryRisk = {
   destructive: boolean
   level: "read" | "medium" | "high" | "critical"
   reasons: string[]
+}
+
+/** One index on a table, with the columns it covers in order. */
+export type DbIndex = {
+  name: string
+  columns: string[]
+  unique: boolean
+  primary: boolean
+}
+
+/** One outgoing foreign key. Composite keys keep columns paired in order. */
+export type DbForeignKey = {
+  name: string
+  columns: string[]
+  refSchema?: string
+  refTable: string
+  refColumns: string[]
+  onUpdate?: string
+  onDelete?: string
+}
+
+/** Everything the Structure tab shows and everything row editing needs. */
+export type DbTableDetail = {
+  schema: string
+  name: string
+  columns: DbColumn[]
+  primaryKey: string[]
+  indexes: DbIndex[]
+  foreignKeys: DbForeignKey[]
+  createSql?: string
+}
+
+/** A named SQL snippet kept against a connection. */
+export type DbSavedQuery = {
+  id: number
+  name: string
+  sql: string
+  createdAt: string
+}
+
+/** One entry in a connection's recent-statement history. */
+export type DbHistoryEntry = {
+  id: number
+  sql: string
+  risk: string
+  success: boolean
+  durationMs: number
+  rowCount: number
+  ranAt: string
+}
+
+export type OrmTarget = "prisma" | "drizzle" | "typescript" | "zod"
+
+/** A generator the server offers, with the filename its download will use. */
+export type OrmTargetInfo = {
+  id: OrmTarget
+  label: string
+  filename: string
+  description: string
+}
+
+/** One session the database server is currently running. */
+export type DbActivity = {
+  pid: string
+  user?: string
+  database?: string
+  state?: string
+  seconds: number
+  query?: string
+  client?: string
+  wait?: string
+  blockedBy?: string
+  /** True for the connection that answered this request — never offer to kill it. */
+  self?: boolean
+}
+
+export type DbActivityResponse = {
+  sessions: DbActivity[]
+  /** False on an engine with no server-side session list, e.g. SQLite. */
+  supported: boolean
+  reason?: string
+}
+
+/** One row found by the schema-wide value search. */
+export type DbSearchMatch = {
+  schema: string
+  table: string
+  column: string
+  value: string
+  row: Record<string, unknown>
+}
+
+export type DbSearchResult = {
+  matches: DbSearchMatch[]
+  tablesScanned: number
+  tablesSkipped?: string[]
+  truncated: boolean
+}
+
+/** What one table costs on disk. Row counts are the engine's estimate. */
+export type DbTableSize = {
+  schema: string
+  table: string
+  rows: number
+  bytes: number
+  dataBytes: number
+  indexBytes: number
+}
+
+export type DbPoolStats = {
+  open: number
+  inUse: number
+  idle: number
+  waitCount: number
+  waitDuration: string
+  maxOpen: number
+  maxIdleClosed: number
+  maxLifetimeClosed: number
+}
+
+export type DbOverview = {
+  schema: string
+  tables: DbTableSize[]
+  totalBytes: number
+  totalRows: number
+  tableCount: number
+  /** False where the engine cannot report bytes — show rows and say so. */
+  sizesKnown: boolean
+  pool: DbPoolStats
+}
+
+/** One condition in the data grid's filter row. */
+export type DbFilter = {
+  column: string
+  op: string
+  value: string
+}
+
+/** A column being created or added, as the DDL form describes it. */
+export type DbNewColumn = {
+  name: string
+  type: string
+  notNull?: boolean
+  primaryKey?: boolean
+  default?: string
+}
+
+export type DbImportResult = {
+  inserted: number
+  failed: number
+  errors: string[]
+  errorsTruncated: boolean
+  statement: string
+}
+
+/** Table name to column names, for editor completion. */
+export type DbOutline = {
+  schema: string
+  tables: Record<string, string[]>
+}
+
+/** table -> its outgoing foreign keys, for the entity diagram. */
+export type DbRelations = Record<string, DbForeignKey[]>
+
+// --- Redis ---------------------------------------------------------------
+
+export type RedisKeyInfo = {
+  key: string
+  type: string
+  /** Seconds; -1 means no expiry, -2 means the key is gone. */
+  ttl: number
+  size: number
+}
+
+export type RedisPage = {
+  keys: RedisKeyInfo[]
+  cursor: number
+  done: boolean
+}
+
+export type RedisZMember = { member: string; score: number }
+
+export type RedisValue = {
+  key: string
+  type: string
+  ttl: number
+  string?: string
+  list?: string[]
+  set?: string[]
+  hash?: Record<string, string>
+  zset?: RedisZMember[]
+  stream?: { id: string; values: Record<string, unknown> }[]
+  truncated: boolean
+}
+
+// --- MongoDB -------------------------------------------------------------
+
+export type MongoCollectionInfo = {
+  indexes: DbIndex[]
+  stats?: Record<string, unknown>
 }
 
 export type SystemUser = {
@@ -1295,6 +1528,88 @@ export type GitResult = {
   ok: boolean
 }
 
+/**
+ * Who this server is, to GitHub, in one repository.
+ *
+ * The answer is per repository and not global, and `owner` is why: gh keeps
+ * the token under the home of the host account that owns the checkout, which
+ * is the same account git runs as when it pushes. Signing in for /srv/app does
+ * not sign in for a repository owned by somebody else.
+ */
+export type GitHubAccount = {
+  loggedIn: boolean
+  host?: string
+  login?: string
+  name?: string
+  avatarUrl?: string
+  profileUrl?: string
+  scopes?: string[]
+  protocol?: string
+  owner?: string
+  /** Whether a push and a commit would actually use the account. */
+  gitConfigured: boolean
+  committerName?: string
+  committerEmail?: string
+  /** How origin is reached: an ssh remote never asks the token for anything. */
+  remoteProtocol?: string
+  /** gh's own words for why nobody is signed in. */
+  reason?: string
+}
+
+export type GitHubStatus = {
+  available: boolean
+  account?: GitHubAccount
+}
+
+export type GitHubRepo = {
+  nameWithOwner: string
+  defaultBranch: string
+  url: string
+  private: boolean
+  permission?: string
+}
+
+/** The code to type into github.com, and where to type it. */
+export type GitHubDeviceStart = {
+  id: string
+  userCode: string
+  verificationUri: string
+  expiresIn: number
+  interval: number
+}
+
+export type GitHubDeviceState = {
+  status: "pending" | "complete" | "denied" | "expired"
+  account?: GitHubAccount
+  message?: string
+}
+
+export type GitPullRequest = {
+  number: number
+  title: string
+  url: string
+  state: string
+  draft: boolean
+  head: string
+  base: string
+  author?: string
+  createdAt?: string
+  comments: number
+}
+
+/**
+ * The answer to "is this shell sitting inside a checkout" for a terminal's
+ * working directory. `inRoots` is false for a real repository that falls
+ * outside JD_GIT_ROOTS: it can be named but not operated on, since every other
+ * git route is gated on those roots.
+ */
+export type GitDetect = {
+  available: boolean
+  inRoots?: boolean
+  root?: string
+  repo?: GitRepo
+}
+
 // --- System updates ---
 
 export type UpdatePackage = {
@@ -1418,6 +1733,199 @@ export type TerminalPane = {
   top: number
   right: number
   bottom: number
+}
+
+// --- detected and provisioned database servers ----------------------------
+
+/**
+ * A database server found running on this host. It deliberately carries no
+ * password: what reaches the browser is the description of a connection that
+ * could be made, not the means to make it.
+ */
+export type DbDetectedServer = {
+  driver: DbConnection["driver"]
+  container: string
+  image: string
+  host: string
+  port: number
+  user?: string
+  database?: string
+  /** Why this one cannot be connected to, when it cannot. */
+  reason?: string
+  /** The name of the connection already pointing at it, if there is one. */
+  adopted?: string
+  health?: string
+  status?: string
+}
+
+export type DbDetected = { servers: DbDetectedServer[] }
+
+/**
+ * What POST /databases/sync did.
+ *
+ * `unreachable` is the half that has to be shown: a database this host is
+ * running that was recognised and could not be connected to — almost always a
+ * container on a compose network with no published port. Dropping it silently
+ * is what made the reconcile look like it did nothing.
+ */
+export type DbUnreachableServer = {
+  container: string
+  driver: string
+  reason: string
+}
+
+export type DbSyncResult = {
+  added: string[]
+  already: string[]
+  unreachable?: DbUnreachableServer[]
+  /** Servers running on the host itself, which nothing here can sign in to. */
+  needsCredentials?: DbCredentialServer[]
+}
+
+/**
+ * A database installed on the machine rather than in a container.
+ *
+ * Everything about it is known except the password: a container states its
+ * credentials in its environment, and an apt-installed server keeps them in
+ * its own catalogue, where no amount of reading the machine finds them. So the
+ * page asks for that one thing, and the server dials before it saves anything.
+ */
+export type DbCredentialServer = {
+  driver: string
+  host: string
+  port: number
+  process?: string
+  name: string
+  /** The engine's own conventional account and database, to open the form with. */
+  user?: string
+  database?: string
+}
+
+export type DbProvisionOption = {
+  engine: string
+  label: string
+  image: string
+  driver: string
+}
+
+// --- schema graph (the diagram) -------------------------------------------
+
+export type DbGraphColumn = {
+  name: string
+  type: string
+  nullable: boolean
+  primaryKey: boolean
+  foreignKey?: string
+  unique?: boolean
+}
+
+export type DbGraphTable = {
+  schema: string
+  name: string
+  type: string
+  rows: number
+  columns: DbGraphColumn[]
+}
+
+export type DbGraphEdge = {
+  name: string
+  fromTable: string
+  fromColumn: string
+  toTable: string
+  toColumn: string
+  onDelete?: string
+  cardinality: "one-to-one" | "many-to-one"
+}
+
+export type DbSchemaGraph = {
+  schema: string
+  tables: DbGraphTable[]
+  edges: DbGraphEdge[]
+  truncated: boolean
+}
+
+// ---------------------------------------------------------------------------
+// The dashboard's own version, its changelog, and updating it in place.
+//
+// These mirror internal/selfupdate. The changelog is structured rather than
+// markdown for the reason that package gives: the UI has to select the
+// releases between the installed version and the newest, and paint a tag
+// against each change — neither of which is a thing you can do to a paragraph.
+// ---------------------------------------------------------------------------
+
+export type ChangeKind = "added" | "changed" | "fixed" | "removed" | "security" | "deprecated"
+
+export type ReleaseChange = {
+  kind: ChangeKind
+  text: string
+  /** The sentence under the line, where the consequence is not obvious. */
+  detail?: string
+}
+
+export type Release = {
+  version: string
+  /** A calendar day, YYYY-MM-DD. */
+  date: string
+  title: string
+  summary?: string
+  changes: ReleaseChange[]
+  /** Needs the operator to do something by hand; never hidden behind a click. */
+  breaking?: boolean
+  breakingNote?: string
+}
+
+export type UpdateRunStatus = "pending" | "running" | "success" | "failed"
+export type UpdatePhase = "queued" | "fetching" | "building" | "restarting" | "finished"
+
+/** One upgrade attempt, as recorded on disk by the container that ran it. */
+export type UpdateRun = {
+  id: string
+  status: UpdateRunStatus
+  phase: UpdatePhase
+  fromVersion: string
+  toVersion: string
+  ref: string
+  dir: string
+  compose: string
+  image: string
+  container: string
+  health?: string
+  fromCommit?: string
+  toCommit?: string
+  actor: string
+  startedAt: string
+  updatedAt: string
+  finishedAt?: string
+  error?: string
+}
+
+export type SelfUpdateReport = {
+  version: string
+  latest?: string
+  available: boolean
+  /** Releases newer than the installed version, newest first. */
+  releases: Release[]
+  /** Everything this build knows about its own past; needs no network. */
+  history: Release[]
+  breaking: boolean
+  check: {
+    enabled: boolean
+    checkedAt?: string
+    error?: string
+    source?: string
+    repo: string
+    ref: string
+  }
+  install: {
+    supported: boolean
+    reason?: string
+    dir?: string
+    compose?: string
+    /** Uncommitted changes in the checkout, in `git status --porcelain` form. */
+    dirty?: string[]
+  }
+  run?: UpdateRun
+  log?: string
 }
 
 /**

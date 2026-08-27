@@ -77,6 +77,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// going red, and the daemon keeps none of it. A host with no Docker
 	// simply never connects, which is a steady state rather than an error.
 	s.modules.dockerEvents.Start(ctx)
+	// Two things, both of which have to happen at boot rather than on request.
+	// An upgrade that was in flight when this process started is settled here,
+	// because after a successful one *this* process is the evidence it worked
+	// and nothing else will ever look. And the periodic version check is
+	// started for the reason the metrics recorder is: the operator who most
+	// needs to be told about a release is the one who has not opened the
+	// dashboard in a month.
+	s.modules.selfUpdate.Start(ctx)
 	return s.modules.backupSched.Start(ctx)
 }
 
@@ -85,6 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Shutdown() {
 	s.modules.metrics.Stop()
 	s.modules.backupSched.Stop()
+	s.modules.selfUpdate.Stop()
 	s.modules.term.Shutdown()
 	s.modules.dbs.Shutdown()
 	s.modules.docker.Close()

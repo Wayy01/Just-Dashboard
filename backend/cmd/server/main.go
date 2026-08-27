@@ -27,7 +27,9 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/version"
 )
 
 func main() {
@@ -36,10 +38,38 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe the local server and exit non-zero if it is unhealthy")
 	agentMode := flag.Bool("agent", false, "run as an agent managed by a hub: no human login, mutual TLS only")
 	agentReset := flag.Bool("agent-reset", false, "forget the enrolled hub so this agent can be enrolled again, then exit")
+	// The upgrade half of internal/selfupdate. This same binary is started in
+	// a separate container to carry out an upgrade, because the containers it
+	// replaces include the one that asked for it — see that package for why
+	// the work cannot be a child process of the server.
+	selfUpdate := flag.Bool("self-update", false,
+		"carry out the dashboard upgrade recorded in -state-dir, then exit")
+	stateDir := flag.String("state-dir", "",
+		"directory holding the upgrade record and its transcript (the value of JD_DATA_DIR)")
 	flag.Parse()
 	if *healthcheck {
 		if err := probe(); err != nil {
 			fmt.Fprintln(os.Stderr, "unhealthy:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *selfUpdate {
+		// Deliberately before config.Load and everything under it. The updater
+		// is given no master key, no database and no environment from the
+		// process that started it: everything it needs is in the record on
+		// disk, which is also what the operator reads afterwards, so the job
+		// described is exactly the job that ran.
+		dir := *stateDir
+		if dir == "" {
+			dir = config.Env("JD_DATA_DIR")
+		}
+		if dir == "" {
+			fmt.Fprintln(os.Stderr, "fatal: -self-update needs -state-dir (the dashboard's JD_DATA_DIR)")
+			os.Exit(2)
+		}
+		if err := selfupdate.RunUpdater(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "update failed:", err)
 			os.Exit(1)
 		}
 		return
@@ -143,6 +173,7 @@ func run(agentFlag, agentReset bool) error {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("just-dashboard listening",
+			"version", version.Version,
 			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs),
 			"require2fa", cfg.Require2FA, "agent", cfg.AgentMode)
 		var err error

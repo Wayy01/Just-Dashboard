@@ -61,8 +61,12 @@ yes_no() {
 
 # ── preflight ───────────────────────────────────────────────────────────────
 
+# Read rather than repeated, so the installer cannot announce a version this
+# checkout is not. Empty if the file moves — a nameless banner beats a wrong one.
+version="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' backend/internal/version/version.go 2>/dev/null)"
+
 say ""
-say "${BOLD}Just Dashboard — setup${RESET}"
+say "${BOLD}Just Dashboard${version:+ $version} — setup${RESET}"
 say "${DIM}Self-hosted management for a single Linux server.${RESET}"
 
 [ "$(id -u)" -eq 0 ] || die "run this with sudo — the dashboard manages the host, so setup needs root."
@@ -304,6 +308,73 @@ yes_no "Require two-factor authentication? (strongly recommended)" y || REQUIRE_
 TERMINAL=true
 yes_no "Enable the web terminal? (a real shell with this process's privileges)" y || TERMINAL=false
 
+# ── ports ───────────────────────────────────────────────────────────────────
+#
+# The three defaults are the three most contested ports on a Linux server:
+# 3000 is every Node app ever started, 8080 is every second Java or Go
+# service, and 8443 is the obvious alternative HTTPS port. A machine that
+# already uses one of them is the normal case.
+#
+# It is checked here rather than left to fail at start-up because of *how* it
+# used to fail. Only the frontend and backend would refuse to bind; the proxy
+# in front of them comes up perfectly clean and forwards to whatever already
+# holds the port — so the operator opens the dashboard, gets somebody else's
+# application over the dashboard's own certificate, and has nothing anywhere
+# that says why. Ninety seconds of confusion at install time is worth avoiding
+# by three lines of ss.
+
+step "Ports"
+
+port_taken() {
+	if command -v ss >/dev/null 2>&1; then
+		ss -lntH "sport = :$1" 2>/dev/null | grep -q . && return 0
+	elif command -v lsof >/dev/null 2>&1; then
+		lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+	fi
+	return 1
+}
+
+# who_has is for the message only. Being unable to name the process is not a
+# reason to stay quiet about the port — hence the `|| true`, which is
+# load-bearing: this runs under `set -e` and its result is consumed by a bare
+# assignment, so a grep that matches nothing would take the whole installer
+# down at precisely the moment a port turned out to be in use.
+who_has() {
+	if command -v ss >/dev/null 2>&1; then
+		ss -lntpH "sport = :$1" 2>/dev/null |
+			grep -o '"[^"]*"' | head -1 | tr -d '"' || true
+	fi
+	return 0
+}
+
+# pick_port keeps the default when it is free and otherwise walks upward. The
+# step is 100 rather than 1 so the number it lands on still reads as a
+# deliberate choice — 3100, 8180, 8543 — instead of looking like the default
+# with a typo.
+# Sets PICKED rather than echoing it: ok() and warn() write to stdout, so a
+# version of this that returned the port through a command substitution would
+# capture its own progress messages into the number.
+PICKED=""
+pick_port() {
+	local want="$1" name="$2" p="$1" tries=0 owner=""
+	while port_taken "$p"; do
+		tries=$((tries + 1))
+		[ "$tries" -gt 20 ] && die "could not find a free port for $name near $want"
+		p=$((p + 100))
+	done
+	if [ "$p" != "$want" ]; then
+		owner="$(who_has "$want")"
+		warn "$name: $want is in use${owner:+ by $owner} — using $p instead"
+	else
+		ok "$name: $p"
+	fi
+	PICKED="$p"
+}
+
+pick_port 8443 "dashboard (the port you connect to)"; JD_PORT="$PICKED"
+pick_port 8080 "backend API";                         JD_BACKEND_PORT="$PICKED"
+pick_port 3000 "frontend";                            JD_FRONTEND_PORT="$PICKED"
+
 # ── write .env ──────────────────────────────────────────────────────────────
 
 step "Writing configuration"
@@ -321,6 +392,14 @@ JD_MASTER_KEY=$MASTER_KEY
 
 # The single address the stack answers on, and the name on its certificate.
 JD_SITE=$SITE
+
+# The port you connect to, and the two loopback ports behind it. Chosen at
+# install time from what was free: 3000, 8080 and 8443 are contested enough
+# that the defaults collide on a great many servers, and a collision here used
+# to surface as the dashboard proxying you to somebody else's application.
+JD_PORT=$JD_PORT
+JD_BACKEND_PORT=$JD_BACKEND_PORT
+JD_FRONTEND_PORT=$JD_FRONTEND_PORT
 
 # Checked before authentication: an address outside this list cannot even
 # reach the login handler.
@@ -348,6 +427,62 @@ ok ".env written (mode 600)"
 
 fi  # KEEP_ENV
 
+# ── ports, on an install that kept its .env ─────────────────────────────────
+#
+# A re-run that keeps an existing .env skipped the port checks entirely, which
+# left the one case that most needs them unserved: an install made before the
+# ports were settings at all, on a machine that has since started using 3000
+# for something else. That operator had to be told to hand-edit .env, which is
+# not a fix, it is a workaround with a person in the middle of it.
+#
+# So the same checks run here, and the file is amended rather than rewritten:
+# a variable missing from an older .env is appended, and one whose port is now
+# held by something else is rewritten to a free one. A port that is merely
+# non-default is left exactly as it is — it was a deliberate choice, and this
+# is not the place to second-guess it.
+if [ "$KEEP_ENV" -eq 1 ]; then
+	step "Ports"
+
+	# set_env_port writes NAME=value into .env, replacing the line if it is
+	# there and appending it if it is not.
+	set_env_port() {
+		if grep -qE "^$1=" .env; then
+			sed -i "s|^$1=.*|$1=$2|" .env
+		else
+			printf '%s=%s\n' "$1" "$2" >> .env
+		fi
+	}
+
+	# Fills a gap; never moves a port that is already recorded.
+	#
+	# The tempting version of this also re-checks an existing value and moves
+	# it when something else has taken the port. It cannot: on a re-run against
+	# a dashboard that is currently up, the thing holding the port *is* this
+	# dashboard, and every way of telling that apart from a squatter is a guess
+	# — one that, when it guesses wrong, moves the ports out from under a
+	# working install. That is a worse failure than the one being fixed.
+	#
+	# A recorded port was chosen deliberately, by a previous run or by the
+	# operator. If something else really has taken it, `docker compose up` now
+	# stops and names it, which is the honest answer and needs no guessing.
+	check_kept_port() {
+		local var="$1" default="$2" name="$3" current
+		# `|| true` for the reason env_port carries one: absent is normal here.
+		current="$(grep -E "^$var=" .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)"
+		if [ -n "$current" ]; then
+			ok "$name: $current (already set)"
+			return
+		fi
+		pick_port "$default" "$name"
+		set_env_port "$var" "$PICKED"
+		ok "$var was not set; using $PICKED"
+	}
+
+	check_kept_port JD_PORT 8443 "dashboard (the port you connect to)"
+	check_kept_port JD_BACKEND_PORT 8080 "backend API"
+	check_kept_port JD_FRONTEND_PORT 3000 "frontend"
+fi
+
 # ── build and start ─────────────────────────────────────────────────────────
 
 step "Building and starting the stack"
@@ -359,9 +494,24 @@ $COMPOSE up -d --build
 step "Waiting for the dashboard to answer"
 
 SITE_ADDR="$(grep -E '^JD_SITE=' .env | cut -d= -f2-)"
+
+# Read back rather than reused from above: a re-run that keeps an existing
+# .env never entered the block that chose them, and printing the defaults at
+# an install that is not using the defaults is how somebody ends up tunnelling
+# to the wrong port and concluding the dashboard is broken.
+# The `|| true` is load-bearing under `set -euo pipefail`: grep exits non-zero
+# when the variable is absent, pipefail promotes that to the pipeline's status,
+# and a bare assignment consuming it aborts the script. Absent is the normal
+# case on an .env written before these variables existed — which is precisely
+# the install being re-run.
+env_port() { grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true; }
+JD_PORT="$(env_port JD_PORT)";                   JD_PORT="${JD_PORT:-8443}"
+JD_BACKEND_PORT="$(env_port JD_BACKEND_PORT)";   JD_BACKEND_PORT="${JD_BACKEND_PORT:-8080}"
+JD_FRONTEND_PORT="$(env_port JD_FRONTEND_PORT)"; JD_FRONTEND_PORT="${JD_FRONTEND_PORT:-3000}"
+
 HEALTHY=0
 for _ in $(seq 1 60); do
-	if curl -fsS --max-time 3 "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; then
+	if curl -fsS --max-time 3 "http://127.0.0.1:$JD_BACKEND_PORT/healthz" >/dev/null 2>&1; then
 		HEALTHY=1; break
 	fi
 	sleep 2
@@ -390,34 +540,34 @@ PUBLIC_HOST="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
 tunnel_fallback() {
 	say ""
 	say "  ${DIM}If that is ever unreachable, an SSH tunnel still works:${RESET}"
-	say "    ${DIM}ssh -L 8443:localhost:8443 $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
-	say "    ${DIM}then open https://localhost:8443${RESET}"
+	say "    ${DIM}ssh -N -L $JD_PORT:localhost:$JD_PORT $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
+	say "    ${DIM}then open https://localhost:$JD_PORT${RESET}"
 }
 
 case "${ACCESS_KIND:-tunnel}" in
 tunnel)
 	say "  ${BOLD}Reach it over an SSH tunnel.${RESET} From your laptop:"
 	say ""
-	say "    ${BLUE}ssh -L 8443:localhost:8443 $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
+	say "    ${BLUE}ssh -N -L $JD_PORT:localhost:$JD_PORT $(logname 2>/dev/null || echo root)@${PUBLIC_HOST:-YOUR_SERVER}${RESET}"
 	say ""
-	say "  Then open ${BOLD}https://localhost:8443${RESET} while that stays open."
+	say "  Then open ${BOLD}https://localhost:$JD_PORT${RESET} while that stays open."
 	;;
 tailscale)
 	say "  ${BOLD}Reach it from any device on your tailnet:${RESET}"
 	say ""
-	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
+	say "    ${BLUE}https://$SITE_ADDR:$JD_PORT${RESET}"
 	tunnel_fallback
 	;;
 private)
 	say "  ${BOLD}Reach it over your private network:${RESET}"
 	say ""
-	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
+	say "    ${BLUE}https://$SITE_ADDR:$JD_PORT${RESET}"
 	tunnel_fallback
 	;;
 public)
 	say "  ${BOLD}Reach it at:${RESET}"
 	say ""
-	say "    ${BLUE}https://$SITE_ADDR:8443${RESET}"
+	say "    ${BLUE}https://$SITE_ADDR:$JD_PORT${RESET}"
 	say ""
 	warn "This is on the public internet. Only the addresses you allowlisted"
 	warn "can reach it. Consider moving to Tailscale when you get a moment."

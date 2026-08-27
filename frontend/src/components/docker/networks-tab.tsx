@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Link2, Loader2, Network as NetworkIcon, Plus, Trash2, Unlink } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { Container, DockerNetwork, NetworkDetail } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -100,7 +100,10 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                   onActivate={() => setSelected(network.id)}
                 >
                   <TableCell className="text-[13px] font-medium">
-                    <button className="text-left hover:underline" onClick={() => setSelected(network.id)}>
+                    <button
+                      className="text-left hover:underline"
+                      onClick={() => setSelected(network.id)}
+                    >
                       {network.name}
                     </button>
                     {network.internal && (
@@ -122,7 +125,6 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                         onClick={() =>
                           confirm({
                             title: "Delete network",
-                            phrase: network.name,
                             confirmLabel: "Delete",
                             description: (
                               <p>
@@ -183,7 +185,8 @@ function NetworkDetailPanel({
   const [attaching, setAttaching] = useState(false)
 
   const { data, error, loading, refresh } = usePoll<NetworkDetail>(
-    (signal) => get<NetworkDetail>(`/docker/networks/${encodeURIComponent(id ?? "")}`, undefined, signal),
+    (signal) =>
+      get<NetworkDetail>(`/docker/networks/${encodeURIComponent(id ?? "")}`, undefined, signal),
     0,
     [id],
     { enabled: id !== null },
@@ -192,11 +195,11 @@ function NetworkDetailPanel({
   const disconnect = async (containerId: string, containerName: string) => {
     try {
       await post(`/docker/networks/${id}/disconnect`, { container: containerId })
-      toast.success(`${containerName} left ${data?.name}`)
+      notify.success(`${containerName} left ${data?.name}`)
       refresh()
       onChanged()
     } catch (err) {
-      toast.error("Could not detach it", { description: String(err) })
+      notify.error("Could not detach it", err)
     }
   }
 
@@ -257,7 +260,11 @@ function NetworkDetailPanel({
                       {m.aliases
                         .filter((a) => a !== m.name && !m.id.startsWith(a))
                         .map((a) => (
-                          <Badge key={a} variant="outline" className="font-mono text-[10px] font-normal">
+                          <Badge
+                            key={a}
+                            variant="outline"
+                            className="font-mono text-[10px] font-normal"
+                          >
                             {a}
                           </Badge>
                         ))}
@@ -330,13 +337,13 @@ function AttachDialog({
         container: picked,
         aliases: alias.trim() ? [alias.trim()] : undefined,
       })
-      toast.success(`Attached to ${networkName}`)
+      notify.success(`Attached to ${networkName}`)
       onAttached()
       onOpenChange(false)
       setPicked("")
       setAlias("")
     } catch (err) {
-      toast.error("Could not attach it", { description: String(err) })
+      notify.error("Could not attach it", err)
     } finally {
       setBusy(false)
     }
@@ -421,14 +428,14 @@ function NewNetworkDialog({
     setBusy(true)
     try {
       await post("/docker/networks/", { name, internal, subnet: subnet.trim() || undefined })
-      toast.success(`${name} created`)
+      notify.success(`${name} created`)
       onCreated()
       onOpenChange(false)
       setName("")
       setSubnet("")
       setInternal(false)
     } catch (err) {
-      toast.error("Could not create the network", { description: String(err) })
+      notify.error("Could not create the network", err)
     } finally {
       setBusy(false)
     }
@@ -462,7 +469,12 @@ function NewNetworkDialog({
             />
           </div>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-hairline p-2.5">
-            <Switch checked={internal} onCheckedChange={setInternal} className="mt-0.5" aria-label="No internet access" />
+            <Switch
+              checked={internal}
+              onCheckedChange={setInternal}
+              className="mt-0.5"
+              aria-label="No internet access"
+            />
             <span>
               <span className="block text-xs font-medium">Cut it off from the internet</span>
               <Hint>

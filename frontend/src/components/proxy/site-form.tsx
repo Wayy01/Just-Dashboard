@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { AlertTriangle, CheckCircle2, FileCode, Globe, Loader2, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { DomainCheck, SiteLocation, SiteResult, SiteSpec } from "@/lib/types"
@@ -117,7 +117,7 @@ function SiteFormBody({
         setManaged(r.managed)
         setLoaded(true)
       })
-      .catch((err) => !controller.signal.aborted && toast.error(String(err)))
+      .catch((err) => !controller.signal.aborted && notify.error("Could not load the site", err))
     return () => controller.abort()
   }, [open, editing])
 
@@ -187,7 +187,7 @@ function SiteFormBody({
         reload,
         overwrite: editing !== null,
       })
-      toast.success(res.reloaded ? `${spec.name} is live` : `${spec.name} saved`, {
+      notify.success(res.reloaded ? `${spec.name} is live` : `${spec.name} saved`, {
         description: res.reloaded
           ? undefined
           : "nginx has not reloaded yet, so the site is on disk but not serving.",
@@ -195,7 +195,7 @@ function SiteFormBody({
       onSaved()
       onOpenChange(false)
     } catch (err) {
-      toast.error("Not applied", { description: String(err) })
+      notify.error("Not applied", err)
     } finally {
       setBusy(false)
     }

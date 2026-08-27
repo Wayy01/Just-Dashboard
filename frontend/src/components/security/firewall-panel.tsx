@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, Lock, Pencil, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { del, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { FirewallRule, FirewallStatus, Posture } from "@/lib/types"
@@ -101,10 +101,10 @@ export function FirewallPanel({
     if (!risky) {
       send()
         .then(() => {
-          toast.success(`Default ${direction} set to ${policy}`)
+          notify.success(`Default ${direction} set to ${policy}`)
           refresh()
         })
-        .catch((err) => toast.error("Not applied", { description: String(err) }))
+        .catch((err) => notify.error("Not applied", err))
       return
     }
     confirm({
@@ -212,10 +212,10 @@ export function FirewallPanel({
                   onValueChange={(level) =>
                     post("/firewall/logging", { level })
                       .then(() => {
-                        toast.success(`Logging set to ${level}`)
+                        notify.success(`Logging set to ${level}`)
                         refresh()
                       })
-                      .catch((err) => toast.error("Not applied", { description: String(err) }))
+                      .catch((err) => notify.error("Not applied", err))
                   }
                 >
                   <SelectTrigger size="sm" className="w-32">

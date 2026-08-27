@@ -1,35 +1,35 @@
-// Copy Monaco's own build into public/, so the editor is served by this
-// dashboard rather than fetched from a CDN.
+// Copies the editor's runtime into public/ so the dashboard serves it itself.
 //
-// @monaco-editor/react loads the editor at runtime from
-// cdn.jsdelivr.net unless it is told otherwise. For a panel that drives the
-// Docker socket, systemd and a root shell, that is third-party JavaScript
-// executing in the same origin as a root-equivalent session — and it means
-// every editor in the product (files, compose, nginx, the site preview) is a
-// spinner that never resolves on a machine reached over Tailscale from a
-// workstation with no egress. Both are answered by shipping the files.
+// @monaco-editor/react resolves Monaco at *runtime*, and its default source is
+// a CDN — a hardcoded https://cdn.jsdelivr.net/npm/monaco-editor@x/min/vs, at a
+// version that need not even match the one installed here. That made the SQL
+// editor the one part of this product needing the operator's browser to reach
+// the public internet, in a panel whose entire security story is a closed
+// network perimeter. With the CDN unreachable the Query tab was a permanent
+// "Loading…" — no error, no fallback, and no way to type a statement.
 //
-// Run from predev/prebuild and from the Dockerfile, because the image builds
-// by invoking next's entrypoint directly and never sees the npm hooks.
+// Copied rather than bundled: min/vs ships its own AMD loader and its web
+// workers and resolves both relative to the path it was loaded from, so serving
+// the directory as it stands needs no bundler or worker configuration to get
+// wrong. It is gitignored and rebuilt from node_modules by `bun run build`, so
+// the tree carries a version number rather than 24 MB of vendored editor.
+import { cp, rm, mkdir } from "node:fs/promises"
+import { createRequire } from "node:module"
+import { dirname, join, sep } from "node:path"
 
-import { cp, mkdir, rm, stat } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+// The package root is found by resolving the main entry and walking back to
+// the directory the package occupies. monaco-editor's exports map rewrites
+// every subpath into esm/vs, so neither "monaco-editor/package.json" nor
+// "monaco-editor/min/vs/loader.js" resolves — min/vs is simply not something
+// the map admits exists, and it is the half being shipped.
+const require = createRequire(import.meta.url)
+const entry = require.resolve("monaco-editor")
+const marker = `${sep}monaco-editor${sep}`
+const root = entry.slice(0, entry.lastIndexOf(marker) + marker.length)
+const src = join(root, "min", "vs")
+const dest = join(process.cwd(), "public", "monaco", "vs")
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..")
-const src = join(root, "node_modules", "monaco-editor", "min", "vs")
-const dest = join(root, "public", "monaco", "vs")
-
-try {
-  await stat(src)
-} catch {
-  console.error("monaco-editor is not installed; run the package manager first")
-  process.exit(1)
-}
-
-// The version is part of the path Monaco resolves its workers against, so a
-// stale copy is worse than none: replace rather than merge.
 await rm(dest, { recursive: true, force: true })
 await mkdir(dirname(dest), { recursive: true })
 await cp(src, dest, { recursive: true })
-console.log(`monaco: ${src} → ${dest}`)
+console.log(`monaco: ${src} -> ${dest}`)

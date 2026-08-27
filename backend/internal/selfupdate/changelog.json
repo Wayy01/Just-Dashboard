@@ -1,0 +1,287 @@
+{
+  "latest": "0.5.9",
+  "releases": [
+    {
+      "version": "0.5.9",
+      "date": "2026-08-27",
+      "title": "The parts of the last release that only worked on the machine they were written on",
+      "summary": "Connecting a database installed on the server asked for nothing and then saved a connection that could not authenticate. The terminal's files and git panel needed tmux to know where the shell was, and said nothing on a host that has none \u2014 which is every stock Debian.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "Connecting a database that is not in a container asks for its password, and dials before it saves",
+          "detail": "It used to hand you a connection string with the password missing, which could be saved as it stood \u2014 the result was a connection that existed, looked connected, and answered \"password authentication failed for user postgres\" to everything afterwards. Now nothing is stored unless the engine accepts it, and its refusal is shown next to the field that caused it. If the account has never had a password, the dialog names the one command that gives it one."
+        },
+        {
+          "kind": "fixed",
+          "text": "The terminal's files and git panel works on a host without tmux",
+          "detail": "The panel is rooted at the shell's current directory, which was only ever read from tmux \u2014 so on a machine without it the panel had nowhere to look and stayed empty beside a shell sitting in a repository. The directory is read from the process itself when tmux cannot answer."
+        },
+        {
+          "kind": "added",
+          "text": "The terminal says when tmux is missing, and what that costs",
+          "detail": "Windows, panes and a session that survives closing the tab are all tmux's. Without it the split button did nothing and the window strip stayed empty, with nothing on screen explaining why. Debian installs no tmux by default, so the page now says so and names the one command that fixes it."
+        }
+      ]
+    },
+    {
+      "version": "0.5.8",
+      "date": "2026-08-26",
+      "title": "Sign in to GitHub from the page that does the pushing",
+      "summary": "The git page can now hold a GitHub account: the same one-time code flow gh auth login uses, rendered as a screen. Commits are recorded as you, pushes are authenticated, and a pull request can be opened from the branch you are on. A database installed on the server itself is no longer invisible beside the ones in containers, and the commit box stopped disappearing under a long list of changes.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "Sign in to GitHub from the git page",
+          "detail": "The same device-code flow as `gh auth login`, as a screen rather than a series of prompts: a one-time code, github.com, done. The token is stored where gh keeps its own \u2014 under the account that owns the repository, which is the account that pushes \u2014 so it is the same credential a shell on the server would use. A pasted token is the way in for GitHub Enterprise or a machine account."
+        },
+        {
+          "kind": "added",
+          "text": "Commits and pushes are made as the signed-in account",
+          "detail": "Signing in sets git's credential helper and, when the account has none, a committer name and address from your GitHub profile. The account chip in the header says whether git here will actually use it \u2014 including the case where the remote is SSH and the push uses the server's key instead."
+        },
+        {
+          "kind": "added",
+          "text": "Open a pull request without leaving the page",
+          "detail": "A Pulls tab beside Changes and History: what is open, which one belongs to the branch you are on, and a form that pushes the branch and opens the request as your account."
+        },
+        {
+          "kind": "fixed",
+          "text": "The commit box stays visible however many files have changed",
+          "detail": "The changes list scrolls inside its own panel now. It used to push the commit box off the bottom of a page that does not scroll, which put committing out of reach exactly when there was most to commit."
+        },
+        {
+          "kind": "changed",
+          "text": "Pushing a new branch publishes it instead of refusing",
+          "detail": "A branch with no upstream used to be answered with git's advice to run a command in a terminal. It now sets the upstream, which is also what makes a pull request possible from a branch created here."
+        },
+        {
+          "kind": "removed",
+          "text": "The \u201cAmend last commit\u201d checkbox on the git page"
+        },
+        {
+          "kind": "added",
+          "text": "Databases installed on the server itself are found, not just the ones in containers",
+          "detail": "A Postgres, MySQL, MongoDB, Redis, ClickHouse or SQL Server that apt installed is recognised from the process listening for it, on whatever port it actually uses. The ones that ship with no credentials connect themselves; the rest say they are there and open the connection form with everything except the password already filled in \u2014 a container states its credentials in its environment, a native server keeps them in its own catalogue, and guessing at them would be an authentication failure in your own logs."
+        },
+        {
+          "kind": "fixed",
+          "text": "A host with no Docker socket can still find its databases",
+          "detail": "Detection answered \u201cunavailable\u201d for the whole question when Docker was missing, which on a plain VPS meant every database on it."
+        },
+        {
+          "kind": "fixed",
+          "text": "The search button sits on the same line as every other icon in the collapsed sidebar",
+          "detail": "The rail is 3rem and its buttons are 2rem; the header kept a wider padding than the nav below it, so the one button in it overflowed half a rem to the right."
+        }
+      ]
+    },
+    {
+      "version": "0.5.7",
+      "date": "2026-08-26",
+      "title": "Selecting and copying in the terminal, as everywhere else",
+      "summary": "Text dragged in a terminal pane unhighlighted itself the moment the mouse came up, and the Copy button and its shortcut both answered that nothing was selected. tmux owned the pointer; it now owns only the wheel.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A plain drag selects text, and it stays selected",
+          "detail": "tmux's mouse mode was taking the drag, drawing its own selection and clearing it on mouse-up \u2014 so the browser never had one, which is why every way of copying reported an empty selection."
+        },
+        {
+          "kind": "added",
+          "text": "Ctrl+C copies the selection, and interrupts when there is nothing selected",
+          "detail": "Copying clears the selection as it goes, so the next Ctrl+C is an interrupt again. Ctrl+Shift+C still works and is still rebindable."
+        },
+        {
+          "kind": "added",
+          "text": "Ctrl+V pastes",
+          "detail": "It used to send a literal ^V instead. The multi-line paste confirmation still sees it."
+        },
+        {
+          "kind": "changed",
+          "text": "Hold Alt to hand the mouse to the program in the pane",
+          "detail": "For vim, htop, less and anything else that wants to be clicked. The wheel still scrolls the session's history with no modifier at all."
+        }
+      ]
+    },
+    {
+      "version": "0.5.6",
+      "date": "2026-08-26",
+      "title": "Connect the database your application already uses",
+      "summary": "A database on a Docker network with no published port \u2014 how nearly every application ships its own Postgres \u2014 was refused as unreachable. It was never unreachable: the dashboard shares the host's network namespace, and a Docker bridge is routable from there.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A database with no published port now connects at its container address",
+          "detail": "The commonest database on any server this runs on was the one database the dashboard declined, while psql from the same machine worked fine."
+        },
+        {
+          "kind": "changed",
+          "text": "A published port is still preferred where there is one",
+          "detail": "It survives the container being recreated. A container address does not, so a connection made that way needs reconnecting after a redeploy \u2014 the Databases page marks which is which."
+        }
+      ]
+    },
+    {
+      "version": "0.5.5",
+      "date": "2026-08-26",
+      "title": "The updater can build again",
+      "summary": "Installing an update failed while building, with \"the --mount option requires BuildKit\". The updater's image was missing the buildx plugin, so it quietly built with the classic builder \u2014 which cannot read this project's own Dockerfile.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "Installing an update no longer fails with \"the --mount option requires BuildKit\"",
+          "detail": "Compose delegates builds to buildx and falls back to the classic builder without saying so when it is absent. The image now carries buildx, and the Dockerfile no longer needs it \u2014 so an install already stuck on this can update its way out."
+        },
+        {
+          "kind": "changed",
+          "text": "Builds are slower the first time and correct every time",
+          "detail": "The Go build cache mounts are gone, because they are a BuildKit extension the classic builder refuses outright rather than ignores."
+        }
+      ]
+    },
+    {
+      "version": "0.5.4",
+      "date": "2026-08-26",
+      "title": "A taken port fails loudly",
+      "summary": "A port already in use now stops the stack with a message naming it, instead of leaving the dashboard quietly serving whatever already held the port. Upgrading installs get their ports filled in automatically.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A port already in use stops the stack instead of serving the wrong application",
+          "detail": "The frontend runs on its own network with its port published, so Docker refuses to start it and names the port. Previously it failed to bind, restarted in a loop, and the proxy forwarded to whatever already held the port."
+        },
+        {
+          "kind": "changed",
+          "text": "Re-running install.sh fills in ports missing from an older .env",
+          "detail": "No hand-editing to upgrade an install made before the ports were settings. A port already recorded is never moved \u2014 that was a deliberate choice, and guessing whether the process holding it is this dashboard is how a working install gets broken."
+        },
+        {
+          "kind": "fixed",
+          "text": "install.sh no longer exits early on an .env without the port settings",
+          "detail": "Reading an absent variable aborted the script under set -euo pipefail, so a re-run stopped before printing how to connect."
+        }
+      ]
+    },
+    {
+      "version": "0.5.3",
+      "date": "2026-08-26",
+      "title": "Say why a database was not connected",
+      "summary": "A database running on this server that the dashboard recognises but cannot reach \u2014 almost always a container on a Docker network with no published port \u2014 used to be skipped in silence. The reconcile now names it and says what is in the way.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A database that cannot be reached is named instead of silently skipped",
+          "detail": "Its credentials were read and its container recognised, then it was dropped without a word \u2014 so the Databases page appeared to do nothing about a database sitting in plain sight on the Docker page."
+        },
+        {
+          "kind": "added",
+          "text": "The reason a database was not connected, on the Databases page",
+          "detail": "Most often that its port is published only inside its own Docker network. Publish it on 127.0.0.1 and it connects itself on the next visit."
+        }
+      ]
+    },
+    {
+      "version": "0.5.2",
+      "date": "2026-08-26",
+      "title": "Ports that do not collide",
+      "summary": "The dashboard's three ports \u2014 8443, 8080 and 3000 \u2014 are the three most contested numbers on a Linux server, and a machine already using one of them got a dashboard that silently served somebody else's application. All three are now settings, and the installer picks free ones.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "A port already in use no longer serves you the wrong application",
+          "detail": "Only the frontend and backend failed to bind; the proxy came up clean and forwarded to whatever already held the port, so you reached another app over the dashboard's own certificate with nothing anywhere saying why."
+        },
+        {
+          "kind": "added",
+          "text": "JD_PORT, JD_BACKEND_PORT and JD_FRONTEND_PORT",
+          "detail": "Change any of the three in .env. The compose file and the proxy read the same variables, so they cannot drift apart."
+        },
+        {
+          "kind": "changed",
+          "text": "install.sh checks all three ports and picks free ones",
+          "detail": "It says which port was taken and what it used instead, and the connection details it prints at the end carry the ports it actually chose."
+        },
+        {
+          "kind": "changed",
+          "text": "`bun dev` follows JD_BACKEND_PORT",
+          "detail": "A developer who moved the backend off 8080 no longer has to find a second variable to keep the dev proxy working."
+        }
+      ]
+    },
+    {
+      "version": "0.5.1",
+      "date": "2026-08-26",
+      "title": "Updates, in the dashboard",
+      "summary": "Just Dashboard now tells you when a new version exists, shows you exactly what is in it, and installs it for you. Until now the only way to find out was to visit the repository, and the only way to upgrade was to ssh in and rebuild by hand.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "A notice above your account in the sidebar when a newer version is out",
+          "detail": "It carries the version, what the release is called, and two buttons: install it, or read what changed first. It is not there at all when you are up to date."
+        },
+        {
+          "kind": "added",
+          "text": "Release notes for every version between the one you run and the newest",
+          "detail": "An install three versions behind is upgrading past three sets of changes, so all three are shown rather than only the last."
+        },
+        {
+          "kind": "added",
+          "text": "One-click install: pull, rebuild and restart the whole stack",
+          "detail": "The upgrade runs in a separate container so it survives the dashboard being rebuilt underneath it, and it waits for the dashboard to answer again before calling itself finished."
+        },
+        {
+          "kind": "added",
+          "text": "A live transcript of the upgrade, and the outcome once it is done",
+          "detail": "The page keeps watching while the backend restarts, so you see the build output rather than a spinner and a guess."
+        },
+        {
+          "kind": "added",
+          "text": "The dashboard's own version and history on the Updates page, beside the host's packages"
+        },
+        {
+          "kind": "changed",
+          "text": "Local changes in the install directory are kept, not discarded",
+          "detail": "The upgrade fast-forwards rather than resetting, so an edited compose file or Caddyfile survives \u2014 and when one genuinely collides, the upgrade stops and says what is in the way instead of deleting it."
+        },
+        {
+          "kind": "added",
+          "text": "JD_UPDATE_CHECK, JD_UPDATE_REPO, JD_UPDATE_BRANCH and JD_UPDATE_DIR",
+          "detail": "Turn the online check off entirely, follow a fork, follow a different branch, or name the directory you installed into."
+        }
+      ]
+    },
+    {
+      "version": "0.5",
+      "date": "2026-08-22",
+      "title": "One panel for one server",
+      "summary": "Metrics with history, Docker, processes, logs, a real terminal, files, git, eight database engines, the reverse proxy, the firewall, backups and deploys \u2014 behind one login with mandatory two-factor and a network allowlist in front of it.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "Overview with recorded history, saturation signals and a health verdict"
+        },
+        {
+          "kind": "added",
+          "text": "Docker: containers, stacks, images, volumes, networks, events and a diagnosis for each container"
+        },
+        {
+          "kind": "added",
+          "text": "A persistent terminal with tmux windows, panes, folders and colours"
+        },
+        {
+          "kind": "added",
+          "text": "Databases for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, Oracle, MongoDB and Redis"
+        },
+        {
+          "kind": "added",
+          "text": "Files, git, logs, processes, proxy and TLS, firewall, backups and deployments"
+        },
+        {
+          "kind": "added",
+          "text": "Capability-based roles, API tokens, an audit trail and twelve themes"
+        }
+      ]
+    }
+  ]
+}

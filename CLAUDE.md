@@ -29,12 +29,21 @@ go run ./cmd/server                 # needs JD_MASTER_KEY set and JD_DATA_DIR wr
 `go.mod` declares `go 1.25.0`; an older local toolchain will try to auto-download 1.25 and
 fail on a network-restricted machine. Check `go version` before blaming the code.
 
-Fifteen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
-`httpx`, `metrics`, `netsec`, `procs`, `proxysvc`, `safepath`, `term`, `updates`). They are all
-fast and hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
-to run on every change. The two exceptions are `term` and the terminal half of `api`, which
-drive the machine's real tmux and skip when it is absent: the bugs they exist to catch live in
-the gap between this process and that one — what tmux has been told, what it has got round to
+Seventeen packages carry tests (`agent`, `api`, `config`, `dbx`, `dockerx`, `files`, `gitx`,
+`httpx`, `jobs`, `metrics`, `netsec`, `procs`, `proxysvc`, `safepath`, `selfupdate`, `term`,
+`updates`). They are all fast and hermetic — none needs Docker, systemd or a network — so `go test ./...` is a reasonable thing
+to run on every change. There are two exceptions, and both take the same shape: they drive a
+real thing outside this process and *skip* when it is absent, so the suite stays green on a
+bare machine and gets stricter on an equipped one.
+
+The first is the live database tests (`dbx/live*_test.go`, `api/handlers_db_live_test.go`),
+which take each engine's DSN from an environment variable defaulting to a local instance. A
+catalogue query naming a column the server does not have is string-matched identically by a
+unit test; only the server rejects it. Bring the engines up and re-run with `-count=1` — the
+test cache will otherwise serve you yesterday's skips.
+
+The second is `term` and the terminal half of `api`, which drive the machine's real tmux.
+The bugs they exist to catch live in the gap between this process and that one — what tmux has been told, what it has got round to
 storing, and what it reports half a second later — and a fake tmux would answer instantly and
 pass every one of them while the product stayed broken. Both packages give themselves a
 private tmux server in `TestMain` (`TMUX_TMPDIR`), so a test run never lists or outlives the
@@ -86,6 +95,8 @@ this repo keeps its own instructions and the generated ones are noise.
 sudo ./install.sh                   # interactive first install; re-runnable, keeps .env
 docker compose up -d --build
 docker compose logs backend | grep "bootstrap admin"   # generated password, printed once
+
+scripts/release.sh 0.6              # cut a release — see "Cutting a release" below
 ```
 
 CONTRIBUTING requires `go build ./...` and `bun run build` to pass before a PR.
@@ -131,17 +142,19 @@ conversion to `http.Handler` — it adds no behaviour. Return `httpx.Err/BadRequ
 keeps internal error strings off the wire. Decode bodies with `httpx.DecodeJSON` (4 MB cap,
 unknown fields rejected).
 
-Irreversible actions require the caller to echo a phrase in the **`X-Confirm`** header via
+`s.destructive(r, ...)` is the marker for "destructive" and adds the capability check and the
+tighter `destrLim` budget — it does *not* enforce confirmation. The **rare and unrecoverable**
+subset additionally requires the caller to echo a phrase in the **`X-Confirm`** header via
 `httpx.RequireTypedConfirmation(w, r, phrase)`, called **inside the handler** where the
 expected phrase is known; the phrase comes back to the client as `error.phrase`, not parsed
-out of the message. `s.destructive(r, ...)` is the marker for "irreversible" and adds the
-capability check and the tighter `destrLim` budget — it does *not* enforce confirmation.
-Adding a destructive route means doing both. It is nested inside stricter groups too
-(`system.admin` routes that delete something), because admin holds every capability, so
-"which routes are irreversible?" has one answer. The single exception is
-`POST /databases/{id}/query`, where the answer depends on the SQL: `dbx.Classify` decides,
-fails closed on anything it does not recognise, and the handler applies the same capability
-check and budget by hand.
+out of the message. Which routes are in that subset, and why the test is frequency rather than
+severity, is invariant 3 — read it before adding one.
+
+`s.destructive` is nested inside stricter groups too (`system.admin` routes that delete
+something), because admin holds every capability, so "which routes are destructive?" has one
+answer. The single exception is `POST /databases/{id}/query`, where the answer depends on the
+SQL: `dbx.Classify` decides, fails closed on anything it does not recognise, and the handler
+applies the same capability check and budget by hand.
 
 Two routes carry a check on the *content* of the request rather than on its path, for the
 same reason: the route cannot know. `POST /docker/containers` gates on `service.control`,
@@ -173,8 +186,8 @@ place. Shared request plumbing that belongs to no feature (`atoiDefault`, `timeo
 `api.Server` holds the dependency graph — config, logger, store, auth service, sealer, audit
 logger, authenticator, WS upgrader, the three limiters, and in agent mode the `agent.Identity`.
 `api/modules.go` (`moduleSet`) holds the feature backends: `sys`, `metrics`, `docker`,
-`dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `updates`,
-`proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
+`dockerStats`, `dockerEvents`, `pm2`, `systemd`, `table`, `cron`, `logs`, `term`, `files`, `git`, `github`, `updates`,
+`selfUpdate`, `proxy`, `dbs`, `linuxUsers`, `netsec`, the three backup pieces (`backupStore`, `backupRunner`,
 `backupSched`) and the two deploy pieces (`deployStore`, `deployer`).
 
 Each module is optional by design: a host with no Docker socket, no systemd or no fail2ban
@@ -184,7 +197,9 @@ host" code that the frontend renders as information rather than an error (see `E
 
 `Server.Start(ctx)` is separate from `New` so a failure to schedule background work is
 reported by `main` rather than swallowed during construction. It starts the metrics recorder,
-the Docker event log and the backup scheduler; the recorder is started here rather than lazily on first request
+the Docker event log, the self-update check and the backup scheduler — and it is also where
+`selfupdate.Installer.Reconcile` settles an upgrade that was in flight when this process
+began, which after a successful upgrade is every time. The recorder is started here rather than lazily on first request
 precisely because nothing may ever request it — its whole purpose is to have been running
 while nobody was looking. `Shutdown` releases what outlives a request: metrics sampler,
 backup scheduler, live PTYs, database pools, the Docker client.
@@ -735,11 +750,167 @@ screen for the whole session, and xterm translates a wheel tick in the
 alternate screen into a cursor key, so scrolling up in a shell walked backwards
 through command history instead of showing what had scrolled past. The
 scrollback that matters is tmux's in any case; xterm's own stays empty because
-tmux repaints the viewport rather than emitting lines. The cost is that a plain
-drag selects into tmux's copy buffer instead of the browser's; **Shift+drag**
-restores the browser's selection, which is the convention every terminal
-emulator uses, and the shortcut sheet lists it because it is exactly the sort
-of thing discovered by finding it broken.
+tmux repaints the viewport rather than emitting lines. The cost used to be that a plain
+drag selected into tmux's copy buffer instead of the browser's — tmux clears
+its own selection on mouse-up, so text highlighted and unhighlighted inside one
+gesture and `getSelection()` stayed empty, which is what made the Copy button
+and the copy shortcut both report that nothing was selected.
+
+`forcePointerToSelect` in `xterm-pane.tsx` takes the pointer back. xterm gates
+mouse-report forwarding on one predicate — `shouldForceSelection`, which its
+selection service and its forwarding both ask, so answering it once is what
+keeps the two from disagreeing — and the pane inverts it: the drag belongs to
+the page unless **Alt** is held, which is left as the way through for a program
+that wants a mouse of its own (vim, htop, less). The wheel is bound separately
+inside xterm and does not consult it, so scrolling still belongs to tmux.
+`clipboardKey` is the other half: Ctrl+C copies **only when something is
+selected** and clears the selection as it goes, so the interrupt is never more
+than one keypress away; Ctrl+V returns false *without* `preventDefault`, so
+xterm leaves the key alone instead of sending ^V and the browser's own paste
+runs — arriving through `onData`, where the multi-line confirmation still sees
+it. Reading the clipboard there instead would need a permission Firefox does
+not grant at all.
+
+### Signing in to GitHub
+
+`internal/ghx` is the GitHub half of the git page, and it exists because the honest answer
+to "why did my push ask for a password" used to be an ssh session.
+
+**Everything is per repository, and that is not a detail.** gh stores its token under the
+home of whichever account runs it, and writes a credential helper into that account's git
+config; gitx already runs git as the account that *owns the checkout* (`hostexec.AsOwner`),
+so ghx runs gh the same way. Sign in as root and push as `deploy` and the push is anonymous
+again. Every route therefore takes `?path=`, and the account chip says which host account
+the credential belongs to rather than implying the answer is global.
+
+**gh is in the image, not borrowed from the host.** The host's copy would run as the host's
+root in the host's namespaces, and the account that actually pushes would see neither the
+token nor the helper. Signed in from this image both halves land in the same account's
+home — which is bind-mounted from the host, so a shell over ssh finds the same credential.
+
+**The login is the CLI's own device flow, performed here.** `gh auth login` is a series of
+prompts and a web request has nobody to answer one, so `device.go` runs the OAuth device
+flow itself — against the GitHub CLI's own public client id, which is what makes the token
+indistinguishable from one gh minted, and what the operator sees named on the authorisation
+screen — and hands the finished token to `gh auth login --with-token`, which is
+non-interactive by design. The device code stays on the server and the access token never
+reaches the browser: the page holds an opaque flow id and polls with that. GitHub's polling
+interval is enforced server-side from the flow's own clock, because its remedy for polling
+too fast is to slow the whole flow down. `LoginWithToken` is three steps that are one
+operation — store the token, `gh auth setup-git`, and write a committer identity if the
+account has none — since any two without the third is a state nobody can see: a token with
+no helper pushes anonymously, a helper with no identity fails at the commit instead. The
+pasted-token path is the way in for a GitHub Enterprise host or a machine account.
+
+**`gh auth status` is parsed, because it has no `--json` and never will.** It is written for
+a person, so the wording is the contract; `parseAuthStatus` matches both the wordings gh has
+shipped (`as <name>` and `account <name>`) and `ghx_test.go` pins them, because the sign-in
+state of the whole page hangs off it. Every field it reads is optional, so a future rewording
+costs a missing scope list rather than a broken page.
+
+**Pull requests are the one thing git has no verb for.** `CreatePull` shells to `gh pr
+create`; the handler pushes the branch first, because gh refuses a branch the remote has
+never seen and its remedy is an interactive prompt. That is also why `gitx.Push` now sets the
+upstream when there is none rather than repeating git's "no upstream branch" advice, which is
+a command to copy into a terminal the operator is trying not to open. `gitConfigured` answers
+one question with one dot — would a commit and a push from this page be this account's — and
+knows that an **ssh** remote never asks a credential helper anything, so it reports the
+identity and stays quiet about the token.
+
+### Databases: eight engines behind one shape
+
+`internal/dbx` drives PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle,
+MongoDB and Redis, all on pure-Go drivers so the image still needs no CGO.
+
+**`Dialect` is the whole abstraction.** Everything one SQL engine does differently — its
+`database/sql` name, its quote character, its bind marker, its pagination tail, its
+catalogue queries, its DDL keywords, its session list, its size query — is one method on
+one interface with six implementations. The earlier shape was a `switch driver` inside each
+of a dozen functions; it worked for three engines and stopped working at seven, because a
+new engine meant finding and extending eleven separate switches and a missed one failed at
+runtime rather than at compile time. Adding an engine now is one file the compiler checks.
+
+**Identifiers are quoted, values are bound, always.** `validateIdent` refuses only what
+quoting cannot make safe (a NUL, a control character) rather than a conservative character
+class — a table called `user-profiles` was listed and then refused to open under the old
+rule — and `quoteWith` doubles the engine's own quote character. Every row edit is scoped by
+the primary key and refused outright without one, because an UPDATE the caller believes
+touches one row would otherwise touch all of them.
+
+`rowsql.go` is the one deliberate exception, and it does not generalise: it renders a row as
+an INSERT *for the clipboard*. Nothing executes what it produces — the statement is text the
+operator pastes somewhere else, having read it — and no code path may call it and then run
+the result. `TestLiveRowInsertSQLQuoting` hands a value containing `'); DROP TABLE …` back
+to every live engine and checks the table is still standing.
+
+**Reading is separated from running, on purpose.** `dbx.Classify` decides whether a
+statement is destructive, fails closed on anything it does not recognise, and the handler
+applies the capability check and the tighter budget by hand — the route cannot know. Every
+dialect's `ExplainPlan` must describe a statement *without executing it*; that is asserted in
+the interface and proved by `TestLiveExplainDoesNotExecute`, which asks each engine to
+explain a DELETE and then counts the rows.
+
+**The diagnostic surface is what a data browser usually lacks.** `activity.go` lists what
+the server is running now — with the blocking session named where the engine reports it,
+which is what turns twenty "slow" sessions into one culprit — and stops one. The list
+includes the dashboard's own connections, marked `self`: hiding them meant a server with
+nothing else connected reported an empty table, which reads as a broken query rather than an
+idle server. `size.go` is the per-table disk breakdown for when the alert fires and nobody
+knows which table grew; row counts there are the engine's own estimate, because counting
+forty tables exactly is a full scan of the database to answer a question about relative
+size. `search.go` finds which table a value lives in, bounded in three directions at once
+(tables visited, columns compared, matches per table) — those bounds are not tuning knobs,
+they are what makes the feature safe to point at a production server.
+
+**A dump for every engine, with no external dependency.** Three of the eight
+have a client-side dump tool the image can carry (`pg_dump`, `mysqldump`,
+`mongodump`); the rest have none — ClickHouse's is a separate package, SQL
+Server's ships only inside Microsoft's image, Oracle's runs on the server, Redis
+has none — and the answer used to be `ErrUnsupported` at the moment the operator
+pressed the button, which is the worst time to learn that a backup was never
+possible. `dump_sql.go` writes the dump itself over the connection already open:
+DDL then INSERTs, ordered so a referenced table is created and filled before the
+tables referencing it, since alphabetical order fails on the first foreign key.
+`dump_nosql.go` does the same for Mongo and Redis as gzipped JSON Lines — Redis
+through `DUMP`/`RESTORE`, so every type survives including the ones with no
+textual form. The native tool is still preferred where it exists, and a native
+tool that *fails* falls through to the built-in one rather than to an error, so
+a `pg_dump` too old for its server is a slower dump rather than no dump.
+`dumpLiteral` is the second place in the package that puts a value into SQL text
+rather than binding it — unavoidable, since a dump file is text — and it is
+per-engine for a reason `rowsql.go` can ignore: a backslash is an escape inside
+a string literal on MySQL and ClickHouse and a plain character on the other
+four, so one rule loses data on half of them. `Restore` picks its reader from
+the file's first bytes rather than from the driver, because a Postgres
+connection may hold either a `PGDMP` archive or the SQL this package wrote.
+
+**A dump the operator can take away, and a database they can remove.** The dump stays on the
+server — that is what the restore route reads — and a copy goes to the browser as soon as it
+is written, because a backup whose only copy is on the machine it protects is not one.
+`GET /databases/{id}/backup/download` takes a *name*, not a path, and contains it against that
+connection's own dump directory with a `files.Service` scoped to it: invariant 6's containment
+with the right root, since narrowing `JD_FILE_ROOTS` must not stop the dashboard handing back
+a file it wrote itself. `DELETE /databases/{id}/database` is the other end — `Dialect` gained
+`DropDatabaseSQL` and `AdminDatabase` because Postgres and SQL Server both refuse to drop the
+database the session is inside, and because two engines have no such verb at all: a SQLite
+database is a file to unlink, and a Redis keyspace is fixed at startup and can only be
+emptied, which `DropResult.Gone` reports rather than pretending otherwise. The connection is
+deleted with the database when it was that connection's own, since a connection to a database
+that no longer exists fails every request it is asked.
+
+**Testing is against real servers, and skips rather than fails.** `live_test.go`,
+`live_nosql_test.go`, `live_devx_test.go` and `api/handlers_db_live_test.go` take each
+engine's DSN from an environment variable defaulting to a local instance, and skip with a
+message naming the variable when it is unreachable — so `go test ./...` stays green on a
+machine with nothing installed and gets stricter on one with the servers up. A suite that
+fails for want of a database teaches people to ignore it. These are the tests that matter
+here: a catalogue query naming a column the server does not have is string-matched
+identically by a unit test and rejected by the engine. Every bug this feature has shipped
+was of that kind — SQL Server rejecting `ADD COLUMN`, a size query summing every index_id
+and reporting a table at four times its size, Postgres's `now()` being the *transaction*
+timestamp and so reporting the asking session a negative age. Oracle is the one engine with
+no live coverage: its installer cannot be driven headlessly, which CONTRIBUTING says
+plainly rather than pretending otherwise.
 
 ### The proxy: a site, a certificate, and what a visitor actually gets
 
@@ -910,6 +1081,119 @@ backend.
 Wherever a variable is read, its documentation lives in four places that must stay in step:
 the reading site, `.env.example`, `docker-compose.yml` and the README's configuration table.
 
+### The version
+
+Two constants, and nothing else: `internal/version.Version` and
+`frontend/src/lib/version.ts`. Everything that shows or logs a version reads one of them —
+the wordmark in the sidebar and on the sign-in page, and the line the server logs at boot.
+
+They are separate because neither half can reach the other's build, and `internal/version`'s
+test reads the TypeScript file and fails the run if the two disagree, which is what makes a
+release two one-line edits rather than a hunt. It skips when the frontend is absent, so the
+backend module still tests on its own. `frontend/package.json` carries a third copy because
+npm demands the field; the same test pins it to the same release, loosely, since npm wants
+three components and the product version has two.
+
+A fourth file now joins them, and it is the one that cannot be skipped:
+`backend/internal/selfupdate/changelog.json` says what the release *contains*.
+`TestChangelogHeadIsTheProductVersion` pins its newest entry to `version.Version` in both
+directions, because both directions are wrong in a way that reaches every install in the
+world — see the next section.
+
+### Cutting a release
+
+**When the user asks for a new version, they name it: "make this 0.6", "release 0.6.1".
+That is the trigger, and this is what it means.** It is one command, and it is not
+`git tag` — a release here is a commit on the tracked branch, because that is what every
+install compares itself against.
+
+```bash
+# 1. Write the release notes FIRST, in backend/internal/selfupdate/changelog.json.
+#    Anywhere in the array; it is sorted on read.
+# 2. Then:
+scripts/release.sh 0.6
+```
+
+`scripts/release.sh` bumps `internal/version/version.go`, `frontend/src/lib/version.ts` and
+`frontend/package.json`, regenerates the root `CHANGELOG.md` from the same JSON, and runs the
+two tests that pin all four together. It refuses — before touching anything — if the
+changelog does not already describe the version being cut, and prints the entry skeleton to
+fill in. `CHANGELOG.md` is **generated**; never edit it by hand.
+
+The ordering is deliberate and is the whole point of the rule. Every install in the world
+decides whether to offer itself an update by comparing its own `version.Version` against the
+changelog at the head of the tracked branch, so:
+
+- a version bumped with no changelog entry is a release nobody is told about, and
+- a changelog entry with no version bump is every existing install permanently offering
+  itself an update it already has.
+
+Both are caught by the test run rather than by an operator. Writing the notes first is what
+makes "0.6" a release with something to say rather than a number.
+
+A changelog entry is written for the person deciding whether to upgrade a root-equivalent
+panel on their own server, not for the person who wrote the code. Each change carries a
+`kind` (`added`, `changed`, `fixed`, `removed`, `security`, `deprecated` — a closed set the
+parser enforces) and reads as what they can now do; `detail` is for where the consequence is
+not obvious, and most changes do not need one. `breaking: true` requires a `breakingNote`
+saying what has to be done by hand, and the UI refuses to fold it away.
+
+### Updating the dashboard itself
+
+`internal/selfupdate` is the one module that manages the product rather than the server, and
+it exists because the honest answer to "how do I upgrade this" used to be an ssh session.
+Four pieces:
+
+**The changelog is data, not prose.** `changelog.json` is embedded with `go:embed` *and*
+fetched from `raw.githubusercontent.com` at the tracked branch, parsed by the same function
+both times — so a malformed file fails the test run before it can be a malformed file every
+install downloads. Markdown would have needed a parser and could not answer the questions
+the UI actually asks: which releases sit between this install and the newest, and what kind
+is each line. Reading it needs no network: the compiled-in copy is what an install with
+`JD_UPDATE_CHECK=false` still shows.
+
+**The check is the only outbound request this product makes on its own initiative**, and it
+is kept deliberately small: one unauthenticated GET, four times a day, a user agent carrying
+the product and version and nothing else, and a switch to turn it off. A failure keeps the
+previous good answer rather than blanking the banner, because a dropped tunnel is a normal
+Tuesday here and a notice that flickers is one nobody trusts.
+
+**Where the install lives is discovered, not configured.** The dashboard asks Docker which
+container bind-mounts its own data directory — the directory holding the database this
+process has open, which is decisive where a service name is not — and reads the compose
+`working_dir` label off it. `JD_UPDATE_DIR` is the escape hatch, and an install that cannot
+be identified says so precisely instead of showing a button that fails.
+
+**The upgrade runs in a sibling container, and that is the load-bearing decision.**
+`docker compose up -d --build` on this stack rebuilds three images and recreates three
+containers, one of which is the process that ran the command. A child process is killed
+with the backend's cgroup somewhere in the middle, leaving the frontend and proxy never
+recreated and no way to report it. So the backend creates a *separate container* through the
+Docker socket — running its own image, which already carries git, the docker CLI and the
+compose plugin, so there is nothing to pull — and that container is untouched by its own
+stack being rebuilt around it. It writes progress to `self-update.json` and a transcript to
+`self-update.log` in `JD_DATA_DIR`, which both halves mount, so the *new* backend can read
+what the old one was doing. `Installer.Reconcile` runs at boot and is the other half: the
+updater still alive means leave it, gone with the version moved means it worked (this
+process running at all is the proof), gone with the version unchanged means it stopped.
+
+Two details inside the upgrade are worth keeping. It **fast-forwards, never resets** —
+unlike `internal/deploy`, whose target's working tree is disposable, this is the operator's
+own checkout and an edited compose file is the normal case, so a local change survives
+unless it genuinely collides and git says exactly what is in the way. And it **waits for the
+dashboard to answer** on its own health URL before calling itself finished, because
+`compose up -d` returns as soon as containers start and a backend that starts and then dies
+looks identical from there.
+
+On the frontend, `hooks/use-self-update.tsx` is one poll for the whole shell and its gotcha
+is the feature's whole design problem: **the API goes away in the middle of the thing it is
+watching**. A poll that fails while a run is in flight is rendered as "restarting", never as
+an error, and the cadence is set from the fetch rather than from an effect so a failed fetch
+does not drop back to the five-minute interval. `components/update/` is the notice in the
+sidebar footer (which renders *nothing* when there is nothing to say), the release-notes
+sheet, and the panel at the top of `/updates` — where the dashboard's own version sits above
+the host's packages, because "what can be updated on this machine" is one question.
+
 ### Deployment topology
 
 ```
@@ -917,6 +1201,30 @@ browser ──(Tailscale / SSH tunnel)──▶ Caddy :8443
                                         ├─ /api/* ─▶ backend :8080  (loopback)
                                         └─ /*     ─▶ frontend :3000 (loopback)
 ```
+
+All three ports are variables — `JD_PORT` (8443), `JD_BACKEND_PORT` (8080), `JD_FRONTEND_PORT`
+(3000) — read by `docker-compose.yml` and `deploy/Caddyfile` from the same `.env`, and chosen
+from what is free by `install.sh`, which also fills them in on a re-run against an `.env`
+written before they existed. It never *moves* a recorded port: on a re-run against a dashboard
+that is up, the process holding the port is this dashboard, and every way of telling that apart
+from a squatter is a guess that moves the ports out from under a working install when it is
+wrong.
+
+**The frontend is the one service not on the host network**, and that is what makes a taken
+port survivable rather than silent. It has no host access of its own, so it gets its own bridge
+network and a port published on loopback that the proxy dials exactly as before. On the host
+namespace, Next failed to bind, the container restart-looped, and the proxy's catch-all
+forwarded to whatever already held 3000 — the operator got a stranger's application over the
+dashboard's own certificate. Published, Docker refuses first: `docker compose up` stops with
+*"failed to bind host port 127.0.0.1:3000/tcp: address already in use"*, before anything
+serves. Inside the container the port is always 3000; only the host side is a variable, because
+only the host side can collide. The defaults are the three most contested numbers on a
+Linux server, and the collision they used to produce was the worst kind to debug: only the
+frontend and backend fail to bind, while the proxy comes up clean and forwards to whatever
+already held the port — so the operator reaches somebody else's application over the
+dashboard's own certificate, with nothing in any log saying so. The variables must stay
+readable from one place; a proxy forwarding to a port its service did not bind is exactly the
+failure they exist to remove.
 
 Caddy (`deploy/Caddyfile`) is the only listener bound to anything but loopback, and it binds
 `{$JD_SITE}` **plus** loopback explicitly — site addresses alone would leave Caddy listening
@@ -936,10 +1244,14 @@ App Router, all pages `"use client"`, one page per feature under
 
 ### The shell
 
-`(dashboard)/layout.tsx` is the authenticated shell and owns four things:
-`CommandPaletteProvider`, `SidebarProvider` + `AppSidebar`, `TopBar`, and `MetricsStream`
+`(dashboard)/layout.tsx` is the authenticated shell and owns five things:
+`CommandPaletteProvider`, `SelfUpdateProvider`, `SidebarProvider` + `AppSidebar`, `TopBar`,
+and `MetricsStream`
 (which renders nothing and exists to hold the metrics socket open for the whole shell, so the
-Overview charts and the top bar's vitals keep filling while you are on another page). Its
+Overview charts and the top bar's vitals keep filling while you are on another page).
+`SelfUpdateProvider` is one poll of the dashboard's own version for the sidebar notice and
+the Updates page together, and is what keeps that poll alive across the moment the backend
+restarts itself. Its
 redirect to `/login` is convenience, not a control — every API call behind it is
 independently authenticated by the server.
 
@@ -977,6 +1289,15 @@ whatever padding and title size its author picked, which is why fourteen pages r
 fourteen products. **Reach for `Panel`/`Page`, not raw `Card`, and add a variant here rather
 than a one-off in a feature page.** `components/state.tsx` covers the non-happy paths the
 same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, `Notice`.
+
+`components/logo.tsx` is the third, and it is smaller than it looks: the logo is the
+wordmark and nothing else — "Just" in `text-primary`, "Dashboard" in the text colour, the
+version as small muted text beside it. No mark, no tile, no strapline. It is the only
+rendering of the product's name in the app, so the sidebar, the sign-in screen and the
+loading splash all show the same thing and a rename is one file. Colour comes from the
+palette rather than from a fixed hex, so the logo re-themes with everything else, and
+`LogoMark` is the single letter the collapsed rail falls back to when three rem is all there
+is.
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
@@ -1280,24 +1601,58 @@ A change that weakens any of these has to say so explicitly:
 
 1. The network allowlist runs **before** authentication.
 2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
-3. Irreversible actions require the typed `X-Confirm` phrase, enforced server-side. There are
-   two relaxations, both deliberate and both narrow.
+3. Every destructive action is behind `s.destructive` — the `destructive` capability, the
+   tighter `destrLim` budget and an audit entry — and pauses the operator with a confirmation
+   dialog. A **subset** of those additionally requires the typed `X-Confirm` phrase, enforced
+   server-side inside the handler where the expected phrase is known.
 
-   `httpx.RequireTypedConfirmationWS` also accepts the phrase as a query parameter — used only
-   by WebSocket routes, where a browser cannot set a header at all, and where `wsx`'s origin
-   check supplies what the header was protecting against. Do not reach for it from an ordinary
-   handler.
+   **The test for the phrase is frequency, not severity.** A phrase in front of something done
+   a dozen times a day is not read, it is typed — and the operator who has learned to type one
+   table name without looking types the next one the same way. That habit is precisely what the
+   phrase is protecting on the routes that keep it, so every route added to the typed set makes
+   the typed set weaker. The question to ask is not "is this dangerous" (they all are, that is
+   what `s.destructive` marks) but "how often does somebody do this, and can they get it back".
 
-   The three terminal close routes — a session, a window, a pane — are destructive and carry
-   **no phrase at all**. They stay inside `s.destructive`, so the capability check, the tighter
-   budget and the audit entry all still apply; only the typing is gone. The phrase exists so an
-   irreversible action cannot be a mis-click, and that holds for the things somebody deletes a
-   handful of times a year. Closing a shell is an everyday act — a dozen a day for anyone using
-   the panel as intended — and a phrase in front of an everyday act is not read, it is typed.
-   Training the operator to type "close terminal" without looking is worse than no guard,
-   because it is the exact habit the confirmation is protecting every *other* route with. This
-   is the reasoning to apply before adding a fourth exception; frequency is the test, not
-   severity.
+   Typed, because they are rare and there is no way back: `DROP DATABASE`, `DROP TABLE`,
+   `DROP COLUMN`, `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a
+   Mongo pipeline with `$out`/`$merge`, a `critical` statement in the query runner, restoring
+   a database or a backup over live data, `compose down`, removing a Docker volume, any prune,
+   deleting a dashboard or Linux account, a recursive directory delete, `git discard` and
+   `git reset --hard`, toggling the firewall, applying package updates, and installing a new
+   version of the dashboard itself.
+
+   That last one is worth spelling out, because it is the newest and the most tempting to
+   soften: the phrase is the **version being installed** (`0.6`), not a fixed sentence. It
+   names the object, which is what every other typed route here does — a stack's name for
+   `compose down`, a table's name for `DROP TABLE` — and what has to be read before pressing
+   a button in the sidebar is *which* version. A release lands every few weeks, and an
+   install that comes back broken is recovered over ssh rather than from here, so it sits
+   squarely on the rare-and-unrecoverable side of the frequency test.
+
+   Not typed, because they are routine or recoverable or both: deleting rows and documents and
+   Redis keys, dropping an index, forgetting a connection, stopping a database session,
+   stopping/restarting/killing/removing/recreating a container, removing an image or a network,
+   deleting one file, signalling a process, stopping or restarting a service, revoking a token
+   or an SSH key, deleting a backup job or a deploy project, rolling back a deploy, disabling a
+   vhost, deleting a firewall rule, and closing a terminal session, window or pane.
+
+   Several routes decide by content rather than by path, and the narrowing lives at the call
+   site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
+   `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`, and
+   `composeNeedsPhrase` only for `down` — with `requireComposePhraseWS` applying the same
+   narrowing on the socket so the two entry points cannot disagree. The frontend mirrors each
+   with a conditional `phrase`, and the server re-decides regardless.
+
+   One relaxation on top of all this: `httpx.RequireTypedConfirmationWS` also accepts the
+   phrase as a query parameter — used only by WebSocket routes, where a browser cannot set a
+   header at all, and where `wsx`'s origin check supplies what the header was protecting
+   against. Do not reach for it from an ordinary handler.
+
+   `api/handlers_db_test.go` pins both directions for the database surface —
+   `TestIrreversibleDatabaseRoutesDemandAPhrase` and
+   `TestRoutineDatabaseRoutesDoNotAskForAPhrase` — because the line has two failure modes and
+   the second one (a phrase creeping back onto routine work, one defensible route at a time) is
+   the quieter of the two.
 4. Capability checks live on the route, never in the UI alone. Where the answer depends on
    what is *in* the request rather than which route it hit, the handler checks by hand and
    fails closed: `dbx.Classify` for SQL, `api.authoriseSpec` for a container spec that is

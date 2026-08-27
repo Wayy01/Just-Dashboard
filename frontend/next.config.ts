@@ -13,7 +13,11 @@ import type { NextConfig } from "next"
  * Rewrites are evaluated at build time, so JD_API_URL is read then — which
  * is exactly why production does not depend on it.
  */
-const apiTarget = process.env.JD_API_URL ?? "http://127.0.0.1:8080"
+// JD_BACKEND_PORT is honoured as well as JD_API_URL, so a developer who moved
+// the backend off 8080 because something else had it does not have to discover
+// a second variable to keep `bun dev` working.
+const apiPort = process.env.JD_BACKEND_PORT ?? "8080"
+const apiTarget = process.env.JD_API_URL ?? `http://127.0.0.1:${apiPort}`
 
 const nextConfig: NextConfig = {
   output: "standalone",

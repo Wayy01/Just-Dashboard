@@ -48,6 +48,8 @@ export type ShortcutAction =
   | "terminal.fontOut"
   | "terminal.fontReset"
   | "terminal.shortcuts"
+  | "workspace.rail"
+  | "workspace.tools"
 
 /**
  * Which listener owns an action.
@@ -102,6 +104,13 @@ export const SHORTCUTS: ShortcutSpec[] = [
   { action: "pane.splitRight", scope: "navigation", group: "Panes", label: "Split side by side", chord: "Ctrl+Alt+Backslash" },
   { action: "pane.splitDown", scope: "navigation", group: "Panes", label: "Split top and bottom", chord: "Ctrl+Alt+Minus" },
   { action: "pane.close", scope: "navigation", group: "Panes", label: "Close the pane", chord: "Ctrl+Alt+KeyX" },
+
+  // The workspace panels. Both are one chord that shows and hides, rather than
+  // a pair: a panel you cannot see is the only reason to press either, so two
+  // separate bindings would mean remembering which of them you needed while
+  // looking at the wrong half of the screen.
+  { action: "workspace.rail", scope: "navigation", group: "Workspace", label: "Sessions panel", chord: "Ctrl+Alt+KeyB" },
+  { action: "workspace.tools", scope: "navigation", group: "Workspace", label: "Files & git panel", chord: "Ctrl+Alt+KeyJ" },
 
   // The emulator's own.
   { action: "terminal.copy", scope: "terminal", group: "Terminal", label: "Copy the selection", chord: "Ctrl+Shift+KeyC" },

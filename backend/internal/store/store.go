@@ -100,6 +100,35 @@ CREATE TABLE IF NOT EXISTS db_connections (
   created_at INTEGER NOT NULL
 );
 
+-- Named SQL snippets an operator keeps against a connection. The SQL is stored
+-- in the clear: it is a query the operator wrote, not a credential, and the
+-- connection it runs against carries the secret. A NULL connection_id would be
+-- a snippet shared across connections, but membership is kept concrete for now.
+CREATE TABLE IF NOT EXISTS db_saved_queries (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  connection_id INTEGER NOT NULL REFERENCES db_connections(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  sql           TEXT NOT NULL,
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_db_saved_conn ON db_saved_queries(connection_id, name);
+
+-- Recent statements per connection, so the Query tab can offer history without
+-- re-reading the audit log (which mixes every action and is admin-only). It is
+-- pruned to the most recent rows per connection on write, so it never grows
+-- without bound.
+CREATE TABLE IF NOT EXISTS db_query_history (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  connection_id INTEGER NOT NULL REFERENCES db_connections(id) ON DELETE CASCADE,
+  sql           TEXT NOT NULL,
+  risk          TEXT NOT NULL DEFAULT 'read',
+  success       INTEGER NOT NULL DEFAULT 1,
+  duration_ms   INTEGER NOT NULL DEFAULT 0,
+  row_count     INTEGER NOT NULL DEFAULT 0,
+  ran_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_db_history_conn ON db_query_history(connection_id, ran_at DESC);
+
 CREATE TABLE IF NOT EXISTS backup_jobs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL UNIQUE,

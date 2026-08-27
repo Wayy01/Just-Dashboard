@@ -457,7 +457,7 @@ func (s *Server) handleDNSCredentials(w http.ResponseWriter, r *http.Request) er
 	return nil
 }
 
-type importRequest struct {
+type certImportRequest struct {
 	Name        string `json:"name"`
 	Certificate string `json:"certificate"`
 	Key         string `json:"key"`
@@ -469,7 +469,7 @@ type importRequest struct {
 // mismatched pair is accepted by every text editor and refused by nginx at
 // reload, and finding that out on a live server is the expensive way.
 func (s *Server) handleCertImport(w http.ResponseWriter, r *http.Request) error {
-	var req importRequest
+	var req certImportRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}

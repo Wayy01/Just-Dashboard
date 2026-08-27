@@ -24,7 +24,18 @@
 # anyone with one already has root. What it buys is that Tailscale being down,
 # or a key expiring, costs you a tunnel command rather than your dashboard.
 # When JD_SITE is already localhost, Caddy collapses the two into one.
-{$JD_SITE:localhost}:8443, localhost:8443 {
+#
+# The three ports are variables because the defaults are the three most
+# contested numbers on a Linux server: 3000 is every Node app ever started,
+# 8080 is every second Java or Go service, and 8443 is the obvious alternative
+# HTTPS port. A machine that already runs something on one of them is the
+# normal case, not the exotic one — and the failure it used to produce was the
+# worst kind, because Caddy would come up clean and proxy the operator
+# straight to whatever already held the port. The dashboard looked broken in a
+# way that pointed at nothing. Set JD_PORT, JD_FRONTEND_PORT or
+# JD_BACKEND_PORT in .env and every file that needs the number reads it from
+# there; install.sh picks free ones on a machine where the defaults are taken.
+{$JD_SITE:localhost}:{$JD_PORT:8443}, localhost:{$JD_PORT:8443} {
 	# The site addresses above decide which Host/SNI this block answers for --
 	# they do NOT decide which interfaces the socket binds. Without an explicit
 	# bind, Caddy listens on every interface, so JD_SITE=localhost would
@@ -45,7 +56,7 @@
 	# The API, including every WebSocket endpoint. Caddy upgrades these
 	# transparently, which is why production needs no NEXT_PUBLIC_WS_BASE.
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8080 {
+		reverse_proxy 127.0.0.1:{$JD_BACKEND_PORT:8080} {
 			# The backend only trusts a forwarded address from a proxy listed
 			# in JD_TRUSTED_PROXIES; without that pairing its allowlist
 			# would judge every request by this proxy's address instead of the
@@ -61,11 +72,11 @@
 	}
 
 	handle /healthz {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:{$JD_BACKEND_PORT:8080}
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:{$JD_FRONTEND_PORT:3000}
 	}
 
 	header {

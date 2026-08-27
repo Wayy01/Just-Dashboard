@@ -19,7 +19,7 @@ import {
   Square,
   Terminal as TerminalIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, put, ApiError } from "@/lib/api"
 import type { ComposeService, ComposeValidation, LogLine, StackDetail } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
@@ -96,7 +96,8 @@ function StackBody({
   const runner = useRunConsole()
 
   const { data, error, loading, refresh } = usePoll<StackDetail>(
-    (signal) => get<StackDetail>(`/docker/stacks/${encodeURIComponent(name ?? "")}`, undefined, signal),
+    (signal) =>
+      get<StackDetail>(`/docker/stacks/${encodeURIComponent(name ?? "")}`, undefined, signal),
     // Slower while a command is running: the poll would otherwise fight the
     // console for attention, and the interesting output is in the console.
     runner.running ? 0 : 10000,
@@ -121,11 +122,17 @@ function StackBody({
     if (code !== 0) throw new Error(`compose ${action} exited with status ${code}`)
   }
 
-  /** The destructive actions go through the same typed confirmation the API demands. */
+  /**
+   * The destructive actions all pause for a confirmation, and `down` is the one
+   * that asks for the stack's name to be typed — it is the only one that
+   * removes the containers. Update and restart are the ordinary redeploy cycle,
+   * run several times in an afternoon, and the server narrows the phrase the
+   * same way so the two cannot disagree.
+   */
   const confirmRun = (action: string, title: string, description: React.ReactNode) =>
     confirm({
       title,
-      phrase: name ?? "",
+      phrase: action === "down" ? (name ?? "") : undefined,
       confirmLabel: title.split(" ")[0],
       description,
       action: (phrase) => run(action, { confirmPhrase: phrase }),
@@ -152,7 +159,9 @@ function StackBody({
       }
       description={data?.workingDir}
       bodyClassName="flex min-h-0 flex-1 flex-col gap-3 p-4"
-      actions={data && <StackActions data={data} run={run} confirmRun={confirmRun} runner={runner} />}
+      actions={
+        data && <StackActions data={data} run={run} confirmRun={confirmRun} runner={runner} />
+      }
     >
       {error && <ErrorState error={error} />}
       {loading && !data && <LoadingRows />}
@@ -168,7 +177,11 @@ function StackBody({
             </Notice>
           )}
           {data.declaredError && (
-            <Notice title="This stack's compose file does not parse" icon={AlertTriangle} tone="danger">
+            <Notice
+              title="This stack's compose file does not parse"
+              icon={AlertTriangle}
+              tone="danger"
+            >
               {data.declaredError}
             </Notice>
           )}
@@ -233,7 +246,7 @@ function StackActions({
   if (!data.managed) return null
   const busy = runner.running
   const quiet = (fn: () => Promise<void>) => () => {
-    fn().catch((err) => toast.error(String(err)))
+    fn().catch((err) => notify.error(String(err)))
   }
 
   return (
@@ -261,8 +274,8 @@ function StackActions({
                   "Update this stack",
                   <>
                     <p>
-                      Pulls a newer image for every service in <b>{data.name}</b>, then recreates the
-                      ones that changed. Services whose image did not move are left running.
+                      Pulls a newer image for every service in <b>{data.name}</b>, then recreates
+                      the ones that changed. Services whose image did not move are left running.
                     </p>
                     <p>Anything being recreated is interrupted while it restarts.</p>
                   </>,
@@ -402,7 +415,10 @@ function ServiceRow({
             <StatusBadge state={service.state} />
           )}
           {service.health && service.health !== "healthy" && (
-            <Badge variant={service.health === "unhealthy" ? "destructive" : "secondary"} className="font-normal">
+            <Badge
+              variant={service.health === "unhealthy" ? "destructive" : "secondary"}
+              className="font-normal"
+            >
               {service.health}
             </Badge>
           )}
@@ -427,7 +443,7 @@ function ServiceRow({
           size="xs"
           variant="ghost"
           onClick={() =>
-            onRun("up", { service: service.name }).catch((err) => toast.error(String(err)))
+            onRun("up", { service: service.name }).catch((err) => notify.error(String(err)))
           }
         >
           <RefreshCw className="size-3" />
@@ -439,7 +455,7 @@ function ServiceRow({
           size="xs"
           variant="outline"
           onClick={() =>
-            onRun("up", { service: service.name }).catch((err) => toast.error(String(err)))
+            onRun("up", { service: service.name }).catch((err) => notify.error(String(err)))
           }
         >
           <Play className="size-3" />
@@ -500,9 +516,9 @@ function ComposeEditor({
         { content },
       )
       setValidation(res)
-      if (res.valid) toast.success(`Valid — ${res.services.length} service(s)`)
+      if (res.valid) notify.success(`Valid — ${res.services.length} service(s)`)
     } catch (err) {
-      toast.error("Could not check the file", { description: String(err) })
+      notify.error("Could not check the file", err)
     } finally {
       setBusy(false)
     }
@@ -519,16 +535,16 @@ function ComposeEditor({
       setValidation(res.validation)
       // Saying so explicitly, because this is the one thing an editor in a
       // deployment tool is most likely to be misread about.
-      toast.success("Saved", {
+      notify.success("Saved", {
         description: "Nothing changed yet — bring the stack up to apply it.",
       })
       onSaved()
     } catch (err) {
       if (err instanceof ApiError && err.code === "compose_invalid") {
         setValidation({ valid: false, error: err.message, services: [] })
-        toast.error("Compose rejected this file", { description: err.message })
+        notify.error("Compose rejected this file", err.message)
       } else {
-        toast.error("Could not save", { description: String(err) })
+        notify.error("Could not save", err)
       }
     } finally {
       setBusy(false)

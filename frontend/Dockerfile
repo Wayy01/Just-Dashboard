@@ -10,14 +10,20 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# Monaco is served from this origin rather than from a CDN, so its files have
-# to be in public/ before the build. Invoking next directly below skips the
-# prebuild hook that does this during development, hence the explicit call.
-RUN node scripts/sync-monaco.mjs
+# The Monaco runtime is copied out of node_modules into public/ before the
+# build, exactly as `bun run build` does outside the image. It is not optional
+# packaging: without it the editor falls back to fetching itself from a CDN,
+# and the Query tab is a permanent "Loading…" on any install whose browser
+# cannot reach the public internet — which is most of them, since this is
+# normally reached down a tunnel.
+#
 # Dependencies are resolved by bun, but the compile itself runs under Node:
 # the baseline bun binary in the official image segfaults tearing down after
-# a Next build. Invoking next's own entrypoint keeps npm out of the picture.
-RUN node node_modules/next/dist/bin/next build
+# a Next build. Invoking next's own entrypoint keeps npm out of the picture,
+# and is why the script is called here rather than through the package script
+# that wraps it.
+RUN node scripts/sync-monaco.mjs \
+ && node node_modules/next/dist/bin/next build
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

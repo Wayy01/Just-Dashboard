@@ -1,7 +1,7 @@
 "use client"
 
 import { Crosshair, ShieldPlus } from "lucide-react"
-import { toast } from "sonner"
+import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { BanSummary } from "@/lib/types"
@@ -47,13 +47,13 @@ export function OffendersPanel({ onBlocked }: { onBlocked?: () => void }) {
         from: ip,
         comment: "repeat offender",
       })
-      toast.success(`${ip} blocked at the firewall`, {
+      notify.success(`${ip} blocked at the firewall`, {
         description: "A firewall rule outlives a ban, which expires.",
       })
       onBlocked?.()
       refresh()
     } catch (err) {
-      toast.error("Could not add the rule", { description: String(err) })
+      notify.error("Could not add the rule", err)
     }
   }
 
