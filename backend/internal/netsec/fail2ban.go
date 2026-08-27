@@ -186,29 +186,90 @@ func (s *Service) JailConfig(ctx context.Context, jail string) (*JailConfig, err
 	return cfg, nil
 }
 
-// parseClientList reads the Python-ish list fail2ban-client prints for the
-// multi-valued parameters: `['127.0.0.1/8', '::1']`, or a bare space-separated
-// line on older builds. Both shapes appear in the wild and neither is JSON.
+// parseClientList reads a multi-valued answer out of fail2ban-client, which
+// prints three different things depending on the version and on whether there
+// is anything to print.
+//
+// Current fail2ban — 1.x, which is Debian 12, Ubuntu 24.04 and everything else
+// shipping today — draws a tree under a heading:
+//
+//	These IP addresses/networks are ignored:
+//	|- 127.0.0.0/8
+//	`- 10.0.0.0/8
+//
+// with none, it answers in a sentence — `No IP address/network is ignored` —
+// and for a single-valued list it prints a heading and bare lines. Older 0.x
+// builds print a Python list, `['127.0.0.1/8', '::1']`, and older ones still a
+// bare space-separated line. Reading the current format with the old parser
+// turned the allowlist into eleven entries reading "These", "IP",
+// "addresses/networks" — and an empty one into five entries beginning "No".
 func parseClientList(out string) []string {
 	out = strings.TrimSpace(out)
 	items := []string{}
+	if out == "" {
+		return items
+	}
 	if strings.HasPrefix(out, "[") && strings.HasSuffix(out, "]") {
-		out = strings.TrimSuffix(strings.TrimPrefix(out, "["), "]")
-		for _, part := range strings.Split(out, ",") {
-			part = strings.TrimSpace(part)
-			part = strings.Trim(part, `'"`)
+		inner := strings.TrimSuffix(strings.TrimPrefix(out, "["), "]")
+		for _, part := range strings.Split(inner, ",") {
+			part = strings.Trim(strings.TrimSpace(part), `'"`)
 			if part != "" {
 				items = append(items, part)
 			}
 		}
 		return items
 	}
-	for _, part := range strings.Fields(out) {
-		if part != "" {
-			items = append(items, part)
+
+	// A tree is unambiguous: take the branches and nothing else.
+	if branches := treeBranches(out); len(branches) > 0 {
+		return branches
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		// A heading names what follows and is not one of the values.
+		if line == "" || strings.HasSuffix(line, ":") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// The one remaining ambiguity is a bare line: an old build's
+		// space-separated values, or the modern sentence saying there are
+		// none. Every value here is an address, a network or a path; prose is
+		// not, so a multi-word line counts only when every word looks like one.
+		if len(fields) > 1 && !allAddressLike(fields) {
+			continue
+		}
+		items = append(items, fields...)
+	}
+	return items
+}
+
+// treeBranches pulls the values out of fail2ban's `|-` / “ `- “ drawing.
+func treeBranches(out string) []string {
+	items := []string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"|- ", "`- ", "|-\t", "`-\t"} {
+			if rest, ok := strings.CutPrefix(line, prefix); ok {
+				if rest = strings.TrimSpace(rest); rest != "" {
+					items = append(items, rest)
+				}
+				break
+			}
 		}
 	}
 	return items
+}
+
+// allAddressLike reports whether every token could be an address, a network or
+// a path — which is to say, whether the line is data rather than a sentence.
+func allAddressLike(fields []string) bool {
+	for _, f := range fields {
+		if !strings.ContainsAny(f, "./:") {
+			return false
+		}
+	}
+	return true
 }
 
 // jailParams is the closed set of parameters this dashboard will set, with
