@@ -133,6 +133,7 @@ func (s *Server) handleSecurityPosture(w http.ResponseWriter, r *http.Request) e
 		// btmp listing itself is admin-only.
 		if records, err := s.modules.netsec.FailedLogins(ctx, 500); err == nil {
 			in.FailedLogins = len(records)
+			in.LoginRecordRead = true
 		}
 	})
 	run(func() {

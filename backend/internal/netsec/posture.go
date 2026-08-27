@@ -93,6 +93,12 @@ type AssessInput struct {
 	// window Since covers, and RecentBans how many bans fail2ban issued.
 	FailedLogins int
 	RecentBans   int
+	// LoginRecordRead says whether btmp could be read at all. Zero failed
+	// attempts and "the tool that counts them is not installed" are the same
+	// number and opposite facts — `last` lives in util-linux-extra, which a
+	// minimal cloud image does not have — so the count is only quoted when
+	// something actually counted.
+	LoginRecordRead bool
 	// SecurityUpdates is the count of pending updates from the security
 	// pocket; RebootRequired is the flag the package manager leaves.
 	SecurityUpdates int
@@ -152,6 +158,9 @@ func Assess(in AssessInput) *Posture {
 	}
 	if in.PackageManager == "" || !in.SecurityFiltering {
 		p.Skipped = append(p.Skipped, "security updates")
+	}
+	if !in.LoginRecordRead {
+		p.Skipped = append(p.Skipped, "failed logins")
 	}
 
 	// Worst first, then by area so a page of warnings does not reshuffle
@@ -376,6 +385,14 @@ func assessIntrusion(in AssessInput) []SecurityFinding {
 			Title:  "fail2ban is running with no jails",
 			Detail: "The service is up but has nothing configured to watch.",
 			Advice: "Enable at least the sshd jail. A running fail2ban with no jails bans nobody.",
+		})
+	}
+	if !in.LoginRecordRead {
+		return append(out, SecurityFinding{
+			ID: "intrusion.no-record", Level: "notice", Area: "intrusion",
+			Title:  "Failed logins cannot be counted on this host",
+			Detail: "The host's btmp record could not be read — `last` and `lastb` come from util-linux-extra, which a minimal image often leaves out.",
+			Advice: "Install util-linux-extra to see who has been trying. Until then this check has no answer, which is not the same as a quiet server.",
 		})
 	}
 	switch {

@@ -44,7 +44,8 @@ func TestAssessAQuietHostReportsNothing(t *testing.T) {
 			{Key: "maxauthtries", Value: "3"},
 		}},
 		PackageManager: "apt", SecurityFiltering: true,
-		Now: time.Now(),
+		LoginRecordRead: true,
+		Now:             time.Now(),
 	})
 	if p.Status != "ok" {
 		t.Fatalf("status = %q with findings %+v", p.Status, p.Findings)
@@ -282,15 +283,15 @@ func TestAssessIntrusion(t *testing.T) {
 }
 
 func TestAssessFailedLoginVolume(t *testing.T) {
-	quiet := Assess(AssessInput{FailedLogins: 5})
+	quiet := Assess(AssessInput{FailedLogins: 5, LoginRecordRead: true})
 	if _, ok := findingByID(quiet, "intrusion.failed-logins"); ok {
 		t.Error("a handful of failures is background noise")
 	}
-	busy := Assess(AssessInput{FailedLogins: failedLoginNoticeCount})
+	busy := Assess(AssessInput{FailedLogins: failedLoginNoticeCount, LoginRecordRead: true})
 	if f, _ := findingByID(busy, "intrusion.failed-logins"); f.Level != "notice" {
 		t.Errorf("level = %q", f.Level)
 	}
-	loud := Assess(AssessInput{FailedLogins: failedLoginWarningCount})
+	loud := Assess(AssessInput{FailedLogins: failedLoginWarningCount, LoginRecordRead: true})
 	if f, _ := findingByID(loud, "intrusion.failed-logins"); f.Level != "warning" {
 		t.Errorf("level = %q", f.Level)
 	}
@@ -372,5 +373,42 @@ func TestAssessReportsAReadOnlyFirewall(t *testing.T) {
 	disabled, _ := findingByID(p, "firewall.disabled")
 	if disabled.Fix != "" {
 		t.Errorf("offered a fix this backend cannot perform: %q", disabled.Fix)
+	}
+}
+
+// Zero failed attempts and "the tool that counts them is not installed" are the
+// same number and opposite facts. `last` lives in util-linux-extra, which a
+// minimal cloud image leaves out, so a verdict reading the two the same way
+// reports a quiet server on a host nothing has looked at.
+func TestAssessSaysWhenFailedLoginsCannotBeCounted(t *testing.T) {
+	p := Assess(AssessInput{
+		Exposure:        &Exposure{Grade: "tailscale"},
+		SSH:             &SSHDConfig{Available: true},
+		Fail2ban:        &Fail2banStatus{Available: true, Running: true, Jails: []Jail{{Name: "sshd"}}},
+		LoginRecordRead: false,
+		Now:             time.Now(),
+	})
+	if _, ok := findingByID(p, "intrusion.no-record"); !ok {
+		t.Fatal("an unreadable login record reported as no failed logins")
+	}
+	if !slices.Contains(p.Skipped, "failed logins") {
+		t.Errorf("skipped = %q, want the unanswerable check listed", p.Skipped)
+	}
+}
+
+// With the record readable and quiet, nothing is said — the check passed.
+func TestAssessSaysNothingWhenTheRecordIsReadableAndQuiet(t *testing.T) {
+	p := Assess(AssessInput{
+		Exposure:        &Exposure{Grade: "tailscale"},
+		SSH:             &SSHDConfig{Available: true},
+		Fail2ban:        &Fail2banStatus{Available: true, Running: true, Jails: []Jail{{Name: "sshd"}}},
+		LoginRecordRead: true, FailedLogins: 3,
+		Now: time.Now(),
+	})
+	if _, ok := findingByID(p, "intrusion.no-record"); ok {
+		t.Error("a readable record reported as unreadable")
+	}
+	if _, ok := findingByID(p, "intrusion.failed-logins"); ok {
+		t.Error("three attempts is background noise, not a finding")
 	}
 }

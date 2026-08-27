@@ -161,7 +161,7 @@ func (s *Service) SSHDStatus(ctx context.Context) *SSHDConfig {
 		cfg.Ports = cfg.Socket.Ports
 	}
 	for _, def := range sshDirectives {
-		value := first(values[def.Key], def.Default)
+		value := def.canonical(first(values[def.Key], def.Default))
 		if def.Kind == "list" {
 			// sshd accumulates these across every line that sets them, so the
 			// first value alone would silently hide the rest.
@@ -210,14 +210,27 @@ type sshDirective struct {
 	Risk     string
 	Options  []string
 	Kind     string
+	// Aliases maps a spelling sshd still prints onto the one this page's
+	// control offers. They are the same setting; a value the dropdown has no
+	// entry for renders as an empty control, which reads as "not set" for a
+	// setting that very much is.
+	Aliases map[string]string
 	// AlwaysAcceptable marks a directive with no better or worse value — a
 	// port, a list of accounts. Grading those would put a permanent amber
 	// dot next to a setting that is simply a choice.
 	AlwaysAcceptable bool
 }
 
+// canonical folds a spelling sshd prints onto the one this page offers.
+func (d sshDirective) canonical(value string) string {
+	if to, ok := d.Aliases[strings.ToLower(strings.TrimSpace(value))]; ok {
+		return to
+	}
+	return value
+}
+
 func (d sshDirective) secure(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ToLower(strings.TrimSpace(d.canonical(value)))
 	if d.AlwaysAcceptable {
 		return true
 	}
@@ -249,10 +262,15 @@ func (d sshDirective) secure(value string) bool {
 var sshDirectives = []sshDirective{
 	{
 		Key: "permitrootlogin", Label: "Root login", Default: "prohibit-password",
-		Recommended: "prohibit-password", Accept: []string{"no", "prohibit-password", "forced-commands-only", "without-password"},
+		Recommended: "prohibit-password", Accept: []string{"no", "prohibit-password", "forced-commands-only"},
 		Kind: "choice", Options: []string{"no", "prohibit-password", "forced-commands-only", "yes"},
-		Detail: "Whether root may log in over SSH at all, and if so how.",
-		Risk:   "\"yes\" lets every bot on the internet guess at the one account that already has full control. Every one of them tries root first.",
+		// `sshd -T` on OpenSSH 9.9 — Ubuntu 25.04, which is to say a current
+		// mainstream server — still prints the deprecated spelling for the
+		// value the distributions actually ship as their default. The two are
+		// the same setting.
+		Aliases: map[string]string{"without-password": "prohibit-password"},
+		Detail:  "Whether root may log in over SSH at all, and if so how.",
+		Risk:    "\"yes\" lets every bot on the internet guess at the one account that already has full control. Every one of them tries root first.",
 	},
 	{
 		Key: "passwordauthentication", Label: "Password authentication", Default: "yes",
