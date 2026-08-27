@@ -386,6 +386,16 @@ Three inputs are shapes declared *in* netsec (`ExposedPort`, `CertSummary`) rath
 imported from `proxysvc`, so the audit keeps no dependency on how ports or certificates are
 discovered.
 
+**A check that could not run is not a pass**, and the verdict has to say which
+is which — `Posture.Skipped` is that list, and two of its entries exist because
+a zero and an unanswerable question look identical. `SecurityFiltering` is
+false on Alpine and Arch, which publish no advisory data, so a count of zero
+security updates there means "cannot tell"; and `LoginRecordRead` is false
+wherever `last` and `lastb` are absent — they come from util-linux-extra, which
+minimal cloud images leave out — so a count of zero failed attempts means
+nothing looked. Each says so as a finding rather than staying quiet, because
+silence in a security verdict reads as "checked, and nothing outstanding".
+
 ### Package managers, plural
 
 `internal/updates` was `apt-get` and nothing else, which meant every RPM,
@@ -395,17 +405,36 @@ posture audit's pending-patch check was therefore silently dead on half the
 servers this runs on.
 
 It is a `manager` interface now: apt, dnf, yum, zypper, pacman and apk, each a
-listing command parsed by a pure function plus an upgrade argv. Two details are
-load-bearing. `dnf check-update` **exits 100 when there is something to do**, so
-treating a non-zero exit as failure reports an error for a host with updates and
-success for one without — exactly backwards. And Alpine and Arch publish no
-advisory data at all, so `SupportsSecurityOnly` is false there,
-`Report.SecurityFiltering` tells the UI to say "cannot tell" rather than "none
-outstanding", and `guardSecurityOnly` refuses a narrowed upgrade instead of
-quietly applying everything.
+listing command parsed by a pure function plus an upgrade argv. Four details are
+load-bearing, and every one of them was confirmed by running the tool in a
+container of the distribution it belongs to rather than from memory.
+
+`dnf check-update` **exits 100 when there is something to do**, so treating a
+non-zero exit as failure reports an error for a host with updates and success
+for one without — exactly backwards. It is read as a *code*: guessing at it
+from the shape of the output passed a real failure through as an empty package
+list, and `Error: Cache-only enabled but no cache for 'baseos'` is what a host
+whose metadata has been cleared prints.
+
+**dnf5 takes `--security` only after the subcommand**, and says so in as many
+words — so `dnf -y --security upgrade` failed on every Fedora from 41 on. The
+command goes first, which dnf4 accepts too. `updateinfo` survives in dnf5 as an
+alias, so the security marking needs no second spelling.
+
+**zypper reserves 100–106 for informational exits** — a skipped repository is
+not a failure — and returning early on them reported an error and no packages
+on a host with one stale repo, which is most long-lived servers.
+
+And Alpine and Arch publish no advisory data at all, so `SupportsSecurityOnly`
+is false there, `Report.SecurityFiltering` tells the UI to say "cannot tell"
+rather than "none outstanding", and `guardSecurityOnly` refuses a narrowed
+upgrade instead of quietly applying everything.
 
 Reboot detection follows the same shape: Debian's flag file first, then
 `needs-restarting -r` for the RPM world, then "cannot tell" reported as false.
+Exactly exit 1 counts as "a reboot is needed" — every other non-zero code is the
+tool failing, and reading those as yes puts a permanent reboot warning on a host
+that never asked for one.
 
 ### sshd, and the guard that makes it offerable
 
@@ -446,6 +475,43 @@ caller's choosing onto the next line) and normalised through `strings.Fields`
 before it is written. An emptied list is commented out rather than written as a
 keyword with no argument, which sshd refuses to start behind.
 
+**Where sshd listens is not always sshd's decision.** Ubuntu has shipped
+socket-activated SSH since 22.10 and it is the default on 24.04 and later:
+`ssh.service` is disabled, `ssh.socket` holds the listener with the port in its
+own `ListenStream`, and sshd never binds anything. `sshd_config`'s `Port` is
+read, resolved, reported back by `sshd -T` — and ignored. That made the port
+control the one setting on this page that reported success and did nothing.
+
+`sshd_socket.go` reads the unit alongside the daemon and writes it alongside
+it. `SSHDConfig.Socket` carries which unit holds the port and which port it is
+actually on — *that* is the answer to "which port is SSH on" wherever it
+exists — and a move writes a drop-in for the unit and **restarts** it. A
+restart, not a reload: systemd rebinds a socket's addresses only on restart,
+and `daemon-reload` alone leaves the old port bound while reporting that the
+new configuration was read. Three details in the drop-in are each a bug that
+was found by running it against a real systemd:
+
+- The empty `ListenStream=` before the new one, because systemd *appends*.
+  Without it a socket moved to 2222 goes on answering on 22 as well.
+- Both families named explicitly. A bare `ListenStream=2222` binds the IPv6
+  wildcard, and under the `BindIPv6Only=ipv6-only` that ssh.socket sets, that
+  takes IPv4 SSH off the machine.
+- `BindIPv6Only=ipv6-only` repeated in the drop-in, because naming both
+  addresses is only legal with it and a hand-written unit may not have set it.
+
+The addresses are rewritten rather than replaced, so a socket bound to one
+interface stays bound to it; wildcards are the fallback for when nothing could
+be read. Refusing the move instead would have been the safe-looking choice and
+the wrong one — it leaves the control broken on the commonest server
+distribution there is.
+
+`reloadSSH` tries the systemd units and then `rc-service` and `service`, since
+not every server runs systemd; and `permitrootlogin` folds `without-password`
+onto `prohibit-password`, because `sshd -T` on OpenSSH 9.9 still prints the
+deprecated spelling of the value the distributions ship as their default, and a
+dropdown with no entry for it renders empty — a security setting reading as
+"not set" on a host where it is set correctly.
+
 `netsec.Disconnect` ends an interactive login. The PID is matched against the
 live session list before anything is signalled; without that check the route is
 a "kill any process on this host" primitive wearing a sensible name. SIGHUP
@@ -477,8 +543,29 @@ a page that says protected in front of a host that is not.
 can do, the page hides the rest, and `ReadOnlyReason` explains the absence. A
 greyed-out button with no reason is worse than one that is not there.
 
+firewalld also spells a port differently and has no multiport at all: it wants
+`8000-8010` where ufw and iptables take `8000:8010`, and answers a comma with a
+flat `INVALID_PORT`. Validation accepts the ufw spelling on purpose — an
+operator should not have to know which tool is underneath — so `firewalldPorts`
+does the translation in the backend that knows, and a list becomes one rule per
+port in a single call rather than a partly applied rule if the third of five is
+refused.
+
 `annotateRule` attaches the catalogue's name and warning centrally, so
-firewalld's rules read the same way ufw's do.
+firewalld's rules read the same way ufw's do — which needs `parseUFWRule` to
+find the port in the first place. `ufw allow 6379` writes a destination with no
+slash in it, and a rule parsed without a port takes the catalogue's name and
+its warning with it: the "Redis is open to the world" line never fired on the
+one spelling a newcomer is most likely to have typed.
+
+The `run` these backends share is a **variable**, so a recorded transcript can
+stand behind it. The parsers here read output whose exact shape — ufw's "(v6)"
+suffix, firewalld's tab-indented rich rules, the column order of `iptables -L
+-n -v --line-numbers`, which is num/pkts/bytes/target/prot/opt/in/out/source/
+destination and was read one place to the left — is the thing most likely to be
+wrong, and a host that happens to run one of the three is no way to check the
+other two. The fixtures in `firewall_ufw_test.go`, `firewall_iptables_test.go`
+and `firewall_firewalld_test.go` are copied from the tools themselves.
 
 ### Firewall: the parts that decide what the rules mean
 
@@ -508,16 +595,32 @@ the form shows and the finding the audit raises are the same claim. `parseUFWRul
 to each rule — but only warns when the source is unrestricted, since the same port limited to
 a private range is the arrangement being recommended.
 
+**ufw writes every rule twice, and deletes one of them.** On a dual-stack host `ufw allow 80`
+produces two numbered entries and `ufw delete <n>` removes exactly one. The page folds the
+"(v6)" duplicates away — eight rules must not read as sixteen — which is right for reading and
+was catastrophic for deleting: closing a port removed the IPv4 line, left the IPv6 line
+standing and *hid it*, so the list showed a closed port that was still open to every IPv6
+client on the internet. `ufwBackend.DeleteRule` therefore reads the rule before deleting it
+and looks its twin up again afterwards by the fields the two share (`sameRule`). Afterwards,
+because a delete renumbers everything below it: the twin's position cannot be arithmetic
+either. A rule with an IPv4 source has no twin and nothing further happens.
+
+**ufw answers a duplicate by doing nothing and exiting zero.** "Skipping adding existing rule"
+read as a successful add, and the `number+1` delete that used to follow removed the rule
+*below* the one being edited — one the operator never touched. `AddRule` reports it as
+`errRuleExists`, and only when *nothing* was written: a v4 rule accepted while its v6 twin was
+skipped is a real add.
+
 `ReplaceRule` is the edit. Neither ufw nor firewalld has one — a rule is a line, and changing
 it means writing another and removing this one — so the order is the whole safety property:
 the replacement goes in **first**, and only then is the original removed. Deleting first and
 failing to add would leave a hole in the firewall, which is the one outcome an edit must never
 produce; failing the other way round leaves two rules, which is visible in the list and no
-less strict than before. ufw is ordered, so the replacement is inserted at the old rule's
-number and the original — pushed down one by the insert — is deleted at `number+1`. firewalld
-has no numbers of its own (the position in the listing is this dashboard's), so the old rule's
-`Handle` is resolved *before* anything is added, because adding changes what position N points
-at. The ordering lives in `replaceRule`, separate from backend detection, so it is driven by
+less strict than before. The rule being replaced is read *before* anything is added, whichever
+backend this is, and found again afterwards by what it says rather than by where it sat. ufw
+is ordered, so the replacement is inserted at the old rule's number; firewalld has no numbers
+of its own (the position in the listing is this dashboard's), so its `Handle` is what removes
+it. The ordering lives in `replaceRule`, separate from backend detection, so it is driven by
 tests against a recording backend rather than discovered on a live firewall.
 
 `AddRule` gained `insert` (ufw stops at the first match, so a deny added after a broad allow
@@ -533,6 +636,18 @@ a runtime-only change is gone at the next restart — the same trap the jail
 start/stop control was rejected for. `mergeJailOverrides` rewrites one section
 and leaves every other jail, and any hand-written line inside the section it
 owns, exactly as it was.
+
+**fail2ban-client does not print a list.** Fail2Ban 1.x — which is Debian 12,
+Ubuntu 24.04 and everything shipping today — draws a tree under a heading for
+its multi-valued answers, and answers an empty one in a sentence (`No IP
+address/network is ignored`). `parseClientList` knew the two shapes 0.x printed
+— a Python list and a bare space-separated line — and neither of them is this,
+so the allowlist panel showed eleven entries reading "These", "IP",
+"addresses/networks" on a jail that had one and five beginning "No" on a jail
+that had none. All four shapes parse now; the one real ambiguity, a bare line
+that is either an old build's values or the modern sentence, is settled by what
+the words look like — every value here is an address, a network or a path, and
+prose is not.
 
 There is deliberately **no start/stop for a fail2ban jail**. `fail2ban-client status` lists
 only running jails, so one stopped from the UI would vanish from every listing with nothing
@@ -930,12 +1045,23 @@ brand-new file in `sites-available` is not in nginx's include tree, so `nginx -t
 to say about it. The symlink goes in **before** the test, and both the file and the link are
 undone together if it fails.
 
-Three details in the renderer are load-bearing. The ACME challenge location is emitted **above**
+Four details in the renderer are load-bearing. The ACME challenge location is emitted **above**
 the catch-all redirect, or renewal stops working in sixty days and nobody finds out until the
 certificate expires. `http2 on;` is a directive, not a `listen` parameter, which nginx 1.25
-deprecated and warns about on every reload. And WebSocket upgrades pass `$http_connection`
+deprecated and warns about on every reload. WebSocket upgrades pass `$http_connection`
 through rather than the usual `$connection_upgrade` map, because a `map` is only legal in the
 `http` block and a site file cannot reach there.
+
+And an `allow` list is **fenced with `deny all`**. nginx reads the access directives in order,
+stops at the first match and falls through to its default, which is to permit — so a site
+restricted to `10.0.0.0/8` and nothing else was reachable from anywhere. The operator used to
+be expected to know that and to write the fence themselves into a box labelled "Deny", and the
+address they would reach for, `0.0.0.0/0`, lets in every IPv6 client there is. A control
+labelled "only these addresses" has to mean it. The explicit denials are rendered *above* the
+allows for the same first-match reason: an address inside an allowed range and named on the
+deny list is meant to be refused. One case still cannot be fenced and is said rather than
+rendered anyway — nginx answers a `return` in the rewrite phase, before the access phase runs
+at all, so an allow list does not restrict a redirect site.
 
 `ParseSiteSpec` reads a file back so the form can edit one, and reports whether it carries our
 marker — a hand-written file round-trips only as far as the parser recognises, and the UI says
@@ -1618,8 +1744,17 @@ A change that weakens any of these has to say so explicitly:
    Mongo pipeline with `$out`/`$merge`, a `critical` statement in the query runner, restoring
    a database or a backup over live data, `compose down`, removing a Docker volume, any prune,
    deleting a dashboard or Linux account, a recursive directory delete, `git discard` and
-   `git reset --hard`, toggling the firewall, applying package updates, and installing a new
-   version of the dashboard itself.
+   `git reset --hard`, toggling the firewall, resetting it, switching the inbound default to
+   deny, changing sshd's configuration, ending somebody's SSH session, deleting a proxy site,
+   a stream or a password file, revoking a certificate, applying package updates, and
+   installing a new version of the dashboard itself.
+
+   The firewall and sshd entries are the ones worth spelling out, because they are not about
+   losing data. They are the marker's other meaning: get one wrong and the way back into the
+   machine is gone, and no amount of undo in this UI helps, because reaching this UI is what
+   you have lost. Each is also rare — an inbound default is set once, an sshd hardening pass
+   happens on the day the server is built — so they sit on the rare side of the frequency
+   test as well.
 
    That last one is worth spelling out, because it is the newest and the most tempting to
    soften: the phrase is the **version being installed** (`0.6`), not a fixed sentence. It
@@ -1634,7 +1769,14 @@ A change that weakens any of these has to say so explicitly:
    stopping/restarting/killing/removing/recreating a container, removing an image or a network,
    deleting one file, signalling a process, stopping or restarting a service, revoking a token
    or an SSH key, deleting a backup job or a deploy project, rolling back a deploy, disabling a
-   vhost, deleting a firewall rule, and closing a terminal session, window or pane.
+   vhost, adding, **editing** or deleting a firewall rule, tuning a fail2ban jail, unbanning an
+   address, stopping a running job, and closing a terminal session, window or pane.
+
+   Editing a firewall rule is a write and not a destructive one, and is mounted accordingly:
+   the replacement goes in before the original comes out, so there is no moment the rule is
+   missing and nothing to confirm the loss of. Stopping a job is the same argument from the
+   other side — interrupting is how you *avoid* a bad outcome, and a phrase in front of a stop
+   button is a phrase somebody types while something is going wrong.
 
    Several routes decide by content rather than by path, and the narrowing lives at the call
    site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
