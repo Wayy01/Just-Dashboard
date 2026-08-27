@@ -3,6 +3,8 @@ package netsec
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -10,6 +12,15 @@ import (
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/hostexec"
 )
+
+// errRuleExists is ufw declining to add a rule it already has.
+//
+// It says so and exits 0, which read as a successful add — and an edit is an
+// add followed by a delete of the line below it, so an edit that changed
+// nothing deleted the operator's *next* rule instead. Reported as an error
+// because "nothing happened" and "the rule is now what you asked for" are not
+// the same answer.
+var errRuleExists = errors.New("ufw already has that exact rule")
 
 // ufw is the Debian and Ubuntu answer, and the one this dashboard was written
 // against first. It is a front end to iptables with an on/off switch, numbered
@@ -151,9 +162,22 @@ func parseUFWRule(num int, body string) Rule {
 	}
 	if to, proto, ok := strings.Cut(r.To, "/"); ok {
 		r.Port, r.Protocol = to, proto
+	} else if bareUFWPortRe.MatchString(r.To) {
+		// `ufw allow 6379` is legal and writes a rule for both protocols, so
+		// the destination is a bare number with no slash to cut on. Left
+		// unparsed the rule carries no port, and everything keyed off the port
+		// goes quiet: the catalogue cannot name the service, and the warning
+		// in front of "Redis is open to the world" — the reason the catalogue
+		// exists — never fires on the one spelling a newcomer is most likely
+		// to have typed.
+		r.Port = r.To
 	}
 	return r
 }
+
+// bareUFWPortRe matches a destination that is only a port, a range or a list.
+// Anything else there is an address or an application profile name.
+var bareUFWPortRe = regexp.MustCompile(`^\d{1,5}(:\d{1,5})?(,\d{1,5}(:\d{1,5})?)*$`)
 
 func (ufwBackend) AddRule(ctx context.Context, req RuleRequest) (string, error) {
 	args := []string{}
@@ -187,13 +211,94 @@ func (ufwBackend) AddRule(ctx context.Context, req RuleRequest) (string, error) 
 	if req.Comment != "" {
 		args = append(args, "comment", req.Comment)
 	}
-	return run(ctx, "ufw", args...)
+	out, err := run(ctx, "ufw", args...)
+	if err != nil {
+		return out, err
+	}
+	// ufw is idempotent and announces it rather than failing: an add matching
+	// a rule already present prints "Skipping adding existing rule" and exits
+	// 0. On a dual-stack host it prints one line per family, so the test is
+	// that *nothing* was added — a v4 rule accepted while its v6 twin was
+	// skipped is a real add and must not be reported as a no-op.
+	if !ufwAdded(out) && strings.Contains(out, "Skipping") {
+		return out, errRuleExists
+	}
+	return out, nil
 }
 
-func (ufwBackend) DeleteRule(ctx context.Context, number int) (string, error) {
+// ufwAdded reports whether ufw's output claims it wrote something.
+func ufwAdded(out string) bool {
+	for _, claim := range []string{"Rule added", "Rule inserted", "Rule updated"} {
+		if strings.Contains(out, claim) {
+			return true
+		}
+	}
+	return false
+}
+
+// DeleteRule removes a numbered rule and, where ufw made one, its IPv6 twin.
+//
+// `ufw delete <n>` removes exactly one numbered entry, and on a dual-stack host
+// ufw wrote the rule into both tables — `ufw allow 80` produces two lines. The
+// page folds the "(v6)" duplicates away so eight rules do not read as sixteen,
+// which is right for reading and was catastrophic for deleting: closing a port
+// removed the IPv4 line, left the IPv6 line in place and hid it, so the rule
+// list showed a closed port that was still open to every IPv6 client on the
+// internet.
+//
+// So the rule is read before it is deleted, and its twin is looked up again
+// afterwards by the fields the two share — the numbering has shifted by then,
+// which is why the second delete cannot be arithmetic either. A rule with a v4
+// source has no twin and nothing further happens.
+func (b ufwBackend) DeleteRule(ctx context.Context, number int) (string, error) {
 	// ufw prompts before deleting; --force answers it. The rule number comes
 	// from our own parsed listing, never from free text.
-	return run(ctx, "ufw", "--force", "delete", strconv.Itoa(number))
+	target, known := b.ruleAt(ctx, number)
+	out, err := run(ctx, "ufw", "--force", "delete", strconv.Itoa(number))
+	if err != nil {
+		return out, err
+	}
+	if !known || target.IPv6 {
+		return out, nil
+	}
+	twin, found := b.findRule(ctx, target, true)
+	if !found {
+		return out, nil
+	}
+	more, err := run(ctx, "ufw", "--force", "delete", strconv.Itoa(twin))
+	if err != nil {
+		return out, fmt.Errorf("the rule was removed from the IPv4 table, but its IPv6 copy could not be: %w", err)
+	}
+	return strings.TrimSpace(out + "\n" + more), nil
+}
+
+// ruleAt reads one numbered rule out of the current listing.
+func (b ufwBackend) ruleAt(ctx context.Context, number int) (Rule, bool) {
+	st, err := b.Status(ctx)
+	if err != nil {
+		return Rule{}, false
+	}
+	for _, r := range st.Rules {
+		if r.Number == number {
+			return r, true
+		}
+	}
+	return Rule{}, false
+}
+
+// findRule locates a rule by what it says rather than by where it sits, which
+// is the only stable identity ufw offers once a delete has renumbered the list.
+func (b ufwBackend) findRule(ctx context.Context, want Rule, ipv6 bool) (int, bool) {
+	st, err := b.Status(ctx)
+	if err != nil {
+		return 0, false
+	}
+	for _, r := range st.Rules {
+		if r.IPv6 == ipv6 && sameRule(r, want) {
+			return r.Number, true
+		}
+	}
+	return 0, false
 }
 
 func (ufwBackend) SetEnabled(ctx context.Context, enabled bool) (string, error) {

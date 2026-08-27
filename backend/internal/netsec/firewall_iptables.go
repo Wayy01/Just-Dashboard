@@ -52,10 +52,15 @@ func (iptablesBackend) Status(ctx context.Context) (*FirewallStatus, error) {
 			if len(fields) > 1 {
 				chain = fields[1]
 			}
-			if strings.Contains(trimmed, "policy") && chain == "INPUT" {
+			if chain == "INPUT" {
 				if idx := strings.Index(trimmed, "policy "); idx >= 0 {
-					st.Default = strings.Trim(strings.Fields(trimmed[idx+7:])[0], "()")
-					st.Policy = DefaultPolicy{Incoming: strings.ToLower(st.Default)}
+					// A chain line always names a verdict after "policy", but
+					// this is parsing a tool's prose and an index into it is
+					// the kind of thing that panics a handler.
+					if fields := strings.Fields(trimmed[idx+len("policy "):]); len(fields) > 0 {
+						st.Default = strings.Trim(fields[0], "()")
+						st.Policy = DefaultPolicy{Incoming: strings.ToLower(st.Default)}
+					}
 				}
 			}
 			continue
@@ -63,8 +68,17 @@ func (iptablesBackend) Status(ctx context.Context) (*FirewallStatus, error) {
 		if strings.HasPrefix(trimmed, "num ") || strings.HasPrefix(trimmed, "pkts ") {
 			continue
 		}
+		// The columns of `iptables -L -n -v --line-numbers` are, in order:
+		//
+		//	num pkts bytes target prot opt in out source destination
+		//
+		// so source and destination are the ninth and tenth, not the eighth
+		// and ninth. Read one place to the left they report the *out*
+		// interface as the rule's source and the source as its destination,
+		// which on a host with any rules at all makes every row say "* → the
+		// address this rule is actually about".
 		fields := strings.Fields(trimmed)
-		if len(fields) < 9 {
+		if len(fields) < 10 {
 			continue
 		}
 		num, err := strconv.Atoi(fields[0])
@@ -73,7 +87,7 @@ func (iptablesBackend) Status(ctx context.Context) (*FirewallStatus, error) {
 		}
 		st.Rules = append(st.Rules, Rule{
 			Number: num, Action: fields[3], Protocol: fields[4],
-			From: fields[7], To: fields[8], Direction: chain,
+			From: fields[8], To: fields[9], Direction: chain,
 			Raw: trimmed,
 		})
 	}

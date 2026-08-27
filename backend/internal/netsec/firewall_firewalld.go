@@ -245,40 +245,93 @@ func (b firewalldBackend) AddRule(ctx context.Context, req RuleRequest) (string,
 	// A plain allow with no source restriction is a port or a service, which
 	// is the shape firewalld prefers and the shape it can list back cleanly.
 	if req.Action == "allow" && req.From == "" && req.To == "" {
-		var arg string
-		switch {
-		case req.App != "":
-			arg = "--add-service=" + req.App
-		case req.Protocol != "":
-			arg = "--add-port=" + req.Port + "/" + req.Protocol
-		default:
-			// firewalld has no protocol-less port. tcp is the overwhelmingly
-			// common intent and is what every example assumes.
-			arg = "--add-port=" + req.Port + "/tcp"
+		args := []string{}
+		if req.App != "" {
+			args = append(args, "--add-service="+req.App)
+		} else {
+			proto := req.Protocol
+			if proto == "" {
+				// firewalld has no protocol-less port. tcp is the
+				// overwhelmingly common intent and is what every example
+				// assumes.
+				proto = "tcp"
+			}
+			for _, port := range firewalldPorts(req.Port) {
+				args = append(args, "--add-port="+port+"/"+proto)
+			}
 		}
-		if _, err := run(ctx, "firewall-cmd", "--permanent", "--zone="+zone, arg); err != nil {
+		if len(args) == 0 {
+			return "", fmt.Errorf("a rule needs a port or a service")
+		}
+		// One call, so a list of ports is one change and one reload rather
+		// than a partially applied rule if the third of five is refused.
+		call := append([]string{"--permanent", "--zone=" + zone}, args...)
+		if _, err := run(ctx, "firewall-cmd", call...); err != nil {
 			return "", err
 		}
 		return run(ctx, "firewall-cmd", "--reload")
 	}
 
-	rule, err := buildRichRule(req)
+	rules, err := buildRichRules(req)
 	if err != nil {
 		return "", err
 	}
-	if _, err := run(ctx, "firewall-cmd", "--permanent", "--zone="+zone, "--add-rich-rule="+rule); err != nil {
+	call := []string{"--permanent", "--zone=" + zone}
+	for _, rule := range rules {
+		call = append(call, "--add-rich-rule="+rule)
+	}
+	if _, err := run(ctx, "firewall-cmd", call...); err != nil {
 		return "", err
 	}
 	return run(ctx, "firewall-cmd", "--reload")
 }
 
-// buildRichRule renders the one form firewalld has for "this source, this
-// port, this verdict".
+// firewalldPorts renders a validated port field in firewalld's own spelling.
+//
+// Two differences, both of which firewalld answers with a flat INVALID_PORT:
+// a range is written with a hyphen, not the colon ufw and iptables use; and
+// there is no multiport, so a list is a rule each. Validation upstream accepts
+// both forms deliberately — the operator should not have to know which tool is
+// underneath — so the translation belongs here, where the tool is known.
+func firewalldPorts(port string) []string {
+	if port == "" {
+		return nil
+	}
+	out := []string{}
+	for _, part := range strings.Split(port, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, strings.ReplaceAll(part, ":", "-"))
+	}
+	return out
+}
+
+// buildRichRules renders the one form firewalld has for "this source, this
+// port, this verdict" — one rule per port, because firewalld has no multiport
+// and answers a comma with INVALID_PORT.
 //
 // The whole string is a single argv element, so the quotes inside it are
 // firewalld's own syntax rather than shell quoting — nothing here is passed
 // through a shell. Every value has already been validated by normaliseRule.
-func buildRichRule(req RuleRequest) (string, error) {
+func buildRichRules(req RuleRequest) ([]string, error) {
+	ports := firewalldPorts(req.Port)
+	if len(ports) == 0 {
+		ports = []string{""}
+	}
+	rules := make([]string, 0, len(ports))
+	for _, port := range ports {
+		rule, err := buildRichRule(req, port)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func buildRichRule(req RuleRequest, port string) (string, error) {
 	parts := []string{"rule"}
 	if req.From != "" && !strings.EqualFold(req.From, "any") {
 		family := "ipv4"
@@ -291,12 +344,12 @@ func buildRichRule(req RuleRequest) (string, error) {
 	switch {
 	case req.App != "":
 		parts = append(parts, fmt.Sprintf("service name=%q", req.App))
-	case req.Port != "":
+	case port != "":
 		proto := req.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
-		parts = append(parts, fmt.Sprintf("port port=%q", req.Port),
+		parts = append(parts, fmt.Sprintf("port port=%q", port),
 			fmt.Sprintf("protocol=%q", proto))
 	}
 	switch req.Action {

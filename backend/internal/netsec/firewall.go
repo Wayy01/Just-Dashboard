@@ -408,34 +408,38 @@ func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, 
 		return "", err
 	}
 
-	// firewalld has no ordering and no numbers of its own — the position in
-	// the listing is this dashboard's — so the old rule's handle is resolved
-	// before anything is added, because adding changes what position N points
-	// at. ufw is ordered and numbered, so the replacement is inserted at the
-	// old rule's place and the original, now pushed down by one, is removed.
-	var oldHandle string
+	// The rule being replaced is read *before* anything is added, whichever
+	// backend this is: adding changes both the positions firewalld's listing
+	// implies and the numbers ufw prints, so a rule identified afterwards is
+	// not necessarily the rule that was asked for.
+	st, err := b.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	old, ok := ruleNumbered(st.Rules, number)
+	if !ok {
+		return "", fmt.Errorf("no rule %d", number)
+	}
+	// firewalld has no ordering and no numbers of its own, so the handle it
+	// was given is what removes it. ufw is ordered, so the replacement is
+	// inserted where the original sits and the original is found again by what
+	// it says — never by arithmetic on the number, which is wrong the moment
+	// ufw declines to insert anything.
+	oldHandle := old.Handle
 	if b.Kind() == BackendUFW {
 		clean.Position = number
-	} else {
-		st, err := b.Status(ctx)
-		if err != nil {
-			return "", err
-		}
-		if number > len(st.Rules) {
-			return "", fmt.Errorf("no rule %d", number)
-		}
-		oldHandle = st.Rules[number-1].Handle
+		oldHandle = ""
 	}
 
 	added, err := b.AddRule(ctx, clean)
 	if err != nil {
+		// An add that changed nothing must not be followed by a delete. ufw
+		// answers a duplicate with "Skipping adding existing rule" and exit 0,
+		// and the delete that used to follow removed the rule *below* the one
+		// being edited.
 		return "", err
 	}
 
-	target := number
-	if b.Kind() == BackendUFW {
-		target = number + 1
-	}
 	var removed string
 	if oldHandle != "" {
 		remover, ok := b.(handleRemover)
@@ -444,6 +448,16 @@ func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, 
 		}
 		removed, err = remover.removeHandle(ctx, oldHandle)
 	} else {
+		locator, ok := b.(ruleLocator)
+		if !ok {
+			return added, fmt.Errorf("the new rule was added, but this backend cannot find the old one to remove it")
+		}
+		target, found := locator.findRule(ctx, old, old.IPv6)
+		if !found {
+			// Already gone. Nothing to undo and nothing to report as a
+			// half-finished edit.
+			return added, nil
+		}
 		removed, err = b.DeleteRule(ctx, target)
 	}
 	if err != nil {
@@ -453,6 +467,41 @@ func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, 
 		return added, fmt.Errorf("the replacement was added but the original rule could not be removed: %w", err)
 	}
 	return strings.TrimSpace(added + "\n" + removed), nil
+}
+
+// ruleNumbered finds the rule a client's number refers to. Backends that print
+// their own numbers are matched on those; the rest are numbered by position,
+// exactly as Service.Status hands them out.
+func ruleNumbered(rules []Rule, number int) (Rule, bool) {
+	for _, r := range rules {
+		if r.Number == number {
+			return r, true
+		}
+	}
+	if number >= 1 && number <= len(rules) {
+		return rules[number-1], true
+	}
+	return Rule{}, false
+}
+
+// sameRule reports whether two listed rules say the same thing.
+//
+// Everything an operator chose is compared and everything the listing computed
+// — the number, the raw line, the catalogue's annotations — is not, so the
+// answer survives the renumbering a delete causes.
+func sameRule(a, b Rule) bool {
+	return a.Action == b.Action &&
+		strings.EqualFold(a.Direction, b.Direction) &&
+		a.To == b.To && a.From == b.From &&
+		a.Port == b.Port && a.Protocol == b.Protocol &&
+		a.Comment == b.Comment
+}
+
+// ruleLocator is a backend that can find a rule again after the list beneath it
+// has moved. Discovered by assertion for the same reason handleRemover is: only
+// the numbered backend needs it.
+type ruleLocator interface {
+	findRule(ctx context.Context, want Rule, ipv6 bool) (int, bool)
 }
 
 // handleRemover is a backend that identifies rules by something other than
@@ -590,7 +639,16 @@ func (s *Service) AppProfiles(ctx context.Context) ([]AppProfile, error) {
 // run invokes a firewall tool on the host. These manage host services, so they
 // run there: a copy of ufw or firewall-cmd inside this image would report on
 // the container.
-func run(ctx context.Context, name string, args ...string) (string, error) {
+//
+// A variable rather than a function so a test can put a recorded transcript
+// behind it. The parsers in this package read output whose exact shape — ufw's
+// "(v6)" suffix, firewalld's tab-indented rich rules, the column order of
+// `iptables -L -n -v --line-numbers` — is the thing most likely to be wrong,
+// and a host that happens to run one of the three is no way to check the other
+// two.
+var run = runOnHost
+
+func runOnHost(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := hostexec.CommandOnHost(ctx, name, args...)

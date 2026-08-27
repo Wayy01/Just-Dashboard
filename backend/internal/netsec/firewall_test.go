@@ -277,6 +277,17 @@ func (b *recordedBackend) AddRule(_ context.Context, req RuleRequest) (string, e
 	if b.addErr != nil {
 		return "", b.addErr
 	}
+	// A numbered backend renumbers everything below an insert, which is the
+	// whole reason the original cannot be found again by arithmetic. Modelled
+	// here so the sequence under test is the one a real ufw would produce.
+	if b.kind == BackendUFW && req.Position > 0 && req.Position <= len(b.rules)+1 {
+		added := Rule{Action: strings.ToUpper(req.Action), Direction: "IN",
+			To: req.Port + "/" + req.Protocol, From: "Anywhere",
+			Port: req.Port, Protocol: req.Protocol, Comment: req.Comment}
+		b.rules = append(b.rules[:req.Position-1],
+			append([]Rule{added}, b.rules[req.Position-1:]...)...)
+		b.renumber()
+	}
 	return "rule added", nil
 }
 func (b *recordedBackend) DeleteRule(_ context.Context, number int) (string, error) {
@@ -284,7 +295,27 @@ func (b *recordedBackend) DeleteRule(_ context.Context, number int) (string, err
 	if b.delErr != nil {
 		return "", b.delErr
 	}
+	for i, r := range b.rules {
+		if r.Number == number {
+			b.rules = append(b.rules[:i], b.rules[i+1:]...)
+			b.renumber()
+			break
+		}
+	}
 	return "rule deleted", nil
+}
+func (b *recordedBackend) renumber() {
+	for i := range b.rules {
+		b.rules[i].Number = i + 1
+	}
+}
+func (b *recordedBackend) findRule(_ context.Context, want Rule, ipv6 bool) (int, bool) {
+	for _, r := range b.rules {
+		if r.IPv6 == ipv6 && sameRule(r, want) {
+			return r.Number, true
+		}
+	}
+	return 0, false
 }
 func (b *recordedBackend) removeHandle(_ context.Context, handle string) (string, error) {
 	b.calls = append(b.calls, "remove "+handle)
@@ -306,17 +337,61 @@ func editable(kind Backend) *recordedBackend {
 	return &recordedBackend{kind: kind, caps: FirewallCapabilities{Editable: true}}
 }
 
+// numbered seeds a ufw-shaped listing: ports in order, numbered from one.
+func numbered(ports ...string) []Rule {
+	rules := make([]Rule, 0, len(ports))
+	for i, p := range ports {
+		rules = append(rules, Rule{
+			Number: i + 1, Action: "ALLOW", Direction: "IN", From: "Anywhere",
+			To: p + "/tcp", Port: p, Protocol: "tcp",
+		})
+	}
+	return rules
+}
+
 // ufw stops at the first match, so the replacement has to land where the
-// original was rather than at the bottom — and the original, pushed down a
-// place by the insert, is number+1 by the time it is deleted.
-func TestReplaceRuleOnUFWInsertsAtThePositionThenDeletesTheOneBelow(t *testing.T) {
+// original was rather than at the bottom — and the original, pushed down by the
+// insert, is found again by what it says rather than by number+1. The
+// arithmetic is right only while the insert is guaranteed to have happened,
+// which is exactly what ufw does not guarantee.
+func TestReplaceRuleOnUFWInsertsAtThePositionThenRemovesTheOriginal(t *testing.T) {
 	b := editable(BackendUFW)
+	b.rules = numbered("22", "80", "443", "3000")
 	if _, err := replaceRule(t.Context(), b, 3, RuleRequest{Action: "allow", Port: "8443", Protocol: "tcp"}, "203.0.113.9"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"add 8443/tcp at 3", "delete 4"}
+	want := []string{"status", "add 8443/tcp at 3", "delete 4"}
 	if strings.Join(b.calls, "; ") != strings.Join(want, "; ") {
 		t.Fatalf("calls = %v, want %v", b.calls, want)
+	}
+	var ports []string
+	for _, r := range b.rules {
+		ports = append(ports, r.Port)
+	}
+	if strings.Join(ports, ",") != "22,80,8443,3000" {
+		t.Fatalf("rules = %v, want the replacement in the original's place", ports)
+	}
+}
+
+// An add ufw declined to perform must not be followed by a delete. ufw answers
+// a duplicate with "Skipping adding existing rule" and exit 0, so the number+1
+// this used to delete was the operator's *next* rule — a rule they never
+// touched, removed by an edit that changed nothing.
+func TestReplaceRuleDeletesNothingWhenTheAddWasSkipped(t *testing.T) {
+	b := editable(BackendUFW)
+	b.rules = numbered("22", "80", "443")
+	b.addErr = errRuleExists
+	_, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "443", Protocol: "tcp"}, "")
+	if err == nil {
+		t.Fatal("an edit that added nothing reported as success")
+	}
+	for _, c := range b.calls {
+		if strings.HasPrefix(c, "delete") {
+			t.Fatalf("deleted a rule after an add that did nothing: %v", b.calls)
+		}
+	}
+	if len(b.rules) != 3 {
+		t.Fatalf("rules = %d, want the list untouched", len(b.rules))
 	}
 }
 
@@ -343,6 +418,7 @@ func TestReplaceRuleOnFirewalldResolvesTheHandleBeforeAdding(t *testing.T) {
 // the only thing standing between the host and the network.
 func TestReplaceRuleLeavesTheOriginalWhenTheAddFails(t *testing.T) {
 	b := editable(BackendUFW)
+	b.rules = numbered("22", "80")
 	b.addErr = errors.New("ufw said no")
 	if _, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "22", Protocol: "tcp"}, ""); err == nil {
 		t.Fatal("expected the failure to be reported")
@@ -359,6 +435,7 @@ func TestReplaceRuleLeavesTheOriginalWhenTheAddFails(t *testing.T) {
 // reported rather than passed off as a clean edit.
 func TestReplaceRuleReportsAnOrphanedOriginal(t *testing.T) {
 	b := editable(BackendUFW)
+	b.rules = numbered("22", "80")
 	b.delErr = errors.New("no such rule")
 	out, err := replaceRule(t.Context(), b, 2, RuleRequest{Action: "allow", Port: "22", Protocol: "tcp"}, "")
 	if err == nil {

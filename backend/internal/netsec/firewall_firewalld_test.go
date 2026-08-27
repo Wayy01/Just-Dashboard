@@ -1,6 +1,7 @@
 package netsec
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -164,10 +165,14 @@ func TestBuildRichRule(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildRichRule(tc.req)
+			rules, err := buildRichRules(tc.req)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if len(rules) != 1 {
+				t.Fatalf("%d rules for one port: %v", len(rules), rules)
+			}
+			got := rules[0]
 			if !strings.HasPrefix(got, "rule ") {
 				t.Fatalf("not a rich rule: %q", got)
 			}
@@ -181,7 +186,7 @@ func TestBuildRichRule(t *testing.T) {
 }
 
 func TestBuildRichRuleRefusesAnUnknownAction(t *testing.T) {
-	if _, err := buildRichRule(RuleRequest{Action: "maybe", Port: "22"}); err == nil {
+	if _, err := buildRichRules(RuleRequest{Action: "maybe", Port: "22"}); err == nil {
 		t.Fatal("accepted")
 	}
 }
@@ -224,5 +229,81 @@ func TestEveryBackendDeclaresItself(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("expected ufw, firewalld and iptables, got %v", seen)
+	}
+}
+
+// firewalld spells a port range with a hyphen and has no multiport at all, and
+// answers either of the other two forms with a flat INVALID_PORT. Validation
+// upstream accepts the ufw spelling on purpose — an operator should not have to
+// know which tool is underneath — so this is where the two are reconciled, and
+// getting it wrong means every range and every list fails on Fedora, RHEL and
+// their derivatives while working on Debian.
+func TestFirewalldPortSpelling(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"8080", []string{"8080"}},
+		{"8000:8010", []string{"8000-8010"}},
+		{"80,443", []string{"80", "443"}},
+		{"80, 8000:8010", []string{"80", "8000-8010"}},
+		{"", nil},
+	}
+	for _, tc := range cases {
+		got := firewalldPorts(tc.in)
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("firewalldPorts(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A list becomes one rich rule per port, because there is no other shape
+// firewalld will take.
+func TestBuildRichRulesSplitsAList(t *testing.T) {
+	rules, err := buildRichRules(RuleRequest{
+		Action: "allow", From: "10.0.0.0/8", Port: "80,443", Protocol: "tcp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("%d rules, want one per port: %v", len(rules), rules)
+	}
+	if !strings.Contains(rules[0], `port port="80"`) || !strings.Contains(rules[1], `port port="443"`) {
+		t.Fatalf("ports not split across the rules: %v", rules)
+	}
+}
+
+// The same, on the path that does not use a rich rule: an unrestricted allow
+// is a plain --add-port, and a list is several of them in one call so a
+// half-applied rule cannot happen.
+func TestFirewalldAddPortSplitsAListInOneCall(t *testing.T) {
+	var calls [][]string
+	previous := run
+	run = func(_ context.Context, name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if len(args) > 0 && args[0] == "--get-default-zone" {
+			return "public\n", nil
+		}
+		return "success", nil
+	}
+	t.Cleanup(func() { run = previous })
+
+	if _, err := (firewalldBackend{}).AddRule(t.Context(), RuleRequest{
+		Action: "allow", Direction: "in", Port: "80,8000:8010", Protocol: "tcp",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var add []string
+	for _, c := range calls {
+		for _, a := range c {
+			if strings.HasPrefix(a, "--add-port=") {
+				add = append(add, a)
+			}
+		}
+	}
+	want := []string{"--add-port=80/tcp", "--add-port=8000-8010/tcp"}
+	if strings.Join(add, " ") != strings.Join(want, " ") {
+		t.Fatalf("add args = %v, want %v", add, want)
 	}
 }

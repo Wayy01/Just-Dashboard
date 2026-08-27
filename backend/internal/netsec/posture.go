@@ -97,7 +97,16 @@ type AssessInput struct {
 	// pocket; RebootRequired is the flag the package manager leaves.
 	SecurityUpdates int
 	RebootRequired  bool
-	Now             time.Time
+	// PackageManager names what runs the host, empty when none was found.
+	// SecurityFiltering says whether it can tell a security update from any
+	// other — Alpine and Arch publish no advisory data, and a count of zero
+	// from them means "cannot tell", not "none outstanding". A verdict that
+	// reads the two the same way reports a clean bill of health on every
+	// Alpine and Arch server, which is the failure this check exists to
+	// prevent rather than one to reproduce.
+	PackageManager    string
+	SecurityFiltering bool
+	Now               time.Time
 }
 
 // Thresholds. Each is a claim about what is bad, and a claim deserves one
@@ -140,6 +149,9 @@ func Assess(in AssessInput) *Posture {
 	}
 	if in.Fail2ban == nil || !in.Fail2ban.Available {
 		p.Skipped = append(p.Skipped, "fail2ban")
+	}
+	if in.PackageManager == "" || !in.SecurityFiltering {
+		p.Skipped = append(p.Skipped, "security updates")
 	}
 
 	// Worst first, then by area so a page of warnings does not reshuffle
@@ -204,8 +216,11 @@ func assessFirewall(in AssessInput) []SecurityFinding {
 		return []SecurityFinding{{
 			ID: "firewall.absent", Level: "warning", Area: "firewall",
 			Title:  "No host firewall",
-			Detail: "Neither ufw nor iptables answered on this host.",
-			Advice: "Install ufw. Without one, every port anything on this machine opens is reachable from wherever the machine is reachable — including the ones a container publishes by accident.",
+			Detail: "None of ufw, firewalld or iptables answered on this host.",
+			// Named per family rather than "install ufw", which is the wrong
+			// package on more than half the distributions this now runs on
+			// and reads as advice from somebody who assumed Debian.
+			Advice: "Install ufw on Debian and Ubuntu, or firewalld on Fedora, RHEL and openSUSE. Without one, every port anything on this machine opens is reachable from wherever the machine is reachable — including the ones a container publishes by accident.",
 		}}
 	}
 	out := []SecurityFinding{}
@@ -452,6 +467,18 @@ func assessCertificates(in AssessInput) []SecurityFinding {
 
 func assessUpdates(in AssessInput) []SecurityFinding {
 	out := []SecurityFinding{}
+	// A manager with no advisory data cannot be quoted a count of zero. Said
+	// plainly rather than left silent: silence here reads as "checked, and
+	// nothing outstanding", which on Alpine and Arch is a claim nothing on
+	// this host is in a position to make.
+	if in.PackageManager != "" && !in.SecurityFiltering {
+		out = append(out, SecurityFinding{
+			ID: "updates.unknown", Level: "notice", Area: "updates",
+			Title:  "Security updates cannot be counted on this host",
+			Detail: in.PackageManager + " publishes no advisory data, so pending updates cannot be separated into security fixes and everything else.",
+			Advice: "Treat the whole update list as the security list, and keep it short. The Updates page shows it.",
+		})
+	}
 	if in.SecurityUpdates >= securityUpdateWarningCount {
 		out = append(out, SecurityFinding{
 			ID: "updates.security", Level: "warning", Area: "updates",

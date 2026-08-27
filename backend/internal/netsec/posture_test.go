@@ -1,6 +1,8 @@
 package netsec
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,6 +43,7 @@ func TestAssessAQuietHostReportsNothing(t *testing.T) {
 			{Key: "permitemptypasswords", Value: "no"},
 			{Key: "maxauthtries", Value: "3"},
 		}},
+		PackageManager: "apt", SecurityFiltering: true,
 		Now: time.Now(),
 	})
 	if p.Status != "ok" {
@@ -48,6 +51,44 @@ func TestAssessAQuietHostReportsNothing(t *testing.T) {
 	}
 	if len(p.Skipped) != 0 {
 		t.Errorf("nothing should be skipped when everything answered: %q", p.Skipped)
+	}
+}
+
+// A package manager with no advisory data cannot be quoted a count of zero.
+// Left silent, the verdict reads as "checked, nothing outstanding" on every
+// Alpine and Arch host — a clean bill of health nothing on those machines is
+// in a position to give.
+func TestAssessSaysWhenSecurityUpdatesCannotBeCounted(t *testing.T) {
+	p := Assess(AssessInput{
+		Exposure:       &Exposure{Grade: "tailscale"},
+		PackageManager: "apk", SecurityFiltering: false,
+		Now: time.Now(),
+	})
+	f, ok := findingByID(p, "updates.unknown")
+	if !ok {
+		t.Fatal("a host that cannot count security updates reported as having none")
+	}
+	if f.Level != "notice" {
+		t.Errorf("level = %q, want notice — this is missing information, not a misconfiguration", f.Level)
+	}
+	if !strings.Contains(f.Detail, "apk") {
+		t.Errorf("the finding does not name the manager: %q", f.Detail)
+	}
+	if !slices.Contains(p.Skipped, "security updates") {
+		t.Errorf("skipped = %q, want the unanswerable check listed", p.Skipped)
+	}
+}
+
+// The counted case is unchanged: a manager that does publish advisories says
+// nothing when there is nothing to say.
+func TestAssessSaysNothingWhenSecurityUpdatesAreCountedAndZero(t *testing.T) {
+	p := Assess(AssessInput{
+		Exposure:       &Exposure{Grade: "tailscale"},
+		PackageManager: "dnf", SecurityFiltering: true,
+		Now: time.Now(),
+	})
+	if _, ok := findingByID(p, "updates.unknown"); ok {
+		t.Error("a manager that can count reported as unable to")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -245,11 +246,15 @@ func (s *Service) rebootState(ctx context.Context) (bool, []string) {
 		return true, pkgs
 	}
 	// dnf's needs-restarting exits 1 when a reboot is required, which is the
-	// RPM world's equivalent of the flag file above.
+	// RPM world's equivalent of the flag file above. Exactly 1 — every other
+	// non-zero code is the tool failing, and reading those as "yes" puts a
+	// permanent reboot warning on a host that never asked for one.
 	if hostexec.AvailableOnHost("needs-restarting") {
 		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := hostexec.CommandOnHost(runCtx, "needs-restarting", "-r").Run(); err != nil {
+		err := hostexec.CommandOnHost(runCtx, "needs-restarting", "-r").Run()
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return true, nil
 		}
 	}

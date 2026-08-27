@@ -144,6 +144,8 @@ func (s *Server) handleSecurityPosture(w http.ResponseWriter, r *http.Request) e
 		if report, err := s.modules.updates.Check(ctx); err == nil {
 			in.SecurityUpdates = report.SecurityCount
 			in.RebootRequired = report.RebootRequired
+			in.PackageManager = report.Manager
+			in.SecurityFiltering = report.SecurityFiltering
 		}
 	})
 	wg.Wait()

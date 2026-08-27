@@ -3,7 +3,9 @@ package updates
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -65,12 +67,31 @@ func detect() manager {
 // run is the shared invocation: on the host, bounded, with a predictable
 // locale so the parsers are not reading a translated table.
 func run(ctx context.Context, limit time.Duration, name string, args ...string) (string, error) {
+	out, _, err := runCode(ctx, limit, name, args...)
+	return out, err
+}
+
+// runCode is run, with the exit status kept.
+//
+// Package managers use the exit code to say things no other tool does — dnf's
+// 100 for "there are updates", zypper's 100-series for informational states —
+// and collapsing that into "err != nil" is how a host with updates waiting
+// reports an error and a host whose metadata is missing reports that it is up
+// to date.
+func runCode(ctx context.Context, limit time.Duration, name string, args ...string) (string, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	cmd := hostexec.CommandOnHost(ctx, name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive")
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	if err == nil {
+		return string(out), 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return string(out), exitErr.ExitCode(), err
+	}
+	return string(out), -1, err
 }
 
 // --- dnf and yum -------------------------------------------------------
@@ -86,10 +107,18 @@ func (m dnfManager) SupportsSecurityOnly() bool { return true }
 // That exit code is the whole trap: treated as a failure, a host with updates
 // waiting reports an error and a host with none reports success, which is
 // exactly backwards from what an operator would guess when the page is empty.
+//
+// It is read as a code rather than guessed at from the shape of the output.
+// The earlier test — "an error whose output has no newline in it" — passed a
+// real failure through as an empty package list, and `dnf --cacheonly` on a
+// host whose metadata has been cleared says exactly that, on one line ending
+// in one: `Error: Cache-only enabled but no cache for 'baseos'`. Reported as
+// "nothing to update", which for a security signal is the worst answer
+// available.
 func (m dnfManager) List(ctx context.Context) ([]Package, error) {
-	out, err := run(ctx, 90*time.Second, m.binary, "-q", "--cacheonly", "check-update")
-	if err != nil && !strings.Contains(out, "\n") {
-		return nil, err
+	out, code, err := runCode(ctx, 90*time.Second, m.binary, "-q", "--cacheonly", "check-update")
+	if err != nil && code != 100 {
+		return nil, dnfError(out, err)
 	}
 	packages := parseDNFCheckUpdate(out)
 
@@ -108,13 +137,33 @@ func (m dnfManager) List(ctx context.Context) ([]Package, error) {
 	return packages, nil
 }
 
+// UpgradeCommand puts the command before its options, which is not a style
+// choice.
+//
+// dnf5 — Fedora 41 and later — parses `--security` as belonging to the
+// subcommand and rejects it anywhere else, in as many words: *Unknown argument
+// "--security" for command "dnf5". ... It has to be placed after the command.*
+// dnf4 accepts either order, so this form is the one that works on both, and
+// the other form silently made "install security updates" the button that
+// fails on every current Fedora.
 func (m dnfManager) UpgradeCommand(securityOnly bool) (string, []string, []string) {
-	args := []string{"-y"}
+	args := []string{"upgrade", "-y"}
 	if securityOnly {
 		args = append(args, "--security")
 	}
-	args = append(args, "upgrade")
 	return m.binary, args, []string{"LC_ALL=C"}
+}
+
+// dnfError puts the tool's own words in front of Go's. "exit status 1" is not
+// something an operator can act on; "no cache for 'baseos'" is.
+func dnfError(out string, err error) error {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Error") || strings.HasPrefix(line, "Cache-only") {
+			return errors.New(line)
+		}
+	}
+	return err
 }
 
 // parseDNFCheckUpdate reads the three-column table check-update prints:
@@ -215,14 +264,20 @@ func (zypperManager) Name() string               { return "zypper" }
 func (zypperManager) Detect() bool               { return hostexec.AvailableOnHost("zypper") }
 func (zypperManager) SupportsSecurityOnly() bool { return true }
 
+// List reads the update table, tolerating zypper's informational exits.
+//
+// zypper reserves 100-106 for states that are not failures — a repository it
+// had to skip, a capability it could not find — and returning early on those
+// reported an error and no packages on a host that merely has one stale
+// repository, which most long-lived servers do.
 func (m zypperManager) List(ctx context.Context) ([]Package, error) {
-	out, err := run(ctx, 90*time.Second, "zypper", "--non-interactive", "--no-refresh", "list-updates")
-	if err != nil {
+	out, code, err := runCode(ctx, 90*time.Second, "zypper", "--non-interactive", "--no-refresh", "list-updates")
+	if err != nil && !zypperInformational(code) {
 		return nil, err
 	}
 	packages := parseZypperUpdates(out)
-	if sec, err := run(ctx, 90*time.Second, "zypper", "--non-interactive", "--no-refresh",
-		"list-patches", "--category", "security"); err == nil {
+	if sec, code, err := runCode(ctx, 90*time.Second, "zypper", "--non-interactive", "--no-refresh",
+		"list-patches", "--category", "security"); err == nil || zypperInformational(code) {
 		names := parseZypperPatches(sec)
 		for i := range packages {
 			if names[packages[i].Name] {
@@ -239,6 +294,11 @@ func (m zypperManager) UpgradeCommand(securityOnly bool) (string, []string, []st
 	}
 	return "zypper", []string{"--non-interactive", "update"}, []string{"LC_ALL=C"}
 }
+
+// zypperInformational reports one of zypper's non-failure exit codes. Its own
+// manual calls 100 through 106 informational: an update is available, a reboot
+// is needed, a repository was skipped.
+func zypperInformational(code int) bool { return code >= 100 && code <= 106 }
 
 // parseZypperUpdates reads the pipe-delimited table:
 //

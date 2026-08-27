@@ -332,8 +332,14 @@ export function FirewallPanel({
                           className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                           onClick={() =>
                             confirm({
+                              // No typed phrase. A rule is one line, visible on
+                              // the row being deleted and re-addable from the
+                              // form beside it — and a phrase in front of
+                              // something done a dozen times a day is a phrase
+                              // that gets typed without being read, which is
+                              // what makes the phrase worthless on the routes
+                              // that keep it.
                               title: "Delete firewall rule",
-                              phrase: `delete rule ${rule.number}`,
                               confirmLabel: "Delete",
                               description: <p className="font-mono text-xs">{rule.raw}</p>,
                               action: async (c) => {
