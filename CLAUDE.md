@@ -1742,12 +1742,30 @@ A change that weakens any of these has to say so explicitly:
    Typed, because they are rare and there is no way back: `DROP DATABASE`, `DROP TABLE`,
    `DROP COLUMN`, `TRUNCATE`, an import that truncates first, dropping a Mongo collection, a
    Mongo pipeline with `$out`/`$merge`, a `critical` statement in the query runner, restoring
-   a database or a backup over live data, `compose down`, removing a Docker volume, any prune,
-   deleting a dashboard or Linux account, a recursive directory delete, `git discard` and
-   `git reset --hard`, toggling the firewall, resetting it, switching the inbound default to
-   deny, changing sshd's configuration, ending somebody's SSH session, deleting a proxy site,
-   a stream or a password file, revoking a certificate, applying package updates, and
-   installing a new version of the dashboard itself.
+   a database or a backup over live data, `compose down`, removing a Docker volume, a prune
+   that also sweeps volumes (`docker system prune --volumes`), deleting a dashboard or Linux
+   account, a recursive directory delete, `git discard` and `git reset --hard`, toggling the
+   firewall, resetting it, switching the inbound default to deny, changing sshd's
+   configuration, revoking a certificate, applying package updates, and installing a new
+   version of the dashboard itself.
+
+   The 0.6.1 review narrowed this set. A prune that leaves volumes alone (`prune images`,
+   `prune networks`, `prune containers`, and the "prune everything" sweep without
+   `--volumes`) is no longer typed — a container, a network or an image comes back from a
+   registry or a compose file, so the loss has a path back and the reflex the phrase guards
+   against costs more than it saves. Deleting a proxy site, an nginx stream or an htpasswd
+   file is not typed either: each is recreated from the same form. Deleting a git branch is
+   a pointer whose commits survive in the reflog and on the remote. And ending an SSH
+   session is a SIGHUP the operator reconnects past — the earlier claim that it costs "the
+   way back into the machine" was overstated: the key still works and sshd still runs. All
+   of these keep `s.destructive` and still stop the operator with an ordinary confirm
+   dialog.
+
+   `compose down` was looked at in the same pass and kept: it is the one compose action
+   that removes the containers rather than just stopping them, and on a host running
+   several stacks typing the name is the guard against `down`-ing the wrong one. `git
+   discard` and `git reset --hard` were kept too — they overwrite uncommitted work, which
+   the reflog does not cover, so there is genuinely no way back.
 
    The firewall and sshd entries are the ones worth spelling out, because they are not about
    losing data. They are the marker's other meaning: get one wrong and the way back into the
@@ -1767,10 +1785,12 @@ A change that weakens any of these has to say so explicitly:
    Not typed, because they are routine or recoverable or both: deleting rows and documents and
    Redis keys, dropping an index, forgetting a connection, stopping a database session,
    stopping/restarting/killing/removing/recreating a container, removing an image or a network,
-   deleting one file, signalling a process, stopping or restarting a service, revoking a token
-   or an SSH key, deleting a backup job or a deploy project, rolling back a deploy, disabling a
-   vhost, adding, **editing** or deleting a firewall rule, tuning a fail2ban jail, unbanning an
-   address, stopping a running job, and closing a terminal session, window or pane.
+   any prune that spares volumes, deleting one file, signalling a process, ending an SSH
+   session, stopping or restarting a service, revoking a token or an SSH key, deleting a
+   backup job or a deploy project, rolling back a deploy, disabling **or deleting** a vhost,
+   deleting an nginx stream or an htpasswd file, deleting a git branch, adding, **editing** or
+   deleting a firewall rule, tuning a fail2ban jail, unbanning an address, stopping a running
+   job, and closing a terminal session, window or pane.
 
    Editing a firewall rule is a write and not a destructive one, and is mounted accordingly:
    the replacement goes in before the original comes out, so there is no moment the rule is
@@ -1780,10 +1800,11 @@ A change that weakens any of these has to say so explicitly:
 
    Several routes decide by content rather than by path, and the narrowing lives at the call
    site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
-   `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`, and
-   `composeNeedsPhrase` only for `down` — with `requireComposePhraseWS` applying the same
-   narrowing on the socket so the two entry points cannot disagree. The frontend mirrors each
-   with a conditional `phrase`, and the server re-decides regardless.
+   `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`,
+   `handlePruneAll` only when `volumes=true`, and `composeNeedsPhrase` only for `down` — with
+   `requireComposePhraseWS` applying the same narrowing on the socket so the two entry points
+   cannot disagree. The frontend mirrors each with a conditional `phrase`, and the server
+   re-decides regardless.
 
    One relaxation on top of all this: `httpx.RequireTypedConfirmationWS` also accepts the
    phrase as a query parameter — used only by WebSocket routes, where a browser cannot set a

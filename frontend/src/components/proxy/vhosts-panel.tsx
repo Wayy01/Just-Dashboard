@@ -194,7 +194,6 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                               onClick={() =>
                                 confirm({
                                   title: `Delete ${vhost.name}`,
-                                  phrase: vhost.name,
                                   confirmLabel: "Delete and reload",
                                   description: (
                                     <p>
@@ -203,10 +202,8 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                                       <code className="font-mono">{vhost.name}.bak</code>.
                                     </p>
                                   ),
-                                  action: async (c) => {
-                                    await del(`/proxy/sites/${encodeURIComponent(vhost.name)}`, {
-                                      confirm: c,
-                                    })
+                                  action: async () => {
+                                    await del(`/proxy/sites/${encodeURIComponent(vhost.name)}`)
                                     refresh()
                                   },
                                 })

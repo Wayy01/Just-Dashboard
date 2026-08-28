@@ -78,7 +78,6 @@ export function BranchesPanel({
   const remove = (b: GitBranch, force: boolean) =>
     confirm({
       title: `${force ? "Force delete" : "Delete"} branch ${b.name}`,
-      phrase: "delete branch",
       confirmLabel: force ? "Force delete" : "Delete",
       description: force ? (
         <p className="text-destructive">
@@ -91,8 +90,8 @@ export function BranchesPanel({
           has commits not merged anywhere, so nothing is lost by accident.
         </p>
       ),
-      action: async (c) => {
-        await post("/git/branch/delete", { ref: b.name, hard: force }, { confirm: c, query: q })
+      action: async () => {
+        await post("/git/branch/delete", { ref: b.name, hard: force }, { query: q })
         branches.refresh()
         onChanged()
       },

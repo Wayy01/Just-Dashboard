@@ -487,9 +487,6 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleNetworkPrune(w http.ResponseWriter, r *http.Request) error {
-	if err := httpx.RequireTypedConfirmation(w, r, "prune networks"); err != nil {
-		return err
-	}
 	rep, err := s.modules.docker.PruneNetworks(r.Context())
 	if err != nil {
 		return s.dockerErr(err)

@@ -330,12 +330,10 @@ func (s *Server) handleGitBranchDelete(w http.ResponseWriter, r *http.Request) e
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	// The confirmation stands whether or not force is set: a safe delete of a
-	// merged branch is still a deliberate act, and the phrase is the same either
-	// way so the habit does not depend on which kind it turned out to be.
-	if err := httpx.RequireTypedConfirmation(w, r, "delete branch"); err != nil {
-		return err
-	}
+	// An ordinary confirmation, not a typed phrase: a deleted branch is a name
+	// pointing at a commit, and the commit survives in the reflog and on the
+	// remote. Losing the pointer is recoverable in a way that discarding
+	// uncommitted work is not, which is where the phrase still stands.
 	return s.gitAction(w, r, "branch.delete", func(p string) (*gitx.Result, error) {
 		return s.modules.git.DeleteBranch(r.Context(), p, req.Ref, req.Hard)
 	})

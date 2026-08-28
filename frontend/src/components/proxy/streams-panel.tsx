@@ -151,7 +151,6 @@ export function StreamsPanel() {
                             onClick={() =>
                               confirm({
                                 title: `Delete ${stream.name}`,
-                                phrase: stream.name,
                                 confirmLabel: "Delete and reload",
                                 description: (
                                   <p>
@@ -160,10 +159,8 @@ export function StreamsPanel() {
                                     <code className="font-mono">{stream.name}.conf.bak</code>.
                                   </p>
                                 ),
-                                action: async (c) => {
-                                  await del(`/proxy/streams/${encodeURIComponent(stream.name)}`, {
-                                    confirm: c,
-                                  })
+                                action: async () => {
+                                  await del(`/proxy/streams/${encodeURIComponent(stream.name)}`)
                                   refresh()
                                 },
                               })

@@ -70,7 +70,6 @@ export default function DockerOverviewPage() {
                 onClick={() =>
                   confirm({
                     title: "Prune everything",
-                    phrase: "prune everything",
                     confirmLabel: "Prune",
                     description: (
                       <p>
@@ -78,11 +77,9 @@ export default function DockerOverviewPage() {
                         left alone unless you prune them from the Volumes page.
                       </p>
                     ),
-                    action: async (c) => {
+                    action: async () => {
                       const reports = await post<{ kind: string; spaceReclaimed: number }[]>(
                         "/docker/prune",
-                        undefined,
-                        { confirm: c },
                       )
                       const total = reports.reduce((s, r) => s + r.spaceReclaimed, 0)
                       notify.success(`Reclaimed ${bytes(total)}`)

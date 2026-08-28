@@ -315,9 +315,6 @@ func (s *Server) handleDisconnectSession(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return httpx.BadRequest("invalid process id")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, "disconnect "+strconv.Itoa(pid)); err != nil {
-		return err
-	}
 	session, err := s.modules.netsec.Disconnect(r.Context(), int32(pid))
 	if err != nil {
 		return httpx.BadRequest("%v", err)

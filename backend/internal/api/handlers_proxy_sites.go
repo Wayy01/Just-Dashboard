@@ -149,9 +149,6 @@ func (s *Server) handleSiteApply(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) error {
 	name := chi.URLParam(r, "name")
-	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-		return err
-	}
 	if err := s.modules.proxy.DeleteSite(r.Context(), name); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
@@ -359,9 +356,6 @@ func (s *Server) handleStreamApply(w http.ResponseWriter, r *http.Request) error
 
 func (s *Server) handleStreamDelete(w http.ResponseWriter, r *http.Request) error {
 	name := chi.URLParam(r, "name")
-	if err := httpx.RequireTypedConfirmation(w, r, name); err != nil {
-		return err
-	}
 	if err := s.modules.proxy.DeleteStream(r.Context(), name); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
@@ -418,9 +412,6 @@ func (s *Server) handleAuthUserRemove(w http.ResponseWriter, r *http.Request) er
 
 func (s *Server) handleAuthFileDelete(w http.ResponseWriter, r *http.Request) error {
 	file := chi.URLParam(r, "file")
-	if err := httpx.RequireTypedConfirmation(w, r, file); err != nil {
-		return err
-	}
 	if err := proxysvc.DeleteAuthFile(file); err != nil {
 		return httpx.BadRequest("%v", err)
 	}

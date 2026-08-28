@@ -96,7 +96,6 @@ function CurrentSessions() {
                         onClick={() =>
                           confirm({
                             title: `Disconnect ${session.user}`,
-                            phrase: `disconnect ${session.pid}`,
                             confirmLabel: "Disconnect",
                             description: (
                               <p>
@@ -106,12 +105,8 @@ function CurrentSessions() {
                                 under tmux or nohup will not survive.
                               </p>
                             ),
-                            action: async (c) => {
-                              await post(
-                                `/ssh-sessions/${session.pid}/disconnect`,
-                                {},
-                                { confirm: c },
-                              )
+                            action: async () => {
+                              await post(`/ssh-sessions/${session.pid}/disconnect`, {})
                               refresh()
                             },
                           })

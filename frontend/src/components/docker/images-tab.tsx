@@ -177,7 +177,6 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                   onClick={() =>
                     confirm({
                       title: "Prune images",
-                      phrase: "prune images",
                       confirmLabel: "Prune",
                       description: (
                         <p>
@@ -186,12 +185,8 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                           can need them.
                         </p>
                       ),
-                      action: async (c) => {
-                        const rep = await post<{ spaceReclaimed: number }>(
-                          "/docker/images/prune",
-                          undefined,
-                          { confirm: c },
-                        )
+                      action: async () => {
+                        const rep = await post<{ spaceReclaimed: number }>("/docker/images/prune")
                         notify.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                         refresh()
                       },
