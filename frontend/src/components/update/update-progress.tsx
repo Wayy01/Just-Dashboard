@@ -1,12 +1,12 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { CheckCircle2, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { relativeTime } from "@/lib/format"
 import type { UpdateRun } from "@/lib/types"
 import { phaseLabel } from "@/hooks/use-self-update"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 
 /**
  * An upgrade, watched rather than waited for — and watched across the moment
@@ -40,7 +40,7 @@ export function UpdateProgress({
     <div className={cn("min-w-0 space-y-3", className)}>
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="pt-0.5">
-          {running && <Loader2 className="size-4 animate-spin text-primary" />}
+          {running && <Spinner className="size-4 text-primary" />}
           {run.status === "success" && <CheckCircle2 className="size-4 text-success" />}
           {run.status === "failed" && <XCircle className="size-4 text-destructive" />}
         </span>

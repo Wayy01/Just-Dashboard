@@ -11,7 +11,6 @@ import {
   GitBranch,
   Hammer,
   Layers,
-  Loader2,
   Play,
   RefreshCw,
   RotateCw,
@@ -31,8 +30,8 @@ import { Hint, Term } from "@/components/docker/explain"
 import { CodeEditor } from "@/components/code-editor"
 import { LogViewer } from "@/components/log-viewer"
 import { SidePanel } from "@/components/side-panel"
-import { EmptyState, ErrorState, LoadingRows, Notice } from "@/components/state"
-import { StatusBadge } from "@/components/status-dot"
+import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -254,7 +253,7 @@ function StackActions({
       {can("service.control") && (
         <>
           <Button size="sm" disabled={busy} onClick={quiet(() => run("up"))}>
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            {busy ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
             Up
           </Button>
           {/*
@@ -412,7 +411,7 @@ function ServiceRow({
               not created
             </Badge>
           ) : (
-            <StatusBadge state={service.state} />
+            <Status state={service.state} />
           )}
           {service.health && service.health !== "healthy" && (
             <Badge
@@ -571,7 +570,7 @@ function ComposeEditor({
         </Button>
         {canWrite && (
           <Button size="xs" onClick={() => save()} disabled={busy || !dirty}>
-            {busy ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+            {busy ? <Spinner className="size-3" /> : <Save className="size-3" />}
             Save
           </Button>
         )}

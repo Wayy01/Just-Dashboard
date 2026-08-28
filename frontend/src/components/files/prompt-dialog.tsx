@@ -1,11 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/state"
 import {
   Dialog,
   DialogContent,
@@ -133,7 +133,7 @@ function PromptBody({
             Cancel
           </Button>
           <Button onClick={run} disabled={busy || !value.trim() || !!error}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             {request.confirmLabel ?? "OK"}
           </Button>
         </DialogFooter>

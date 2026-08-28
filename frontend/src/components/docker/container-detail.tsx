@@ -9,7 +9,6 @@ import {
   Eye,
   EyeOff,
   FileWarning,
-  Loader2,
   Pencil,
   ShieldAlert,
 } from "lucide-react"
@@ -28,8 +27,8 @@ import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { LogViewer } from "@/components/log-viewer"
 import { XtermPane } from "@/components/xterm-pane"
-import { ErrorState, LoadingRows, Notice } from "@/components/state"
-import { StatusBadge } from "@/components/status-dot"
+import { ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
+import { Status } from "@/components/status-dot"
 import { ContainerUsage } from "@/components/docker/container-usage"
 import { ContainerFindings } from "@/components/docker/diagnosis-panel"
 import { PortLink } from "@/components/docker/shared"
@@ -40,6 +39,7 @@ import { Detail, DetailList } from "@/components/page"
 import { Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
@@ -118,7 +118,7 @@ function ContainerDetailPanel({
       title={
         <>
           {detail?.name ?? "Container"}
-          {detail && <StatusBadge state={detail.state} />}
+          {detail && <Status state={detail.state} />}
         </>
       }
       description={detail?.image ?? containerId ?? undefined}
@@ -623,7 +623,7 @@ function ContainerActions({
       )}
       {can("service.control") && onDuplicate && (
         <Button size="sm" variant="outline" onClick={duplicate} disabled={busy}>
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Copy className="size-3.5" />}
+          {busy ? <Spinner className="size-3.5" /> : <Copy className="size-3.5" />}
           Duplicate
         </Button>
       )}
@@ -658,7 +658,7 @@ function RenameButton({ detail, onRenamed }: { detail: ContainerDetail; onRename
   }
   return (
     <span className="flex items-center gap-1.5">
-      <input
+      <Input
         autoFocus
         value={name}
         spellCheck={false}
@@ -667,7 +667,7 @@ function RenameButton({ detail, onRenamed }: { detail: ContainerDetail; onRename
           if (e.key === "Enter") save()
           if (e.key === "Escape") setEditing(false)
         }}
-        className="h-8 w-40 rounded-md border bg-background px-2 font-mono text-xs outline-none focus-visible:border-ring"
+        className="h-8 w-40 font-mono text-xs"
       />
       <Button size="xs" onClick={save} disabled={!name.trim() || name === detail.name}>
         Save
@@ -949,31 +949,31 @@ function ResourceLimitsEditor({
           <label className="text-[10px] text-muted-foreground" htmlFor="limit-memory">
             Memory (MB)
           </label>
-          <input
+          <Input
             id="limit-memory"
             type="number"
             value={memory}
             placeholder="unlimited"
             onChange={(e) => setMemory(e.target.value)}
-            className="h-8 w-full rounded-md border bg-background px-2 text-xs outline-none focus-visible:border-ring"
+            className="h-8 text-xs"
           />
         </div>
         <div className="w-28">
           <label className="text-[10px] text-muted-foreground" htmlFor="limit-cpus">
             CPU cores
           </label>
-          <input
+          <Input
             id="limit-cpus"
             type="number"
             step="0.5"
             value={cpus}
             placeholder="unlimited"
             onChange={(e) => setCpus(e.target.value)}
-            className="h-8 w-full rounded-md border bg-background px-2 text-xs outline-none focus-visible:border-ring"
+            className="h-8 text-xs"
           />
         </div>
         <Button size="sm" onClick={save} disabled={busy}>
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <Spinner className="size-3.5" />}
           Apply
         </Button>
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>

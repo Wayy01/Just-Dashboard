@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, Cable, Loader2, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, Cable, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { SiteResult, StreamSpec, StreamStatus } from "@/lib/types"
@@ -10,8 +10,9 @@ import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { CodeEditor } from "@/components/code-editor"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { RowLink } from "@/components/page"
 import { SidePanel } from "@/components/side-panel"
-import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
@@ -122,12 +123,7 @@ export function StreamsPanel() {
                   {data.streams.map((stream) => (
                     <TableRow key={stream.name} className="group">
                       <TableCell>
-                        <button
-                          className="text-[13px] font-medium hover:underline"
-                          onClick={() => open(stream)}
-                        >
-                          {stream.name}
-                        </button>
+                        <RowLink onClick={() => open(stream)}>{stream.name}</RowLink>
                       </TableCell>
                       <TableCell className="font-mono text-xs">
                         {stream.listen}
@@ -297,7 +293,7 @@ function StreamForm({
             onClick={save}
             disabled={busy || !spec.name || !spec.listen || !spec.upstream}
           >
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Save and reload
           </Button>
         </>

@@ -11,10 +11,10 @@ import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useMetrics } from "@/hooks/use-metrics"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Page, PageHeader, Metric, MetricStrip, SearchInput } from "@/components/page"
+import { Page, PageHeader, Metric, MetricStrip, RowLink, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
-import { StatusBadge } from "@/components/status-dot"
+import { Status } from "@/components/status-dot"
 import { UnitJournalSheet } from "@/components/procs/unit-journal"
 import { PM2LogSheet } from "@/components/procs/pm2-logs"
 import { Badge } from "@/components/ui/badge"
@@ -136,19 +136,14 @@ function PM2Tab() {
                 <TableRow key={proc.id} className="group" onActivate={() => setLogsFor(proc.name)}>
                   <TableCell>
                     <div className="max-w-[22rem] min-w-0">
-                      <button
-                        className="truncate text-[13px] font-medium hover:underline"
-                        onClick={() => setLogsFor(proc.name)}
-                      >
-                        {proc.name}
-                      </button>
+                      <RowLink onClick={() => setLogsFor(proc.name)}>{proc.name}</RowLink>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">
                         {proc.scriptPath}
                       </p>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge state={proc.status} />
+                    <Status state={proc.status} />
                   </TableCell>
                   <TableCell className="numeric text-right font-mono text-xs">
                     {percent(proc.cpu)}
@@ -342,19 +337,14 @@ function SystemdTab() {
                 >
                   <TableCell>
                     <div className="max-w-[26rem] min-w-0">
-                      <button
-                        className="truncate text-[13px] font-medium hover:underline"
-                        onClick={() => setJournalFor(unit.name)}
-                      >
-                        {unit.name}
-                      </button>
+                      <RowLink onClick={() => setJournalFor(unit.name)}>{unit.name}</RowLink>
                       <p className="truncate text-[11px] text-muted-foreground">
                         {unit.description}
                       </p>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <StatusBadge
+                    <Status
                       state={unit.activeState}
                       label={`${unit.activeState} (${unit.subState})`}
                     />

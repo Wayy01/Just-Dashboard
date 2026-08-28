@@ -2,27 +2,18 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronRight, Cpu, MemoryStick, Monitor, Moon, Search, Sun } from "lucide-react"
+import { ChevronRight, Cpu, MemoryStick, Moon, Search, Sun } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { percent } from "@/lib/format"
 import { useMetrics } from "@/hooks/use-metrics"
 import { useHealth } from "@/hooks/use-metrics-history"
 import { HealthBadge } from "@/components/metrics/health-panel"
 import { useTheme } from "@/hooks/use-theme"
-import { THEMES } from "@/lib/themes"
 import { navLocation } from "@/components/app-sidebar"
 import { useCommandPalette } from "@/components/command-palette"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 
 /**
  * The one bar across the top of every page.
@@ -50,6 +41,12 @@ export function TopBar() {
             <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
           </>
         )}
+        {here?.parent && (
+          <>
+            <span className="hidden truncate text-muted-foreground sm:inline">{here.parent}</span>
+            <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+          </>
+        )}
         <span className="truncate font-medium">{here?.title ?? "Just Dashboard"}</span>
       </nav>
 
@@ -67,7 +64,7 @@ export function TopBar() {
         <Search className="size-4" />
       </Button>
 
-      <ThemeMenu />
+      <ThemeToggle />
     </header>
   )
 }
@@ -97,7 +94,7 @@ function Vitals() {
         // Only when there is something to say. A permanent green badge in the
         // chrome is a badge nobody looks at, which makes it useless on the day
         // it turns red.
-        <Link href="/" aria-label="Health findings" className="hidden sm:block">
+        <Link href="/" aria-label="Health findings" className="hidden items-center sm:flex">
           <HealthBadge status={health.status} />
         </Link>
       )}
@@ -126,17 +123,10 @@ function Vitals() {
       )}
       <Tooltip>
         <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium",
-              live
-                ? "border-success/25 bg-success/10 text-success"
-                : "border-border bg-muted/50 text-muted-foreground",
-            )}
-          >
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             <span
               className={cn(
-                "size-1.5 rounded-full",
+                "size-1.5 shrink-0 rounded-full",
                 live ? "animate-pulse bg-success" : "bg-muted-foreground",
               )}
             />
@@ -191,82 +181,26 @@ function Reading({
   )
 }
 
-/**
- * The palette switcher, reachable from anywhere rather than only from the
- * Appearance page — twelve themes are a preference you tune while looking at
- * the screen you are tuning them for.
- */
-function ThemeMenu() {
-  const { themeId, mode, setTheme } = useTheme()
+/** Flips between light and dark, reachable from anywhere rather than only
+ *  from the Appearance page — it's a preference you tune while looking at
+ *  the screen you are tuning it for. */
+function ThemeToggle() {
+  const { mode, toggle } = useTheme()
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Theme" className="text-muted-foreground">
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={mode === "dark" ? "Switch to light" : "Switch to dark"}
+          className="text-muted-foreground"
+          onClick={toggle}
+        >
           {mode === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuLabel className="eyebrow">Dark</DropdownMenuLabel>
-        {THEMES.filter((t) => t.mode === "dark").map((theme) => (
-          <ThemeItem
-            key={theme.id}
-            id={theme.id}
-            name={theme.name}
-            active={theme.id === themeId}
-            onPick={setTheme}
-          />
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="eyebrow">Light</DropdownMenuLabel>
-        {THEMES.filter((t) => t.mode === "light").map((theme) => (
-          <ThemeItem
-            key={theme.id}
-            id={theme.id}
-            name={theme.name}
-            active={theme.id === themeId}
-            onPick={setTheme}
-          />
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <a href="/appearance">
-            <Monitor className="size-4" />
-            All appearance settings
-          </a>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-function ThemeItem({
-  id,
-  name,
-  active,
-  onPick,
-}: {
-  id: string
-  name: string
-  active: boolean
-  onPick: (id: string) => void
-}) {
-  return (
-    <DropdownMenuItem onSelect={() => onPick(id)} className="gap-2">
-      {/* Each row is drawn in the palette it offers: the swatches carry the
-          theme attribute, so they resolve to that theme's tokens inside a menu
-          painted in the current one. */}
-      <span
-        data-theme={id}
-        aria-hidden
-        className="flex shrink-0 items-center gap-0.5 rounded border border-border bg-background p-0.5"
-      >
-        <span className="size-2.5 rounded-[2px] bg-primary" />
-        <span className="size-2.5 rounded-[2px] bg-chart-3" />
-        <span className="size-2.5 rounded-[2px] bg-card" />
-      </span>
-      <span className="flex-1 text-[13px]">{name}</span>
-      {active && <span className="size-1.5 rounded-full bg-primary" />}
-    </DropdownMenuItem>
+      </TooltipTrigger>
+      <TooltipContent>{mode === "dark" ? "Switch to light" : "Switch to dark"}</TooltipContent>
+    </Tooltip>
   )
 }

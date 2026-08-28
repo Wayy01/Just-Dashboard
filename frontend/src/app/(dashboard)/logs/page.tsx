@@ -12,6 +12,7 @@ import { usePoll } from "@/hooks/use-poll"
 import { Page, PageHeader, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { LogViewer } from "@/components/log-viewer"
+import { Status } from "@/components/status-dot"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -177,24 +178,7 @@ function LogStream({
       lines={lines}
       onClear={() => setLines([])}
       emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
-      toolbar={
-        <span
-          className={cn(
-            "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-            state === "open"
-              ? "border-success/25 bg-success/10 text-success"
-              : "border-border text-muted-foreground",
-          )}
-        >
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              state === "open" ? "bg-success" : "bg-muted-foreground",
-            )}
-          />
-          {state}
-        </span>
-      }
+      toolbar={<Status state={state} label={state} className="text-[11px]" />}
     />
   )
 }

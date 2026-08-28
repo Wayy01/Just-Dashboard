@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frontend Design System Audit</title>
+<style>
+  :root {
+    --bg: #111214;
+    --panel: #17181b;
+    --text: #f2f2f3;
+    --dim: #a3a5aa;
+    --faint: #6f7176;
+    --line: #2a2c30;
+    --ok: #6ee7a8;
+    --warn: #f0c76b;
+    --bad: #f08b8b;
+    --link: #8ab4f8;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 64px 28px 120px; }
+
+  header { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 44px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; font-weight: bold; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0; }
+  .meta { color: var(--faint); font-size: 13px; margin-top: 14px; }
+
+  h2 {
+    font-size: 20px; margin: 52px 0 6px; font-weight: bold; letter-spacing: -0.01em;
+    padding-top: 22px; border-top: 1px solid var(--line);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h3 { font-size: 15px; margin: 28px 0 8px; font-weight: bold; color: var(--text); }
+  p { margin: 10px 0; color: var(--dim); }
+  p.lead { color: var(--text); }
+
+  ul { margin: 10px 0 10px 0; padding-left: 20px; color: var(--dim); }
+  li { margin: 5px 0; }
+  li strong, p strong { color: var(--text); font-weight: bold; }
+
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: #d9dbe0;
+    white-space: nowrap;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 18px 0 6px; font-size: 14px; }
+  th {
+    text-align: left; color: var(--faint); font-weight: bold; font-size: 11px;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 0 12px 9px 0; border-bottom: 1px solid var(--line); vertical-align: bottom;
+  }
+  td { padding: 11px 12px 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--dim); }
+  td:first-child { color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+
+  .ok { color: var(--ok); }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .tag { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: bold; }
+
+  .box {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 18px 22px; margin: 20px 0;
+  }
+  .box p:first-child { margin-top: 0; }
+  .box p:last-child { margin-bottom: 0; }
+
+  .kpis { display: flex; flex-wrap: wrap; gap: 10px; margin: 26px 0 6px; }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 14px 18px; min-width: 132px; flex: 1 1 132px;
+  }
+  .kpi .n { font-size: 24px; font-weight: bold; color: var(--text); line-height: 1.1; }
+  .kpi .l { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-top: 5px; }
+
+  footer { margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--faint); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Frontend Design System Audit</h1>
+  <p class="sub">Full inventory of the design system + every place a page reimplements a component that already exists, checked file by file across all 17 routes and ~150 component files.</p>
+  <p class="meta">2026-08-27 · Just Dashboard frontend, branch <code>patch/0.6.1</code> · Next.js 16 / React 19 / Tailwind v4 / shadcn (new-york)</p>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><div class="n">150</div><div class="l">Component &amp; page files reviewed</div></div>
+  <div class="kpi"><div class="n">9</div><div class="l">Real duplication gaps found</div></div>
+  <div class="kpi"><div class="n">44</div><div class="l">Raw Loader2 spinners, should be <code>Spinner</code></div></div>
+  <div class="kpi"><div class="n">5</div><div class="l">Hand-rolled status pills, should be <code>StatusBadge</code></div></div>
+  <div class="kpi"><div class="n">4</div><div class="l">Things checked and confirmed intentional</div></div>
+</div>
+
+<h2>1. Summary</h2>
+<p class="lead">The design system itself is in good shape — two purpose-built layout primitives (<code>Panel</code>, <code>Page</code>) and a shared state layer (<code>state.tsx</code>) are used consistently across all 17 routes, and the biggest historical anti-pattern this codebase used to have — every page hand-rolling its own <code>Card</code> — is fully gone: <code>Card</code>/<code>CardHeader</code>/<code>CardContent</code> have <strong>zero</strong> call sites left anywhere in <code>src</code>. That refactor finished.</p>
+<p>What's left is smaller and more specific: a loading spinner that exists as a one-line component and is used in 32 places, but hand-duplicated as raw <code>&lt;Loader2 className="size-4 animate-spin"/&gt;</code> in 44 others; a status-pill component (<code>StatusBadge</code>, badge + dot + tone) used in 7 places, with the identical visual shape rebuilt by hand in 5 more, two of which (<code>HealthBadge</code> and the posture verdict badge) are the same 20-line tone switch copy-pasted between two files; a "clickable entity name in a table cell" pattern built fresh 13 times with no shared component at all; and three spots where a native <code>&lt;input type="checkbox"&gt;</code> quietly sits next to nine other files using the real <code>Checkbox</code>. None of this is a different design language competing with the system — it's the same visual result achieved by hand instead of by import, which is exactly the "different button doing the same job" pattern you asked me to check for.</p>
+<p>I also went looking for the false positives — raw <code>&lt;button&gt;</code>, hardcoded hex colors, a native <code>&lt;select&gt;</code> — and confirmed four of them are deliberate, with reasoning already written into the code as comments. Those are called out below so they don't get "fixed" into something worse.</p>
+
+<div class="box">
+  <p><strong>Verified by reading:</strong> every file under <code>frontend/src</code> that imports a UI primitive, plus a full-text grep across the tree for raw <code>&lt;button&gt;</code>, <code>&lt;input&gt;</code>, <code>&lt;select&gt;</code>, <code>&lt;table&gt;</code>, hex colors, <code>Loader2</code>, <code>animate-spin</code>, <code>window.confirm</code>/<code>AlertDialog</code>, and hand-rolled <code>rounded-full border</code> pill classes. Every finding below is a specific <code>file:line</code>, not an estimate.</p>
+</div>
+
+<h2>2. The design system as it exists today</h2>
+
+<h3>2.1 Stack</h3>
+<table>
+  <tr><th>Layer</th><th>Library</th><th>Notes</th></tr>
+  <tr><td>Framework</td><td>Next.js 16.3.1 / React 19.2.8</td><td>App Router, every page <code>"use client"</code>, no server components in the dashboard shell</td></tr>
+  <tr><td>Styling</td><td>Tailwind v4</td><td>No <code>tailwind.config.js</code> — theme is defined in CSS (<code>app/globals.css</code> <code>@theme</code> block) and per-palette in <code>app/themes.css</code></td></tr>
+  <tr><td>Component primitives</td><td>shadcn/ui (new-york, zinc base) over <code>radix-ui</code> + individual <code>@radix-ui/react-*</code> packages</td><td>36 generated files in <code>components/ui/</code></td></tr>
+  <tr><td>Variants</td><td><code>class-variance-authority</code> + <code>tailwind-merge</code> (via <code>cn()</code>)</td><td>Every primitive with more than one look (<code>Button</code>, <code>Badge</code>) is a <code>cva()</code></td></tr>
+  <tr><td>Icons</td><td>lucide-react</td><td>No second icon set anywhere</td></tr>
+  <tr><td>Forms</td><td>react-hook-form + zod + @hookform/resolvers</td><td>Used selectively — most forms here are plain controlled state, not RHF</td></tr>
+  <tr><td>Charts</td><td>recharts 3.8</td><td>Fully wrapped by <code>components/metrics/</code>, no page imports recharts directly</td></tr>
+  <tr><td>Terminal</td><td>@xterm/xterm + fit/search/web-links addons</td><td>One consumer: <code>xterm-pane.tsx</code></td></tr>
+  <tr><td>Diagrams</td><td>@xyflow/react + @dagrejs/dagre</td><td>One consumer: the database ER diagram</td></tr>
+  <tr><td>Code editor</td><td>@monaco-editor/react + monaco-editor (self-hosted, see below)</td><td>One consumer: <code>components/code-editor.tsx</code></td></tr>
+  <tr><td>Toasts</td><td>sonner</td><td>Wrapped by <code>lib/toast.ts</code> (<code>notify.success/error</code>) — nothing calls sonner directly</td></tr>
+  <tr><td>Theme mode</td><td>next-themes is a dependency but unused for theming</td><td>Theming is hand-rolled in <code>hooks/use-theme.tsx</code> via a <code>data-theme</code> attribute; next-themes is dead weight here — worth confirming before 0.6.1 whether it's used anywhere at all</td></tr>
+</table>
+
+<h3>2.2 Layout primitives — <code>components/page.tsx</code></h3>
+<p>The frame every route renders into. <code>Page</code> sets the one measure (max-width 1600px), gutter and vertical rhythm for the whole app; <code>fill</code> is the variant for the terminal and log pages whose content is the viewport. <code>PageHeader</code> is the eyebrow/title/description/actions band at the top of every route. <code>Section</code> groups panels within a page that holds more than one idea (Appearance, Account, Certificates). <code>Toolbar</code> and <code>SearchInput</code> standardise the filter row that used to be assembled slightly differently on six pages. <code>Metric</code>/<code>MetricStrip</code> and <code>DetailList</code>/<code>Detail</code> replace the hand-rolled <code>&lt;dl&gt;</code> grids every card used to build with its own column widths.</p>
+
+<h3>2.3 Content primitive — <code>components/panel.tsx</code></h3>
+<p><code>Panel</code> is the single content block in the product — a framed surface with an optional tinted header strip (<code>PanelHeader</code>, with an icon tile, eyebrow, title, description, actions), an optional filter strip under it (<code>PanelToolbar</code>), a body (<code>PanelBody</code>, with <code>flush</code> for a full-bleed table and <code>scroll</code> for an internally-scrolling list), and a footer (<code>PanelFooter</code>). <code>Well</code> is the recessed surface for command output, diffs and stored secrets. This is the component that replaced shadcn's <code>Card</code> — see finding 3.8.</p>
+
+<h3>2.4 State primitive — <code>components/state.tsx</code></h3>
+<p><code>Spinner</code>, <code>LoadingRows</code>, <code>LoadingPanel</code> (skeleton with a heavier first row so the placeholder has the same silhouette as the table arriving), <code>EmptyState</code>, <code>ErrorState</code> (renders a missing module — no Docker socket, no systemd — as information rather than a failure), and <code>Notice</code> (a quiet banner for a fact the operator needs before acting, in four tones). Every one of these six is meant to be the single answer to its situation across the whole app; findings 3.1–3.2 are about the two that aren't yet.</p>
+
+<h3>2.5 Status vocabulary — <code>components/status-dot.tsx</code></h3>
+<p><code>toneFor(state)</code> maps every state vocabulary the backend speaks — Docker, systemd, pm2 — onto one four-value signal (<code>running</code> / <code>stopped</code> / <code>warning</code> / <code>unknown</code>). <code>StatusDot</code> is the small coloured dot; <code>StatusBadge</code> wraps it in a <code>Badge</code> with a label. Used across the docker, processes and system-users pages. Findings 3.1–3.2 are the places this exists in spirit but not in code.</p>
+
+<h3>2.6 shadcn/ui primitives — <code>components/ui/</code></h3>
+<p>36 generated files. All are reached for consistently except one: <code>card.tsx</code> (0 call sites — see 3.8). Everything else — <code>Button</code>, <code>Badge</code>, <code>Input</code>, <code>Select</code>, <code>Dialog</code> (36 files), <code>Sheet</code> (3 files, for the genuinely slide-in cases — changelog, shortcuts), <code>Tabs</code> (16 files), <code>Checkbox</code>, <code>Table</code>, <code>Tooltip</code>, <code>HoverCard</code>, <code>Popover</code>, <code>DropdownMenu</code>, <code>AlertDialog</code> (used by exactly one consumer, <code>ConfirmDialog</code> — see 2.7), <code>Accordion</code>, <code>Collapsible</code>, <code>Progress</code>, <code>Slider</code>, <code>RadioGroup</code>, <code>Switch</code>, <code>Toggle</code>/<code>ToggleGroup</code>, <code>Avatar</code>, <code>Breadcrumb</code>, <code>Command</code> (⌘K palette) — is imported from its canonical file everywhere it's needed. <code>Button</code>'s size scale (<code>xs</code>/<code>sm</code>/<code>default</code>/<code>lg</code> plus <code>icon-xs</code>/<code>icon-sm</code>/<code>icon</code>/<code>icon-lg</code>) is used correctly and consistently — there is no separate "small button" class anywhere.</p>
+
+<h3>2.7 Destructive actions — <code>components/confirm-dialog.tsx</code></h3>
+<p>One dialog, two forms (plain confirm, and the same dialog with a typed phrase for the rare/unrecoverable routes), reached through a single <code>confirm({ title, description, action, phrase? })</code> call exposed by a <code>useConfirm</code> hook. I grepped every call site of <code>confirm(</code> across the app (73 of them) and every <code>AlertDialog</code> import — there is exactly one AlertDialog consumer, this component. No page has rolled its own <code>window.confirm()</code> or a second confirmation dialog. This is the cleanest part of the system.</p>
+
+<h3>2.8 Theming</h3>
+<p>12 palettes (9 dark, 3 light) registered in <code>lib/themes.ts</code>, each with a matching <code>[data-theme="&lt;id&gt;"]</code> block in <code>app/themes.css</code> — that CSS file is the only place a colour value is defined. Switching is one attribute write on <code>&lt;html&gt;</code>, applied pre-paint by an inlined bootstrap script so there's no flash of the wrong palette. Two hand-named utility classes carry weight across the whole app: <code>.eyebrow</code> (the small-caps section label — 10px, tracked, uppercase, muted) and <code>.numeric</code> (tabular-nums, for any figure meant to be compared against its neighbour). Four custom CSS variables back the panel chrome everywhere: <code>--surface-header</code>, <code>--surface-sunken</code>, <code>--hairline</code>, <code>--row-hover</code>, all <code>color-mix()</code> against the active palette rather than fixed greys, which is what makes one <code>Panel</code> definition work unmodified across all 12 themes.</p>
+
+<h2>3. Gaps — the same job, built by hand instead of by import</h2>
+<p>Ranked by how many places repeat the duplication. Each entry names every file, so nothing here needs re-discovering before it gets fixed.</p>
+
+<h3>3.1 Loading spinner: <code>Spinner</code> exists, 44 spots don't use it</h3>
+<p><code>Spinner</code> in <code>state.tsx</code> is exactly <code>&lt;Loader2 className={cn("size-4 animate-spin", className)} /&gt;</code>. It's used 32 times, almost entirely inside <code>components/database/*</code> plus a handful in <code>git/</code> and <code>files/</code>. Everywhere else — every docker, proxy, update, security, terminal and files-dialog component, plus both auth screens — writes the identical two-class JSX by hand instead.</p>
+<table>
+  <tr><th>Area</th><th>Files</th><th>Raw <code>Loader2</code> count</th></tr>
+  <tr><td>docker/</td><td>create-container, run-console, volumes-tab, build-dialog, stacks-tab (×2), stack-detail (×2), networks-tab (×2), container-detail (×2), images-tab (×2)</td><td>13</td></tr>
+  <tr><td>proxy/ + proxy page</td><td>page.tsx, tls-report, site-form, import-dialog, certbot-panel (×3), streams-panel</td><td>8</td></tr>
+  <tr><td>update/</td><td>update-panel, update-notice (×2), update-progress, changes-sheet (×2)</td><td>6</td></tr>
+  <tr><td>terminal/, files/, security/, git/</td><td>workspace-tools (×2), permissions-dialog, file-editor, prompt-dialog, tools-panel, preview-panel</td><td>7</td></tr>
+  <tr><td>Auth + account</td><td>login/page.tsx (×4), account/page.tsx</td><td>5</td></tr>
+  <tr><td>Shared chrome</td><td>confirm-dialog.tsx, code-editor.tsx, job-console.tsx</td><td>3</td></tr>
+  <tr><td>database/</td><td>new-database-dialog.tsx — uses <code>Spinner</code> in three spots in the <em>same file</em> and raw <code>Loader2</code> in a fourth</td><td>1</td></tr>
+</table>
+<p>The fix is a pure substitution — <code>&lt;Loader2 className="size-N animate-spin [tone]" /&gt;</code> → <code>&lt;Spinner className="size-N [tone]" /&gt;</code> — since <code>Spinner</code> already forwards <code>className</code>. Zero behaviour change, and it removes a stray <code>Loader2</code> import from 30 files.</p>
+
+<h3>3.2 Status pill: <code>StatusBadge</code> exists, 5 places rebuild it — two of them identically</h3>
+<p><code>StatusBadge</code> (2.5 above) is a <code>Badge</code> + <code>StatusDot</code> for the 4-value process-state vocabulary. Five other components independently hand-build the exact same visual shape — <code>rounded-full border px-2 py-0.5 text-[11px] font-medium</code> plus a coloured dot and a tone switch — for a <em>severity</em> vocabulary (critical/warning/notice/healthy) that <code>StatusBadge</code>'s tone set doesn't currently cover, which is presumably why nobody reached for it. Two of the five are not just similar, they are the same function body copy-pasted:</p>
+<table>
+  <tr><th>File</th><th>What it renders</th><th>Note</th></tr>
+  <tr><td><code>components/metrics/health-panel.tsx:127-150</code> — <code>HealthBadge</code></td><td>critical / warning / notice / healthy verdict pill, coloured dot</td><td class="bad">Identical 20-line tone switch to the next row</td></tr>
+  <tr><td><code>components/security/posture-panel.tsx:190-215</code></td><td>critical / warning / notice / hardened verdict pill, icon instead of dot</td><td class="bad">Same border/bg/text class per tone, copy-pasted from <code>HealthBadge</code></td></tr>
+  <tr><td><code>app/(dashboard)/logs/page.tsx:182-196</code></td><td>stream connection pill (open/connecting), dot</td><td>Two-tone (success/neutral) subset of the same shape</td></tr>
+  <tr><td><code>components/top-bar.tsx:128-142</code></td><td>live/idle connection pill, dot with <code>animate-pulse</code></td><td>Same two-tone shape as the logs pill, in a different file</td></tr>
+  <tr><td><code>components/job-console.tsx:258-278</code></td><td>recent-job chip (running/failed/other), clickable</td><td>Interactive (it's a <code>&lt;button&gt;</code>, not a static badge) so this one can't just become <code>StatusBadge</code> as-is</td></tr>
+</table>
+<p>The health-panel/posture-panel pair is the clean win: same logic, two files, should be one function. Fixing the other three means widening <code>StatusBadge</code>'s tone vocabulary (or adding a sibling, e.g. a <code>tone</code>-driven <code>SeverityBadge</code>) to cover critical/notice, which is a small API decision worth having before I touch it — flagged in section 5.</p>
+
+<h3>3.3 A "clickable entity name" table cell, built fresh 13 times</h3>
+<p>Every list page follows the same UX — the primary column of a table is a plain-looking, underline-on-hover button that opens the row's detail view — but there's no shared component for it, so the same three lines of Tailwind (<code>truncate text-left text-[13px] font-medium hover:underline</code>, occasionally wrapped in a <code>max-w-[Nrem] min-w-0</code> div) are retyped per page:</p>
+<p><code>app/(dashboard)/proxy/page.tsx:233</code>, <code>app/(dashboard)/processes/page.tsx:139,345</code>, <code>app/(dashboard)/git/page.tsx:149</code>, <code>app/(dashboard)/docker/page.tsx:418</code>, <code>components/proxy/streams-panel.tsx:125</code>, <code>components/docker/networks-tab.tsx:103</code>, <code>components/docker/images-tab.tsx:240</code>, <code>components/docker/volumes-tab.tsx:146</code>, <code>components/docker/stacks-tab.tsx:148</code>, <code>components/git/history-panel.tsx:99</code>, <code>components/database/query-tab.tsx:307</code>, <code>components/files/file-row.tsx:111</code>.</p>
+<p>Button's <code>variant="link"</code> doesn't fit — it colours the text primary and always underlines, and every one of these 13 wants default text colour with underline only on hover. A small <code>RowLink</code>/<code>EntityLink</code> component next to <code>SearchInput</code> in <code>page.tsx</code> (or a <code>Panel</code> sibling) would collapse all 13 into one import, and fix the one place they've already drifted apart: some wrap in <code>max-w-[Nrem]</code>, some don't, and the max-width values themselves are inconsistent (18rem, 20rem, 22rem, 24rem, 26rem) with no evident reason tied to column width.</p>
+
+<h3>3.4 A "selectable list row" pattern, built fresh 4 times</h3>
+<p>The sidebar-style picker list — a vertical stack of buttons, each <code>rounded-md px-2 py-1.5 text-left</code>, selected state <code>bg-primary/12 font-medium text-foreground</code> vs. unselected <code>text-muted-foreground hover:bg-[var(--row-hover)] hover:text-foreground</code> — appears with matching classes in <code>app/(dashboard)/logs/page.tsx:250-260</code> (log source list), <code>components/database/redis-browser.tsx:224-236</code> (key list), <code>components/database/browse-tab.tsx:457-470</code> (table list) and <code>components/database/mongo-browser.tsx:251-263</code> (collection list). Same case as 3.3: not wrong anywhere, just the same 10 lines four times instead of once.</p>
+
+<h3>3.5 Checkbox: shared component in 10 files, native input in 3</h3>
+<p><code>Checkbox</code> (Radix, <code>components/ui/checkbox.tsx</code>) is the established control — used in <code>audit</code>, <code>system-users</code>, <code>files</code> (×2), and four database components. Three files instead render a raw <code>&lt;input type="checkbox" className="size-3.5 accent-[var(--primary)]" /&gt;</code>:</p>
+<table>
+  <tr><th>File:line</th><th>What it toggles</th></tr>
+  <tr><td><code>components/proxy/site-form.tsx:731</code></td><td>"WebSockets on this path"</td></tr>
+  <tr><td><code>components/git/pulls-panel.tsx:336</code></td><td>"Open as a draft"</td></tr>
+  <tr><td><code>components/terminal/git-tools.tsx:535</code></td><td>"Amend"</td></tr>
+</table>
+<p>These three render with whatever the browser/OS draws for <code>accent-color</code> — a different shape and animation than the Radix <code>Checkbox</code>'s square-with-check everywhere else. A user on Safari or Firefox will see a visibly different control on these three toggles than on the other ten.</p>
+
+<h3>3.6 Container limit inputs hand-roll <code>Input</code>'s styling — and drop its focus ring</h3>
+<p><code>components/docker/container-detail.tsx</code> never imports <code>Input</code>. Three raw <code>&lt;input&gt;</code> elements (the inline container-rename field at line 661, and the memory/CPU limit fields at 952 and 965) carry a hand-written class string — <code>h-8 w-full rounded-md border bg-background px-2 text-xs outline-none focus-visible:border-ring</code> — that's a subset of what <code>Input</code> actually applies. The part it's missing is <code>focus-visible:ring-[3px] focus-visible:ring-ring/50</code>: every other text field in the app gets a visible focus ring, these three get only a border-colour change, which is both a visual inconsistency and a (minor) accessibility regression for keyboard users on this one panel.</p>
+
+<h3>3.7 Progress bars: the shared component exists but is used twice</h3>
+<p><code>ui/progress.tsx</code> (Radix) is imported in exactly two places (<code>app/(dashboard)/page.tsx</code>, <code>app/(dashboard)/docker/page.tsx</code>). Two more components draw their own percentage bar with an inline <code>style={{ width: "N%" }}</code> — <code>components/stat-tile.tsx:63</code> (the meter under a stat figure) and <code>app/(dashboard)/appearance/page.tsx:189</code> (the theme-swatch preview bar). Low priority: <code>stat-tile.tsx</code> is itself a single shared component reused everywhere a metric meter appears, so this isn't duplicated the way 3.1–3.5 are — it's one deliberate lighter-weight bar for a decorative sparkline-adjacent use, not competing with <code>Progress</code>. Worth a note, not urgent.</p>
+
+<h3>3.8 <code>Card</code>/<code>CardHeader</code>/<code>CardContent</code>/<code>CardFooter</code>: zero call sites</h3>
+<p><code>components/ui/card.tsx</code> is fully generated shadcn boilerplate with no consumer anywhere in <code>src</code> — <code>Panel</code> replaced it completely, per the comment already in <code>panel.tsx</code> ("before this existed each page assembled its own out of Card/CardHeader/CardContent"). Not a bug, but dead code sitting in the primitives folder next to the thing that's supposed to be reached for instead — worth deleting in the 0.6.1 pass so nobody imports it out of habit while redesigning.</p>
+
+<h3>3.9 Terminal settings popover uses a native <code>&lt;select&gt;</code></h3>
+<p><code>components/xterm-pane.tsx:1120</code> and <code>:1134</code> (font family, cursor style, inside the terminal settings <code>Popover</code>) are plain HTML <code>&lt;select&gt;</code> elements, hand-styled to approximate the Radix <code>Select</code> used everywhere else in the app (17 files). This is the one finding in this section I'd flag as <em>plausibly</em> deliberate rather than confidently a gap — a Radix <code>Select</code> nested inside a Radix <code>Popover</code> is a real thing to get right (portal target, close-on-select interaction with the popover), and two two-to-three-option pickers in a tight settings panel is a defensible place to keep it simple. But it will visually read as the one native dropdown in an app that otherwise never shows one, so it's listed here rather than in the "confirmed intentional" section below — flagged for your call in section 5, not assumed.</p>
+
+<h2>4. Checked and confirmed intentional — not gaps</h2>
+<p>These matched the shape of a "different component doing the same job," but reading the code (and in two cases, the comment already sitting above it) confirmed they're deliberate. Listed so the redesign pass doesn't "fix" them into something worse.</p>
+<ul>
+  <li><strong>Raw <code>&lt;button&gt;</code> for custom-shaped interactive elements (~55 occurrences).</strong> Tab pills, tree-row toggles, drag handles, chip close buttons, sidebar nav rows, <code>HoverCardTrigger</code>/<code>DropdownMenuTrigger asChild</code> wrappers, and the docker/git "term with a hover definition" pattern all use a bare <code>&lt;button&gt;</code> as a reset base for fully custom styling that <code>Button</code>'s variant system doesn't (and shouldn't) cover. This is applied consistently everywhere it appears — it's the correct pattern for "this needs to be a real <code>&lt;button&gt;</code> element for accessibility, but look like a tree row / tab / chip / underlined term, not like a button" — not a gap.</li>
+  <li><strong>Hardcoded hex colors in <code>xterm-pane.tsx</code> (~30 values, lines 77-102 and 664-667).</strong> The file's own comment explains it: xterm.js parses its theme colours itself and doesn't understand <code>oklch()</code> or CSS custom properties, so the terminal gets two hand-picked palettes (dark/light) that follow the active theme's <em>mode</em> rather than reading its tokens. This is the one legitimate escape hatch from "colour is defined only in themes.css" in the whole app, and it's already documented as such in the code.</li>
+  <li><strong>docker/explain.tsx's <code>Term</code>/<code>ExplainIcon</code> mirrored by git/help.tsx's <code>GitTerm</code>/<code>GitExplain</code>.</strong> Two files, near-identical wrapper mechanics (a <code>HoverCard</code> around a dotted-underline button or a help icon). <code>git/help.tsx</code>'s own top comment says this mirrors "the shape docker/explain.tsx established" on purpose, because each carries its own glossary content (Docker vocabulary vs. git vocabulary) and there was no third consumer yet to justify extracting a generic <code>&lt;TermHover glossary={} name={}&gt;</code>. Real, minor duplication (~20 lines), but deliberate — worth a shared helper only if a third feature grows its own glossary next.</li>
+  <li><strong>No second confirmation system.</strong> Checked every <code>confirm(</code> call site (73) and every <code>AlertDialog</code> import — all roads lead to the one <code>ConfirmDialog</code>. No <code>window.confirm()</code>, no ad-hoc alert dialog anywhere.</li>
+</ul>
+
+<h2>5. What needs your call before I fix it</h2>
+<p>3.1, 3.5, 3.6 and 3.8 are pure substitutions with no design decision attached — same visual result, existing component, nothing to name or design. I'd fix those as part of 0.6.1 without further sign-off. The rest need a small decision each:</p>
+<ul>
+  <li><strong>3.2 (status pills).</strong> Do you want <code>StatusBadge</code>'s tone vocabulary widened to include <code>critical</code>/<code>notice</code> so <code>HealthBadge</code> and the posture verdict badge can both become one shared component built on it — or a separate <code>SeverityBadge</code> sibling, since process state and health severity are genuinely different concepts that happen to look the same?</li>
+  <li><strong>3.3 / 3.4 (new shared components).</strong> These need a name and a home — e.g. <code>RowLink</code> and <code>ListPicker</code> in <code>page.tsx</code>/<code>panel.tsx</code> — before I migrate 17 call sites onto them.</li>
+  <li><strong>3.9 (terminal select).</strong> Leave as-is (nested-Radix-in-a-popover is a reasonable reason) or swap for <code>Select</code>?</li>
+</ul>
+
+<footer>
+  Just Dashboard frontend audit · branch <code>patch/0.6.1</code> · generated 2026-08-27 · disposable, safe to delete
+</footer>
+
+</div>
+</body>
+</html>

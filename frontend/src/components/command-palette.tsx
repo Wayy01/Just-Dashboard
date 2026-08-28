@@ -2,10 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { LogOut, Moon, Sun } from "lucide-react"
+import { Check, LogOut, Moon, Sun } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { useTheme } from "@/hooks/use-theme"
-import { THEMES } from "@/lib/themes"
 import { NAV, PERSONAL_NAV } from "@/components/app-sidebar"
 import {
   Command,
@@ -29,11 +28,11 @@ type PaletteValue = { open: () => void; close: () => void; toggle: () => void }
 const PaletteContext = createContext<PaletteValue | null>(null)
 
 /**
- * One keystroke to any of fifteen pages or twelve palettes.
+ * One keystroke to any of fifteen pages, or to light/dark.
  *
  * A server dashboard is navigated by someone who already knows where they are
  * going — they are here because something is wrong at 3am, not to browse. The
- * palette is the shortest path, and it also gives the theme picker a home that
+ * palette is the shortest path, and it also gives the theme toggle a home that
  * does not require finding the Appearance page first.
  */
 export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
@@ -75,7 +74,7 @@ export function useCommandPalette() {
 function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const router = useRouter()
   const { can, logout } = useAuth()
-  const { themeId, setTheme } = useTheme()
+  const { mode, setMode } = useTheme()
 
   const run = useCallback(
     (action: () => void) => {
@@ -93,7 +92,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: bool
       </DialogHeader>
       <DialogContent className="overflow-hidden p-0 sm:max-w-xl" showCloseButton={false}>
         <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-[0.14em] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group]]:px-2 [&_[cmdk-item]]:gap-2.5 [&_[cmdk-item]]:rounded-md [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2 [&_[cmdk-item]]:text-[13px]">
-          <CommandInput placeholder="Jump to a page, or type a theme name…" />
+          <CommandInput placeholder="Jump to a page, or switch light/dark…" />
           <CommandList className="max-h-[60svh]">
             <CommandEmpty>Nothing matches.</CommandEmpty>
 
@@ -102,16 +101,35 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: bool
               if (items.length === 0) return null
               return (
                 <CommandGroup key={group.label} heading={group.label}>
-                  {items.map((item) => (
-                    <CommandItem
-                      key={item.href}
-                      value={`${group.label} ${item.title}`}
-                      onSelect={() => run(() => router.push(item.href))}
-                    >
-                      <item.icon className="size-4" />
-                      {item.title}
-                    </CommandItem>
-                  ))}
+                  {items.flatMap((item) => {
+                    const rows = [
+                      <CommandItem
+                        key={item.href}
+                        value={`${group.label} ${item.title}`}
+                        onSelect={() => run(() => router.push(item.href))}
+                      >
+                        <item.icon className="size-4" />
+                        {item.title}
+                      </CommandItem>,
+                    ]
+                    // A nested feature's pages are reachable here even when the
+                    // sidebar is collapsed to the icon rail and hides them.
+                    for (const child of item.children ?? []) {
+                      if (child.href === item.href) continue
+                      rows.push(
+                        <CommandItem
+                          key={child.href}
+                          value={`${group.label} ${item.title} ${child.title}`}
+                          onSelect={() => run(() => router.push(child.href))}
+                        >
+                          <child.icon className="size-4" />
+                          <span className="text-muted-foreground">{item.title}</span>
+                          {child.title}
+                        </CommandItem>,
+                      )
+                    }
+                    return rows
+                  })}
                 </CommandGroup>
               )
             })}
@@ -136,30 +154,16 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: bool
 
             <CommandSeparator />
             <CommandGroup heading="Theme">
-              {THEMES.map((theme) => (
-                <CommandItem
-                  key={theme.id}
-                  value={`theme ${theme.name} ${theme.mode}`}
-                  onSelect={() => run(() => setTheme(theme.id))}
-                >
-                  {theme.mode === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
-                  <span className="flex-1">{theme.name}</span>
-                  {/* Rendered in its own palette, which is the fastest way to say
-                      what picking it will do. */}
-                  <span
-                    data-theme={theme.id}
-                    aria-hidden
-                    className="flex items-center gap-0.5 rounded border border-border bg-background p-0.5"
-                  >
-                    <span className="size-2 rounded-[2px] bg-primary" />
-                    <span className="size-2 rounded-[2px] bg-chart-3" />
-                    <span className="size-2 rounded-[2px] bg-muted-foreground" />
-                  </span>
-                  {themeId === theme.id && (
-                    <span className="text-[10px] text-muted-foreground">current</span>
-                  )}
-                </CommandItem>
-              ))}
+              <CommandItem value="theme dark" onSelect={() => run(() => setMode("dark"))}>
+                <Moon className="size-4" />
+                <span className="flex-1">Dark</span>
+                {mode === "dark" && <Check className="size-3.5 text-muted-foreground" />}
+              </CommandItem>
+              <CommandItem value="theme light" onSelect={() => run(() => setMode("light"))}>
+                <Sun className="size-4" />
+                <span className="flex-1">Light</span>
+                {mode === "light" && <Check className="size-3.5 text-muted-foreground" />}
+              </CommandItem>
             </CommandGroup>
           </CommandList>
         </Command>

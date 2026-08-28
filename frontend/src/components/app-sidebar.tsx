@@ -1,29 +1,49 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   Activity,
   Archive,
+  BadgeCheck,
   Box,
+  Cable,
+  ChevronRight,
   ChevronsUpDown,
+  Columns3,
   Database,
+  Disc3,
+  FileCode2,
   FileText,
   FolderTree,
   GitBranch,
   Globe,
+  HardDrive,
+  Layers,
+  LayoutGrid,
+  LineChart,
   ListChecks,
   LogOut,
+  Network,
   PackageCheck,
   Palette,
+  Plug,
+  Radar,
+  Radio,
   Rocket,
+  ScanLine,
   ScrollText,
   Search,
   ShieldCheck,
   Shield,
+  Siren,
+  SquareTerminal,
   TerminalSquare,
   Users,
+  Workflow,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { useCommandPalette } from "@/components/command-palette"
 import { Logo, LogoMark } from "@/components/logo"
@@ -40,9 +60,13 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,12 +76,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
+type NavChild = {
+  title: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+}
+
 type NavItem = {
   title: string
   href: string
   icon: React.ComponentType<{ className?: string }>
   /** Hidden unless the signed-in role holds this capability. */
   capability?: Capability
+  /** A feature large enough to be several pages — the row expands to show them. */
+  children?: NavChild[]
 }
 
 export const NAV: { label: string; items: NavItem[] }[] = [
@@ -65,7 +97,20 @@ export const NAV: { label: string; items: NavItem[] }[] = [
     label: "Server",
     items: [
       { title: "Overview", href: "/", icon: Activity },
-      { title: "Docker", href: "/docker", icon: Box },
+      { title: "Metrics", href: "/metrics", icon: LineChart },
+      {
+        title: "Docker",
+        href: "/docker",
+        icon: Box,
+        children: [
+          { title: "Containers", href: "/docker/containers", icon: Box },
+          { title: "Stacks", href: "/docker/stacks", icon: Layers },
+          { title: "Images", href: "/docker/images", icon: Disc3 },
+          { title: "Volumes", href: "/docker/volumes", icon: HardDrive },
+          { title: "Networks", href: "/docker/networks", icon: Network },
+          { title: "Events", href: "/docker/events", icon: Radio },
+        ],
+      },
       { title: "Processes", href: "/processes", icon: ListChecks },
       { title: "Logs", href: "/logs", icon: ScrollText },
     ],
@@ -76,14 +121,51 @@ export const NAV: { label: string; items: NavItem[] }[] = [
       { title: "Terminal", href: "/terminal", icon: TerminalSquare, capability: "terminal" },
       { title: "Files", href: "/files", icon: FolderTree },
       { title: "Git", href: "/git", icon: GitBranch },
-      { title: "Databases", href: "/databases", icon: Database },
+      {
+        title: "Databases",
+        href: "/databases",
+        icon: Database,
+        children: [
+          { title: "Structure", href: "/databases/structure", icon: Columns3 },
+          { title: "Diagram", href: "/databases/diagram", icon: Workflow },
+          { title: "Query", href: "/databases/query", icon: SquareTerminal },
+          { title: "Find", href: "/databases/find", icon: Search },
+          { title: "Monitor", href: "/databases/monitor", icon: Activity },
+          { title: "Generate", href: "/databases/generate", icon: FileCode2 },
+          { title: "Connection", href: "/databases/connection", icon: Cable },
+        ],
+      },
     ],
   },
   {
     label: "Network",
     items: [
-      { title: "Proxy & TLS", href: "/proxy", icon: Globe },
-      { title: "Security", href: "/security", icon: Shield },
+      {
+        title: "Proxy & TLS",
+        href: "/proxy",
+        icon: Globe,
+        children: [
+          { title: "Sites", href: "/proxy/sites", icon: Globe },
+          { title: "Certificates", href: "/proxy/certificates", icon: BadgeCheck },
+          { title: "TLS report", href: "/proxy/tls", icon: ScanLine },
+          { title: "Streams", href: "/proxy/streams", icon: Cable },
+          { title: "Ports", href: "/proxy/ports", icon: Plug },
+        ],
+      },
+      {
+        title: "Security",
+        href: "/security",
+        icon: Shield,
+        children: [
+          { title: "Firewall", href: "/security/firewall", icon: Shield },
+          { title: "SSH", href: "/security/ssh", icon: TerminalSquare },
+          { title: "Intrusion", href: "/security/intrusion", icon: Siren },
+          { title: "Connections", href: "/security/connections", icon: Network },
+          { title: "Logins", href: "/security/logins", icon: Users },
+          { title: "Network", href: "/security/network", icon: Cable },
+          { title: "Tools", href: "/security/tools", icon: Radar },
+        ],
+      },
     ],
   },
   {
@@ -109,11 +191,21 @@ export function navMatches(href: string, pathname: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
 }
 
-/** The group and item a path belongs to, for the breadcrumb in the top bar. */
-export function navLocation(pathname: string): { group?: string; title: string } | null {
+/**
+ * The group, page and — for a nested feature like Docker — the parent it
+ * belongs to, for the breadcrumb in the top bar. A child's exact path wins
+ * over the parent's prefix match, so `/docker/images` reads as "Images", not
+ * "Docker".
+ */
+export function navLocation(
+  pathname: string,
+): { group?: string; parent?: string; title: string } | null {
   for (const group of NAV) {
-    const item = group.items.find((i) => navMatches(i.href, pathname))
-    if (item) return { group: group.label, title: item.title }
+    for (const item of group.items) {
+      const child = item.children?.find((c) => c.href === pathname && c.href !== item.href)
+      if (child) return { group: group.label, parent: item.title, title: child.title }
+      if (navMatches(item.href, pathname)) return { group: group.label, title: item.title }
+    }
   }
   const personal = PERSONAL_NAV.find((i) => navMatches(i.href, pathname))
   if (personal) return { group: "You", title: personal.title }
@@ -174,21 +266,25 @@ export function AppSidebar() {
               <SidebarGroupLabel className="eyebrow h-6 px-2">{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu className="gap-0.5">
-                  {items.map((item) => (
-                    <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive(item.href)}
-                        tooltip={item.title}
-                        className="h-8 text-[13px]"
-                      >
-                        <Link href={item.href}>
-                          <item.icon className="size-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                  {items.map((item) =>
+                    item.children ? (
+                      <NavParent key={item.href} item={item} pathname={pathname} />
+                    ) : (
+                      <SidebarMenuItem key={item.href}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isActive(item.href)}
+                          tooltip={item.title}
+                          className="h-8 text-[13px]"
+                        >
+                          <Link href={item.href}>
+                            <item.icon className="size-4" />
+                            <span>{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ),
+                  )}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -208,6 +304,105 @@ export function AppSidebar() {
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+  )
+}
+
+/**
+ * A nav row for a feature that spans several pages — Docker, Databases, Proxy,
+ * Security. The row itself is *only* a disclosure toggle; it navigates nowhere.
+ * The feature's landing page is the first child, "Overview", so every
+ * destination in the section is a leaf in the list and "where am I" always
+ * points at exactly one row.
+ *
+ * Collapsed to the icon rail there is no room for a child list, so the row
+ * falls back to a plain link to the Overview with the section's tooltip.
+ *
+ * Open state is a single `useState` seeded from the route and forced back open
+ * whenever navigation lands anywhere in the section, so the active child is
+ * never hidden. Leaving the section keeps the last state rather than snapping
+ * shut, now that the collapse is animated.
+ */
+function NavParent({ item, pathname }: { item: NavItem; pathname: string }) {
+  const { state } = useSidebar()
+  const inSection = navMatches(item.href, pathname)
+  const [open, setOpen] = useState(inSection)
+
+  const [seenPath, setSeenPath] = useState(pathname)
+  if (pathname !== seenPath) {
+    setSeenPath(pathname)
+    if (inSection) setOpen(true)
+  }
+
+  if (state === "collapsed") {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          asChild
+          isActive={inSection}
+          tooltip={item.title}
+          className="h-8 text-[13px]"
+        >
+          <Link href={item.href}>
+            <item.icon className="size-4" />
+            <span>{item.title}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
+  }
+
+  const children: NavChild[] = [
+    { title: "Overview", href: item.href, icon: LayoutGrid },
+    ...(item.children ?? []),
+  ]
+
+  return (
+    <Collapsible asChild open={open} onOpenChange={setOpen}>
+      <SidebarMenuItem>
+        <CollapsibleTrigger asChild>
+          {/* No `tooltip` prop: its content is hidden unless the rail is
+              collapsed, and this branch only renders when it is not — passing
+              it would wrap the button in <Tooltip>, which swallows the
+              trigger's click. The chevron rotates off the button's own
+              `data-state`, which the trigger always carries. */}
+          <SidebarMenuButton
+            aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`}
+            className={cn(
+              "h-8 text-[13px] [&>svg:last-child]:transition-transform [&>svg:last-child]:duration-200",
+              "data-[state=open]:[&>svg:last-child]:rotate-90",
+              // Somewhere in this section: quiet accent tint and a
+              // primary-coloured icon, so the row reads as "you are in here"
+              // without competing with the solid pill on the active child.
+              inSection && "bg-sidebar-accent/60 [&>svg:first-child]:text-primary",
+            )}
+          >
+            <item.icon className="size-4" />
+            <span className="flex-1 truncate">{item.title}</span>
+            {/* No explicit colour — inherits the row's, so it follows the
+                hover and in-section states instead of staying one flat grey. */}
+            <ChevronRight className="size-4 shrink-0 opacity-70" />
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
+          <SidebarMenuSub className="mr-0 gap-0.5">
+            {children.map((child) => (
+              <SidebarMenuSubItem key={child.href}>
+                <SidebarMenuSubButton
+                  asChild
+                  isActive={pathname === child.href}
+                  className="transition-colors"
+                >
+                  <Link href={child.href}>
+                    <child.icon className="size-4" />
+                    <span>{child.title}</span>
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
   )
 }
 

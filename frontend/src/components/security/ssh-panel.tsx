@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, CheckCircle2, KeyRound, Network, TerminalSquare } from "lucide-react"
+import { AlertTriangle, KeyRound, Network, TerminalSquare } from "lucide-react"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Job, SSHDConfig, SSHSetting } from "@/lib/types"
@@ -11,6 +11,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -21,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /**
  * The SSH server's own settings, which is where a single-server operator is
@@ -165,91 +167,31 @@ export function SSHPanel() {
             title="SSH server"
             description={
               data.socket?.unit
-                ? `Port ${data.ports.join(", ")} (held by ${data.socket.unit}) · read from ${data.source}`
-                : `Port ${data.ports.join(", ")} · read from ${data.source}`
+                ? `Port ${data.ports.join(", ")} · held by ${data.socket.unit} · from ${data.source}`
+                : `Port ${data.ports.join(", ")} · from ${data.source}`
             }
             actions={
               <>
-              <RecentJobs kinds={["ssh."]} onOpen={console_.open} />
-              {insecure === 0 ? (
-                <Badge variant="success" className="font-normal">
-                  <CheckCircle2 className="size-3" />
-                  hardened
-                </Badge>
-              ) : (
-                <Badge variant="warning" className="font-normal">
-                  {insecure} {insecure === 1 ? "setting" : "settings"} below the recommendation
-                </Badge>
-              )}
+                <RecentJobs kinds={["ssh."]} onOpen={console_.open} />
+                <Status
+                  verdict={insecure === 0 ? "ok" : "warning"}
+                  label={insecure === 0 ? "Hardened" : `${insecure} below recommendation`}
+                />
               </>
             }
           />
-          <PanelBody className="space-y-2.5">
-            {data.settings.map((setting) => (
-              <div
-                key={setting.key}
-                className={cn(
-                  "flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-lg border p-2.5",
-                  changed(setting)
-                    ? "border-primary/40 bg-primary/[0.06]"
-                    : setting.secure
-                      ? "border-hairline bg-surface-sunken"
-                      : "border-warning/30 bg-warning/5",
-                )}
-              >
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="text-[13px] font-medium">{setting.label}</span>
-                    <code className="font-mono text-[11px] text-muted-foreground">
-                      {setting.key}
-                    </code>
-                    {!setting.secure && (
-                      <span className="text-[11px] text-warning">
-                        recommended: {setting.recommended}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    {setting.detail}
-                  </p>
-                  {!setting.secure && setting.risk && (
-                    <p className="text-[11px] leading-relaxed text-foreground/80">{setting.risk}</p>
-                  )}
-                </div>
-                <div className={cn("shrink-0", setting.kind === "list" ? "w-full sm:w-72" : "w-40")}>
-                  {setting.kind === "list" ? (
-                    <Input
-                      value={valueOf(setting)}
-                      placeholder="deploy admin — empty allows everyone"
-                      className="font-mono text-xs"
-                      onChange={(e) => setPending((p) => ({ ...p, [setting.key]: e.target.value }))}
-                    />
-                  ) : setting.kind === "choice" ? (
-                    <Select
-                      value={valueOf(setting)}
-                      onValueChange={(v) => setPending((p) => ({ ...p, [setting.key]: v }))}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {setting.options?.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      value={valueOf(setting)}
-                      inputMode="numeric"
-                      onChange={(e) => setPending((p) => ({ ...p, [setting.key]: e.target.value }))}
-                    />
-                  )}
-                </div>
-              </div>
-            ))}
+          <PanelBody flush>
+            <div className="divide-y divide-hairline">
+              {data.settings.map((setting) => (
+                <SettingRow
+                  key={setting.key}
+                  setting={setting}
+                  value={valueOf(setting)}
+                  changed={changed(setting)}
+                  onChange={(v) => setPending((p) => ({ ...p, [setting.key]: v }))}
+                />
+              ))}
+            </div>
           </PanelBody>
           {dirty && (
             <PanelFooter>
@@ -296,5 +238,103 @@ export function SSHPanel() {
       </div>
       {dialog}
     </>
+  )
+}
+
+/**
+ * One sshd directive as a row in a plain divided list — the label in words, the
+ * directive name beside it, one line of what it does, and the control on the
+ * right at a fixed column so every row's answer lines up.
+ *
+ * The row only raises its voice when the setting is below the recommendation:
+ * a warning-tinted left edge and the "recommended … because …" line appear
+ * there and nowhere else. Every row used to be its own bordered card in one of
+ * three colours, which made a list of twelve mostly-fine settings look like
+ * twelve problems.
+ *
+ * A two-value choice (password auth on/off, root login) is a segmented control
+ * rather than a dropdown — the two states are the whole decision and both
+ * should be visible without opening a menu.
+ */
+function SettingRow({
+  setting,
+  value,
+  changed,
+  onChange,
+}: {
+  setting: SSHSetting
+  value: string
+  changed: boolean
+  onChange: (value: string) => void
+}) {
+  const below = !setting.secure
+  const segmented =
+    setting.kind === "choice" &&
+    setting.options?.length === 2 &&
+    setting.options.includes(value)
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-2 border-l-2 border-transparent px-4 py-3",
+        changed && "border-primary/60 bg-primary/[0.04]",
+        !changed && below && "border-warning/50 bg-warning/[0.035]",
+      )}
+    >
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-[13px] font-medium">{setting.label}</span>
+          <code className="font-mono text-[11px] text-muted-foreground">{setting.key}</code>
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">{setting.detail}</p>
+        {below && (
+          <p className="text-[11px] leading-relaxed">
+            <span className="font-medium text-warning">Recommended {setting.recommended}.</span>
+            {setting.risk && <span className="text-foreground/75"> {setting.risk}</span>}
+          </p>
+        )}
+      </div>
+      <div className={cn("shrink-0", setting.kind === "list" ? "w-full sm:w-72" : "w-44")}>
+        {setting.kind === "list" ? (
+          <Input
+            value={value}
+            placeholder="deploy admin — empty allows everyone"
+            className="font-mono text-xs"
+            onChange={(e) => onChange(e.target.value)}
+          />
+        ) : segmented ? (
+          <ToggleGroup
+            type="single"
+            value={value}
+            onValueChange={(v) => v && onChange(v)}
+            variant="outline"
+            size="sm"
+            className="w-full"
+            aria-label={setting.label}
+          >
+            {setting.options!.map((option) => (
+              <ToggleGroupItem key={option} value={option} className="flex-1 text-xs capitalize">
+                {option}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : setting.kind === "choice" ? (
+          <Select value={value} onValueChange={onChange}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {setting.options?.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input value={value} inputMode="numeric" onChange={(e) => onChange(e.target.value)} />
+        )}
+      </div>
+    </div>
   )
 }

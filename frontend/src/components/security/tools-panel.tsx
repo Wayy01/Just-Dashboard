@@ -1,14 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, Radar } from "lucide-react"
+import { Radar } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { ProbeResult } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
-import { EmptyState, Notice } from "@/components/state"
+import { EmptyState, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -140,7 +140,7 @@ export function ToolsPanel() {
               </div>
             )}
             <Button onClick={run} disabled={busy || !target.trim()}>
-              {busy && <Loader2 className="size-4 animate-spin" />}
+              {busy && <Spinner className="size-4" />}
               Run
             </Button>
           </div>

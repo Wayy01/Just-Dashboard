@@ -65,43 +65,155 @@ import {
 
 type Query = Record<string, string | number | boolean | undefined | null>
 
+type XtermTheme = NonNullable<Terminal["options"]["theme"]>
+
 /**
- * xterm cannot read the theme tokens: it parses colours itself and does not
- * understand `oklch()` or `var()`. So the terminal gets two hand-picked
- * palettes and follows the active theme's mode rather than its hue — which is
- * the part that matters, since a black pane in the middle of a light page is
- * the one place a palette can be actively unreadable.
+ * The last resort when a canvas 2D context is unavailable (a headless or
+ * locked-down browser). The runtime resolver below is what actually runs.
  */
-const TERMINAL_THEMES = {
+/**
+ * The neutral ANSI ramp (colours 0, 8, 7, 15) as a fraction of ink mixed into
+ * paper. `--foreground` and `--background` swap roles between modes, so one
+ * formula cannot give "a dark grey" in both: in dark mode a little ink lifts
+ * off the near-black ground; in light mode colour 0 has to sit near the ink or
+ * it vanishes on white. Colour 8 (`brightBlack`) is the most-used of the four —
+ * git hashes, vim comments, `ls -l` metadata — so it is kept clearly legible
+ * either way.
+ */
+const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> = {
+  dark: { black: 18, brightBlack: 44, white: 74 },
+  light: { black: 86, brightBlack: 56, white: 44 },
+}
+
+/** cyan has no near-200° token in the palette, so it is the one hardcoded hue. */
+const TERMINAL_CYAN: Record<"dark" | "light", string> = {
+  dark: "#4cc4cc",
+  light: "#0e7490",
+}
+
+/**
+ * The last resort when a canvas 2D context is unavailable (a headless or
+ * locked-down browser). The runtime resolver below is what actually runs.
+ */
+const TERMINAL_FALLBACK: Record<"dark" | "light", XtermTheme> = {
   dark: {
-    background: "#0e1117",
-    foreground: "#e3e6ee",
-    cursor: "#e4e4e7",
-    selectionBackground: "#3f3f46",
-    black: "#18181b",
-    red: "#f87171",
-    green: "#4ade80",
-    yellow: "#fbbf24",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#e4e4e7",
+    background: "#141414",
+    foreground: "#fafafa",
+    cursor: "#fafafa",
+    selectionBackground: "rgba(200,160,60,0.3)",
+    black: "#333333",
+    red: "#e5484d",
+    green: "#46a758",
+    yellow: "#d9a441",
+    blue: "#5b7fdb",
+    magenta: "#8e6fd6",
+    cyan: TERMINAL_CYAN.dark,
+    white: "#c2c2c6",
+    brightBlack: "#6b6b6b",
+    brightWhite: "#fafafa",
   },
   light: {
-    background: "#fbfbfd",
-    foreground: "#26262b",
-    cursor: "#3f3f46",
-    selectionBackground: "#c7d2fe",
-    black: "#26262b",
-    red: "#b91c1c",
-    green: "#15803d",
-    yellow: "#a16207",
-    blue: "#1d4ed8",
-    magenta: "#7e22ce",
-    cyan: "#0e7490",
-    white: "#52525b",
+    background: "#ffffff",
+    foreground: "#0a0a0a",
+    cursor: "#0a0a0a",
+    selectionBackground: "rgba(60,110,220,0.22)",
+    black: "#242424",
+    red: "#c62a2f",
+    green: "#2f7d3a",
+    yellow: "#9a6b1f",
+    blue: "#2f52c4",
+    magenta: "#6b46c1",
+    cyan: TERMINAL_CYAN.light,
+    white: "#8a8a8a",
+    brightBlack: "#6b6b6b",
+    brightWhite: "#0a0a0a",
   },
-} as const
+}
+
+/**
+ * xterm parses colours itself and understands neither `oklch()` nor `var()`,
+ * so the palette can't be handed the theme tokens directly. Instead a hidden
+ * probe borrows each token the way any element would — `color: var(--x)` — and
+ * its resolved computed colour is normalised through a canvas, which accepts
+ * every form `getComputedStyle` returns and hands back `#rrggbb`. The result
+ * tracks the active theme in both modes with only cyan hard-coded: the
+ * background is the app's, the accents are the chart colours the rest of the
+ * UI uses, and the neutral ramp is mixed from foreground and background so it
+ * stays legible whichever mode is on.
+ */
+function resolveTerminalTheme(mode: "dark" | "light"): XtermTheme {
+  if (typeof document === "undefined") return TERMINAL_FALLBACK[mode]
+  const ctx = document.createElement("canvas").getContext("2d")
+  if (!ctx) return TERMINAL_FALLBACK[mode]
+
+  const probe = document.createElement("span")
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"
+  document.body.appendChild(probe)
+
+  const read = (expr: string, fallback: string) => {
+    // A sentinel first: an expression the browser rejects outright (a typo in
+    // a function name) leaves `color` at the sentinel rather than erroring, so
+    // that is the signal to fall back.
+    probe.style.color = "rgb(1, 2, 3)"
+    probe.style.color = expr
+    const raw = getComputedStyle(probe).color
+    if (!raw || raw === "rgb(1, 2, 3)") return fallback
+    try {
+      ctx.fillStyle = "#000"
+      ctx.fillStyle = raw
+      return ctx.fillStyle
+    } catch {
+      return fallback
+    }
+  }
+  const token = (name: string, fallback: string) => read(`var(${name})`, fallback)
+  const mix = (a: string, pct: number, b: string, fallback: string) =>
+    read(`color-mix(in oklab, var(${a}) ${pct}%, var(${b}))`, fallback)
+  const withAlpha = (hex: string, a: number) =>
+    /^#[0-9a-f]{6}$/i.test(hex)
+      ? hex +
+        Math.round(a * 255)
+          .toString(16)
+          .padStart(2, "0")
+      : hex
+
+  const fb = TERMINAL_FALLBACK[mode]
+  const n = NEUTRAL_INK[mode]
+  const fg = token("--foreground", fb.foreground!)
+  const bg = token("--background", fb.background!)
+  const red = token("--destructive", fb.red!)
+  const green = token("--success", fb.green!)
+  const yellow = token("--warning", fb.yellow!)
+  const blue = token("--chart-1", fb.blue!)
+  const magenta = token("--chart-4", fb.magenta!)
+  const cyan = TERMINAL_CYAN[mode]
+
+  const theme = {
+    background: bg,
+    foreground: fg,
+    cursor: token("--primary", fg),
+    cursorAccent: bg,
+    selectionBackground: withAlpha(token("--ring", fb.blue!), 0.3),
+    black: mix("--foreground", n.black, "--background", fb.black!),
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white: mix("--foreground", n.white, "--background", fb.white!),
+    brightBlack: mix("--foreground", n.brightBlack, "--background", fb.brightBlack!),
+    brightRed: red,
+    brightGreen: green,
+    brightYellow: yellow,
+    brightBlue: blue,
+    brightMagenta: magenta,
+    brightCyan: cyan,
+    brightWhite: fg,
+  }
+  probe.remove()
+  return theme
+}
 
 /** The control keys a strip can send. Bytes, not tmux key names: these go
  *  straight down the same socket a keypress would, so the shell cannot tell
@@ -249,12 +361,14 @@ export function XtermPane({
     // xterm touches `window` at import time, so it is loaded in the effect
     // rather than at module scope where the server render would break.
     ;(async () => {
-      const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-web-links"),
-        import("@xterm/addon-search"),
-      ])
+      const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }, { WebglAddon }] =
+        await Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+          import("@xterm/addon-web-links"),
+          import("@xterm/addon-search"),
+          import("@xterm/addon-webgl"),
+        ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
 
@@ -306,7 +420,7 @@ export function XtermPane({
         // "none" over a scrollback full of matches, which is worse than not
         // showing a count at all.
         allowProposedApi: true,
-        theme: { ...TERMINAL_THEMES[modeRef.current] },
+        theme: resolveTerminalTheme(modeRef.current),
       })
       termRef.current = term
       const fit = new FitAddon()
@@ -317,6 +431,24 @@ export function XtermPane({
       term.loadAddon(search)
       term.loadAddon(new WebLinksAddon())
       term.open(host)
+
+      // The WebGL renderer, loaded after open() as the addon requires. xterm's
+      // core ships only the DOM renderer, which draws box-drawing and block
+      // characters from the font — and most system monospace fonts space those
+      // wrong, so tmux's pane borders came through with gaps and any TUI that
+      // paints with ▀▄█ (Claude Code's banner, htop's meters) rendered broken
+      // while plain text was fine. The WebGL renderer draws those glyphs itself
+      // from a vector atlas, so they line up regardless of the font. If the GPU
+      // context is lost or refused, the addon disposes itself and xterm falls
+      // straight back to the DOM renderer.
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        term.loadAddon(webgl)
+      } catch {
+        // No WebGL in this browser — the DOM renderer is the fallback and needs
+        // nothing done.
+      }
       // A plain drag selects, the way it does in every other application.
       //
       // tmux's mouse mode is on — that is what makes the wheel scroll the
@@ -598,7 +730,7 @@ export function XtermPane({
 
   useEffect(() => {
     modeRef.current = mode
-    if (termRef.current) termRef.current.options.theme = { ...TERMINAL_THEMES[mode] }
+    if (termRef.current) termRef.current.options.theme = resolveTerminalTheme(mode)
   }, [mode])
 
   // Anything that changes the cell size changes the geometry, so the PTY has
@@ -896,7 +1028,7 @@ export function XtermPane({
         <div
           ref={hostRef}
           className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
-          style={bell ? undefined : { backgroundColor: TERMINAL_THEMES[mode].background }}
+          style={bell ? undefined : { backgroundColor: "var(--background)" }}
           // Clicking inside a pane focuses it, which is what clicking inside
           // anything does. tmux composes every pane into one screen before the
           // PTY ever sees it, so there is no element to hang a handler on —

@@ -11,6 +11,7 @@ import { GitHubMark } from "@/components/git/github-account"
 import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -332,12 +333,7 @@ function CreatePullDialog({
             />
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={draft}
-              onChange={(e) => setDraft(e.target.checked)}
-              className="size-3.5 accent-[var(--primary)]"
-            />
+            <Checkbox checked={draft} onCheckedChange={(v) => setDraft(Boolean(v))} />
             Open as a draft — nobody is asked to review it yet
           </label>
         </div>

@@ -2,54 +2,37 @@
 
 import { Check, Monitor, Moon, Sun } from "lucide-react"
 import { useTheme } from "@/hooks/use-theme"
-import { THEMES, type Theme } from "@/lib/themes"
+import type { ThemeMode } from "@/lib/themes"
 import { cn } from "@/lib/utils"
 import { Page, PageHeader, Section } from "@/components/page"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 
 export default function AppearancePage() {
-  const { themeId, theme, setTheme } = useTheme()
-
-  const dark = THEMES.filter((t) => t.mode === "dark")
-  const light = THEMES.filter((t) => t.mode === "light")
+  const { mode, setMode } = useTheme()
 
   return (
     <Page>
       <PageHeader
         eyebrow="You"
         title="Appearance"
-        description="Pick a palette for Just Dashboard. It applies immediately and is remembered in this browser."
+        description="Light or dark. It applies immediately and is remembered in this browser."
         actions={
           <Badge variant="outline" className="gap-1.5 font-normal">
-            {theme.mode === "dark" ? <Moon className="size-3" /> : <Sun className="size-3" />}
-            {theme.name}
+            {mode === "dark" ? <Moon className="size-3" /> : <Sun className="size-3" />}
+            {mode === "dark" ? "Dark" : "Light"}
           </Badge>
         }
       />
 
       <Section
-        title={
-          <span className="flex items-center gap-2">
-            <Moon className="size-3.5 text-muted-foreground" />
-            Dark
-          </span>
-        }
-        description="For a room with the lights off, and for reading a graph at 3am."
+        title="Mode"
+        description="Just Dashboard's own palette, in the two modes it ships."
       >
-        <ThemeGrid themes={dark} active={themeId} onPick={setTheme} />
-      </Section>
-
-      <Section
-        title={
-          <span className="flex items-center gap-2">
-            <Sun className="size-3.5 text-muted-foreground" />
-            Light
-          </span>
-        }
-        description="For daylight and for screenshots that end up in a ticket."
-      >
-        <ThemeGrid themes={light} active={themeId} onPick={setTheme} />
+        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+          <ModeOption mode="dark" active={mode === "dark"} onPick={setMode} />
+          <ModeOption mode="light" active={mode === "light"} onPick={setMode} />
+        </div>
       </Section>
 
       <Panel>
@@ -59,9 +42,8 @@ export default function AppearancePage() {
             The choice lives in this browser&apos;s local storage, not on your account — the same
             server can look one way on your laptop and another on your phone. It survives reloads,
             sign-outs and dashboard restarts, and it is applied before the page paints, so there is
-            no flash of the previous palette. The palette is also reachable from the top bar and
-            from the command palette (⌘K), so you can try one without leaving the page you are
-            reading.
+            no flash of the previous mode. It is also reachable from the top bar and from the
+            command palette (⌘K), so you can flip it without leaving the page you are reading.
           </p>
         </PanelBody>
       </Panel>
@@ -69,78 +51,64 @@ export default function AppearancePage() {
   )
 }
 
-function ThemeGrid({
-  themes,
-  active,
-  onPick,
-}: {
-  themes: Theme[]
-  active: string
-  onPick: (id: string) => void
-}) {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
-      {themes.map((theme) => (
-        <ThemeOption
-          key={theme.id}
-          theme={theme}
-          active={theme.id === active}
-          onPick={() => onPick(theme.id)}
-        />
-      ))}
-    </div>
-  )
+const MODE_COPY: Record<ThemeMode, { label: string; description: string }> = {
+  dark: { label: "Dark", description: "For a room with the lights off, and for reading a graph at 3am." },
+  light: { label: "Light", description: "For daylight and for screenshots that end up in a ticket." },
 }
 
-function ThemeOption({
-  theme,
+function ModeOption({
+  mode,
   active,
   onPick,
 }: {
-  theme: Theme
+  mode: ThemeMode
   active: boolean
-  onPick: () => void
+  onPick: (mode: ThemeMode) => void
 }) {
+  const copy = MODE_COPY[mode]
   return (
     <button
       type="button"
-      onClick={onPick}
+      onClick={() => onPick(mode)}
       aria-pressed={active}
       className={cn(
-        "group min-w-0 rounded-xl border bg-card p-2 text-left transition-all",
+        "card-sheen group min-w-0 rounded-xl border bg-card p-2 text-left transition-all",
         "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
         active
           ? "border-primary ring-[3px] ring-primary/25"
           : "hover:border-primary/40 hover:bg-accent/40",
       )}
     >
-      <ThemePreview theme={theme} />
+      <ModePreview mode={mode} />
       <div className="min-w-0 px-1.5 pt-2.5 pb-1">
         <div className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium">{theme.name}</span>
+          {mode === "dark" ? (
+            <Moon className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <Sun className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate text-[13px] font-medium">{copy.label}</span>
           {active && <Check className="size-3.5 shrink-0 text-primary" />}
         </div>
-        <p className="text-xs text-muted-foreground">{theme.description}</p>
+        <p className="text-xs text-muted-foreground">{copy.description}</p>
       </div>
     </button>
   )
 }
 
 /**
- * A miniature of the dashboard drawn in the theme it is offering.
+ * A miniature of the dashboard drawn in the mode it is offering.
  *
- * The `data-theme` attribute is all it takes: the palettes are defined against
- * a bare attribute selector, so the tokens inside this element resolve to that
- * theme's values while the page around it stays as it is. Nothing here uses a
- * `dark:` variant, which is what keeps a light preview readable inside a dark
- * page.
+ * `.light`/`.dark` is all it takes: both are classes, not `:root`, precisely
+ * so an element that isn't <html> can force one directly — the tokens inside
+ * this element resolve to that mode's values while the page around it, in
+ * whichever mode it is actually in, stays as it is.
  */
-function ThemePreview({ theme }: { theme: Theme }) {
+function ModePreview({ mode }: { mode: ThemeMode }) {
   return (
     <div
-      data-theme={theme.id}
+      className={cn("flex h-32 overflow-hidden rounded-lg border bg-background", mode)}
       aria-hidden
-      className="flex h-32 overflow-hidden rounded-lg border bg-background"
     >
       <div className="flex w-9 shrink-0 flex-col gap-1.5 border-r bg-sidebar p-1.5">
         <div className="h-2 rounded-sm bg-sidebar-primary" />

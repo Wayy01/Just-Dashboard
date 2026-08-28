@@ -181,7 +181,7 @@ function Canvas({
           type: MarkerType.ArrowClosed,
           width: 16,
           height: 16,
-          color: involved ? "var(--color-primary)" : "var(--color-muted-foreground)",
+          color: involved ? "var(--color-chart-1)" : "var(--color-muted-foreground)",
         },
       }
     })
@@ -272,7 +272,7 @@ function Canvas({
             zoomable
             className="!bottom-3 !right-3 !h-24 !w-40 overflow-hidden !rounded-md !border !bg-card"
             maskColor="color-mix(in oklab, var(--color-background) 70%, transparent)"
-            nodeColor="var(--color-primary)"
+            nodeColor="color-mix(in oklab, var(--color-chart-1) 55%, var(--color-muted))"
             nodeStrokeWidth={0}
           />
         </ReactFlow>
@@ -342,16 +342,13 @@ function Legend() {
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-md border bg-card/90 px-2.5 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
       <span className="flex items-center gap-1">
-        <KeyRound className="size-3 text-amber-500" /> primary
+        <KeyRound className="size-3 text-chart-2" /> primary key
       </span>
       <span className="flex items-center gap-1">
-        <Link2 className="size-3 text-sky-500" /> foreign
+        <Link2 className="size-3 text-chart-1" /> foreign key
       </span>
       <span className="flex items-center gap-1">
-        <Fingerprint className="size-3" /> unique
-      </span>
-      <span className="flex items-center gap-1">
-        <span className="text-destructive/70">*</span> not null
+        <Fingerprint className="size-3 text-muted-foreground/60" /> unique
       </span>
     </div>
   )

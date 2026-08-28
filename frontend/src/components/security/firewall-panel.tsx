@@ -5,13 +5,15 @@ import { AlertTriangle, Lock, Pencil, RotateCcw, Shield, ShieldAlert, Trash2 } f
 import { notify } from "@/lib/toast"
 import { del, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { FirewallRule, FirewallStatus, Posture } from "@/lib/types"
+import type { FirewallRule, FirewallStatus, Posture, SecurityFinding } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
+import { Metric } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import { AreaFindings } from "@/components/security/posture-panel"
 import { AddRuleDialog, EditRuleDialog } from "@/components/security/rule-form"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { IconAction } from "@/components/icon-action"
 import { Label } from "@/components/ui/label"
@@ -50,12 +52,14 @@ export function FirewallPanel({
   loading,
   error,
   refresh,
+  onFix,
 }: {
   status: FirewallStatus | undefined
   posture: Posture | undefined
   loading: boolean
   error: Error | undefined
   refresh: () => void
+  onFix?: (finding: SecurityFinding) => void
 }) {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
@@ -128,7 +132,7 @@ export function FirewallPanel({
   return (
     <>
       <div className="flex min-w-0 flex-col gap-4">
-        <AreaFindings posture={posture} area="firewall" />
+        <AreaFindings posture={posture} area="firewall" onFix={onFix} />
 
         {caps.readOnlyReason && (
           <Notice icon={Lock} title={`${status.backend} can be read here, not changed`}>
@@ -145,14 +149,16 @@ export function FirewallPanel({
         <Panel>
           <PanelHeader
             icon={Shield}
-            title={`${status.backend} · ${status.enabled ? "active" : "inactive"}`}
-            description={
-              [status.defaultPolicy ?? "no default policy reported", status.zone && `zone ${status.zone}`]
-                .filter(Boolean)
-                .join(" · ")
-            }
+            eyebrow={status.backend}
+            title="Firewall"
+            description={status.zone ? `zone ${status.zone}` : undefined}
             actions={
-              writable && (
+              <>
+                <Status
+                  verdict={status.enabled ? "ok" : "warning"}
+                  label={status.enabled ? "Active" : "Inactive"}
+                />
+                {writable && (
                 <>
                   <AddRuleDialog onDone={refresh} hasProfiles={caps.profiles} />
                   {caps.toggle && (
@@ -183,28 +189,47 @@ export function FirewallPanel({
                   />
                   )}
                 </>
-              )
+                )}
+              </>
             }
           />
-          {writable && (caps.defaultPolicy || caps.logging || caps.reset) && (
-            <PanelToolbar className="gap-4">
-              {caps.defaultPolicy && (
-                <PolicySelect
-                  label="Inbound"
-                  value={status.policy?.incoming}
-                  onChange={(v) => setPolicy("incoming", v)}
-                  hint="What happens to a connection no rule matched"
-                />
-              )}
-              {caps.defaultPolicy && status.backend === "ufw" && (
+          {/* One strip whether or not this firewall can be changed from here.
+              Read-only backends (iptables) used to show none of this — just a
+              "·"-joined string in the description — so the same facts now read
+              the same way: the default policy, the logging level and the rule
+              count as figures, and where the backend can take an instruction,
+              the figure becomes the control that sets it. */}
+          <PanelToolbar className="gap-x-6 gap-y-3">
+            {caps.defaultPolicy && writable ? (
+              <PolicySelect
+                label="Inbound"
+                value={status.policy?.incoming}
+                onChange={(v) => setPolicy("incoming", v)}
+                hint="What happens to a connection no rule matched"
+              />
+            ) : (
+              <Metric
+                label="inbound default"
+                value={policyLabel(status.policy?.incoming, status.defaultPolicy)}
+                hint="a connection no rule matched"
+              />
+            )}
+            {status.backend === "ufw" &&
+              (caps.defaultPolicy && writable ? (
                 <PolicySelect
                   label="Outbound"
                   value={status.policy?.outgoing}
                   onChange={(v) => setPolicy("outgoing", v)}
                   hint="What this host may reach"
                 />
-              )}
-              {caps.logging && (
+              ) : (
+                <Metric
+                  label="outbound default"
+                  value={policyLabel(status.policy?.outgoing)}
+                  hint="what this host may reach"
+                />
+              ))}
+            {caps.logging && writable ? (
               <div className="space-y-1">
                 <Label className="eyebrow">Logging</Label>
                 <Select
@@ -230,13 +255,24 @@ export function FirewallPanel({
                   </SelectContent>
                 </Select>
               </div>
-              )}
-              <span className="flex-1" />
-              {caps.reset && (
+            ) : (
+              <Metric
+                label="logging"
+                value={loggingLevel(status.logging)}
+                hint={
+                  !status.logging || status.logging.startsWith("off")
+                    ? "a silent drop leaves no record"
+                    : undefined
+                }
+              />
+            )}
+            <Metric label="rules" value={rules.length} />
+            <span className="flex-1" />
+            {writable && caps.reset && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="text-destructive"
+                className="self-center text-destructive"
                 onClick={() =>
                   confirm({
                     title: "Reset the firewall",
@@ -258,9 +294,8 @@ export function FirewallPanel({
                 <RotateCcw className="size-3.5" />
                 Reset
               </Button>
-              )}
-            </PanelToolbar>
-          )}
+            )}
+          </PanelToolbar>
           <PanelBody flush>
             <Table containerClassName="max-h-[calc(100svh-30rem)]">
               <TableHeader className={stickyTableHeader}>
@@ -282,14 +317,16 @@ export function FirewallPanel({
                     <TableCell className="numeric font-mono text-xs">{rule.number}</TableCell>
                     <TableCell>
                       <Badge
-                        variant={
-                          rule.action === "ALLOW"
-                            ? "success"
-                            : rule.action === "LIMIT"
-                              ? "warning"
-                              : "destructive"
-                        }
-                        className="font-normal"
+                        variant="outline"
+                        className={cn(
+                          "font-mono font-normal",
+                          // ALLOW / DENY / LIMIT is a property of the rule, not
+                          // the app's running/stopped status language, so it
+                          // stays a plain tag. Deny-family rules read quieter —
+                          // an allow to the world is the line worth catching,
+                          // and rule.danger already tints that row red.
+                          rule.action !== "ALLOW" && "text-muted-foreground",
+                        )}
                       >
                         {rule.action}
                       </Badge>
@@ -413,6 +450,15 @@ function PolicySelect({
       </Select>
     </div>
   )
+}
+
+/**
+ * The default policy as a word. Prefer the structured field the write controls
+ * also read, so a read-only backend and a writable one describe the same thing
+ * the same way; fall back to the raw string ufw's verbose output carries.
+ */
+function policyLabel(structured: string | undefined, raw?: string) {
+  return structured || raw || "—"
 }
 
 /** ufw prints "on (low)" or "off"; the control offers the level. */

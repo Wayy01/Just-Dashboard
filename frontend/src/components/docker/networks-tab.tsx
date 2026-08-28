@@ -1,17 +1,17 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Link2, Loader2, Network as NetworkIcon, Plus, Trash2, Unlink } from "lucide-react"
+import { Link2, Network as NetworkIcon, Plus, Trash2, Unlink } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { Container, DockerNetwork, NetworkDetail } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingPanel, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Spinner } from "@/components/state"
 import { IconAction } from "@/components/icon-action"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
-import { Detail, DetailList } from "@/components/page"
+import { Detail, DetailList, RowLink } from "@/components/page"
 import type { ConfirmFn } from "@/components/docker/shared"
 import { Hint } from "@/components/docker/explain"
 import { Badge } from "@/components/ui/badge"
@@ -99,13 +99,8 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                   className="group"
                   onActivate={() => setSelected(network.id)}
                 >
-                  <TableCell className="text-[13px] font-medium">
-                    <button
-                      className="text-left hover:underline"
-                      onClick={() => setSelected(network.id)}
-                    >
-                      {network.name}
-                    </button>
+                  <TableCell>
+                    <RowLink onClick={() => setSelected(network.id)}>{network.name}</RowLink>
                     {network.internal && (
                       <Badge variant="outline" className="ml-2 text-[10px] font-normal">
                         no internet
@@ -401,7 +396,7 @@ function AttachDialog({
             Cancel
           </Button>
           <Button onClick={attach} disabled={busy || !picked}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Attach
           </Button>
         </DialogFooter>
@@ -506,7 +501,7 @@ function NewNetworkDialog({
             Cancel
           </Button>
           <Button onClick={create} disabled={busy || !name.trim()}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Create
           </Button>
         </DialogFooter>

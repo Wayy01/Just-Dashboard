@@ -28,7 +28,7 @@ export function LoadingRows({ rows = 5, className }: { rows?: number; className?
  */
 export function LoadingPanel({ rows = 6, className }: { rows?: number; className?: string }) {
   return (
-    <div className={cn("min-w-0 overflow-hidden rounded-xl border bg-card", className)}>
+    <div className={cn("card-sheen min-w-0 overflow-hidden rounded-xl border bg-card", className)}>
       <div className="border-b border-hairline bg-surface-header px-4 py-2.5">
         <Skeleton className="h-4 w-40" />
       </div>

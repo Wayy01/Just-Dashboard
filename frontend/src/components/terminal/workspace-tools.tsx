@@ -6,7 +6,6 @@ import {
   FolderTree,
   GitBranch as GitBranchIcon,
   GitCompare,
-  Loader2,
   PanelRightClose,
   Save,
   X,
@@ -19,7 +18,7 @@ import type { FileContent, GitDetect, GitFileChange, GitStatus } from "@/lib/typ
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { CodeEditor } from "@/components/code-editor"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -409,7 +408,7 @@ function InlineFile({
             <TooltipTrigger asChild>
               <Button size="xs" onClick={save} disabled={!dirty || saving}>
                 {saving ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <Spinner className="size-3.5" />
                 ) : (
                   <Save className="size-3.5" />
                 )}
@@ -560,7 +559,7 @@ function InlineConfirm({ request, onClose }: { request: ConfirmRequest; onClose:
   }, [])
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 p-3 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-xl border bg-card p-4 shadow-lg">
+      <div className="card-sheen w-full max-w-sm rounded-xl border bg-card p-4 shadow-lg">
         <p className="text-[13px] font-medium">{request.title}</p>
         {request.body && (
           <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{request.body}</div>
@@ -575,7 +574,7 @@ function InlineConfirm({ request, onClose }: { request: ConfirmRequest; onClose:
             onClick={runIt}
             disabled={busy}
           >
-            {busy && <Loader2 className="size-3.5 animate-spin" />}
+            {busy && <Spinner className="size-3.5" />}
             {request.confirmLabel ?? "Confirm"}
           </Button>
         </div>

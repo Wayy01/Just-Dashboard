@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Asterisk, KeyRound, Plus, Trash2 } from "lucide-react"
+import { Asterisk, Check, ChevronDown, KeyRound, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { plural } from "@/lib/format"
@@ -21,13 +21,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 
 /**
  * The schema-editing forms.
@@ -242,10 +244,17 @@ export function CreateTableDialog({
 }
 
 /**
- * A type field that offers the engine's own types but still accepts anything
- * typed in. The list is the fast path; the free text is what keeps an unusual
- * but legitimate type from being unreachable, and the server validates it
- * either way.
+ * The column type: an editable field welded to a searchable list of the
+ * engine's own types.
+ *
+ * Both halves are load-bearing. The engine's list is templates —
+ * `varchar(255)`, `numeric(10,2)`, `enum('a','b')` — so picking one is a start,
+ * not an answer, and the field has to stay editable to change the number. The
+ * list is what makes `timestamptz` or `jsonb` a click rather than a spelling
+ * test, and it is searchable because twenty-odd names including "double
+ * precision" is past the point a plain menu is faster than typing. Anything
+ * typed that is not on the list is still sent — the server validates it — so an
+ * unusual but legitimate type is never unreachable.
  */
 function TypePicker({
   types,
@@ -256,41 +265,56 @@ function TypePicker({
   value: string
   onChange: (v: string) => void
 }) {
-  // One control rather than two: the picker used to be a text box with a bare
-  // dropdown arrow beside it, which read as two unrelated fields and put a
-  // second thing to aim at in a row already five things wide. The chevron sits
-  // inside the field it fills.
-  //
-  // It is inset from the border rather than flush to it, because flush meant
-  // the trigger's own box was cut by the input's corner radius; and it has no
-  // hover surface of its own, because a second highlight inside a field reads
-  // as a separate control sitting on top of it. It is the affordance for the
-  // field it belongs to, so it takes the field's colour and brightens with it.
+  const [open, setOpen] = useState(false)
   return (
-    <div className="group/type relative flex min-w-0 items-center">
-      <Input
-        placeholder="text"
+    <div className="flex h-8 w-full min-w-0 items-center rounded-md border bg-transparent transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+      <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 min-w-0 pr-8 font-mono text-xs"
+        placeholder="text"
+        aria-label="Column type"
+        className="h-full min-w-0 flex-1 bg-transparent px-2 font-mono text-xs outline-none placeholder:text-muted-foreground"
       />
       {types.length > 0 && (
-        <Select value="" onValueChange={onChange}>
-          <SelectTrigger
-            size="sm"
-            aria-label="Choose a type"
-            className="absolute right-1.5 h-5 w-4 justify-center border-0 bg-transparent px-0 text-muted-foreground shadow-none transition-colors group-hover/type:text-foreground focus-visible:ring-0 data-[state=open]:text-foreground [&>span]:hidden [&>svg]:opacity-100"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="max-h-64">
-            {types.map((t) => (
-              <SelectItem key={t} value={t} className="font-mono text-xs">
-                {t}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="Browse types"
+              className="flex h-full w-7 shrink-0 items-center justify-center rounded-r-[5px] border-l border-hairline text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+            >
+              <ChevronDown className="size-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-52 p-0">
+            <Command
+              filter={(v, search) => (v.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}
+            >
+              <CommandInput placeholder="Filter types…" className="text-xs" />
+              <CommandList className="max-h-60">
+                <CommandEmpty className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  Not on the list — type it into the field.
+                </CommandEmpty>
+                <CommandGroup>
+                  {types.map((t) => (
+                    <CommandItem
+                      key={t}
+                      value={t}
+                      onSelect={() => {
+                        onChange(t)
+                        setOpen(false)
+                      }}
+                      className="font-mono text-xs"
+                    >
+                      {t}
+                      {value === t && <Check className="ml-auto size-3.5 text-primary" />}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       )}
     </div>
   )

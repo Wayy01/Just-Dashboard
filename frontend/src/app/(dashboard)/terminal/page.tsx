@@ -706,12 +706,14 @@ export default function TerminalPage() {
               icon={PanelLeft}
             />
             {currentDir && (
-              <span
-                className="min-w-0 truncate px-1 font-mono text-[11px] text-muted-foreground"
-                title={currentDir}
+              <button
+                type="button"
+                onClick={() => router.push(`/files?path=${encodeURIComponent(currentDir)}`)}
+                className="min-w-0 truncate rounded px-1 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                title={`Open ${currentDir} in Files`}
               >
                 {currentDir}
-              </span>
+              </button>
             )}
             <span className="flex-1" />
             <WorkspaceToggle

@@ -1,16 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { AlertTriangle, CheckCircle2, FileCode, Globe, Loader2, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, FileCode, Globe, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { DomainCheck, SiteLocation, SiteResult, SiteSpec } from "@/lib/types"
 import { CodeEditor } from "@/components/code-editor"
 import { SidePanel } from "@/components/side-panel"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
@@ -226,7 +227,7 @@ function SiteFormBody({
             Save only
           </Button>
           <Button size="sm" onClick={() => save(true)} disabled={!ready || busy}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Save and reload
           </Button>
         </>
@@ -727,11 +728,9 @@ function LocationsField({
             />
           )}
           <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={loc.webSockets}
-              onChange={(e) => update(i, { webSockets: e.target.checked })}
-              className="size-3.5 accent-[var(--primary)]"
+              onCheckedChange={(v) => update(i, { webSockets: Boolean(v) })}
             />
             WebSockets on this path
           </label>

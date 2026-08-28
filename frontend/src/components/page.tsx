@@ -175,6 +175,42 @@ export function MetricStrip({ className, ...props }: React.ComponentProps<"div">
 }
 
 /**
+ * A table cell's primary column, rendered as the row's way into its detail
+ * view — default text colour, underline only on hover.
+ *
+ * `Button`'s `variant="link"` doesn't fit here: it colours the text primary
+ * and always underlines, which reads as navigation rather than "this is the
+ * name of the thing the row is about". Thirteen tables across the app were
+ * each retyping the same three classes for exactly this button before this
+ * existed.
+ */
+export function RowLink({
+  onClick,
+  mono,
+  className,
+  children,
+}: {
+  onClick: () => void
+  mono?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "truncate text-left text-[13px] font-medium hover:underline",
+        mono && "font-mono text-xs",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
  * A label/value pair in a stacked list — the replacement for the `<dl>` grids
  * that each card used to hand-roll with its own column widths.
  */

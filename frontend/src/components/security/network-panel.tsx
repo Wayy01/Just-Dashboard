@@ -1,13 +1,16 @@
 "use client"
 
-import { Cable, Globe, Route as RouteIcon, Server } from "lucide-react"
+import { Cable, Route as RouteIcon, Server } from "lucide-react"
 import { get } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { NetworkInfo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { Panel, PanelBody, PanelHeader } from "@/components/panel"
+import { Metric, MetricStrip } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { ErrorState, LoadingPanel } from "@/components/state"
+import { ReachBadge } from "@/components/security/reach-badge"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import {
   Table,
@@ -36,6 +39,10 @@ export function NetworkPanel() {
   if (error) return <ErrorState error={error} />
   if (!data) return null
 
+  const real = data.interfaces.filter((i) => i.kind !== "virtual" && i.kind !== "bridge")
+  const exposed = data.interfaces.filter((i) => i.public && i.up)
+  const defaultRoute = data.routes.find((r) => r.destination === "default")
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <Panel>
@@ -43,7 +50,30 @@ export function NetworkPanel() {
           icon={Cable}
           title="Interfaces"
           description="A host running Docker has a dozen virtual devices; they are grouped so the real ones read first"
+          actions={
+            <Status
+              verdict={exposed.length > 0 ? "warning" : "ok"}
+              label={
+                exposed.length > 0 ? `${exposed.length} on a public address` : "no public address"
+              }
+            />
+          }
         />
+        <PanelToolbar>
+          <MetricStrip>
+            <Metric
+              label="devices"
+              value={data.interfaces.length}
+              hint={`${real.length} not virtual`}
+            />
+            <Metric label="up" value={data.interfaces.filter((i) => i.up).length} />
+            <Metric
+              label="default route"
+              value={defaultRoute?.interface ?? "—"}
+              hint="where the internet reaches this host"
+            />
+          </MetricStrip>
+        </PanelToolbar>
         <PanelBody flush>
           <Table>
             <TableHeader>
@@ -74,20 +104,9 @@ export function NetworkPanel() {
                     {bytes(ifc.bytesRecv)} / {bytes(ifc.bytesSent)}
                   </TableCell>
                   <TableCell>
-                    {ifc.public ? (
-                      <Badge variant="warning" className="font-normal">
-                        <Globe className="size-3" />
-                        internet
-                      </Badge>
-                    ) : ifc.loopback ? (
-                      <Badge variant="secondary" className="font-normal">
-                        local only
-                      </Badge>
-                    ) : (
-                      <Badge variant="success" className="font-normal">
-                        private
-                      </Badge>
-                    )}
+                    <ReachBadge
+                      scope={ifc.public ? "internet" : ifc.loopback ? "local" : "private"}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

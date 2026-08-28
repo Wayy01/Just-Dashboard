@@ -2,18 +2,18 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { FolderTree, HardDrive, Loader2, Plus, Trash2 } from "lucide-react"
+import { FolderTree, HardDrive, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, truncateMiddle } from "@/lib/format"
 import type { VolumeDetail } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingPanel, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Spinner } from "@/components/state"
 import { IconAction } from "@/components/icon-action"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
-import { Detail, DetailList } from "@/components/page"
+import { Detail, DetailList, RowLink } from "@/components/page"
 import type { ConfirmFn } from "@/components/docker/shared"
 import { Hint, Term } from "@/components/docker/explain"
 import { Badge } from "@/components/ui/badge"
@@ -143,12 +143,9 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                 >
                   <TableCell>
                     <div className="max-w-[24rem] min-w-0">
-                      <button
-                        className="truncate text-left font-mono text-xs hover:underline"
-                        onClick={() => setSelected(volume.name)}
-                      >
+                      <RowLink mono onClick={() => setSelected(volume.name)}>
                         {truncateMiddle(volume.name, 40)}
-                      </button>
+                      </RowLink>
                       <p className="truncate font-mono text-[11px] text-muted-foreground">
                         {volume.mountpoint}
                       </p>
@@ -407,7 +404,7 @@ function NewVolumeDialog({
             Cancel
           </Button>
           <Button onClick={create} disabled={busy || !name.trim()}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Create
           </Button>
         </DialogFooter>

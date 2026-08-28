@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { FileCode, Loader2, Save, ShieldAlert } from "lucide-react"
+import { FileCode, Save, ShieldAlert } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { downloadUrl, get, post, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -9,7 +9,7 @@ import type { FileContent } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { CodeEditor } from "@/components/code-editor"
 import { SidePanel } from "@/components/side-panel"
-import { ErrorState, LoadingRows, Notice } from "@/components/state"
+import { ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -141,7 +141,7 @@ function FileEditorPanel({
             <span className="numeric text-xs text-muted-foreground">{bytes(draft.length)}</span>
             {can("file.write") && !isImage(path) && (
               <Button size="sm" onClick={save} disabled={!dirty || saving || file.binary}>
-                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                {saving ? <Spinner className="size-4" /> : <Save className="size-4" />}
                 Save
               </Button>
             )}

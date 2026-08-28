@@ -1,14 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { FileCode, GitCompare, Loader2, Save, X } from "lucide-react"
+import { FileCode, GitCompare, Save, X } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import type { FileContent } from "@/lib/types"
 import { CodeEditor } from "@/components/code-editor"
 import { DiffView } from "@/components/files/diff-view"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { EmptyState, ErrorState, LoadingRows, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -144,7 +144,7 @@ function FilePreview({
             {file && !file.binary && canWrite && (
               <Button size="xs" onClick={save} disabled={!dirty || saving}>
                 {saving ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <Spinner className="size-3.5" />
                 ) : (
                   <Save className="size-3.5" />
                 )}

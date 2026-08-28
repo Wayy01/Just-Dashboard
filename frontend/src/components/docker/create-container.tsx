@@ -10,7 +10,6 @@ import {
   Globe,
   HardDrive,
   Layers,
-  Loader2,
   Plus,
   Rocket,
   Settings2,
@@ -35,7 +34,7 @@ import type {
 import { useAuth } from "@/hooks/use-auth"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { SidePanel } from "@/components/side-panel"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 import { Field, Hint, Term } from "@/components/docker/explain"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -205,7 +204,7 @@ function CreateContainerBody({
                 Start it now
               </label>
               <Button size="sm" onClick={create} disabled={busy || !spec.image.trim()}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />}
+                {busy ? <Spinner className="size-4" /> : <Rocket className="size-4" />}
                 {spec.start ? "Create and start" : "Create"}
               </Button>
             </div>
@@ -324,7 +323,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
             <button
               key={template.id}
               onClick={() => onPick(template.spec())}
-              className="min-w-0 rounded-lg border border-hairline bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-[var(--row-hover)]"
+              className="card-sheen min-w-0 rounded-lg border border-hairline bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-[var(--row-hover)]"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-[13px] font-medium">{template.name}</span>

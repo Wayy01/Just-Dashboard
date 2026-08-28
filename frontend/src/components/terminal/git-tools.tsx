@@ -31,6 +31,7 @@ import type {
 import { usePoll } from "@/hooks/use-poll"
 import { GitHubAccountControl } from "@/components/git/github-account"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { EmptyState, ErrorState, LoadingRows, Notice, Spinner } from "@/components/state"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -531,11 +532,10 @@ function ChangesTab({
           />
           <div className="flex items-center gap-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={amend}
-                onChange={(e) => setAmend(e.target.checked)}
-                className="size-3 accent-[var(--primary)]"
+                onCheckedChange={(v) => setAmend(Boolean(v))}
+                className="size-3.5"
               />
               Amend
             </label>

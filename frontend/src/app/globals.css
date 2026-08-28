@@ -1,89 +1,180 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "./themes.css";
 
 @custom-variant dark (&:is(.dark *));
 
-/* The default palette, Midnight, spelled out here rather than only in
-   themes.css so a document renders correctly before the theme script has set
-   an attribute on it — including with JavaScript off entirely.
+/* The palette — "Just Dashboard", from tweakcn — plus everything the layout
+   needs that the palette doesn't define.
 
-   Wrapped in :where() to give it zero specificity. A theme block is a bare
-   `[data-theme="x"]` selector, which scores the same as `:root`, so without
-   this the winner would be decided by which file @import happened to place
-   last — and @import has to come first in a stylesheet, which is the wrong
-   order. Zero specificity makes the intent explicit instead: this is the
-   fallback, anything that names a theme beats it. */
-:where(:root) {
-  --radius: 0.625rem;
+   `.light` and `.dark`, not `:root` and `.dark`: `<html>` always carries
+   exactly one of the two (the bootstrap script and `useTheme` both toggle
+   them as a pair), and `:root` only ever matches the root element itself —
+   never a nested one. A theme preview swatch needs to force its *own*
+   colours regardless of which mode the page around it is in, and a rule that
+   can only ever match `<html>` cannot do that; a class can be put on
+   anything. `:root` is left for the handful of tokens that do not vary by
+   mode at all. */
+:root {
+  --radius: 0.5rem;
+}
 
-  /* Every neutral carries a little of the primary's hue (258) rather than
-     being flat grey. It is the difference between a surface that reads as
-     part of the product and one that reads as an unstyled default. */
-  --background: oklch(0.165 0.014 258);
-  --foreground: oklch(0.975 0.004 250);
-  --card: oklch(0.212 0.017 257);
-  --card-foreground: oklch(0.975 0.004 250);
-  --popover: oklch(0.222 0.018 257);
-  --popover-foreground: oklch(0.975 0.004 250);
+.light {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0 0 0);
 
-  /* The one saturated colour in the system. Everything that is the answer to
-     "what do I press" is this blue, and nothing else is. */
-  --primary: oklch(0.606 0.192 259);
+  /* Primary is ink, not a hue: press-worthy actions read as the strongest
+     mark on the page rather than as "the blue one" among several. Blue is
+     kept in reserve as the accent, for the handful of things that are a
+     choice rather than a command — the active nav item, a focus ring. */
+  --primary: oklch(0 0 0);
   --primary-foreground: oklch(1 0 0);
 
-  --secondary: oklch(0.278 0.021 257);
-  --secondary-foreground: oklch(0.975 0.004 250);
-  --muted: oklch(0.271 0.019 257);
-  --muted-foreground: oklch(0.712 0.024 257);
-  --accent: oklch(0.312 0.035 259);
-  --accent-foreground: oklch(0.985 0.004 250);
-  --destructive: oklch(0.645 0.209 25.5);
+  --secondary: oklch(0.9702 0 0);
+  --secondary-foreground: oklch(0.2046 0 0);
+  --muted: oklch(0.9702 0 0);
+  --muted-foreground: oklch(0.5555 0 0);
+  --destructive: oklch(0.7106 0.1661 22.2162);
   --destructive-foreground: oklch(1 0 0);
 
   /* Status colours live as tokens so a running container, a healthy mount and
      an up interface are the same green everywhere, and stay tunable in one
-     place. */
+     place. Not part of the palette itself — darker and more saturated than
+     the dark-mode pair below, which is what a status colour needs to stay
+     legible against a white card rather than a near-black one. */
+  --success: oklch(0.58 0.142 162);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.68 0.15 70);
+  --warning-foreground: oklch(0.24 0.05 70);
+
+  --border: oklch(0.937 0 0);
+  --input: oklch(0.937 0 0);
+  --ring: oklch(0.5731 0.2145 258.2467);
+
+  --chart-1: oklch(0.5731 0.2145 258.2467);
+  --chart-2: oklch(0.7837 0.1587 72.9913);
+  --chart-3: oklch(0.673 0.2146 25.0397);
+  --chart-4: oklch(0.5413 0.2466 293.009);
+  --chart-5: oklch(0.6959 0.1491 162.4796);
+
+  --sidebar: oklch(0.9851 0 0);
+  --sidebar-foreground: oklch(0.2046 0 0);
+  /* The tweakcn export set this to the accent blue, independently of
+     --primary — which reads as a second, competing brand colour the moment
+     it sits next to the black/white buttons everywhere else. The "you are
+     here" mark in the nav should be the same ink as "press this". */
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.937 0 0);
+  --sidebar-accent-foreground: oklch(0 0 0);
+  --sidebar-border: oklch(0.937 0 0);
+  --sidebar-ring: oklch(0.5731 0.2145 258.2467);
+
+  /* Git status on a light card needs its own lightness, not just its own
+     hue — these are text, and the dark-mode set below reads as ink on white
+     rather than as colour. Same convention every git client uses:
+     green-means-added, so the hues stay fixed and only travel with the
+     mode. */
+  --git-added: oklch(0.5 0.16 152);
+  --git-modified: oklch(0.53 0.13 70);
+  --git-deleted: oklch(0.52 0.21 25);
+  --git-untracked: oklch(0.5 0.11 200);
+  --git-renamed: oklch(0.49 0.17 265);
+  --git-conflict: oklch(0.51 0.22 8);
+
+  --shadow-color: #000000;
+  --shadow-opacity: 0.08;
+  --shadow-blur: 12px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 2px;
+  --tracking-normal: -0.02em;
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.04);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.04);
+  --shadow-sm: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 1px 2px -1px hsl(0 0% 0% / 0.08);
+  --shadow: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 1px 2px -1px hsl(0 0% 0% / 0.08);
+  --shadow-md: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 2px 4px -1px hsl(0 0% 0% / 0.08);
+  --shadow-lg: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 4px 6px -1px hsl(0 0% 0% / 0.08);
+  --shadow-xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 8px 10px -1px hsl(0 0% 0% / 0.08);
+  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.2);
+}
+
+.dark {
+  --background: oklch(0.1448 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.1776 0 0);
+  --card-foreground: oklch(1 0 0);
+  --popover: oklch(0.1776 0 0);
+  --popover-foreground: oklch(1 0 0);
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.2178 0 0);
+  --secondary-foreground: oklch(0.9461 0 0);
+  --muted: oklch(0.2002 0 0);
+  --muted-foreground: oklch(0.7118 0.0129 286.0665);
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(1 0 0);
+
   --success: oklch(0.72 0.163 162);
   --success-foreground: oklch(0.18 0.05 162);
   --warning: oklch(0.79 0.152 78);
   --warning-foreground: oklch(0.22 0.05 78);
 
-  --border: oklch(0.72 0.045 258 / 16%);
-  --input: oklch(0.72 0.045 258 / 22%);
-  --ring: oklch(0.606 0.192 259);
+  --border: oklch(0.252 0 0);
+  --input: oklch(0.252 0 0);
+  --ring: oklch(0.7837 0.1587 72.9913);
 
-  /* Chart 1 is the primary, so a single series matches the buttons beside it;
-     the rest walk away around the wheel far enough to stay separable. */
-  --chart-1: oklch(0.632 0.188 259);
-  --chart-2: oklch(0.724 0.147 213);
-  --chart-3: oklch(0.72 0.163 162);
-  --chart-4: oklch(0.667 0.208 297);
-  --chart-5: oklch(0.79 0.152 78);
+  --chart-1: oklch(0.5731 0.2145 258.2467);
+  --chart-2: oklch(0.7837 0.1587 72.9913);
+  --chart-3: oklch(0.673 0.2146 25.0397);
+  --chart-4: oklch(0.6056 0.2189 292.7172);
+  --chart-5: oklch(0.6959 0.1491 162.4796);
 
-  /* The sidebar sits below the page in depth: darker than the canvas, so the
-     content area reads as the lit surface. */
-  --sidebar: oklch(0.182 0.017 258);
-  --sidebar-foreground: oklch(0.94 0.006 250);
-  --sidebar-primary: oklch(0.606 0.192 259);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.286 0.032 259);
-  --sidebar-accent-foreground: oklch(0.985 0.004 250);
-  --sidebar-border: oklch(0.72 0.045 258 / 14%);
-  --sidebar-ring: oklch(0.606 0.192 259);
+  --sidebar: oklch(0.1344 0 0);
+  --sidebar-foreground: oklch(0.9461 0 0);
+  /* See the light block's comment: matches --primary rather than the
+     tweakcn export's independent accent blue. */
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.2178 0 0);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.252 0 0);
+  --sidebar-ring: oklch(0.5731 0.2145 258.2467);
+
+  --git-added: oklch(0.68 0.16 152);
+  --git-modified: oklch(0.72 0.14 78);
+  --git-deleted: oklch(0.65 0.19 25);
+  --git-untracked: oklch(0.7 0.11 195);
+  --git-renamed: oklch(0.67 0.15 265);
+  --git-conflict: oklch(0.66 0.21 8);
+
+  --shadow-color: #000000;
+  --shadow-opacity: 0.6;
+  --shadow-blur: 30px;
+  --shadow-spread: -5px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 10px;
+  --tracking-normal: -0.02em;
+  --shadow-2xs: 0px 10px 30px -5px hsl(0 0% 0% / 0.3);
+  --shadow-xs: 0px 10px 30px -5px hsl(0 0% 0% / 0.3);
+  --shadow-sm: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 1px 2px -6px hsl(0 0% 0% / 0.6);
+  --shadow: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 1px 2px -6px hsl(0 0% 0% / 0.6);
+  --shadow-md: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 2px 4px -6px hsl(0 0% 0% / 0.6);
+  --shadow-lg: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 4px 6px -6px hsl(0 0% 0% / 0.6);
+  --shadow-xl: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 8px 10px -6px hsl(0 0% 0% / 0.6);
+  --shadow-2xl: 0px 10px 30px -5px hsl(0 0% 0% / 1.5);
 }
 
 /* ---------------------------------------------------------------------------
    Derived surfaces.
 
-   Twelve palettes define twelve sets of the tokens above and nothing else, so
-   anything the layout needs beyond them has to be *computed* from them rather
-   than declared per theme — otherwise every new surface means twelve more
-   lines to keep in step, and the first one anybody forgets is the one that
-   breaks a light theme.
-
-   These are all color-mix over existing tokens, so they follow whichever
-   palette is in force, in either mode, with no per-theme entry.
+   Neither the palette above nor the tag tokens below vary by light or dark
+   separately from this: everything here is *computed* from the tokens above
+   via color-mix, so it follows whichever of the two blocks is in force with
+   no per-mode entry of its own.
    --------------------------------------------------------------------------- */
 :root {
   /* The strip at the top of a panel, and any toolbar that sits inside one.
@@ -98,8 +189,31 @@
   --hairline: color-mix(in oklab, var(--border) 70%, transparent);
 
   /* Row banding and hover, expressed against the card rather than as a
-     translucent grey, so it lands the same way on a light and a dark card. */
+     translucent grey, so it lands the same way on the light and the dark
+     card. */
   --row-hover: color-mix(in oklab, var(--muted) 55%, transparent);
+
+  /* The generic hover/highlight wash — what a dropdown item, a select
+     option, a ghost or outline button, a tab, a command-palette row all turn
+     when the pointer (or the keyboard) lands on them. This is `--accent` in
+     every generated shadcn primitive, and the tweakcn export set `--accent`
+     to the same vivid blue as `--ring` — which reads as "everything is
+     blue" the instant a menu opens, since this token is what nearly every
+     interactive surface in the app is built on. Computed a step off `--muted`
+     instead, the relationship the previous palette used, so the blue stays
+     where the theme actually wants it seen: the focus ring, the charts, the
+     one deliberate highlight — not the hover state of every button. */
+  --accent: color-mix(in oklab, var(--muted) 82%, var(--foreground) 18%);
+  --accent-foreground: var(--foreground);
+
+  /* The hover/selected wash for the surfaces where `--accent` was too heavy —
+     a menu that opens under the pointer, a select's option list, a command
+     row. `--accent` still backs ghost and outline buttons and the tabs, where
+     a firmer highlight is wanted; this is a shade lighter, computed against
+     the card the way `--row-hover` is, because a dropdown item and a table
+     row are the same gesture and should land the same way. In light mode the
+     old value mixed 18% ink into near-white and read as a grey slab. */
+  --menu-hover: color-mix(in oklab, var(--muted) 75%, transparent);
 
   /* Colour tags, for the terminal rail: a folder, the sessions inside it and
      the windows inside those.
@@ -119,31 +233,13 @@
   --tag-blue: oklch(0.65 0.17 255);
   --tag-violet: oklch(0.65 0.18 295);
   --tag-pink: oklch(0.68 0.19 350);
-
-  /* Git status, wherever a changed file is listed: the tree in the terminal's
-     companion, the Files page, the Git page.
-
-     Fixed *hues*, for the same reason the tags above are: green-means-added is
-     a convention the operator brings from every other git client, and one that
-     shifted hue per theme would have to be re-learned twelve times. Lightness
-     is not fixed — these are text, and a value that reads on a near-black card
-     is unreadable on a near-white one — so the three light palettes override
-     them at the foot of themes.css, where the comment explains why that rule
-     needs a specificity these tokens are alone in needing. Every
-     surface drawn from one (the badge, the row tint) is color-mix against the
-     card, so it follows without a second override. */
-  --git-added: oklch(0.68 0.16 152);
-  --git-modified: oklch(0.72 0.14 78);
-  --git-deleted: oklch(0.65 0.19 25);
-  --git-untracked: oklch(0.7 0.11 195);
-  --git-renamed: oklch(0.67 0.15 265);
-  --git-conflict: oklch(0.66 0.21 8);
 }
 
 @theme inline {
   /* System font stacks rather than a webfont: this dashboard is built and run
      on locked-down networks, and next/font/google would make every image build
-     depend on reaching fonts.googleapis.com. */
+     depend on reaching fonts.googleapis.com. Kept even while adopting the rest
+     of this palette — the reason has nothing to do with colour. */
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
@@ -195,6 +291,28 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* The theme's shadow scale, so `shadow-xs`…`shadow-2xl` — already used
+     throughout the generated shadcn primitives (inputs, dialogs, the
+     sidebar) — pick up its softer, wider spread instead of Tailwind's
+     built-in default. Each name maps to itself: the value lives in `:root`/
+     `.dark` above and has to stay a `var()` reference here rather than a
+     literal, or it would stop changing with the mode. */
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+  --color-shadow-color: var(--shadow-color);
+  --tracking-normal: var(--tracking-normal);
+  --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+  --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+  --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+  --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+  --tracking-widest: calc(var(--tracking-normal) + 0.1em);
 }
 
 @layer base {
@@ -205,8 +323,9 @@
     @apply bg-background text-foreground;
     /* Tabular figures everywhere by default would be wrong for prose, but the
        optical alignment of the sidebar and topbar labels benefits from the
-       tighter default tracking a dashboard wants. */
-    letter-spacing: -0.006em;
+       tighter default tracking a dashboard wants — the palette's own value,
+       now that it has one. */
+    letter-spacing: var(--tracking-normal);
   }
 
   /* Tailwind v4 dropped the browser's pointer cursor on buttons, which leaves
@@ -238,7 +357,7 @@
 
   /* A dashboard is mostly scrolling regions — log panes, tables, source lists,
      side sheets. The platform scrollbar is a light-grey slab that ignores the
-     palette entirely, which on a near-black theme is the brightest thing on
+     palette entirely, which on the dark mode is the brightest thing on
      screen. Themed once here so every overflow container matches. */
   * {
     scrollbar-width: thin;
@@ -280,6 +399,21 @@
   .numeric {
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
+  }
+
+  /* The faint lift every card in this theme has — a sheen off the top edge
+   * rather than a flat fill, which is what actually reads as "this surface is
+   * raised" next to the shadow. Kept to a few percent of `--foreground` so it
+   * survives being sat on top of by any text or icon without needing its own
+   * contrast exception, and expressed as a gradient rather than a second
+   * colour token because it is the same relationship — a touch lighter than
+   * the card, fading back to it — in both modes. */
+  .card-sheen {
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--card) 100%, var(--foreground) 4%),
+      var(--card) 60%
+    );
   }
 }
 
@@ -392,9 +526,9 @@
 
 /* Monaco ships its own palette and knows nothing about the theme in force.
  * Letting the editor's own background show through would put a hard-edged
- * slate rectangle inside a card that is any other colour, in all twelve
- * palettes. The container below owns the ground instead, and the editor is
- * told to be transparent over it. */
+ * slate rectangle inside a card that is any other colour, in either mode.
+ * The container below owns the ground instead, and the editor is told to be
+ * transparent over it. */
 .monaco-host,
 .monaco-host .monaco-editor,
 .monaco-host .monaco-editor .overflow-guard,

@@ -1,11 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, CheckCircle2, Loader2, Upload } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Upload } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import type { ImportResult } from "@/lib/types"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -158,7 +158,7 @@ export function ImportDialog({ onDone }: { onDone: () => void }) {
               onClick={submit}
               disabled={busy || !name.trim() || !certificate.trim() || !key.trim()}
             >
-              {busy && <Loader2 className="size-4 animate-spin" />}
+              {busy && <Spinner className="size-4" />}
               Check and import
             </Button>
           )}

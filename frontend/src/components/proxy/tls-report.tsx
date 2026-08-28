@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Fingerprint,
   Info,
-  Loader2,
   Lock,
   ScanLine,
   ShieldAlert,
@@ -19,7 +18,7 @@ import { cn } from "@/lib/utils"
 import type { ScanFinding, TLSScan } from "@/lib/types"
 import { Detail, DetailList } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
-import { EmptyState, Notice } from "@/components/state"
+import { EmptyState, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,7 +70,7 @@ export function TLSReport() {
             className="h-8 w-full text-[13px] sm:w-72"
           />
           <Button size="sm" onClick={run} disabled={busy || !domain.trim()}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Scan
           </Button>
         </PanelToolbar>

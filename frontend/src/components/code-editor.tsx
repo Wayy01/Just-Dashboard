@@ -2,9 +2,9 @@
 
 import { useEffect, useRef } from "react"
 import dynamic from "next/dynamic"
-import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/hooks/use-theme"
+import { Spinner } from "@/components/state"
 
 // Monaco pulls in a large worker bundle and touches `window`, so it is loaded
 // only when an editor is actually opened.
@@ -33,7 +33,7 @@ const MonacoEditor = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        <Spinner className="size-5 text-muted-foreground" />
       </div>
     ),
   },
