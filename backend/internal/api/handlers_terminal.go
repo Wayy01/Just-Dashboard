@@ -417,16 +417,33 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 					}
 					continue
 				case "exit-copy":
-					// The first keystroke after scrolling up. tmux is in copy
-					// mode and would swallow it as a copy command; this is the
+					// The first keystroke after scrolling up, or the
+					// jump-to-end button. tmux is in copy mode and would
+					// swallow a keystroke as a copy command; this is the
 					// browser asking to be put back at the prompt before the
 					// keystroke that follows is delivered. Synchronous, so the
-					// order the operator typed in is the order tmux sees.
+					// order the operator typed in is the order tmux sees. The
+					// `copy-mode` frame back is what lets the client clear its
+					// jump-to-end affordance against something real rather than
+					// a guess.
 					if sess.TmuxName != "" {
 						ctx, cancel := detachedContext(5)
 						_ = s.modules.term.ExitCopyMode(ctx, sess.TmuxName)
 						cancel()
 					}
+					_ = conn.Send("copy-mode", map[string]any{"active": false})
+					continue
+				case "sync-copy":
+					// The browser scrolling back down cannot see when tmux
+					// reaches the bottom and leaves copy mode. It asks; the
+					// answer is tmux's own `#{pane_in_mode}`.
+					active := false
+					if sess.TmuxName != "" {
+						ctx, cancel := detachedContext(5)
+						active, _ = s.modules.term.InCopyMode(ctx, sess.TmuxName)
+						cancel()
+					}
+					_ = conn.Send("copy-mode", map[string]any{"active": active})
 					continue
 				case "input":
 					sess.Write([]byte(ctrl.Data))

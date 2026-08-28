@@ -349,3 +349,24 @@ func (m *Manager) ExitCopyMode(ctx context.Context, tmuxName string) error {
 	_ = hostexec.CommandOnHost(ctx, "tmux", "send-keys", "-X", "-t", tmuxName, "cancel").Run()
 	return nil
 }
+
+// InCopyMode reports whether the session's active pane is scrolled away from
+// the prompt — tmux's copy/view mode.
+//
+// The browser forwards a wheel tick to tmux but never learns what tmux did
+// with it: whether it entered copy mode, and whether a later scroll down has
+// reached the bottom and left it again. `#{pane_in_mode}` is the only
+// authority on that, and the jump-to-end affordance in the pane is driven from
+// it rather than from the browser's own dead reckoning, which otherwise stuck
+// on until the next keystroke. Ownership is not re-checked, as in Redraw: the
+// name comes from the session record, never from the request.
+func (m *Manager) InCopyMode(ctx context.Context, tmuxName string) (bool, error) {
+	if !m.useTmux || tmuxName == "" {
+		return false, nil
+	}
+	out, err := hostexec.CommandOnHost(ctx, "tmux", "display-message", "-p", "-t", tmuxName, "#{pane_in_mode}").Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) == "1", nil
+}

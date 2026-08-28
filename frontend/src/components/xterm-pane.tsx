@@ -431,24 +431,6 @@ export function XtermPane({
       term.loadAddon(search)
       term.loadAddon(new WebLinksAddon())
       term.open(host)
-
-      // The WebGL renderer, loaded after open() as the addon requires. xterm's
-      // core ships only the DOM renderer, which draws box-drawing and block
-      // characters from the font — and most system monospace fonts space those
-      // wrong, so tmux's pane borders came through with gaps and any TUI that
-      // paints with ▀▄█ (Claude Code's banner, htop's meters) rendered broken
-      // while plain text was fine. The WebGL renderer draws those glyphs itself
-      // from a vector atlas, so they line up regardless of the font. If the GPU
-      // context is lost or refused, the addon disposes itself and xterm falls
-      // straight back to the DOM renderer.
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => webgl.dispose())
-        term.loadAddon(webgl)
-      } catch {
-        // No WebGL in this browser — the DOM renderer is the fallback and needs
-        // nothing done.
-      }
       // A plain drag selects, the way it does in every other application.
       //
       // tmux's mouse mode is on — that is what makes the wheel scroll the
@@ -462,7 +444,36 @@ export function XtermPane({
       forcePointerToSelect(term)
       fit.fit()
 
+      // The WebGL renderer, loaded once the pane has its real size. xterm's
+      // core ships only the DOM renderer, which draws box-drawing and block
+      // characters from the font — and most system monospace fonts space those
+      // wrong, so tmux's pane borders came through with gaps and any TUI that
+      // paints with ▀▄█ (htop's meters, a banner) rendered broken while plain
+      // text was fine. The WebGL renderer draws those glyphs itself from a
+      // vector atlas, so they line up regardless of the font.
+      //
+      // It tracks dirty rows rather than repainting everything, and misses the
+      // wholesale change when an app switches to the alternate screen — the
+      // first row of a full-screen TUI (Claude Code, vim, less) came through
+      // blank. `onBufferChange` forces the full repaint that the switch needs.
+      // On GPU context loss the addon disposes itself and xterm falls straight
+      // back to the DOM renderer.
       const disposables: IDisposable[] = []
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        term.loadAddon(webgl)
+        disposables.push(term.buffer.onBufferChange(() => term.refresh(0, term.rows - 1)))
+        requestAnimationFrame(() => {
+          if (disposed) return
+          fit.fit()
+          term.refresh(0, term.rows - 1)
+        })
+      } catch {
+        // No WebGL in this browser — the DOM renderer is the fallback and needs
+        // nothing done.
+      }
+
       disposables.push(
         search.onDidChangeResults((r) =>
           setMatches({ index: r?.resultIndex ?? -1, count: r?.resultCount ?? 0 }),
@@ -496,6 +507,20 @@ export function XtermPane({
           if (!settingsRef.current.copyOnSelect) return
           const selection = term.getSelection()
           if (selection) void navigator.clipboard?.writeText(selection).catch(() => {})
+        }),
+      )
+      // The geometry itself is what the PTY has to be told about, so the send
+      // hangs off the change rather than off each caller that might cause one
+      // (a fit after the WebGL load, a container resize, a font change). An
+      // Ink-based TUI redraws entirely from the size it was last given, so a
+      // fit that nobody forwarded is a full-screen app painting for the wrong
+      // window — a blank or garbled first row.
+      disposables.push(
+        term.onResize(({ rows, cols }) => {
+          const socket = socketRef.current
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "resize", rows, cols }))
+          }
         }),
       )
 
@@ -564,6 +589,16 @@ export function XtermPane({
               term.writeln(`\r\n\x1b[31m${msg.error}\x1b[0m`)
             } else if (msg.type === "scrollback") {
               replaying = true
+            } else if (msg.type === "copy-mode") {
+              // The server is the only authority on whether tmux is still
+              // scrolled away from the prompt — the browser forwards the wheel
+              // tick but never learns what tmux did with it. This frame comes
+              // back after an `exit-copy` and after a `sync-copy` (sent while
+              // scrolling back down), so the jump-to-end affordance tracks the
+              // real mode rather than a guess that could stick on forever.
+              const active = Boolean(msg.data?.active)
+              scrolledBackRef.current = active
+              setScrolledBack(active)
             }
           } catch {
             term.write(event.data)
@@ -679,6 +714,22 @@ export function XtermPane({
       // `capture` it never runs at all: xterm binds its own wheel handler to
       // the viewport *inside* this element and stops the event there, so a
       // listener on the host only sees the ticks xterm did not want.
+      // A scroll back down cannot tell the browser when tmux has reached the
+      // bottom and left copy mode, so it asks — trailing-edge, once the wheel
+      // settles, rather than a frame. The server answers with a `copy-mode`
+      // frame carrying `#{pane_in_mode}`, which is what clears the
+      // jump-to-end affordance when the operator scrolls back by hand instead
+      // of pressing it.
+      let syncTimer: ReturnType<typeof setTimeout> | undefined
+      const scheduleCopySync = () => {
+        clearTimeout(syncTimer)
+        syncTimer = setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "sync-copy" }))
+          }
+        }, 250)
+      }
+
       const onWheel = (event: WheelEvent) => {
         if (event.ctrlKey) {
           event.preventDefault()
@@ -689,14 +740,15 @@ export function XtermPane({
           return
         }
         // The tick itself is xterm's to forward; this only records which way
-        // it went. Up means tmux is now in copy mode. Down does *not* clear
-        // the flag — tmux leaves copy mode only when the scroll reaches the
-        // very bottom, and the browser cannot tell how far back it is — so the
-        // flag is cleared by the server instead, which asks tmux whether there
-        // is a mode to leave before it cancels one.
+        // it went. Up means tmux is now in copy mode. Down asks the server
+        // whether tmux has left it yet — tmux drops copy mode only when the
+        // scroll reaches the very bottom, and the browser cannot tell how far
+        // back it is.
         if (event.deltaY < 0) {
           scrolledBackRef.current = true
           setScrolledBack(true)
+        } else if (event.deltaY > 0 && scrolledBackRef.current) {
+          scheduleCopySync()
         }
       }
       host.addEventListener("wheel", onWheel, { passive: false, capture: true })
@@ -706,6 +758,7 @@ export function XtermPane({
 
       cleanup = () => {
         observer.disconnect()
+        clearTimeout(syncTimer)
         host.removeEventListener("wheel", onWheel, { capture: true })
         for (const d of disposables) d.dispose()
         socket.close()
@@ -1064,15 +1117,17 @@ export function XtermPane({
               // Two scrollbacks can be behind this: the emulator's, when
               // there is no tmux, and tmux's own. Ending both is what "the
               // end" means, and the second one is also what gives the pane
-              // its keyboard back.
+              // its keyboard back. `exit-copy` goes out unconditionally —
+              // tmux can be in a mode the browser never recorded, and a cancel
+              // sent to a pane that is not in one is a harmless no-op — and
+              // the server's `copy-mode` reply is what actually settles the
+              // flag.
               termRef.current?.scrollToBottom()
-              if (scrolledBackRef.current) {
-                scrolledBackRef.current = false
-                setScrolledBack(false)
-                const socket = socketRef.current
-                if (socket?.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify({ type: "exit-copy" }))
-                }
+              scrolledBackRef.current = false
+              setScrolledBack(false)
+              const socket = socketRef.current
+              if (socket?.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "exit-copy" }))
               }
               termRef.current?.focus()
             }}

@@ -13,7 +13,7 @@ import {
   TerminalSquare,
 } from "lucide-react"
 import { notify } from "@/lib/toast"
-import { del, get, patch, post, put } from "@/lib/api"
+import { del, get, patch, post } from "@/lib/api"
 import type { TerminalFolder, TerminalPane, TerminalWindow, TerminalWorkspace } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import {
@@ -233,15 +233,26 @@ export default function TerminalPage() {
   // opened. This is what the file tree roots at and what git detection runs on.
   const currentDir = activeWindow?.cwd || activeSession?.cwd || undefined
 
-  // Panes, only for the window on screen and only once it has been split.
-  // Asking for them unconditionally would be a subprocess on the host every
-  // five seconds for the overwhelmingly common case of one pane.
+  // Panes of the window on screen, polled whenever a session is attached — not
+  // only once a window reports more than one.
   //
-  // The index is required rather than defaulted. Falling back to window 0 read
-  // as an occasional wrong answer instead of no answer: between a window being
-  // selected and the next windows poll no window reports itself active, and
-  // during that gap the bar listed window 0's panes and clicking one selected
-  // a pane in a window nobody was looking at.
+  // Gating on `activeWindow.panes > 1` looked like the frugal choice and was a
+  // bug: that count comes from the 5s windows poll, so for seconds after a
+  // split the pane list stayed empty — long enough that clicking a pane to
+  // focus it and the pane bar both silently did nothing — and for seconds
+  // after a pane was killed the *stale* two-entry list lingered, leaving a chip
+  // in the bar for a pane that no longer existed. `panes.refresh()` could not
+  // help either: a disabled poll ignores it. The windows poll already pays a
+  // `list-windows` subprocess at this cadence; one `list-panes` beside it is
+  // the price of the bar and the click target being right the instant they
+  // change. `PaneBar` and the click handler both no-op below two panes, so the
+  // common one-pane answer costs nothing on screen.
+  //
+  // The index is still required rather than defaulted. Falling back to window 0
+  // read as an occasional wrong answer instead of no answer: between a window
+  // being selected and the next windows poll no window reports itself active,
+  // and during that gap the bar listed window 0's panes and clicking one
+  // selected a pane in a window nobody was looking at.
   const paneWindow = activeWindow?.index
   const panes = usePoll<TerminalPane[]>(
     (signal) =>
@@ -253,7 +264,7 @@ export default function TerminalPage() {
     5000,
     [tmuxName, paneWindow],
     {
-      enabled: Boolean(tmuxName) && paneWindow !== undefined && (activeWindow?.panes ?? 1) > 1,
+      enabled: Boolean(tmuxName) && paneWindow !== undefined,
     },
   )
 
@@ -268,13 +279,22 @@ export default function TerminalPage() {
   // listener falls through here rather than being swallowed.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      // Only while focus is inside the workspace — the pane, the rail, the
+      // window strip or the tools panel. A navigation chord pressed while the
+      // app sidebar, the command palette or a dialog somewhere else on the
+      // page has focus is not aimed at this page, and firing it there is how
+      // Ctrl+Alt+W closed a tmux window while the operator was clicking around
+      // the file tree. Nothing focused (`target` is `document.body`) counts as
+      // outside too: the shortcuts follow the terminal, not the tab.
+      const root = workspaceRef.current
+      if (!root || !target || !root.contains(target)) return
       // Not while somebody is typing into the rail's filter or renaming a row
       // — but the terminal itself does not count, and that exclusion is the
       // whole point. xterm takes keystrokes through a hidden
       // `.xterm-helper-textarea`, so a plain "is the target a text field"
       // guard suppresses every one of these shortcuts exactly when the
       // terminal has focus, which is the only time anybody presses them.
-      const target = event.target as HTMLElement | null
       if (target?.closest("input, textarea, [contenteditable=true]") && !target.closest(".xterm")) {
         return
       }
@@ -653,21 +673,6 @@ export default function TerminalPage() {
               )
             }
             onDeleteFolder={deleteFolder}
-            onReorderFolders={(names) =>
-              act(
-                () =>
-                  put("/terminal/folders", {
-                    // The colours travel with the order: the endpoint replaces
-                    // the record, so sending names alone would repaint every
-                    // folder grey.
-                    folders: names.map((name) => ({
-                      name,
-                      colour: data.folders.find((f) => f.name === name)?.colour ?? "",
-                    })),
-                  }),
-                "Could not reorder the folders",
-              )
-            }
             onMoveWindow={(from, index, to) =>
               act(
                 () => patch(`${persistent(from)}/windows/${index}`, { session: to }),

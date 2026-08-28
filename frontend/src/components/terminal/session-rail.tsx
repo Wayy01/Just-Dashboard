@@ -6,7 +6,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  GripVertical,
   MoreHorizontal,
   Palette,
   Pencil,
@@ -35,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { IconAction } from "@/components/icon-action"
 import { ColourMenuItems, TagSwatch, tagStyle, tagVar } from "@/components/terminal/tags"
-import { beginDrag, carries, endDrag, readDrop, useDragPayload } from "@/components/terminal/dnd"
+import { carries, endDrag, readDrop } from "@/components/terminal/dnd"
 
 /**
  * The list of terminals, as a workspace tree.
@@ -51,7 +50,7 @@ import { beginDrag, carries, endDrag, readDrop, useDragPayload } from "@/compone
  *
  * The first version of this had folders and sessions drawn as the same row at
  * the same weight, which meant the hierarchy existed in the data and nowhere
- * on screen. Four things carry it now, and they are worth keeping:
+ * on screen. Three things carry it now, and they are worth keeping:
  *
  *   - **A folder is chrome, a session is content.** The folder header has the
  *     panel-header tint, an icon in a tinted tile and an uppercase label; a
@@ -63,14 +62,13 @@ import { beginDrag, carries, endDrag, readDrop, useDragPayload } from "@/compone
  *   - **Colour is inherited.** Paint the folder and everything in it is
  *     painted, because colouring eight sessions by hand is work nobody does
  *     twice.
- *   - **Everything is draggable** — a session into a folder, a folder up the
- *     list, a window onto another session. Filing by dragging is the only kind
- *     of filing people actually do.
  *
- * Pinning sorts a session to the top *of its folder* rather than lifting it
- * into a separate group. The separate group was the earlier design and it
- * quietly broke the hierarchy: a starred session vanished from the folder it
- * was in, which is exactly the thing the operator had filed it there to avoid.
+ * Filing is through each row's menu — "Move to" for a session, the colour
+ * submenu for either. Pinning sorts a session to the top *of its folder*
+ * rather than lifting it into a separate group; the separate group was the
+ * earlier design and it quietly broke the hierarchy: a starred session
+ * vanished from the folder it was in, which is exactly the thing the operator
+ * had filed it there to avoid.
  */
 export function SessionRail({
   sessions,
@@ -86,7 +84,6 @@ export function SessionRail({
   onCreateFolder,
   onUpdateFolder,
   onDeleteFolder,
-  onReorderFolders,
   onMoveWindow,
   className,
 }: {
@@ -97,7 +94,7 @@ export function SessionRail({
   onSelect: (session: TerminalWorkspace) => void
   onRename: (session: TerminalWorkspace, title: string) => void
   onTogglePinned: (session: TerminalWorkspace) => void
-  /** By tmux name: a drop knows the name and nothing else about the row. */
+  /** By tmux name: the menu knows the name and nothing else about the row. */
   onSetFolder: (tmuxName: string, folder: string) => void
   onSetColour: (session: TerminalWorkspace, colour: string) => void
   onClose: (session: TerminalWorkspace) => void
@@ -105,7 +102,6 @@ export function SessionRail({
   onCreateFolder: (name: string) => void
   onUpdateFolder: (name: string, next: { name?: string; colour?: string }) => void
   onDeleteFolder: (folder: TerminalFolder) => void
-  onReorderFolders: (names: string[]) => void
   /** A window dragged out of its session and dropped onto another one. */
   onMoveWindow: (from: string, index: number, to: string) => void
   /** The page owns the rail's width — it is the operator's to drag. */
@@ -114,7 +110,6 @@ export function SessionRail({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [filter, setFilter] = useState("")
-  const drag = useDragPayload()
 
   const matches = useMemo(() => {
     const needle = filter.trim().toLowerCase()
@@ -149,19 +144,6 @@ export function SessionRail({
       unfiled: order(byFolder.get("") ?? []),
     }
   }, [matches, folders])
-
-  const draggingFolder = drag?.kind === "folder" ? drag.name : null
-
-  /** Dropping a folder onto another one puts it there and shifts the rest. */
-  const dropFolder = (event: React.DragEvent, before: string) => {
-    const payload = readDrop(event, "folder")
-    endDrag()
-    if (!payload || payload.kind !== "folder" || payload.name === before) return
-    const names = folders.map((f) => f.name).filter((n) => n !== payload.name)
-    const at = names.indexOf(before)
-    names.splice(at < 0 ? names.length : at, 0, payload.name)
-    onReorderFolders(names)
-  }
 
   return (
     <div className={cn("flex min-h-0 w-full shrink-0 flex-col gap-2 lg:w-72", className)}>
@@ -204,11 +186,9 @@ export function SessionRail({
             items={items}
             activeId={activeId}
             collapsed={Boolean(collapsed[folder.name])}
-            dimmed={Boolean(draggingFolder) && draggingFolder !== folder.name}
             onToggle={() =>
               setCollapsed((c) => ({ ...c, [folder.name]: !c[folder.name] }))
             }
-            onDropFolder={dropFolder}
             onSelect={onSelect}
             onRename={onRename}
             onTogglePinned={onTogglePinned}
@@ -254,7 +234,7 @@ type RowHandlers = {
   onSelect: (session: TerminalWorkspace) => void
   onRename: (session: TerminalWorkspace, title: string) => void
   onTogglePinned: (session: TerminalWorkspace) => void
-  /** By tmux name: a drop knows the name and nothing else about the row. */
+  /** By tmux name: the menu knows the name and nothing else about the row. */
   onSetFolder: (tmuxName: string, folder: string) => void
   onSetColour: (session: TerminalWorkspace, colour: string) => void
   onClose: (session: TerminalWorkspace) => void
@@ -266,9 +246,7 @@ function FolderGroup({
   folder,
   items,
   collapsed,
-  dimmed,
   onToggle,
-  onDropFolder,
   onUpdateFolder,
   onDeleteFolder,
   ...rows
@@ -276,40 +254,11 @@ function FolderGroup({
   folder: TerminalFolder
   items: TerminalWorkspace[]
   collapsed: boolean
-  dimmed: boolean
   onToggle: () => void
-  onDropFolder: (event: React.DragEvent, before: string) => void
   onUpdateFolder: (name: string, next: { name?: string; colour?: string }) => void
   onDeleteFolder: (folder: TerminalFolder) => void
 }) {
   const [renaming, setRenaming] = useState(false)
-  const [over, setOver] = useState<null | "session" | "folder">(null)
-  // A drag crossing a child fires dragleave on the parent, so a single boolean
-  // flickers the highlight off and on the whole way across the folder. Counting
-  // enter and leave is the standard answer and the only one that is stable.
-  const depth = useRef(0)
-
-  const accepts = (event: React.DragEvent): null | "session" | "folder" => {
-    if (carries(event, "session")) return "session"
-    if (carries(event, "folder")) return "folder"
-    return null
-  }
-
-  const onDrop = (event: React.DragEvent) => {
-    const kind = accepts(event)
-    event.preventDefault()
-    depth.current = 0
-    setOver(null)
-    if (kind === "folder") {
-      onDropFolder(event, folder.name)
-      return
-    }
-    const payload = readDrop(event, "session")
-    endDrag()
-    if (payload?.kind === "session" && payload.folder !== folder.name) {
-      rows.onSetFolder(payload.tmuxName, folder.name)
-    }
-  }
 
   if (renaming) {
     return (
@@ -328,30 +277,11 @@ function FolderGroup({
   return (
     <div
       // Named in the DOM so the group a row belongs to is readable from
-      // outside it — which is what a drop target has to know, and what an
-      // end-to-end test asserting "this session is in that folder" needs in
-      // place of guessing from indentation.
+      // outside it — which is what an end-to-end test asserting "this session
+      // is in that folder" needs in place of guessing from indentation.
       data-folder={folder.name}
-      className={cn("min-w-0 transition-opacity", dimmed && "opacity-45")}
+      className="min-w-0"
       style={tagStyle(folder.colour)}
-      onDragEnter={(event) => {
-        if (!accepts(event)) return
-        depth.current += 1
-        setOver(accepts(event))
-      }}
-      onDragLeave={() => {
-        depth.current -= 1
-        if (depth.current <= 0) {
-          depth.current = 0
-          setOver(null)
-        }
-      }}
-      onDragOver={(event) => {
-        if (!accepts(event)) return
-        event.preventDefault()
-        event.dataTransfer.dropEffect = "move"
-      }}
-      onDrop={onDrop}
     >
       {/*
         The header is drawn as chrome — the same tint and hairline a Panel
@@ -359,16 +289,9 @@ function FolderGroup({
         rather than as a slightly bolder session.
       */}
       <div
-        draggable
-        onDragStart={(event) =>
-          beginDrag(event, { kind: "folder", name: folder.name }, tagVar(folder.colour))
-        }
-        onDragEnd={endDrag}
         className={cn(
           "group/folder flex items-center gap-1 rounded-lg border px-1.5 py-1 transition-colors",
           !tagVar(folder.colour) && "border-hairline bg-surface-header",
-          over === "session" && "border-primary/50 bg-primary/10",
-          over === "folder" && "border-t-2 border-t-primary",
         )}
         // The whole header takes the colour, not just the icon. A folder
         // painted only on a 20px tile is a folder nobody can pick out of a
@@ -384,7 +307,6 @@ function FolderGroup({
             : undefined
         }
       >
-        <GripVertical className="size-3 shrink-0 cursor-grab text-muted-foreground/50 opacity-0 transition-opacity group-hover/folder:opacity-100" />
         <button
           className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left"
           onClick={onToggle}
@@ -464,9 +386,6 @@ function FolderGroup({
       </div>
 
       {!collapsed && (
-        // The rule down the left is the folder's colour at low strength: it is
-        // what makes four rows read as one group without repeating the colour
-        // on every one of them.
         // The indent rule is structure, not colour: it says these rows are
         // children of the row above. It stays neutral now that each child
         // carries the folder's colour as its own fill — drawing the hue a
@@ -494,71 +413,24 @@ function FolderGroup({
   )
 }
 
-/**
- * Everything not in a folder. It is a drop target in its own right, because
- * dragging a session *out* of a folder needs somewhere to go — without this
- * the only way back out is the menu, and a filing system you can only put
- * things into is a trap.
- */
+/** Everything not in a folder. */
 function UnfiledGroup({
   items,
   hasFolders,
   ...rows
 }: RowHandlers & { items: TerminalWorkspace[]; hasFolders: boolean }) {
-  const [over, setOver] = useState(false)
-  const depth = useRef(0)
-
   if (items.length === 0 && !hasFolders) return null
 
   return (
-    <div
-      className="min-w-0"
-      data-folder=""
-      onDragEnter={(event) => {
-        if (!carries(event, "session")) return
-        depth.current += 1
-        setOver(true)
-      }}
-      onDragLeave={() => {
-        depth.current -= 1
-        if (depth.current <= 0) {
-          depth.current = 0
-          setOver(false)
-        }
-      }}
-      onDragOver={(event) => {
-        if (!carries(event, "session")) return
-        event.preventDefault()
-        event.dataTransfer.dropEffect = "move"
-      }}
-      onDrop={(event) => {
-        event.preventDefault()
-        depth.current = 0
-        setOver(false)
-        const payload = readDrop(event, "session")
-        endDrag()
-        if (payload?.kind === "session" && payload.folder) {
-          rows.onSetFolder(payload.tmuxName, "")
-        }
-      }}
-    >
+    <div className="min-w-0" data-folder="">
       {hasFolders && (
-        <div
-          className={cn(
-            "mt-1 flex items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-1 transition-colors",
-            over && "border-dashed border-primary/50 bg-primary/5",
-          )}
-        >
+        <div className="mt-1 flex items-center gap-1.5 px-1.5 py-1">
           <span className="eyebrow truncate text-muted-foreground/70">Unfiled</span>
           <span className="numeric rounded-full bg-muted px-1.5 text-[10px] leading-4 text-muted-foreground">
             {items.length}
           </span>
           <span className="flex-1" />
-          <IconAction
-            label="New unfiled session"
-            className="size-6"
-            onClick={() => rows.onNew()}
-          >
+          <IconAction label="New unfiled session" className="size-6" onClick={() => rows.onNew()}>
             <Plus />
           </IconAction>
         </div>
@@ -589,6 +461,7 @@ function SessionRow({
   const [windowOver, setWindowOver] = useState(false)
   const active = activeId !== null && session.id === activeId
   const colour = session.colour || inheritedColour
+  const accent = tagVar(colour) ?? "var(--primary)"
 
   if (renaming) {
     return (
@@ -606,21 +479,8 @@ function SessionRow({
 
   return (
     <div
-      draggable
       data-session={session.tmuxName ?? session.id}
-      onDragStart={(event) =>
-        beginDrag(
-          event,
-          {
-            kind: "session",
-            tmuxName: session.tmuxName ?? "",
-            folder: session.folder ?? "",
-            title: session.title,
-          },
-          tagVar(colour),
-        )
-      }
-      onDragEnd={endDrag}
+      data-active={active || undefined}
       // A window dropped onto a session moves it there, which is how work
       // opened in the wrong place gets put right without losing its scrollback.
       onDragOver={(event) => {
@@ -642,26 +502,29 @@ function SessionRow({
       }}
       className={cn(
         "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-colors",
-        active && "border-primary/50",
-        !active && !colour && "border-transparent hover:border-hairline hover:bg-[var(--row-hover)]",
-        !active && colour && "border-transparent hover:brightness-110",
+        !active && !windowOver && "border-transparent",
+        !active && !colour && "hover:border-hairline hover:bg-[var(--row-hover)]",
+        !active && colour && "hover:brightness-110",
+        active && "shadow-xs",
+        active && !colour && !windowOver && "card-sheen bg-card",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
-      // The colour is the fill and nothing else — no rule down the edge, no
-      // tinted outline. Three ways of saying the same thing on one 28px row is
-      // noise, and the fill is the one that works while scanning. The border is
-      // left to the selected row, so "which group is this" and "which one am I
-      // looking at" stay two separate readings that never compete.
+      // The selected row is lifted into a card — the design system's own
+      // sheen: a border, a hairline gradient off the top edge, a soft shadow.
+      // A flat fill on its own read as a grey wash in the light theme, since
+      // the app's ink *is* grey there. A coloured session keeps its hue: the
+      // border and a gentle top-to-bottom tint carry the same "raised" reading
+      // in the tag colour.
       style={{
         ...tagStyle(colour),
-        ...(colour
+        ...(active && colour
           ? {
-              backgroundColor: active
-                ? "color-mix(in oklab, var(--tag) 22%, var(--card))"
-                : "color-mix(in oklab, var(--tag) 11%, var(--card))",
+              backgroundImage:
+                "linear-gradient(180deg, color-mix(in oklab, var(--tag) 22%, var(--card)), color-mix(in oklab, var(--tag) 13%, var(--card)) 60%)",
+              borderColor: "color-mix(in oklab, var(--tag) 45%, transparent)",
             }
-          : active
-            ? { backgroundColor: "color-mix(in oklab, var(--primary) 12%, var(--card))" }
+          : !active && colour
+            ? { backgroundColor: "color-mix(in oklab, var(--tag) 11%, var(--card))" }
             : undefined),
       }}
     >
@@ -675,9 +538,9 @@ function SessionRow({
           every session is a light that is always on and therefore says
           nothing.
 
-            - **Filled primary, with a halo** — the session on screen. This is
-              the reading somebody actually wants from a list, and the row's
-              border alone was carrying it.
+            - **Filled, in the row's accent, with a halo** — the session on
+              screen. The accent bar carries this too; the dot keeps it legible
+              when the row is scrolled to the edge.
             - **Filled green** — running and attached, ready without a wait.
             - **Hollow** — running on the host with no PTY. Still alive; the
               difference is that clicking costs a reattach.
@@ -686,17 +549,24 @@ function SessionRow({
           data-status={active ? "active" : session.live ? "live" : "detached"}
           className={cn(
             "size-2 shrink-0 rounded-full transition-colors",
-            active
-              ? "bg-primary ring-2 ring-primary/30"
-              : session.live
-                ? "bg-success"
-                : "ring-1 ring-muted-foreground/60 ring-inset",
+            !active && session.live && "bg-success",
+            !active && !session.live && "ring-1 ring-muted-foreground/60 ring-inset",
           )}
+          style={
+            active
+              ? {
+                  backgroundColor: accent,
+                  boxShadow: `0 0 0 2px color-mix(in oklab, ${accent} 30%, transparent)`,
+                }
+              : undefined
+          }
         />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
             {session.favourite && <Pin className="size-2.5 shrink-0 text-warning" />}
-            <span className="truncate text-[13px] leading-tight">{session.title}</span>
+            <span className={cn("truncate text-[13px] leading-tight", active && "font-medium")}>
+              {session.title}
+            </span>
           </span>
           <span className="flex items-center gap-1 truncate font-mono text-[10px] leading-tight text-muted-foreground">
             {session.cwd ? truncateMiddle(session.cwd, 26) : relativeTime(session.createdAt)}
