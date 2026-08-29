@@ -15,6 +15,7 @@ import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { FileContent, GitDetect, GitFileChange, GitStatus } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { CodeEditor } from "@/components/code-editor"
@@ -52,7 +53,9 @@ export function WorkspaceTools({
   onClose?: () => void
 }) {
   const { can } = useAuth()
-  const [tab, setTab] = useState<"files" | "git">("files")
+  // Which half of the companion you had open, kept across a navigation:
+  // somebody working out of git is on that tab all afternoon.
+  const [tab, setTab] = useViewState<"files" | "git">("terminal.tools.tab", "files")
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
 

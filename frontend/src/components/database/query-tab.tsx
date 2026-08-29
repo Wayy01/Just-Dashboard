@@ -16,6 +16,7 @@ import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { del, get, post } from "@/lib/api"
 import { cn, ringSafeScroll } from "@/lib/utils"
+import { useViewState } from "@/lib/view-state"
 import type {
   DbConnection,
   DbHistoryEntry,
@@ -57,6 +58,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
   const [plan, setPlan] = useState<QueryResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
+  const [side, setSide] = useViewState("db.query.side", "history")
 
   const saved = usePoll(
     (signal) => get<DbSavedQuery[]>(`/databases/${conn.id}/queries`, undefined, signal),
@@ -245,7 +247,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
         </Panel>
 
         <Panel className="min-h-0">
-          <Tabs defaultValue="history" className="gap-0">
+          <Tabs value={side} onValueChange={setSide} className="gap-0">
             <PanelHeader className="py-2">
               <TabsList className="h-8">
                 <TabsTrigger value="history" className="gap-1 text-xs">

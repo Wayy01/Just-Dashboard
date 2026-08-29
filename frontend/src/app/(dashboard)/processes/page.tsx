@@ -7,6 +7,7 @@ import { del, get, post, put } from "@/lib/api"
 import { bytes, duration, percent, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useMetrics } from "@/hooks/use-metrics"
@@ -41,6 +42,11 @@ import {
 } from "@/components/ui/table"
 
 export default function ProcessesPage() {
+  // Which of the four this host is actually run from — a PM2 shop never
+  // looks at systemd, and the other way round. Remembered, so the page
+  // opens where it was left rather than on whichever tab is first.
+  const [tab, setTab] = useViewState("processes.tab", "pm2")
+
   return (
     <Page>
       <PageHeader
@@ -48,7 +54,7 @@ export default function ProcessesPage() {
         title="Processes"
         description="PM2 applications, systemd units, the raw process table and cron"
       />
-      <Tabs defaultValue="pm2" className="min-w-0 gap-4">
+      <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="pm2">PM2</TabsTrigger>
           <TabsTrigger value="systemd">systemd</TabsTrigger>
@@ -448,7 +454,7 @@ function ProcessTableTab() {
   // holding six gigabytes, and a CPU-sorted list buries it. The server sorts
   // before it truncates, so this changes which 200 rows come back, not just
   // their order.
-  const [sort, setSort] = useState<"cpu" | "memory">("cpu")
+  const [sort, setSort] = useViewState<"cpu" | "memory">("processes.table.sort", "cpu")
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<ProcessRow[]>("/processes/", { limit: 200, q: query, sort }, signal),
     4000,

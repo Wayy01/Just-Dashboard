@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils"
 import { relativeTime, truncateMiddle } from "@/lib/format"
 import type { TerminalFolder, TerminalWorkspace } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -107,7 +108,13 @@ export function SessionRail({
   /** The page owns the rail's width — it is the operator's to drag. */
   className?: string
 }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // Which folders are folded away. Remembered, because a rail with eight
+  // folders is organised precisely so that seven of them can be shut, and
+  // reopening them on every visit undoes the organising.
+  const [collapsed, setCollapsed] = useViewState<Record<string, boolean>>(
+    "terminal.folders.collapsed",
+    {},
+  )
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [filter, setFilter] = useState("")
 

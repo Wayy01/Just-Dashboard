@@ -6,7 +6,7 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-**Version 0.6.2** · Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.6.3** · Go backend · Next.js frontend · one `docker compose` stack
 
 [Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
@@ -107,13 +107,19 @@ history, so a spike is told apart from a trend, and it is visible from every pag
 
 ![The command palette](docs/command-palette.png)
 
-**⌘K** from anywhere. Every page and every theme, because a server dashboard is navigated by
-someone who already knows where they are going. The top bar keeps CPU, memory and the health
-verdict in view while you are elsewhere.
+**⌘K** from anywhere. Every page, and the light/dark switch, because a server dashboard is
+navigated by someone who already knows where they are going. The top bar keeps CPU, memory and
+the health verdict in view while you are elsewhere.
+
+**Every page comes back the way you left it.** The panel you hid, the folder you collapsed, the
+tab you were on, the sort you chose and the rail you narrowed are remembered in the browser you
+are sitting at — so leaving a page and returning to it is not a page you have to set up again.
+What you were *looking at* is not: a search box, a selected row and a half-filled form all start
+empty, because a filter restored from yesterday is a table that looks broken.
 
 ### Docker: a panel you can run things from
 
-![Docker stacks](docs/docker.png)
+![The container list, with the verdict above it](docs/docker.png)
 
 **Run a container** from a starting point, from a pasted `docker run` command, or from a
 blank form. The command and the compose service it would produce are rendered back to you,
@@ -189,7 +195,7 @@ destination.
 
 ### Git: the repositories that are actually on the server
 
-![The git page](docs/git.png)
+![A repository, with a working-tree diff open beside its history](docs/git.png)
 
 Every repository under the configured roots, found by walking them rather than by being
 registered. Branch, ahead/behind, working tree, history with diffs and per-commit line
@@ -218,13 +224,13 @@ opened from the branch you are on without leaving for a browser tab.
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
 | **System users** | Host accounts, SSH keys, lock and unlock. |
 | **Audit log** | Every state-changing request, filterable by actor, action and outcome. |
-| **Appearance** | Twelve palettes, nine dark and three light, applied before the page paints so a light theme never flashes black. The choice belongs to the browser you are sitting at, not to the account. |
+| **Appearance** | One palette in light and dark, applied before the page paints so the light mode never flashes black. The choice belongs to the browser you are sitting at, not to the account — as does how you left each page arranged. |
 
 ---
 
 ## Version, and updating
 
-This is **0.6.2**: the panel as a finished single-server product — every page in the tour
+This is **0.6.3**: the panel as a finished single-server product — every page in the tour
 above is built and in use. It is not 1.0 because the API is still moving. 1.0 is when it
 stops. Every release is in [CHANGELOG.md](CHANGELOG.md), and in the dashboard itself.
 

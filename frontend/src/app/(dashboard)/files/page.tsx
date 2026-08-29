@@ -27,6 +27,7 @@ import { API_BASE, del, downloadUrl, get, post } from "@/lib/api"
 import { truncateMiddle } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { FileEntry, FileListing } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -108,13 +109,16 @@ export default function FilesPage() {
 
   const initialPath = useSearchParams().get("path")
   const [path, setPath] = useState(initialPath || "/")
-  const [showHidden, setShowHidden] = useState(false)
-  const [showTree, setShowTree] = useState(false)
+  // How the listing is arranged, remembered across a navigation: somebody who
+  // works with dotfiles works with them every visit, and a tree turned on is a
+  // layout choice rather than a question being asked.
+  const [showHidden, setShowHidden] = useViewState("files.hidden", false)
+  const [showTree, setShowTree] = useViewState("files.tree", false)
   const [editing, setEditing] = useState<string | null>(null)
   const [permsEntry, setPermsEntry] = useState<FileEntry | null>(null)
   const [symlinkOpen, setSymlinkOpen] = useState(false)
   const [clip, setClip] = useState<Clip | null>(null)
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+  const [sort, setSort] = useViewState<{ key: SortKey; dir: "asc" | "desc" }>("files.sort", {
     key: "name",
     dir: "asc",
   })

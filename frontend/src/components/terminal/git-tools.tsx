@@ -19,6 +19,7 @@ import { get, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
+import { useViewState } from "@/lib/view-state"
 import type {
   GitBranch,
   GitCommit,
@@ -79,7 +80,10 @@ export function GitTools({
   onConfirm: (req: ConfirmRequest) => void
   onChanged: () => void
 }) {
-  const [tab, setTab] = useState<"changes" | "history" | "branches">("changes")
+  const [tab, setTab] = useViewState<"changes" | "history" | "branches">(
+    "terminal.git.tab",
+    "changes",
+  )
   const [busy, setBusy] = useState<string>()
 
   const repo = detect?.inRoots ? detect.repo : undefined

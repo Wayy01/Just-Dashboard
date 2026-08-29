@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
 import { Network, ShieldPlus } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { Connections } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { Metric, MetricStrip } from "@/components/page"
@@ -35,7 +35,7 @@ import {
  */
 export function ConnectionsPanel() {
   const { can } = useAuth()
-  const [scope, setScope] = useState<"all" | "public">("all")
+  const [scope, setScope] = useViewState<"all" | "public">("security.connections.scope", "all")
   const { data, error, loading, refresh } = usePoll<Connections>(
     (signal) => get("/connections", undefined, signal),
     10000,

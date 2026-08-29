@@ -506,10 +506,37 @@
   /* Pressed: the light moves to the other side. The gloss inverts into a
      shadow cast from the top edge inwards and the drop goes away entirely, so
      the control sits down *into* the page instead of standing on it — which is
-     the only reason it was worth drawing standing up. Guarded on `:disabled`
-     and `aria-disabled` rather than trusting `pointer-events-none`: Radix
-     disables its triggers with the attribute, and those still take a pointer. */
-  &:active:not(:disabled):not([aria-disabled="true"]) {
+     the only reason it was worth drawing standing up.
+
+     Only where there is something to press. A card is a very large button that
+     nobody presses, and that second half of the claim was missing: a click
+     anywhere on a panel, a stat tile or the sign-in card sank the whole surface
+     a pixel and took its shadow away, so selecting a line of log output or
+     dragging across a table read as pressing a control that then did nothing.
+     The selector is what a pointer can actually activate — what the browser or
+     ARIA already calls a control — rather than a class somebody has to remember
+     to add, so a new raised div is inert by default and a new raised button
+     presses without being told to.
+
+     Guarded on `:disabled` and `aria-disabled` rather than trusting
+     `pointer-events-none`: Radix disables its triggers with the attribute, and
+     those still take a pointer. */
+  &:is(
+      button,
+      a[href],
+      summary,
+      label,
+      [role="button"],
+      [role="tab"],
+      [role="menuitem"],
+      [role="menuitemcheckbox"],
+      [role="menuitemradio"],
+      [role="option"],
+      [role="checkbox"],
+      [role="radio"],
+      [role="switch"],
+      [role="slider"]
+    ):active:not(:disabled):not([aria-disabled="true"]) {
     background-image: linear-gradient(180deg, var(--raise-press), transparent 60%);
     box-shadow: inset 0 1px 2px 0 var(--raise-press);
     transform: translateY(1px);

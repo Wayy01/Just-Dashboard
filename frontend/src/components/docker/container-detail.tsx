@@ -15,6 +15,7 @@ import {
 import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { duration, timestamp } from "@/lib/format"
+import { useViewState } from "@/lib/view-state"
 import type {
   ContainerDetail,
   ContainerSpec,
@@ -96,7 +97,9 @@ function ContainerDetailPanel({
   const { can } = useAuth()
   const [detail, setDetail] = useState<ContainerDetail>()
   const [error, setError] = useState<Error>()
-  const [tab, setTab] = useState("overview")
+  // Which tab a container opens on. Somebody watching a deploy wants Logs
+  // every time, and reopening on Overview is a click paid per container.
+  const [tab, setTab] = useViewState("docker.container.tab", "overview")
   const [reloads, setReloads] = useState(0)
 
   useEffect(() => {

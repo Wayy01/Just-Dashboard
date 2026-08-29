@@ -17,6 +17,7 @@ import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { GitFileChange, GitRepo, GitResult, GitStatus } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useGitHubAccount } from "@/hooks/use-github"
 import { useAuth } from "@/hooks/use-auth"
@@ -74,7 +75,7 @@ export function RepoWorkspace({
   const router = useRouter()
   const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState<string>()
-  const [tab, setTab] = useState("changes")
+  const [tab, setTab] = useViewState("git.repo.tab", "changes")
   const [preview, setPreviewState] = useState<GitPreview | null>(null)
   const [graphOpen, setGraphOpen] = useState(false)
 

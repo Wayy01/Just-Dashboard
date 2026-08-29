@@ -25,6 +25,7 @@ import {
 } from "@/lib/terminal-keymap"
 import { usePanelSize } from "@/lib/panel-size"
 import { cn } from "@/lib/utils"
+import { useViewState } from "@/lib/view-state"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page } from "@/components/page"
 import { XtermPane } from "@/components/xterm-pane"
@@ -75,8 +76,15 @@ export default function TerminalPage() {
   // tree and git out of reach the moment you maximised. Toggling a panel is
   // pure React state and never touches the Fullscreen API, so it works without
   // dropping out of fullscreen.
-  const [showRail, setShowRail] = useState(true)
-  const [showTools, setShowTools] = useState(true)
+  //
+  // The two panels are remembered, because this page is left and returned to
+  // all day and a panel that reopened itself on every visit is one that gets
+  // closed on every visit. Fullscreen deliberately is not: it hides the sidebar
+  // and the top bar, so restoring it would drop somebody into a shell with no
+  // visible way back to the rest of the dashboard, on a page they may not
+  // remember maximising.
+  const [showRail, setShowRail] = useViewState("terminal.rail", true)
+  const [showTools, setShowTools] = useViewState("terminal.tools", true)
   const [immersive, setImmersive] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   // How wide each panel was dragged, and how much row there is to divide. The

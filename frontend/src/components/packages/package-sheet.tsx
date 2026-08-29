@@ -19,6 +19,7 @@ import { get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { notify } from "@/lib/toast"
 import type { Job, PackageDetail, PackageUsage } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -64,6 +65,7 @@ export function PackageSheet({
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useViewState("packages.sheet.tab", "about")
 
   // The two reads are fired together rather than the usage one waiting for the
   // detail: they are independent on the server and the manual is the slower of
@@ -180,7 +182,7 @@ export function PackageSheet({
             {loading && <LoadingRows rows={6} />}
 
             {detail && (
-              <Tabs defaultValue="about" className="gap-3">
+              <Tabs value={tab} onValueChange={setTab} className="gap-3">
                 <TabsList>
                   <TabsTrigger value="about">About</TabsTrigger>
                   <TabsTrigger value="usage">How to use it</TabsTrigger>

@@ -4,6 +4,22 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.6.3 — 29 August 2026
+
+**Every page comes back the way you left it**
+
+Hide the file panel on the terminal page, go and look at something else, come back — and it was open again. Every page in this dashboard is thrown away the moment you navigate off it, so every panel you closed, folder you collapsed, tab you chose and sort you set was gone by the time you returned. That is the whole arrangement of a page you come back to all day, and it is answered everywhere at once rather than on the page that annoyed somebody most.
+
+### Added
+
+- Pages remember how you left them arranged — hidden panels, collapsed folders, the tab you were on, the sort you chose
+  - One store behind the whole app rather than a fix per page, so it covers the terminal's session rail, its Files/Git companion and which half of that you had open, the folders you collapsed in the rail, the file manager's tree, hidden files and sort order, the tab on Processes, Packages, Account, Deployments, a container, a stack and a repository, the processor's total-or-breakdown switch, "show system accounts", the connections filter, and the sidebar itself, which now stays collapsed across a reload instead of springing back. It is kept in the browser you are sitting at, like the theme and the terminal's font, not on the account. What you were looking at is deliberately not kept: a search box, a selected row, an open dialog and a half-filled form all start empty, because a filter restored from yesterday is a table that looks broken for no visible reason.
+
+### Fixed
+
+- Cards, panels and stat tiles no longer press down like buttons when you click them
+  - The lift that makes a control look like something you press is one rule shared by every raised surface in the app, and its pressed state never asked whether the surface was a control. So a click anywhere on a panel — selecting a line of log output, dragging across a table, pressing on a heading — sank the whole card a pixel and took its shadow away, which reads as pressing a button that does nothing. The press now applies only to what a pointer can actually activate: buttons, links, tabs, checkboxes, switches and sliders. Nothing about the resting look changed.
+
 ## 0.6.2 — 29 August 2026
 
 **The updater runs an image that is still on the machine**
