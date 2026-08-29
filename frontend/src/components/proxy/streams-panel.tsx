@@ -258,7 +258,15 @@ function StreamForm({
   const save = async () => {
     setBusy(true)
     try {
-      const res = await post<SiteResult>("/proxy/streams/", { spec: body, reload: true })
+      // overwrite only when this form opened on an existing stream: without
+      // it, "New stream" named after one that already exists replaced it in
+      // silence, and a forwarding rule that quietly stopped pointing where it
+      // used to is the worst way this can fail.
+      const res = await post<SiteResult>("/proxy/streams/", {
+        spec: body,
+        reload: true,
+        overwrite: initial !== null,
+      })
       notify.success(`${spec.name} forwarding`, {
         description: res.warnings[0],
       })

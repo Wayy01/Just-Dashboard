@@ -160,26 +160,37 @@ func (s *Service) ListDNSProviders() []DNSProvider {
 // certbotPluginInstalled looks for the plugin's own directory rather than
 // asking certbot, which costs a subprocess per provider and would make the
 // list a second slow.
+//
+// The interpreter directory is globbed rather than listed. Naming versions
+// meant the check only ever worked on the two this was written against —
+// RHEL 9 ships python3.9, Debian 13 and Fedora ship 3.13, and every one of
+// those hosts was told a plugin it had installed was missing, which is a
+// refusal in front of a certificate that would have been issued.
 func certbotPluginInstalled(plugin string) bool {
-	module := "certbot_" + strings.ReplaceAll(strings.TrimPrefix(plugin, "dns-"), "-", "_")
-	roots := []string{
-		"/usr/lib/python3/dist-packages", "/usr/lib/python3.11/site-packages",
-		"/usr/lib/python3.12/site-packages", "/snap/certbot/current/lib/python3.12/site-packages",
-		"/opt/certbot/lib/python3.11/site-packages", "/opt/certbot/lib/python3.12/site-packages",
+	suffix := strings.TrimPrefix(plugin, "dns-")
+	names := map[string]bool{
+		"certbot_" + strings.ReplaceAll(suffix, "-", "_"):     true,
+		"certbot_dns_" + suffix:                               true,
+		"certbot_dns_" + strings.ReplaceAll(suffix, "-", "_"): true,
 	}
-	for _, root := range roots {
-		for _, name := range []string{module, "certbot_dns_" + strings.TrimPrefix(plugin, "dns-")} {
-			if _, err := os.Stat(filepath.Join(root, name)); err == nil {
+	patterns := []string{
+		// Debian and Ubuntu, which put every distribution package in one
+		// unversioned tree.
+		"/usr/lib/python3/dist-packages/*",
+		// The RPM world and Alpine, versioned; pip --user and pipx too.
+		"/usr/lib/python3*/site-packages/*",
+		"/usr/lib64/python3*/site-packages/*",
+		"/usr/local/lib/python3*/*-packages/*",
+		// The snap and the pip-in-a-venv install certbot's own installer uses.
+		"/snap/certbot/current/lib/python3*/site-packages/*",
+		"/opt/certbot/lib/python3*/site-packages/*",
+	}
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		for _, m := range matches {
+			if names[filepath.Base(m)] {
 				return true
 			}
-		}
-	}
-	// Snap installs plugins into the certbot snap's own tree, which globs.
-	matches, _ := filepath.Glob("/snap/certbot/current/lib/*/site-packages/certbot_dns_*")
-	suffix := strings.TrimPrefix(plugin, "dns-")
-	for _, m := range matches {
-		if strings.HasSuffix(m, suffix) || strings.HasSuffix(m, strings.ReplaceAll(suffix, "-", "_")) {
-			return true
 		}
 	}
 	return false

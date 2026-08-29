@@ -25,7 +25,9 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 
 /** One short line under a control: what to type, or what happens if you do not. */
 export function Hint({ className, ...props }: React.ComponentProps<"p">) {
-  return <p className={cn("text-[11px] leading-relaxed text-muted-foreground", className)} {...props} />
+  return (
+    <p className={cn("text-[11px] leading-relaxed text-muted-foreground", className)} {...props} />
+  )
 }
 
 /**
@@ -161,7 +163,7 @@ export const GLOSSARY: Record<string, { title: string; body: string }> = {
   },
   restart: {
     title: "Restart policy",
-    body: "What Docker does when the container stops. \"Unless stopped\" is what a service wants: it comes back after a crash and after a reboot, but stays down if you deliberately stopped it. \"No\" means it will not come back when this server restarts.",
+    body: 'What Docker does when the container stops. "Unless stopped" is what a service wants: it comes back after a crash and after a reboot, but stays down if you deliberately stopped it. "No" means it will not come back when this server restarts.',
   },
   env: {
     title: "Environment variables",
@@ -177,7 +179,7 @@ export const GLOSSARY: Record<string, { title: string; body: string }> = {
   },
   health: {
     title: "Health check",
-    body: "A command Docker runs inside the container to ask whether it is actually working. Without one, \"running\" only means the process has not exited — a wedged application that answers nothing still counts as up.",
+    body: 'A command Docker runs inside the container to ask whether it is actually working. Without one, "running" only means the process has not exited — a wedged application that answers nothing still counts as up.',
   },
   privileged: {
     title: "Privileged",
@@ -198,6 +200,10 @@ export const GLOSSARY: Record<string, { title: string; body: string }> = {
   dangling: {
     title: "Dangling image",
     body: "A layer left behind when an image was rebuilt or re-pulled and the tag moved to the new copy. Nothing references it and it is always safe to remove.",
+  },
+  buildCache: {
+    title: "Build cache",
+    body: 'What BuildKit keeps from every `docker build` so the next one can skip the steps that have not changed. It lives outside the image store, which is why deleting images never shrinks it and why it is the usual answer to "where did my disk go" on a server that builds. Emptying it costs nothing but a slower next build.',
   },
   writableLayer: {
     title: "The container's own filesystem",

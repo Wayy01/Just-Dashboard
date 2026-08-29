@@ -140,8 +140,15 @@ func (s *Server) handleSecurityPosture(w http.ResponseWriter, r *http.Request) e
 		// Failed logins are the volume of attempts, not their content, so the
 		// count is fine to feed a verdict every role can read even though the
 		// btmp listing itself is admin-only.
-		if records, err := s.modules.netsec.FailedLogins(ctx, 500); err == nil {
-			in.FailedLogins = len(records)
+		//
+		// Counted over a window rather than taken as the length of a capped
+		// listing: the old figure was len() of 500 records covering the whole
+		// of btmp, which made the 2000-attempt threshold unreachable and the
+		// 200-attempt one permanent on every host with a public SSH port.
+		if vol, err := s.modules.netsec.FailedLoginVolume(ctx, failedLoginWindow); err == nil {
+			in.FailedLogins = vol.Count
+			in.FailedLoginsCapped = vol.Capped
+			in.FailedLoginWindow = vol.Window
 			in.LoginRecordRead = true
 		}
 	})
@@ -163,6 +170,11 @@ func (s *Server) handleSecurityPosture(w http.ResponseWriter, r *http.Request) e
 	httpx.JSON(w, http.StatusOK, netsec.Assess(in))
 	return nil
 }
+
+// failedLoginWindow is how far back the verdict counts attempts. A week is
+// long enough that a weekend campaign is not missed and short enough that a
+// server which was scanned last spring is not still being warned about it.
+const failedLoginWindow = 7 * 24 * time.Hour
 
 func ptr[T any](v T) *T { return &v }
 

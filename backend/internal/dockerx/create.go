@@ -66,6 +66,16 @@ type ContainerSpec struct {
 	// means even when they do not know the option exists.
 	RestartPolicy string `json:"restartPolicy,omitempty"`
 	MaxRetries    int    `json:"maxRetries,omitempty"`
+	// Logging is how much of what this container prints is kept.
+	//
+	// It is on the spec because it has to survive a round trip: reading a
+	// container back and recreating it is how "edit" works here, and a field
+	// the spec cannot represent is a setting silently dropped on the way
+	// through. Docker's default keeps every line ever printed in one file
+	// that is never rotated, so a container whose logging *was* capped and
+	// came back out of an edit uncapped is a disk filling up in slow motion
+	// with nothing on screen having changed.
+	Logging LogConfig `json:"logging,omitempty"`
 
 	WorkingDir string `json:"workingDir,omitempty"`
 	User       string `json:"user,omitempty"`
@@ -159,6 +169,27 @@ type HealthSpec struct {
 	Retries        int      `json:"retries,omitempty"`
 	// Disable turns off a healthcheck the image defined.
 	Disable bool `json:"disable,omitempty"`
+}
+
+// LogConfig is the container's log driver and its options.
+//
+// An empty Driver means Docker's default, which on every normal install is
+// json-file with no rotation — the single most common way a server runs out of
+// disk without anything appearing to be wrong.
+type LogConfig struct {
+	Driver  string            `json:"driver,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
+}
+
+// Capped is the logging this dashboard offers as the remedy: ten megabytes a
+// file, three files, so a container keeps a useful amount of recent output and
+// cannot grow past thirty megabytes. Named rather than written inline so the
+// finding, the button and the rendered compose all quote the same numbers.
+func CappedLogging() LogConfig {
+	return LogConfig{
+		Driver:  "json-file",
+		Options: map[string]string{"max-size": "10m", "max-file": "3"},
+	}
 }
 
 // ResourceLimits are the ceilings. Zero means "no limit", which is Docker's
@@ -357,6 +388,11 @@ func (s ContainerSpec) toEngine() (*container.Config, *container.HostConfig, *ne
 	if s.Init {
 		init := true
 		hostCfg.Init = &init
+	}
+	if s.Logging.Driver != "" || len(s.Logging.Options) != 0 {
+		hostCfg.LogConfig = container.LogConfig{
+			Type: s.Logging.Driver, Config: s.Logging.Options,
+		}
 	}
 
 	policy, err := restartPolicy(s.RestartPolicy, s.MaxRetries)
@@ -640,6 +676,11 @@ func (c *Client) SpecOf(ctx context.Context, id string) (*ContainerSpec, error) 
 		spec.DNS = hc.DNS
 		spec.RestartPolicy = string(hc.RestartPolicy.Name)
 		spec.MaxRetries = hc.RestartPolicy.MaximumRetryCount
+		// Read back so an edit-and-recreate keeps it. Without this the round
+		// trip quietly reset a capped container to Docker's unbounded default.
+		if hc.LogConfig.Type != "" || len(hc.LogConfig.Config) != 0 {
+			spec.Logging = LogConfig{Driver: hc.LogConfig.Type, Options: hc.LogConfig.Config}
+		}
 		if hc.Init != nil {
 			spec.Init = *hc.Init
 		}

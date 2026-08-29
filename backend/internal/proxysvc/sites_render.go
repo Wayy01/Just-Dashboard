@@ -98,7 +98,7 @@ func RenderNginx(spec *SiteSpec) (string, error) {
 	}
 	if strings.TrimSpace(spec.Custom) != "" {
 		l.blank()
-		l.add("    # Added by hand from the site form.")
+		l.add("    %s", customMarker)
 		for _, line := range strings.Split(strings.TrimRight(spec.Custom, "\n"), "\n") {
 			l.add("    %s", strings.TrimRight(line, " \t"))
 		}
@@ -284,7 +284,7 @@ func renderExploitBlocks(l *lines) {
 	l.add("    # The shapes scanners ask for constantly. Refusing them costs nothing")
 	l.add("    # and keeps the log readable; it is not a substitute for the")
 	l.add("    # application being sound.")
-	l.add("    location ~ /\\.(?!well-known) {")
+	l.add("    location ~ %s {", exploitDotLocation)
 	l.add("        deny all;")
 	l.add("    }")
 	l.add("    location ~* \\.(sql|bak|old|orig|save|swp|env)$ {")

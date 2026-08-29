@@ -36,17 +36,40 @@ func ParseSiteSpec(name, content string) (*SiteSpec, bool) {
 	rootLocationWS := false
 	sawTLSListen := false
 	sawPlainRedirect := false
+	var custom []string
+	inCustom := false
 
 	sc := bufio.NewScanner(strings.NewReader(content))
 	sc.Buffer(make([]byte, 0, 8192), 1<<20)
 	for sc.Scan() {
-		raw := strings.TrimSpace(sc.Text())
+		line := sc.Text()
+		raw := strings.TrimSpace(line)
+		// Everything after the custom marker belongs to the operator, so it is
+		// collected verbatim rather than parsed. Without this the "extra
+		// configuration" box was written to the file and silently dropped the
+		// next time anybody opened the form and saved — the form's own escape
+		// hatch was the one field an edit destroyed.
+		if inCustom {
+			custom = append(custom, strings.TrimPrefix(line, "    "))
+			continue
+		}
+		if raw == customMarker {
+			inCustom = true
+			continue
+		}
 		if raw == "" || strings.HasPrefix(raw, "#") {
 			continue
 		}
 		if m := locationOpenRe.FindStringSubmatch(raw); m != nil {
 			depth++
 			location = m[1]
+			// The exploit blocks are this renderer's, not the operator's, and
+			// the switch that produced them is a field of its own. Reading
+			// them back as locations would drop them; reading them back as
+			// the flag is what makes the switch survive an edit.
+			if location == exploitDotLocation {
+				spec.BlockExploits = true
+			}
 			// The ACME challenge location belongs to the redirect block this
 			// renderer writes for a forced-HTTPS site. Reading it back as one
 			// of the operator's own locations makes a round trip emit it
@@ -103,7 +126,13 @@ func ParseSiteSpec(name, content string) (*SiteSpec, bool) {
 		case "auth_basic_user_file":
 			spec.BasicAuthFile = value
 		case "allow":
-			spec.AllowFrom = append(spec.AllowFrom, value)
+			// Server level only, like deny: an allow inside a location
+			// restricts that one path, and hoisting it into the form's
+			// site-wide list would apply it to the whole site on the next
+			// save — a widening or a narrowing nobody asked for.
+			if location == "" {
+				spec.AllowFrom = append(spec.AllowFrom, value)
+			}
 		case "deny":
 			if location == "" {
 				spec.DenyFrom = append(spec.DenyFrom, value)
@@ -177,10 +206,28 @@ func ParseSiteSpec(name, content string) (*SiteSpec, bool) {
 		}
 	}
 	spec.Locations = kept
+	// The custom block is everything between the marker and the server's
+	// closing brace, which the renderer always writes last.
+	for len(custom) > 0 && strings.TrimSpace(custom[len(custom)-1]) == "" {
+		custom = custom[:len(custom)-1]
+	}
+	if len(custom) > 0 && strings.TrimSpace(custom[len(custom)-1]) == "}" {
+		custom = custom[:len(custom)-1]
+	}
+	spec.Custom = strings.TrimRight(strings.Join(custom, "\n"), "\n")
 	return spec, managed
 }
 
 const acmeChallengePath = "/.well-known/acme-challenge/"
+
+// customMarker introduces the operator's own directives, and exploitDotLocation
+// is the first location renderExploitBlocks writes. Both are read back by the
+// parser, so they are constants shared with the renderer rather than strings
+// repeated in two files that can drift apart.
+const (
+	customMarker       = "# Added by hand from the site form."
+	exploitDotLocation = `/\.(?!well-known)`
+)
 
 var locationOpenRe = regexp.MustCompile(`^location\s+(?:[~^=*]+\s+)?(\S+)\s*\{`)
 
@@ -240,9 +287,18 @@ func (s *Service) ApplySite(ctx context.Context, spec *SiteSpec, enable, reload,
 	available := filepath.Join(s.nginxDir, "sites-available", spec.Name)
 	if _, err := os.Stat(filepath.Dir(available)); err != nil {
 		// A host keeping everything in conf.d has no sites-available, and
-		// there is no enable/disable there either.
-		available = filepath.Join(s.nginxDir, "conf.d", spec.Name+".conf")
+		// there is no enable/disable there either. The suffix is added by
+		// confdPath rather than here, so editing a site the listing calls
+		// app.conf writes back over it instead of creating app.conf.conf.
+		available = s.confdPath(spec.Name)
 		enable = true
+		if _, err := os.Stat(filepath.Dir(available)); err != nil {
+			// Neither layout is present, which on a host that really runs
+			// nginx means JD_NGINX_DIR points at the wrong place. Saying
+			// which directory was looked for beats the "no such file or
+			// directory" the write would otherwise fail with.
+			return nil, fmt.Errorf("%s has neither a sites-available nor a conf.d directory — set JD_NGINX_DIR to where this host keeps its nginx configuration", s.nginxDir)
+		}
 	}
 	full, err := s.allowedPath(available)
 	if err != nil {
@@ -265,13 +321,16 @@ func (s *Service) ApplySite(ctx context.Context, spec *SiteSpec, enable, reload,
 		// symlink to make and nothing to report as pending.
 		res.Enabled = true
 	} else if enable {
-		link := filepath.Join(s.nginxDir, "sites-enabled", spec.Name)
-		if _, err := os.Lstat(link); err != nil {
-			if err := os.MkdirAll(filepath.Dir(link), 0o755); err == nil &&
-				os.Symlink(full, link) == nil {
-				undoLink = func() { os.Remove(link) }
-			}
+		undo, err := linkEnabled(filepath.Join(s.nginxDir, "sites-enabled", spec.Name), full)
+		if err != nil {
+			// The write is undone rather than left standing: a file in
+			// sites-available that nginx does not include is invisible
+			// everywhere except the next person to wonder why the site is
+			// not serving.
+			restoreConfig(full, original, existed)
+			return nil, err
 		}
+		undoLink = undo
 		res.Enabled = true
 	}
 
@@ -295,6 +354,37 @@ func (s *Service) ApplySite(ctx context.Context, spec *SiteSpec, enable, reload,
 		res.Reloaded = true
 	}
 	return res, nil
+}
+
+// linkEnabled points sites-enabled at this file, and returns the undo.
+//
+// Three cases rather than one, because two of them used to be reported as
+// success and were not. A link that already points somewhere else is replaced:
+// leaving it meant the new file was never in nginx's include tree while the
+// page said the site was enabled. And a symlink that could not be created at
+// all is an error now — the earlier version swallowed it and set Enabled true
+// regardless, so a read-only or missing sites-enabled produced a site that had
+// been "enabled" and was serving nothing.
+func linkEnabled(link, target string) (func(), error) {
+	if existing, err := os.Readlink(link); err == nil {
+		if existing == target {
+			return func() {}, nil
+		}
+		if err := os.Remove(link); err != nil {
+			return nil, err
+		}
+	} else if _, err := os.Lstat(link); err == nil {
+		// Not a symlink: a real file sitting where the link belongs. Removing
+		// somebody's configuration is not this function's decision.
+		return nil, fmt.Errorf("%s already exists and is not a symlink — move it aside first", link)
+	}
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Symlink(target, link); err != nil {
+		return nil, err
+	}
+	return func() { os.Remove(link) }, nil
 }
 
 func readIfPresent(path string) (string, bool) {
@@ -321,17 +411,25 @@ func (s *Service) DeleteSite(ctx context.Context, name string) error {
 	if !siteNameRe.MatchString(name) {
 		return fmt.Errorf("invalid site name")
 	}
+	if isBackupFile(name) {
+		// Unreachable from the listing, which hides these — but a second
+		// delete of the same name must never be able to produce
+		// <name>.bak.bak, which is the shape the old bug took.
+		return fmt.Errorf("%s is a backup of a deleted site, not a site — remove it from the file manager if you no longer want it", name)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	removedLink := false
 	link := filepath.Join(s.nginxDir, "sites-enabled", name)
 	if _, err := os.Lstat(link); err == nil {
 		if err := os.Remove(link); err != nil {
 			return err
 		}
+		removedLink = true
 	}
 	for _, candidate := range []string{
 		filepath.Join(s.nginxDir, "sites-available", name),
-		filepath.Join(s.nginxDir, "conf.d", name+".conf"),
+		s.confdPath(name),
 	} {
 		full, err := s.allowedPath(candidate)
 		if err != nil {
@@ -343,10 +441,18 @@ func (s *Service) DeleteSite(ctx context.Context, name string) error {
 		// Kept as .bak for the same reason a compose file is: validation
 		// catches a broken config, not a correct one that says the wrong
 		// thing, and the only cure for the second is the previous version.
+		// The listing skips these, so the copy is a file on disk rather than
+		// a site that comes back the moment the one it replaced is deleted.
 		if b, err := os.ReadFile(full); err == nil {
 			os.WriteFile(full+".bak", b, 0o644)
 		}
 		return os.Remove(full)
+	}
+	if removedLink {
+		// A link with nothing behind it is exactly what takes every site on
+		// the box down at the next reload, so removing it is the whole job
+		// and reporting failure afterwards would be wrong.
+		return nil
 	}
 	return fmt.Errorf("no such site: %s", name)
 }

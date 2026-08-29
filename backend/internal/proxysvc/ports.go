@@ -35,7 +35,12 @@ func ListListeners(ctx context.Context) ([]Listener, error) {
 	out := []Listener{}
 	seen := map[string]bool{}
 	for _, c := range conns {
-		if c.Status != "LISTEN" && c.Type != 2 { // type 2 is SOCK_DGRAM: UDP has no LISTEN state
+		// Type 2 is SOCK_DGRAM: UDP has no LISTEN state, so a bound socket is
+		// the closest thing to a listener there is. A *connected* one is not —
+		// every DNS lookup on the host opens one, and listing those turned a
+		// page about what the server is accepting on into a page of the
+		// machine's own outbound traffic.
+		if c.Status != "LISTEN" && !(c.Type == 2 && c.Raddr.Port == 0) {
 			continue
 		}
 		proto := "tcp"

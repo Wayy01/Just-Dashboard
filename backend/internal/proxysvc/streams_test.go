@@ -1,6 +1,9 @@
 package proxysvc
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -155,5 +158,58 @@ func TestStreamWarnings(t *testing.T) {
 	udp.Protocol, udp.ProxyProtocol = "udp", true
 	if !containsSubstring(streamWarnings(udp), "PROXY protocol is a TCP thing") {
 		t.Error("PROXY protocol on UDP silently does nothing and should say so")
+	}
+}
+
+// The snippet this page prints is exactly what people paste into nginx.conf
+// commented out while they think about it. A banner that disappears then is
+// worse than none: the files go on being written and silently ignored.
+func TestStreamIncludeIgnoresACommentedOutInclude(t *testing.T) {
+	dir := t.TempDir()
+	streams := filepath.Join(dir, "stream.d")
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "nginx.conf"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("# stream {\n#     include " + streams + "/*.conf;\n# }\nhttp { }\n")
+	if streamIncludeFound(dir, streams) {
+		t.Error("a commented-out include was read as present")
+	}
+	write("stream {\n    include " + streams + "/*.conf;\n}\nhttp { }\n")
+	if !streamIncludeFound(dir, streams) {
+		t.Error("a real include was not found")
+	}
+}
+
+// The stream directory hangs off the configured nginx directory, so a host
+// with JD_NGINX_DIR set somewhere else does not write into /etc/nginx.
+func TestStreamsLiveUnderTheConfiguredNginxDir(t *testing.T) {
+	dir := t.TempDir()
+	svc := New(dir, filepath.Join(t.TempDir(), "Caddyfile"))
+	if got := svc.Streams(context.Background()).Dir; got != filepath.Join(dir, "stream.d") {
+		t.Fatalf("stream dir is %s", got)
+	}
+}
+
+// "New stream" and "Edit this stream" post to one route, so without the guard
+// a new one named after an existing one replaced it in silence — a forwarding
+// rule that quietly stopped pointing where it used to.
+func TestApplyStreamRefusesToReplaceWithoutOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	svc := New(dir, filepath.Join(t.TempDir(), "Caddyfile"))
+	if err := os.MkdirAll(svc.streamDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(svc.streamDir(), "postgres-replica.conf")
+	if err := os.WriteFile(path, []byte("# existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ApplyStream(context.Background(), tcpStream(), false, false); err == nil {
+		t.Fatal("an existing stream was replaced without asking")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != "# existing\n" {
+		t.Fatalf("the existing file was touched: %q %v", b, err)
 	}
 }

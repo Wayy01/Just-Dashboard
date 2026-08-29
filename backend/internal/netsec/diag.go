@@ -141,7 +141,16 @@ func (s *Service) Lookup(ctx context.Context, target, recordType string) (*Probe
 		var mx []*net.MX
 		mx, err = net.DefaultResolver.LookupMX(ctx, target)
 		for _, m := range mx {
-			res.Records = append(res.Records, fmt.Sprintf("%d %s", m.Pref, strings.TrimSuffix(m.Host, ".")))
+			host := strings.TrimSuffix(m.Host, ".")
+			if host == "" {
+				// A null MX — RFC 7505's "0 ." — is a real answer meaning the
+				// domain accepts no mail at all. Rendered by trimming the dot
+				// it becomes a preference and a blank, which reads as a broken
+				// lookup rather than as a deliberate configuration.
+				res.Records = append(res.Records, "0 . (null MX — this domain accepts no mail)")
+				continue
+			}
+			res.Records = append(res.Records, fmt.Sprintf("%d %s", m.Pref, host))
 		}
 	case "TXT":
 		res.Records, err = net.DefaultResolver.LookupTXT(ctx, target)

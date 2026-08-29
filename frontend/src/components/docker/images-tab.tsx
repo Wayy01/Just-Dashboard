@@ -18,12 +18,20 @@ import { bytes, relativeTime } from "@/lib/format"
 import type { DockerImage, ImageDetail, ImageUpdateStatus } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice, Spinner } from "@/components/state"
+import {
+  EmptyState,
+  ErrorState,
+  LoadingPanel,
+  LoadingRows,
+  Notice,
+  Spinner,
+} from "@/components/state"
 import { IconAction } from "@/components/icon-action"
 import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
 import { Detail, DetailList, RowLink, SearchInput } from "@/components/page"
 import type { ConfirmFn } from "@/components/docker/shared"
+import { DiskPanel } from "@/components/docker/disk-panel"
 import { Hint, Term } from "@/components/docker/explain"
 import { usePullProgress } from "@/components/docker/create-container"
 import { BuildDialog } from "@/components/docker/build-dialog"
@@ -129,6 +137,11 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
 
   return (
     <div className="space-y-4">
+      {/* Above the image list on purpose: "where did the disk go" is the
+          question that brings people to this tab, and images are only ever
+          part of the answer. */}
+      <DiskPanel confirm={confirm} onPruned={refresh} />
+
       {outdated.length > 0 && (
         <Notice
           title={`${outdated.length} running image${outdated.length === 1 ? " has" : "s have"} a newer version`}
@@ -606,11 +619,7 @@ function PullDialog({
             Close
           </Button>
           <Button onClick={start} disabled={!ref.trim() || pull.active}>
-            {pull.active ? (
-              <Spinner className="size-4" />
-            ) : (
-              <HardDrive className="size-4" />
-            )}
+            {pull.active ? <Spinner className="size-4" /> : <HardDrive className="size-4" />}
             Pull
           </Button>
         </DialogFooter>

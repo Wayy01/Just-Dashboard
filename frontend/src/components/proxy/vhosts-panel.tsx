@@ -171,8 +171,23 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                         )}
                       </TableCell>
                       <TableCell>
+                        {/*
+                          A conf.d host has no sites-enabled to link into, so
+                          there is nothing for the switch to do — every file in
+                          that directory is active. An empty enabledPath is what
+                          says which of the two layouts this is, and offering a
+                          control that can only ever return an error is worse
+                          than not offering one.
+                        */}
                         {vhost.kind === "caddy" ? (
                           <span className="text-xs text-muted-foreground">n/a</span>
+                        ) : !vhost.enabledPath ? (
+                          <span
+                            className="text-xs text-muted-foreground"
+                            title="This host keeps its sites in conf.d, where every file is active. There is nothing to enable or disable."
+                          >
+                            always on
+                          </span>
                         ) : (
                           <Switch
                             checked={vhost.enabled}
@@ -198,8 +213,9 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                                   description: (
                                     <p>
                                       The file and its symlink are removed and nginx reloads. The
-                                      previous content is kept as{" "}
-                                      <code className="font-mono">{vhost.name}.bak</code>.
+                                      previous content is kept beside it as{" "}
+                                      <code className="font-mono">{vhost.name}.bak</code>, which
+                                      nginx does not read and this list does not show.
                                     </p>
                                   ),
                                   action: async () => {

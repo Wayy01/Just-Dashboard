@@ -97,6 +97,25 @@ func (c *Client) Diagnose(ctx context.Context) (*Diagnosis, error) {
 	}
 	d := &Diagnosis{Status: "ok", Findings: []DockerFinding{}, CheckedAt: time.Now().UTC()}
 
+	// The writable layer is read from the disk-usage snapshot, not from the
+	// container listing, and that is the difference between this check working
+	// and not existing.
+	//
+	// Docker's container list omits SizeRw entirely unless it is asked for
+	// (`size=1`), and asking makes the daemon walk every container's layer —
+	// far too expensive for a listing the containers page polls twice a
+	// minute. So the field was always zero, and the rule below it, which is
+	// one of the three findings this panel exists for, had never fired on any
+	// host. The disk-usage walk already computes exactly this figure and is
+	// already cached and already being read a few lines further down for the
+	// daemon findings, so taking it from there costs nothing.
+	writable := map[string]int64{}
+	if du := c.diskUsage(ctx); du != nil {
+		for _, ct := range du.Containers {
+			writable[ct.ID] = ct.SizeRw
+		}
+	}
+
 	// Stack membership is needed to spot a half-up stack, which is only
 	// visible across containers rather than in any one of them.
 	stackTotal := map[string]int{}
@@ -108,6 +127,9 @@ func (c *Client) Diagnose(ctx context.Context) (*Diagnosis, error) {
 			continue
 		}
 		d.Checked++
+		if size, ok := writable[ct.ID]; ok {
+			ct.SizeRw = size
+		}
 		if ct.ComposeStack != "" {
 			stackTotal[ct.ComposeStack]++
 			if ct.State != "running" {
@@ -346,18 +368,27 @@ func diagnoseContainer(ct Container, insp containerInspect) []DockerFinding {
 					Level:  "warning",
 					Title:  name + " has written " + humanBytes(size) + " of logs",
 					Detail: "Docker's default log driver keeps every line this container has ever printed, in one file that is never rotated. It is deleted only when the container is.",
-					Advice: "Setting a maximum log size on the container caps it — this is the single most common way a server runs out of disk without anything appearing to be wrong.",
+					Advice: "Setting a maximum log size on the container caps it — this is the single most common way a server runs out of disk without anything appearing to be wrong. Capping it here rebuilds the container with a 10 MB limit over three files; the existing log file is discarded with the old container.",
+					// The advice described a fix the dashboard could carry out
+					// and did not offer, which is the same gap the reclaim
+					// button had. Docker cannot change a log driver on a live
+					// container, so the remedy is a recreate — the same bargain
+					// the restart-policy finding makes, and the UI says so.
+					Action:      "cap-logs",
+					ActionLabel: "Cap the log size",
 				})
 			}
 		}
 	}
 	if ct.SizeRw > writableLayerWarnBytes {
 		add(DockerFinding{
-			ID:     "container.writablelayer." + ct.ID,
-			Level:  "warning",
-			Title:  name + " has " + humanBytes(ct.SizeRw) + " written inside the container",
-			Detail: "That is data sitting in the container's own writable layer rather than in a volume. It is not backed up, it is invisible to the file manager, and it is destroyed the moment the container is recreated — which includes every image update.",
-			Advice: "If it matters, mount a volume at whatever path it is being written to. If it does not, it is still costing that much disk.",
+			ID:          "container.writablelayer." + ct.ID,
+			Level:       "warning",
+			Title:       name + " has " + humanBytes(ct.SizeRw) + " written inside the container",
+			Detail:      "That is data sitting in the container's own writable layer rather than in a volume. It is not backed up, it is invisible to the file manager, and it is destroyed the moment the container is recreated — which includes every image update.",
+			Advice:      "If it matters, mount a volume at whatever path it is being written to. If it does not, it is still costing that much disk — and no prune can reclaim it while the container exists.",
+			Action:      "changes",
+			ActionLabel: "Show what it has written",
 		})
 	}
 
@@ -429,59 +460,52 @@ func diagnoseContainer(ct Container, insp containerInspect) []DockerFinding {
 // one container.
 func (c *Client) diagnoseDaemon(ctx context.Context) []DockerFinding {
 	out := []DockerFinding{}
-	du := c.diskUsage(ctx)
-	if du == nil {
+	// The same accounting the disk panel shows, so the figure in this finding
+	// and the figure on the page it sends you to are one number rather than
+	// two that disagree. Both are Docker's own definition of reclaimable —
+	// shared layers counted once — because the previous naive sum promised
+	// more than any prune could deliver.
+	du, err := c.DiskUsage(ctx)
+	if err != nil {
 		return out
 	}
-	var reclaimable int64
-	danglingImages := 0
-	for _, img := range du.Images {
-		if img.Containers == 0 {
-			reclaimable += img.Size
-			if len(img.RepoTags) == 0 || img.RepoTags[0] == "<none>:<none>" {
-				danglingImages++
-			}
-		}
-	}
-	unusedVolumes := 0
-	var unusedVolumeBytes int64
-	for _, v := range du.Volumes {
-		if v.UsageData != nil && v.UsageData.RefCount == 0 {
-			unusedVolumes++
-			unusedVolumeBytes += v.UsageData.Size
-		}
-	}
-	var buildCache int64
-	for _, b := range du.BuildCache {
-		if !b.InUse {
-			buildCache += b.Size
-		}
-	}
+	images, buildCache := du.ImagesLine.Reclaimable, du.BuildCacheLine.Reclaimable
 
-	if reclaimable+buildCache > reclaimableNoticeBytes {
-		detail := fmt.Sprintf("%s of images no container is using", humanBytes(reclaimable))
-		if buildCache > 0 {
-			detail += fmt.Sprintf(", and %s of build cache", humanBytes(buildCache))
+	if images+buildCache > reclaimableNoticeBytes {
+		parts := []string{}
+		if images > 0 {
+			parts = append(parts, humanBytes(images)+" of images no container is using")
 		}
+		if buildCache > 0 {
+			parts = append(parts, humanBytes(buildCache)+" of build cache")
+		}
+		detail := strings.Join(parts, ", and ")
 		out = append(out, DockerFinding{
-			ID:          "daemon.reclaimable",
-			Level:       "notice",
-			Title:       humanBytes(reclaimable+buildCache) + " of Docker disk can be reclaimed",
-			Detail:      detail + ". Old image layers are kept after every update, which is what makes this grow on its own.",
-			Advice:      "Pruning images and build cache is safe: anything a container still needs is never removed. Unused volumes are a different matter — those hold data.",
-			Scope:       "daemon",
+			ID:     "daemon.reclaimable",
+			Level:  "notice",
+			Title:  humanBytes(images+buildCache) + " of Docker disk can be reclaimed",
+			Detail: detail + ". Old image layers are kept after every update, and every build leaves its cache behind, which is what makes this grow on its own.",
+			Advice: "Both are safe to remove: anything a container still needs is never touched, and the cache costs a slower next build rather than anything you cannot get back. Unused volumes are a different matter — those hold data, and this does not include them.",
+			Scope:  "daemon",
+			// Handled on the page rather than by sending the operator to a
+			// tab and hoping. It used to be a link to the images list, whose
+			// only button prunes *dangling* images — on a host where nothing
+			// is dangling that is a promise of forty gigabytes answered by a
+			// button that frees nothing.
 			Action:      "prune",
 			ActionLabel: "Reclaim it",
 		})
 	}
-	if unusedVolumes > 0 && unusedVolumeBytes > reclaimableNoticeBytes {
+	if du.VolumesLine.Total-du.VolumesLine.Active > 0 && du.VolumesLine.Reclaimable > reclaimableNoticeBytes {
 		out = append(out, DockerFinding{
-			ID:     "daemon.orphanvolumes",
-			Level:  "notice",
-			Title:  fmt.Sprintf("%d volumes holding %s are not attached to anything", unusedVolumes, humanBytes(unusedVolumeBytes)),
-			Detail: "A volume outlives the container that created it. These are usually left behind by a container that was removed and recreated — but some of them are the only copy of something.",
-			Advice: "Worth looking at one by one rather than pruning: the Volumes tab shows what each one holds and when it was created.",
-			Scope:  "daemon",
+			ID:          "daemon.orphanvolumes",
+			Level:       "notice",
+			Title:       fmt.Sprintf("%d volumes holding %s are not attached to anything", du.VolumesLine.Total-du.VolumesLine.Active, humanBytes(du.VolumesLine.Reclaimable)),
+			Detail:      "A volume outlives the container that created it. These are usually left behind by a container that was removed and recreated — but some of them are the only copy of something.",
+			Advice:      "Worth looking at one by one rather than pruning: the Volumes tab shows what each one holds and when it was created.",
+			Scope:       "daemon",
+			Action:      "volumes",
+			ActionLabel: "Show the volumes",
 		})
 	}
 	return out

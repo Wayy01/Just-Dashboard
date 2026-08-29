@@ -1,10 +1,5 @@
 export type Capability =
-  | "read"
-  | "service.control"
-  | "file.write"
-  | "terminal"
-  | "destructive"
-  | "system.admin"
+  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -474,6 +469,12 @@ export type DockerNetwork = {
   labels: Record<string, string>
   subnets: string[]
   containers: number
+  /**
+   * The containers attached, joined on the server from the container listing.
+   * Docker's own network listing leaves its container map empty, so `containers`
+   * was structurally zero on every host until this was joined in.
+   */
+  usedBy: string[]
 }
 
 export type ComposeService = {
@@ -544,6 +545,40 @@ export type DockerDiagnosis = {
   findings: DockerFinding[]
   checkedAt: string
   checked: number
+}
+
+/** One line of `docker system df`. */
+export type DockerDiskUsageLine = {
+  total: number
+  active: number
+  size: number
+  /**
+   * What a prune would actually give back — Docker's own figure, which counts
+   * an unused image's shared layers as staying put. The naive "size of the
+   * things nothing is using" is always larger and is what made the old
+   * reclaim button look broken.
+   */
+  reclaimable: number
+}
+
+export type DockerDiskUsage = {
+  layersSize: number
+  imagesSize: number
+  containersSize: number
+  volumesSize: number
+  buildCacheSize: number
+  images: DockerDiskUsageLine
+  containers: DockerDiskUsageLine
+  volumes: DockerDiskUsageLine
+  buildCache: DockerDiskUsageLine
+}
+
+export type PruneReport = {
+  kind: string
+  spaceReclaimed: number
+  items: string[]
+  /** Set when this part of a sweep failed while the rest carried on. */
+  error?: string
 }
 
 export type DockerEvent = {
@@ -661,6 +696,12 @@ export type ContainerSpec = {
   dns?: string[]
   restartPolicy?: string
   maxRetries?: number
+  /**
+   * The log driver and its options. Present on the spec so an edit-and-recreate
+   * keeps it — a field the round trip cannot carry is a setting silently reset
+   * to Docker's unbounded default on the way through.
+   */
+  logging?: { driver?: string; options?: Record<string, string> }
   workingDir?: string
   user?: string
   stopSignal?: string
@@ -1012,14 +1053,7 @@ export type Listener = {
 }
 
 export type DbDriver =
-  | "postgres"
-  | "mysql"
-  | "sqlite"
-  | "sqlserver"
-  | "clickhouse"
-  | "oracle"
-  | "mongodb"
-  | "redis"
+  "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "oracle" | "mongodb" | "redis"
 
 /**
  * What one engine can do, as the server reports it.
@@ -2373,6 +2407,13 @@ export type DomainCheck = {
   domain: string
   addresses: string[]
   hostAddresses: string[]
+  /**
+   * False on every VPS behind provider NAT — AWS, Google Cloud, Azure and
+   * Oracle all give the instance a private address and map a public one in
+   * front of it — where the comparison cannot be made at all. Rendered as
+   * "cannot tell", never as a mismatch.
+   */
+  hostAddressesKnown: boolean
   pointsHere: boolean
   behindProxy: boolean
   summary: string

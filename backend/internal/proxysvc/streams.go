@@ -30,9 +30,9 @@ import (
 // clearly when nginx.conf does not include it, because a stream config nginx
 // never reads is the same failure as a drop-in it ignores.
 
-// streamDir is where stream files go. Its own directory rather than conf.d,
-// which nginx includes from *inside* the http block.
-const streamDir = "/etc/nginx/stream.d"
+// Where stream files go is Service.streamDir() — a directory of its own rather
+// than conf.d, which nginx includes from *inside* the http block, and hung off
+// the configured nginx directory rather than a hard-coded /etc/nginx.
 
 // StreamSpec is one forwarded port.
 type StreamSpec struct {
@@ -71,7 +71,7 @@ var streamNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // ValidateStream checks a spec before it becomes a file.
 func ValidateStream(spec *StreamSpec) error {
-	if !streamNameRe.MatchString(spec.Name) {
+	if !streamNameRe.MatchString(spec.Name) || isBackupFile(spec.Name) {
 		return fmt.Errorf("name must be lowercase letters, digits, dots, dashes or underscores")
 	}
 	if spec.Listen < 1 || spec.Listen > 65535 {
@@ -206,21 +206,22 @@ func ParseStreamSpec(name, content string) *StreamSpec {
 
 // Streams lists what is configured, and whether nginx is reading it.
 func (s *Service) Streams(ctx context.Context) *StreamStatus {
+	dir := s.streamDir()
 	status := &StreamStatus{
-		Dir:     streamDir,
+		Dir:     dir,
 		Streams: []StreamSpec{},
-		Snippet: "stream {\n    include " + streamDir + "/*.conf;\n}",
+		Snippet: "stream {\n    include " + dir + "/*.conf;\n}",
 	}
-	status.Included = streamIncludeFound(s.nginxDir)
-	entries, err := os.ReadDir(streamDir)
+	status.Included = streamIncludeFound(s.nginxDir, dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return status
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") || isBackupFile(e.Name()) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(streamDir, e.Name()))
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -238,20 +239,38 @@ func (s *Service) Streams(ctx context.Context) *StreamStatus {
 // Reported rather than fixed: nginx.conf is the file every other configuration
 // on the host depends on, and a dashboard that edits it silently is one bad
 // write away from a server that will not start.
-func streamIncludeFound(nginxDir string) bool {
+func streamIncludeFound(nginxDir, dir string) bool {
 	b, err := os.ReadFile(filepath.Join(nginxDir, "nginx.conf"))
 	if err != nil {
 		return false
 	}
-	text := string(b)
+	// Comments are stripped first. The snippet this page prints is exactly
+	// what people paste in commented-out while they think about it, and a
+	// banner that disappears the moment the include is present-but-inert is
+	// worse than no banner: the files go on being written and ignored.
+	var live strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		live.WriteString(line)
+		live.WriteByte('\n')
+	}
+	text := live.String()
 	if !strings.Contains(text, "stream") {
 		return false
 	}
-	return strings.Contains(text, streamDir) || strings.Contains(text, "stream.d")
+	return strings.Contains(text, dir) || strings.Contains(text, "stream.d")
 }
 
 // ApplyStream writes a stream and reloads, testing first like everything else.
-func (s *Service) ApplyStream(ctx context.Context, spec *StreamSpec, reload bool) (*SiteResult, error) {
+//
+// overwrite is the same guard ApplySite carries and for the same reason: "New
+// stream" and "Edit this stream" post to one route, so without it a new one
+// named after an existing one replaced it silently — and a forwarding rule
+// that quietly stopped pointing where it used to is the worst shape this
+// feature can fail in.
+func (s *Service) ApplyStream(ctx context.Context, spec *StreamSpec, reload, overwrite bool) (*SiteResult, error) {
 	content, err := RenderStream(spec)
 	if err != nil {
 		return nil, err
@@ -259,11 +278,15 @@ func (s *Service) ApplyStream(ctx context.Context, spec *StreamSpec, reload bool
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(streamDir, 0o755); err != nil {
+	dir := s.streamDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(streamDir, spec.Name+".conf")
+	path := filepath.Join(dir, spec.Name+".conf")
 	original, existed := readIfPresent(path)
+	if existed && !overwrite {
+		return nil, fmt.Errorf("a stream called %s already exists", spec.Name)
+	}
 	res := &SiteResult{Name: spec.Name, Path: path, Content: content, Warnings: streamWarnings(spec)}
 	if err := writeAtomic(path, content); err != nil {
 		return nil, err
@@ -321,12 +344,12 @@ func streamDanger(port int) (string, bool) {
 // since the delete itself is the only thing this dashboard does to a stream
 // that cannot be undone from the form.
 func (s *Service) DeleteStream(ctx context.Context, name string) error {
-	if !streamNameRe.MatchString(name) {
+	if !streamNameRe.MatchString(name) || isBackupFile(name) {
 		return fmt.Errorf("invalid stream name")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	path := filepath.Join(streamDir, name+".conf")
+	path := filepath.Join(s.streamDir(), name+".conf")
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("no such stream: %s", name)
 	}

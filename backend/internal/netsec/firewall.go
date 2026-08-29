@@ -17,6 +17,7 @@ import (
 	"net"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,7 +201,7 @@ func annotateRule(r *Rule) {
 	if r.Service != "" && r.Danger != "" {
 		return
 	}
-	preset, ok := PresetFor(r.Port, r.Protocol)
+	preset, ok := presetForRulePort(r.Port, r.Protocol)
 	if !ok {
 		return
 	}
@@ -213,6 +214,50 @@ func annotateRule(r *Rule) {
 	if preset.Danger != "" && r.Action == "ALLOW" && isAnywhere(r.From) {
 		r.Danger = preset.Danger
 	}
+}
+
+// presetForRulePort resolves the catalogue for a rule's port, which unlike a
+// listening socket's may be a list or a range.
+//
+// Both forms are ones this dashboard's own rule form writes — `80,443` and
+// `8000:8010` — and an exact-string lookup matched neither, so a rule opening
+// Redis as part of a list carried no name and, more to the point, no warning.
+// The first catalogued port found wins: the warning is about the rule, and one
+// dangerous port in a list is enough to earn it.
+func presetForRulePort(port, protocol string) (ServicePreset, bool) {
+	if port == "" {
+		return ServicePreset{}, false
+	}
+	if preset, ok := PresetFor(port, protocol); ok {
+		return preset, true
+	}
+	for _, part := range strings.Split(port, ",") {
+		part = strings.TrimSpace(part)
+		lo, hi, isRange := strings.Cut(part, ":")
+		if !isRange {
+			if preset, ok := PresetFor(part, protocol); ok {
+				return preset, true
+			}
+			continue
+		}
+		// A range is walked through the catalogue rather than through the
+		// range, which may be sixty thousand ports wide.
+		from, err1 := strconv.Atoi(strings.TrimSpace(lo))
+		to, err2 := strconv.Atoi(strings.TrimSpace(hi))
+		if err1 != nil || err2 != nil || from > to {
+			continue
+		}
+		for _, candidate := range ServiceCatalogue {
+			n, err := strconv.Atoi(candidate.Port)
+			if err != nil || n < from || n > to {
+				continue
+			}
+			if protocol == "" || protocol == candidate.Protocol {
+				return candidate, true
+			}
+		}
+	}
+	return ServicePreset{}, false
 }
 
 // isAnywhere reports a source that restricts nothing.
@@ -295,8 +340,18 @@ func normaliseRule(req RuleRequest) (RuleRequest, error) {
 	if req.Direction != "in" && req.Direction != "out" {
 		return req, fmt.Errorf("direction must be in or out")
 	}
-	if req.Port != "" && !portRe.MatchString(req.Port) {
-		return req, fmt.Errorf("port must be a number, a range like 8000:8010, or a list like 80,443")
+	if req.Port != "" {
+		if !portRe.MatchString(req.Port) {
+			return req, fmt.Errorf("port must be a number, a range like 8000:8010, or a list like 80,443")
+		}
+		// The pattern bounds the digits, not the numbers. 0 and 99999 both
+		// match five digits or fewer and neither is a port, and a range
+		// written backwards is accepted by the pattern and rejected by every
+		// tool underneath — with an error that says nothing about which of
+		// the four fields on the form was wrong.
+		if err := boundPorts(req.Port); err != nil {
+			return req, err
+		}
 	}
 	req.Protocol = strings.ToLower(strings.TrimSpace(req.Protocol))
 	if req.Protocol != "" && req.Protocol != "tcp" && req.Protocol != "udp" {
@@ -331,6 +386,37 @@ func normaliseRule(req RuleRequest) (RuleRequest, error) {
 		return req, fmt.Errorf("position must be a rule number")
 	}
 	return req, nil
+}
+
+// boundPorts checks every number in a port specification is a real port and
+// every range runs the right way round.
+func boundPorts(spec string) error {
+	for _, part := range strings.Split(spec, ",") {
+		lo, hi, isRange := strings.Cut(part, ":")
+		from, err := portNumber(lo)
+		if err != nil {
+			return err
+		}
+		if !isRange {
+			continue
+		}
+		to, err := portNumber(hi)
+		if err != nil {
+			return err
+		}
+		if from > to {
+			return fmt.Errorf("the port range %s starts above where it ends", part)
+		}
+	}
+	return nil
+}
+
+func portNumber(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("%q is not a port; ports run from 1 to 65535", strings.TrimSpace(s))
+	}
+	return n, nil
 }
 
 // validAddress accepts an IP, a CIDR, or the word for "no restriction".
@@ -419,6 +505,13 @@ func replaceRule(ctx context.Context, b fwBackend, number int, req RuleRequest, 
 	old, ok := ruleNumbered(st.Rules, number)
 	if !ok {
 		return "", fmt.Errorf("no rule %d", number)
+	}
+	// A forwarding rule — `ufw route`, which is what ufw-docker writes — is
+	// neither inbound nor outbound, and this form has no way to say so. An
+	// edit would therefore rewrite it as an inbound rule and quietly change
+	// what it does, which is worse than declining to edit it.
+	if old.Direction != "" && !strings.EqualFold(old.Direction, "in") && !strings.EqualFold(old.Direction, "out") {
+		return "", fmt.Errorf("rule %d is a %s rule, which this form cannot express — edit it with ufw directly", number, old.Direction)
 	}
 	// firewalld has no ordering and no numbers of its own, so the handle it
 	// was given is what removes it. ufw is ordered, so the replacement is

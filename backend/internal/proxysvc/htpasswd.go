@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -25,9 +27,11 @@ import (
 // hashes for over a decade. Doing it in-process also means the password never
 // becomes an argv, which /proc/*/cmdline would make world-readable.
 
-// htpasswdDir is where these files live — beside the proxy config they belong
-// to, and inside the directory the config editor already guards.
-const htpasswdDir = "/etc/nginx/jd-auth"
+// Where these files live is Service.authDir(): beside the proxy config they
+// belong to, and under the configured nginx directory rather than a hard-coded
+// /etc/nginx — JD_NGINX_DIR exists for the hosts whose nginx is somewhere
+// else, and a password file written where that nginx never looks is a site
+// that refuses every visitor.
 
 var (
 	authFileRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -44,9 +48,10 @@ type AuthFile struct {
 }
 
 // ListAuthFiles enumerates the password files this dashboard manages.
-func ListAuthFiles() []AuthFile {
+func (s *Service) ListAuthFiles() []AuthFile {
 	out := []AuthFile{}
-	entries, err := os.ReadDir(htpasswdDir)
+	dir := s.authDir()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return out
 	}
@@ -54,12 +59,12 @@ func ListAuthFiles() []AuthFile {
 		if e.IsDir() || !authFileRe.MatchString(e.Name()) {
 			continue
 		}
-		users, err := readAuthUsers(filepath.Join(htpasswdDir, e.Name()))
+		users, err := readAuthUsers(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
 		out = append(out, AuthFile{
-			Name: e.Name(), Path: filepath.Join(htpasswdDir, e.Name()), Users: users,
+			Name: e.Name(), Path: filepath.Join(dir, e.Name()), Users: users,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -88,7 +93,7 @@ func readAuthUsers(path string) ([]string, error) {
 }
 
 // SetAuthUser adds or replaces one entry, creating the file if needed.
-func SetAuthUser(file, user, password string) (*AuthFile, error) {
+func (s *Service) SetAuthUser(file, user, password string) (*AuthFile, error) {
 	if !authFileRe.MatchString(file) {
 		return nil, fmt.Errorf("file name must be lowercase letters, digits, dots, dashes or underscores")
 	}
@@ -108,7 +113,7 @@ func SetAuthUser(file, user, password string) (*AuthFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(htpasswdDir, file)
+	path := filepath.Join(s.authDir(), file)
 	lines, err := readAuthLines(path)
 	if err != nil {
 		return nil, err
@@ -125,7 +130,7 @@ func SetAuthUser(file, user, password string) (*AuthFile, error) {
 	if !replaced {
 		lines = append(lines, entry)
 	}
-	if err := writeAuthFile(path, lines); err != nil {
+	if err := s.writeAuthFile(path, lines); err != nil {
 		return nil, err
 	}
 	users, _ := readAuthUsers(path)
@@ -135,11 +140,11 @@ func SetAuthUser(file, user, password string) (*AuthFile, error) {
 // RemoveAuthUser deletes one entry. Removing the last one leaves an empty
 // file rather than deleting it: a site whose auth_basic_user_file has vanished
 // stops nginx from starting, and an empty file simply admits nobody.
-func RemoveAuthUser(file, user string) (*AuthFile, error) {
+func (s *Service) RemoveAuthUser(file, user string) (*AuthFile, error) {
 	if !authFileRe.MatchString(file) {
 		return nil, fmt.Errorf("invalid file name")
 	}
-	path := filepath.Join(htpasswdDir, file)
+	path := filepath.Join(s.authDir(), file)
 	lines, err := readAuthLines(path)
 	if err != nil {
 		return nil, err
@@ -156,7 +161,7 @@ func RemoveAuthUser(file, user string) (*AuthFile, error) {
 	if !found {
 		return nil, fmt.Errorf("%q is not in %s", user, file)
 	}
-	if err := writeAuthFile(path, kept); err != nil {
+	if err := s.writeAuthFile(path, kept); err != nil {
 		return nil, err
 	}
 	users, _ := readAuthUsers(path)
@@ -164,11 +169,17 @@ func RemoveAuthUser(file, user string) (*AuthFile, error) {
 }
 
 // DeleteAuthFile removes a password file entirely.
-func DeleteAuthFile(file string) error {
+func (s *Service) DeleteAuthFile(file string) error {
 	if !authFileRe.MatchString(file) {
 		return fmt.Errorf("invalid file name")
 	}
-	return os.Remove(filepath.Join(htpasswdDir, file))
+	if err := os.Remove(filepath.Join(s.authDir(), file)); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no such password file: %s", file)
+		}
+		return err
+	}
+	return nil
 }
 
 func readAuthLines(path string) ([]string, error) {
@@ -188,10 +199,21 @@ func readAuthLines(path string) ([]string, error) {
 	return lines, nil
 }
 
-// writeAuthFile writes through a temporary file in the same directory. Mode
-// 0640: nginx reads it as its own user, and nothing else has any business
-// reading a file full of password hashes.
-func writeAuthFile(path string, lines []string) error {
+// writeAuthFile writes through a temporary file in the same directory.
+//
+// The mode is the part that was wrong and produced a feature that could not
+// work anywhere. nginx opens auth_basic_user_file in a *worker*, which runs as
+// www-data, nginx or http depending on the distribution — not as the root that
+// started the master and not as the root that writes this file. A 0640 file
+// owned by root:root therefore gave "Permission denied" in the error log and a
+// 403 to every visitor, which reads exactly like a wrong password.
+//
+// So the group is handed to whoever nginx's workers run as and the mode stays
+// 0640. Where that user cannot be worked out, the file is 0644 instead: a
+// world-readable list of bcrypt hashes is the same thing htpasswd itself
+// produces by default, and it is a great deal better than a login nobody can
+// pass.
+func (s *Service) writeAuthFile(path string, lines []string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -212,8 +234,54 @@ func writeAuthFile(path string, lines []string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o640); err != nil {
+	mode := os.FileMode(0o644)
+	if gid, ok := s.nginxWorkerGID(); ok && os.Chown(tmp.Name(), -1, gid) == nil {
+		mode = 0o640
+	}
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// nginxUserRe reads the `user` directive, which names the account nginx drops
+// its workers to and optionally the group as well.
+var nginxUserRe = regexp.MustCompile(`(?m)^\s*user\s+([^;#]+);`)
+
+// nginxWorkerGID answers "who has to be able to read this".
+//
+// nginx.conf first, because that is the machine's own answer and the only one
+// that is right on a host where somebody changed it. The three names after it
+// are the defaults of every distribution family this runs on — www-data on
+// Debian and Ubuntu, nginx on the RPM world and Alpine, http on Arch — tried
+// in turn so a config that leaves the directive commented out still works.
+func (s *Service) nginxWorkerGID() (int, bool) {
+	names := []string{}
+	if b, err := os.ReadFile(filepath.Join(s.nginxDir, "nginx.conf")); err == nil {
+		if m := nginxUserRe.FindSubmatch(b); m != nil {
+			fields := strings.Fields(string(m[1]))
+			if len(fields) > 1 {
+				// An explicit group wins: `user www-data adm;` means adm.
+				if g, err := user.LookupGroup(fields[1]); err == nil {
+					if gid, err := strconv.Atoi(g.Gid); err == nil {
+						return gid, true
+					}
+				}
+			}
+			if len(fields) > 0 {
+				names = append(names, fields[0])
+			}
+		}
+	}
+	names = append(names, "www-data", "nginx", "http")
+	for _, name := range names {
+		u, err := user.Lookup(name)
+		if err != nil {
+			continue
+		}
+		if gid, err := strconv.Atoi(u.Gid); err == nil {
+			return gid, true
+		}
+	}
+	return 0, false
 }

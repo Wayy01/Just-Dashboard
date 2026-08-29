@@ -162,20 +162,37 @@ function SiteFormBody({
     }
   }, [open, loaded, spec])
 
+  /**
+   * The file name the server will accept: lowercase, starting with a letter or
+   * a digit. Stripping the disallowed characters is not enough on its own —
+   * `*.example.com` becomes `.example.com`, which the server refuses, and the
+   * form has no name field to correct it in, so the first thing anybody
+   * issuing a wildcard did was hit an error they could not fix.
+   */
+  const fileNameFor = (domain: string) =>
+    domain
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, "")
+      .replace(/^[^a-z0-9]+/, "")
+      .slice(0, 64)
+
   const commitDomains = (text: string) => {
     setDomainText(text)
     const domains = text.split(/[\s,]+/).filter(Boolean)
+    // A wildcard certificate is issued for the parent zone, so that is where
+    // certbot puts it — /etc/letsencrypt/live/example.com, never
+    // live/*.example.com, which is not a directory name at all.
+    const lineage = domains[0]?.replace(/^\*\./, "")
     setSpec((s) => ({
       ...s,
       domains,
       // The file is named after the first domain unless somebody has already
       // typed a name. A site called "site-1" is one nobody can find later.
-      name: s.name || domains[0]?.replace(/[^a-z0-9._-]/gi, "").toLowerCase() || "",
+      name: s.name || (domains[0] ? fileNameFor(domains[0]) : ""),
       certPath:
-        s.certPath ||
-        (domains[0] ? `/etc/letsencrypt/live/${domains[0]}/fullchain.pem` : undefined),
+        s.certPath || (lineage ? `/etc/letsencrypt/live/${lineage}/fullchain.pem` : undefined),
       keyPath:
-        s.keyPath || (domains[0] ? `/etc/letsencrypt/live/${domains[0]}/privkey.pem` : undefined),
+        s.keyPath || (lineage ? `/etc/letsencrypt/live/${lineage}/privkey.pem` : undefined),
     }))
   }
 
@@ -243,7 +260,14 @@ function SiteFormBody({
         )}
 
         <div className="space-y-4 pt-1">
-          <Field label="Domains" hint="Space-separated. The first one names the file.">
+          <Field
+            label="Domains"
+            hint={
+              spec.name
+                ? `Space-separated. Saved as ${spec.name} in nginx's site directory.`
+                : "Space-separated. The first one names the file."
+            }
+          >
             <Input
               value={domainText}
               onChange={(e) => commitDomains(e.target.value)}
@@ -548,7 +572,10 @@ function DNSCheck({ domain }: { domain: string }) {
         "text-[11px] leading-relaxed",
         check.pointsHere
           ? "text-success"
-          : check.behindProxy
+          : // A host behind provider NAT has no address of its own to compare
+            // against, so "cannot tell" is muted like the CDN case rather than
+            // warned about — the domain is very probably fine.
+            check.behindProxy || !check.hostAddressesKnown
             ? "text-muted-foreground"
             : "text-warning",
       )}

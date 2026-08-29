@@ -89,13 +89,43 @@ func (s *Service) SetJailParams(ctx context.Context, jail string, params map[str
 		return res, nil
 	}
 	existing, _ := os.ReadFile(path)
-	merged := mergeJailOverrides(string(existing), jail, clean)
+	merged := mergeJailOverrides(string(existing), jail, numeric(clean))
 	if err := writeJailOverride(path, merged); err != nil {
 		res.Warning = "Applied to the running server, but could not be written to disk: " + err.Error()
 		return res, nil
 	}
 	res.Persisted, res.File = true, path
 	return res, nil
+}
+
+// numeric renders the integer parameters as the strings the file holds. The
+// merge takes strings because not every persisted value is a number —
+// ignoreip is a list of addresses and needs the same drop-in.
+func numeric(params map[string]int) map[string]string {
+	out := make(map[string]string, len(params))
+	for k, v := range params {
+		out[k] = strconv.Itoa(v)
+	}
+	return out
+}
+
+// PersistJailValue writes one non-numeric parameter into the same drop-in.
+//
+// It exists for ignoreip, which had the exact problem this whole file was
+// added to fix: fail2ban-client's addignoreip changes the running server and
+// nothing else, so the allowlist an operator adds after banning themselves is
+// gone at the next restart — silently, with the page still showing it.
+func (s *Service) PersistJailValue(jail, param, value string) (string, error) {
+	path := jailOverridePath()
+	if path == "" {
+		return "", fmt.Errorf("no /etc/fail2ban directory")
+	}
+	existing, _ := os.ReadFile(path)
+	merged := mergeJailOverrides(string(existing), jail, map[string]string{param: value})
+	if err := writeJailOverride(path, merged); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func sortedParams(params map[string]int) []string {
@@ -115,7 +145,7 @@ func sortedParams(params map[string]int) []string {
 // silently drop the rest. Unknown keys inside a section this dashboard owns
 // are kept too: somebody may have added a line by hand, and eating it would be
 // the same mistake in miniature.
-func mergeJailOverrides(existing, jail string, params map[string]int) string {
+func mergeJailOverrides(existing, jail string, params map[string]string) string {
 	header := "[" + jail + "]"
 	var out []string
 	wrote := false
@@ -123,9 +153,9 @@ func mergeJailOverrides(existing, jail string, params map[string]int) string {
 	written := map[string]bool{}
 
 	flushSection := func() {
-		for _, param := range sortedParams(params) {
+		for _, param := range sortedStringParams(params) {
 			if !written[param] {
-				out = append(out, param+" = "+strconv.Itoa(params[param]))
+				out = append(out, param+" = "+params[param])
 				written[param] = true
 			}
 		}
@@ -151,7 +181,7 @@ func mergeJailOverrides(existing, jail string, params map[string]int) string {
 			key = strings.ToLower(strings.TrimSpace(key))
 			if ok {
 				if value, managed := params[key]; managed {
-					out = append(out, key+" = "+strconv.Itoa(value))
+					out = append(out, key+" = "+value)
 					written[key] = true
 					continue
 				}
@@ -167,8 +197,8 @@ func mergeJailOverrides(existing, jail string, params map[string]int) string {
 			out = append(out, "")
 		}
 		out = append(out, header)
-		for _, param := range sortedParams(params) {
-			out = append(out, param+" = "+strconv.Itoa(params[param]))
+		for _, param := range sortedStringParams(params) {
+			out = append(out, param+" = "+params[param])
 		}
 	}
 
@@ -179,6 +209,15 @@ func mergeJailOverrides(existing, jail string, params map[string]int) string {
 			"# distribution's own jail.conf and jail.d/*.conf set.\n" + body
 	}
 	return strings.TrimRight(body, "\n") + "\n"
+}
+
+func sortedStringParams(params map[string]string) []string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func writeJailOverride(path, content string) error {

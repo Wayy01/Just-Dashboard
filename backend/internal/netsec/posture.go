@@ -89,10 +89,15 @@ type AssessInput struct {
 	SSH          *SSHDConfig
 	Listeners    []ExposedPort
 	Certificates []CertSummary
-	// FailedLogins is how many failed attempts the host recorded in the
-	// window Since covers, and RecentBans how many bans fail2ban issued.
-	FailedLogins int
-	RecentBans   int
+	// FailedLogins is how many failed attempts the host recorded inside
+	// FailedLoginWindow, and RecentBans how many bans fail2ban issued.
+	// FailedLoginsCapped says the sample ran out before the window did, so
+	// the count is a floor — which is worth saying rather than quoting a
+	// number that stopped counting.
+	FailedLogins       int
+	FailedLoginsCapped bool
+	FailedLoginWindow  time.Duration
+	RecentBans         int
 	// LoginRecordRead says whether btmp could be read at all. Zero failed
 	// attempts and "the tool that counts them is not installed" are the same
 	// number and opposite facts — `last` lives in util-linux-extra, which a
@@ -118,9 +123,14 @@ type AssessInput struct {
 // Thresholds. Each is a claim about what is bad, and a claim deserves one
 // place to be read and argued with.
 const (
-	// Failed logins in the last week that stop being background noise and
-	// start being a campaign. An internet-facing host with password
-	// authentication on will pass this within a day.
+	// Failed logins inside the assessed window that stop being background
+	// noise and start being a campaign. An internet-facing host with password
+	// authentication on will pass the first within a day.
+	//
+	// Both are counts over a window, and both were previously compared
+	// against the length of a 500-record listing of the whole of btmp — so
+	// the warning was unreachable and the notice was permanent on any host
+	// that had ever accumulated 200 attempts.
 	failedLoginNoticeCount  = 200
 	failedLoginWarningCount = 2000
 	// A certificate this close to expiry, on a host where nothing has renewed
@@ -399,19 +409,44 @@ func assessIntrusion(in AssessInput) []SecurityFinding {
 	case in.FailedLogins >= failedLoginWarningCount:
 		out = append(out, SecurityFinding{
 			ID: "intrusion.failed-logins", Level: "warning", Area: "intrusion",
-			Title:  "Sustained login attempts against this host",
-			Detail: fmt.Sprintf("%d failed attempts in the recorded window, %d bans issued.", in.FailedLogins, in.RecentBans),
+			Title: "Sustained login attempts against this host",
+			Detail: fmt.Sprintf("%s failed attempts %s, %d bans issued.",
+				countLabel(in.FailedLogins, in.FailedLoginsCapped), windowLabel(in.FailedLoginWindow), in.RecentBans),
 			Advice: "This is what a public SSH port looks like. Confirm password authentication is off, and that fail2ban's sshd jail is actually banning — the failure count matters much less once neither passwords nor unlimited attempts are available.",
 		})
 	case in.FailedLogins >= failedLoginNoticeCount:
 		out = append(out, SecurityFinding{
 			ID: "intrusion.failed-logins", Level: "notice", Area: "intrusion",
-			Title:  "Background brute-force traffic",
-			Detail: fmt.Sprintf("%d failed attempts in the recorded window.", in.FailedLogins),
+			Title: "Background brute-force traffic",
+			Detail: fmt.Sprintf("%s failed attempts %s.",
+				countLabel(in.FailedLogins, in.FailedLoginsCapped), windowLabel(in.FailedLoginWindow)),
 			Advice: "Normal for anything with a public SSH port. Worth knowing rather than worth acting on, provided keys are the only way in.",
 		})
 	}
 	return out
+}
+
+// countLabel says "at least" where the sample ran out, because a floor quoted
+// as a total is the kind of number people go on to reason from.
+func countLabel(n int, capped bool) string {
+	if capped {
+		return "at least " + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}
+
+// windowLabel names the period the count covers. An unset window means the
+// caller counted the whole record, which is what the old figure did and is
+// worth admitting rather than dressing up as a period.
+func windowLabel(window time.Duration) string {
+	switch {
+	case window == 0:
+		return "in the host's whole record"
+	case window >= 48*time.Hour:
+		return fmt.Sprintf("in the last %d days", int(window.Hours()/24))
+	default:
+		return fmt.Sprintf("in the last %d hours", int(window.Hours()))
+	}
 }
 
 func assessPorts(in AssessInput) []SecurityFinding {

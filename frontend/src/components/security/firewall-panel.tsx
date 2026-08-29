@@ -354,7 +354,13 @@ export function FirewallPanel({
                       )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {writable && rule.number !== undefined && (
+                      {/* A forwarding rule (ufw route, which is what ufw-docker
+                          writes) has no representation in this form: it is
+                          neither inbound nor outbound, and reopening it here
+                          would offer to save it back as an inbound rule. The
+                          server refuses that too; not offering the button is
+                          the half the reader can see. */}
+                      {writable && rule.number !== undefined && rule.direction !== "FWD" && (
                         <IconAction
                           label="Edit rule"
                           className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"

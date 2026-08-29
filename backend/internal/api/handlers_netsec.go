@@ -282,8 +282,15 @@ func (s *Server) handleFail2banBan(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	jail := chi.URLParam(r, "jail")
-	out, err := s.modules.netsec.Ban(r.Context(), jail, req.IP)
+	// The caller's own address goes down with the request for the reason it
+	// does on the firewall route: a ban is a drop rule, and banning yourself
+	// ends this session and every future one from here.
+	out, err := s.modules.netsec.Ban(r.Context(), jail, req.IP, httpx.ClientIP(r))
 	if err != nil {
+		if errors.Is(err, netsec.ErrLockout) {
+			httpx.SetAudit(r, "fail2ban.ban", jail, map[string]any{"result": "refused_lockout"})
+			return httpx.Err(http.StatusConflict, "would_lock_you_out", err.Error())
+		}
 		return httpx.BadRequest("%v", err)
 	}
 	httpx.SetAudit(r, "fail2ban.ban", jail, map[string]any{"ip": req.IP})

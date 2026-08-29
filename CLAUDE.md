@@ -622,6 +622,53 @@ a "kill any process on this host" primitive wearing a sensible name. SIGHUP
 rather than SIGKILL, so the login is recorded as ended rather than as a process
 that vanished.
 
+### What ufw is actually told
+
+The argv this dashboard builds for ufw is checked against a real ufw with
+`--dry-run` (`TestUFWAppProfileGoesInATargetClause`), because ufw's grammar has
+two shapes that are *accepted* and mean something other than what they look
+like — and one of them shipped.
+
+**An application profile is a destination, and only a `to` clause reads it as
+one.** `ufw allow in app OpenSSH` is refused outright ("Need 'to' or 'from'
+clause"), so choosing a profile and nothing else never worked; and `ufw allow
+in from 10.0.0.0/8 app OpenSSH` is accepted and binds the profile to the
+*source* port — `--sport 22`, `sapp_OpenSSH` — a rule admitting traffic that
+came from port 22 rather than traffic going to it. Every rule this code writes
+therefore names both ends: `from <src|any> to <dst|any>`, with `app` inside the
+`to` clause.
+
+**`ALLOW FWD` is a third direction.** `ufw route` rules print it, ufw-docker
+writes a great many of them, and an unrecognised direction leaks into the
+source address — worse, a rule parsed with no direction is read as inbound,
+which is how a host whose only rules were forwarding rules passed
+`admitsAnything` and was allowed to switch its inbound default to deny. They
+are also refused by `replaceRule` and hidden from the edit control: the rule
+form has no way to express one and would save it back as inbound.
+
+**The destination column carries an address when the rule names one** —
+`10.0.0.5 5432/tcp` — so the port is its last field, not the whole of it, and
+`presetForRulePort` expands the lists and ranges the form itself writes
+(`6379,6380`, `8000:8010`) before consulting the catalogue. Both were silent
+failures of the same kind: the rule parsed, and the warning that is the whole
+reason for the catalogue never fired.
+
+**A ban is a deny rule wearing another name.** `netsec.Ban` takes the caller's
+address and refuses it, because fail2ban installs a firewall drop and banning
+yourself severs the session exactly as an inbound deny would — the firewall
+route has guarded that since it shipped and this one reached the same outcome
+from a different button. And `IgnoreIP` writes through to the jail.d drop-in
+alongside the numeric parameters: `addignoreip` changes only the running
+server, so the address somebody allowlists after banning themselves used to
+last until fail2ban next restarted.
+
+**A count needs a window and a sample big enough to fill it.** The posture
+verdict's failed-login figure was `len()` of a 500-record listing of the whole
+of btmp, which made the 2000-attempt threshold unreachable and the 200-attempt
+notice permanent on every host with a public SSH port. `FailedLoginVolume`
+counts inside a window and reports `Capped` when the sample ran out first, so
+a floor is never quoted as a total.
+
 ### One firewall page, three firewalls
 
 `netsec/firewall.go` is a dispatcher, not an implementation. `fwBackend` is the
@@ -1305,6 +1352,40 @@ propagation arguments after itself, and route53 has neither — with credentials
 written 0600 into certbot's own tree. Asking for a wildcard over HTTP is refused
 here with what to do instead, rather than relaying certbot's "wildcard domains
 are not supported by the HTTP-01 challenge", which is accurate and useless.
+
+**The two layouts, and the files that are not sites.** `nginxVHosts` reads
+sites-available where it exists and conf.d where it does not — the second is
+every RPM distribution, Alpine and Arch, which is most of the servers this runs
+on — and the difference reaches the UI as an empty `EnabledPath`, because
+conf.d has no symlink to toggle and a switch that can only return an error is
+worse than none. `confdPath` is the other half: the listing on such a host
+reports a name that already ends in `.conf`, so appending a second one made
+delete and save act on `app.conf.conf`, which exists nowhere. And the listing
+**skips backups** (`isBackupFile`) — `.bak`, `~`, `.dpkg-old`, `.rpmsave` and
+the rest. nginx reads none of them, and the delete keeps the previous content
+as `<name>.bak`, so without the filter deleting a site produced a second site
+and deleting that produced `.bak.bak`.
+
+**A password file has to be readable by the account that reads it.** nginx
+opens `auth_basic_user_file` in a *worker* — www-data, nginx or http depending
+on the distribution — not as the root that wrote it, so a 0640 root:root file
+is a 403 for every visitor and "Permission denied" in the error log, which
+reads exactly like a wrong password. `nginxWorkerGID` takes the account from
+this host's own `nginx.conf` and falls back to the three distribution defaults;
+where none resolves the file is 0644, which is what `htpasswd` itself produces
+and is better than a login nobody can pass. `authDir` and `streamDir` hang off
+`JD_NGINX_DIR` for the same class of reason: that setting exists precisely for
+the hosts whose nginx is somewhere else.
+
+**`ParseSiteSpec` must round-trip every field the form writes**, or an edit
+deletes what it cannot read back. `Custom` and `BlockExploits` were the two
+that did not, so opening a site and pressing save removed the operator's own
+directives and turned the probe blocks off. `customMarker` and
+`exploitDotLocation` are shared with the renderer rather than repeated, and
+`TestCustomConfigurationSurvivesARoundTrip` renders, parses and re-renders. The
+same test is what an added field needs. An `allow` or `deny` inside a location
+stays there, too: hoisting it into the form's site-wide list applied one path's
+restriction to the whole site on the next save.
 
 **`import.go` — a certificate somebody bought.** The key is checked against the
 certificate *before* either is written: a mismatched pair is accepted by every

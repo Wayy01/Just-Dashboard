@@ -476,5 +476,10 @@ func (c *Client) PruneContainers(ctx context.Context) (uint64, []string, error) 
 	if err != nil {
 		return 0, nil, err
 	}
-	return rep.SpaceReclaimed, rep.ContainersDeleted, nil
+	defer c.forgetDiskUsage()
+	deleted := rep.ContainersDeleted
+	if deleted == nil {
+		deleted = []string{}
+	}
+	return rep.SpaceReclaimed, deleted, nil
 }

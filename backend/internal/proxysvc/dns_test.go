@@ -80,3 +80,31 @@ func TestHostAddressesExcludesPrivateRanges(t *testing.T) {
 		}
 	}
 }
+
+// Every VPS behind provider NAT — AWS, Google Cloud, Azure and Oracle all hand
+// the instance a private address and map a public one in front of it — has no
+// routable address of its own to compare against. Reporting "does not point
+// here" for a correctly configured domain there is a false alarm on the most
+// common hosting arrangement there is, so the answer has to be that the check
+// could not be made.
+func TestDomainCheckSaysSoWhenTheHostHasNoPublicAddress(t *testing.T) {
+	natted := &DomainCheck{
+		Domain: "app.example.com", Addresses: []string{"203.0.113.9"},
+		HostAddresses: []string{}, HostAddressesKnown: false,
+	}
+	summary := describeDomainCheck(natted)
+	if strings.Contains(summary, "will fail") {
+		t.Fatalf("reported a failure it cannot know about: %q", summary)
+	}
+	if !strings.Contains(summary, "no public address of its own") {
+		t.Fatalf("did not say the check could not be made: %q", summary)
+	}
+
+	known := &DomainCheck{
+		Domain: "app.example.com", Addresses: []string{"203.0.113.9"},
+		HostAddresses: []string{"198.51.100.4"}, HostAddressesKnown: true,
+	}
+	if !strings.Contains(describeDomainCheck(known), "will fail") {
+		t.Fatal("a host that does know its addresses should still report a mismatch")
+	}
+}

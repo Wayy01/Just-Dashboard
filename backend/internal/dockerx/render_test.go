@@ -139,3 +139,47 @@ func TestImageRefDefaultsTheTag(t *testing.T) {
 		}
 	}
 }
+
+// Logging has to survive both renderings, because a spec field that neither
+// text shows is one an operator copying the command out of this dashboard
+// loses silently — and because the cap this product offers as a remedy is
+// worth nothing if the compose it writes does not carry it.
+func TestBothRenderingsCarryTheLogCap(t *testing.T) {
+	spec := ContainerSpec{Image: "nginx:alpine", Name: "web", Logging: CappedLogging()}
+
+	run := spec.RunCommand()
+	for _, want := range []string{"--log-driver json-file", "--log-opt max-file=3", "--log-opt max-size=10m"} {
+		if !strings.Contains(run, want) {
+			t.Errorf("the run command is missing %q:\n%s", want, run)
+		}
+	}
+
+	yaml := spec.ComposeService("web")
+	for _, want := range []string{"logging:", "driver: json-file", `max-size: "10m"`, `max-file: "3"`} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("the compose service is missing %q:\n%s", want, yaml)
+		}
+	}
+	// max-file must be a string. Unquoted it is an int to every YAML parser,
+	// and the daemon refuses an int here — which fails at `up`, long after the
+	// preview said the file was fine.
+	if strings.Contains(yaml, "max-file: 3\n") {
+		t.Error("max-file rendered as an integer; the daemon requires a string")
+	}
+}
+
+// Rendering must not reorder itself between two identical requests. Go
+// randomises map iteration, so an unsorted options map makes the live preview
+// shuffle its own lines as the operator types.
+func TestLogOptionsRenderInAStableOrder(t *testing.T) {
+	spec := ContainerSpec{Image: "nginx", Logging: LogConfig{
+		Driver:  "json-file",
+		Options: map[string]string{"max-size": "10m", "max-file": "3", "compress": "true"},
+	}}
+	first := spec.RunCommand()
+	for i := 0; i < 20; i++ {
+		if got := spec.RunCommand(); got != first {
+			t.Fatalf("render %d differed from the first:\n%s\n%s", i, first, got)
+		}
+	}
+}

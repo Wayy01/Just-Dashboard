@@ -100,6 +100,12 @@ func ValidateSpec(spec *SiteSpec) error {
 	if !siteNameRe.MatchString(spec.Name) {
 		return fmt.Errorf("name must be lowercase letters, digits, dots, dashes or underscores")
 	}
+	// The listing hides anything that looks like a backup, since that is what
+	// a deleted site leaves behind. Refusing the name here means the form says
+	// so, rather than writing a file that then never appears on the page.
+	if isBackupFile(spec.Name) {
+		return fmt.Errorf("a name ending like a backup file is hidden from the site list — call it something else")
+	}
 	if len(spec.Domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
 	}
@@ -148,10 +154,22 @@ func ValidateSpec(spec *SiteSpec) error {
 			}
 		}
 	}
+	// The renderer always writes a catch-all `location /`, so one in the list
+	// is a second block for the same path: nginx takes the first and ignores
+	// the rest, which is a site quietly serving something other than what the
+	// form shows.
+	seenLocation := map[string]bool{"/": spec.Kind != "redirect"}
 	for _, loc := range spec.Locations {
 		if !locationPathRe.MatchString(loc.Path) {
 			return fmt.Errorf("location %q must be a path starting with /", loc.Path)
 		}
+		if seenLocation[loc.Path] {
+			if loc.Path == "/" {
+				return fmt.Errorf("everything not matched by another path already goes to the site's main upstream — remove the location for /")
+			}
+			return fmt.Errorf("two locations both handle %s; nginx would use the first and ignore the second", loc.Path)
+		}
+		seenLocation[loc.Path] = true
 		if loc.Upstream != "" {
 			if err := validUpstream(loc.Upstream); err != nil {
 				return err
@@ -244,6 +262,17 @@ func SpecWarnings(spec *SiteSpec) []string {
 	if spec.WebSockets && spec.ProxyTimeout > 0 && spec.ProxyTimeout < 60 {
 		warnings = append(warnings,
 			"A short read timeout closes idle WebSocket connections. Sixty seconds or more is usual for anything long-lived.")
+	}
+	if spec.Kind != "proxy" && len(spec.Locations) > 0 {
+		warnings = append(warnings,
+			"Extra paths are only applied to a site that forwards to an application. On this one they are not written into the config at all.")
+	}
+	if spec.BasicAuthFile != "" && spec.Kind == "redirect" {
+		// Same reason the allow list does not restrict a redirect: `return`
+		// is answered in the rewrite phase, before the access phase where
+		// auth_basic lives, so the password prompt never appears.
+		warnings = append(warnings,
+			"A redirect is answered before nginx checks the password, so this site will not prompt for one. Put the password on whatever the redirect points at.")
 	}
 	if len(spec.AllowFrom) > 0 {
 		warnings = append(warnings,

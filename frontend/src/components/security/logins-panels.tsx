@@ -182,9 +182,20 @@ function LoginHistoryPanel() {
       />
       <PanelBody flush>
         {unavailable ? (
-          <Notice tone="default" title="No login record on this host">
-            wtmp is not being written here, so there is nothing to read back. That is normal on a
-            minimal image, and it means logins leave no trace on this machine at all.
+          <Notice tone="default" title="This host cannot read its login record">
+            <div className="space-y-1.5">
+              <p>
+                <code className="font-mono">last</code> and{" "}
+                <code className="font-mono">lastb</code> are what read wtmp and btmp, and they come
+                from <code className="font-mono">util-linux-extra</code> — which minimal cloud
+                images leave out. Install it and this fills in; the records themselves have been
+                there all along.
+              </p>
+              <p>
+                Until then this page has no answer, which is not the same as a host nobody has
+                tried to log in to.
+              </p>
+            </div>
           </Notice>
         ) : error ? (
           <ErrorState error={error} />
