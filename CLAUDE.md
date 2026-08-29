@@ -1670,9 +1670,15 @@ very large button that nobody presses. A surface wanting a deeper shadow overrid
 (`[--raise-drop:var(--shadow-lg)]` on the terminal's floating confirm) rather than adding a
 `shadow-*` utility, which would win the cascade and silently delete the shine and the lip.
 
-The sidebar is on it too, top-level items and sub-items alike, which is why `SidebarMenu` and
-`SidebarMenuSub` sit at `gap-1.5` rather than `gap-1`: forty-nine raised pills stacked four
-pixels apart read as one ridged slab instead of as forty-nine things you can press.
+**The nav is the exception, and it was tried both ways.** Every item in the sidebar has an
+edge and is clickable, so the rule above says to raise it — and raised, the rail reads as a
+texture rather than a hierarchy. The lift works by making one thing stand out from what is
+behind it, which is a claim that stops meaning anything when forty-nine things in a column
+make it at once; a nav is a *list*, and the thing that should stand out in it is the item you
+are on. So `SidebarMenuButton` and `SidebarMenuSubButton` stay flat, with the active item's
+solid primary fill doing the work. What survived from the experiment is the spacing:
+`SidebarMenu` and `SidebarMenuSub` sit at `gap-2` rather than `gap-1`, because the rail was
+too tight before anything was drawn on it.
 
 The line is the one a reader can see: **a border or a fill gets `raised`; ghost and link do
 not.** Ghost is 142 of the app's ~400 buttons — the quiet action at the end of a table row —
