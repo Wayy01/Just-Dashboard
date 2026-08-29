@@ -1,6 +1,9 @@
 package proxysvc
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -396,5 +399,199 @@ func TestNoFenceWithoutAnAllowList(t *testing.T) {
 	}
 	if !strings.Contains(out, "deny 203.0.113.0/24;") {
 		t.Error("the blocklist entry is missing")
+	}
+}
+
+// A deleted site must not come back as a site called <name>.bak.
+//
+// The listing showed every file in sites-available, and the delete keeps the
+// previous content beside it — so deleting `app` produced `app.bak`, deleting
+// that produced `app.bak.bak`, and a host where apt had ever touched a config
+// showed a duplicate of every site as .dpkg-old. nginx reads none of these:
+// sites-enabled is a directory of symlinks and conf.d is included as *.conf.
+func TestBackupsAndEditorLeftoversAreNotSites(t *testing.T) {
+	dir := t.TempDir()
+	available := filepath.Join(dir, "sites-available")
+	if err := os.MkdirAll(available, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"app", "app.bak", "app.bak.bak", "app~", "app.dpkg-old", "app.conf.rpmsave", "app.orig",
+	} {
+		if err := os.WriteFile(filepath.Join(available, name), []byte("server {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hosts := New(dir, filepath.Join(t.TempDir(), "Caddyfile")).nginxVHosts()
+	if len(hosts) != 1 || hosts[0].Name != "app" {
+		names := []string{}
+		for _, h := range hosts {
+			names = append(names, h.Name)
+		}
+		t.Fatalf("expected only app, got %v", names)
+	}
+}
+
+// Deleting a site keeps the previous content, and the copy must not be
+// deletable as if it were a site of its own.
+func TestDeleteSiteKeepsABackupAndRefusesToBackUpABackup(t *testing.T) {
+	dir := t.TempDir()
+	available := filepath.Join(dir, "sites-available")
+	if err := os.MkdirAll(available, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(available, "app"), []byte("server {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(dir, filepath.Join(t.TempDir(), "Caddyfile"))
+	if err := svc.DeleteSite(context.Background(), "app"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(available, "app.bak")); err != nil {
+		t.Fatalf("the previous content was not kept: %v", err)
+	}
+	if err := svc.DeleteSite(context.Background(), "app.bak"); err == nil {
+		t.Fatal("deleting a backup was accepted, which is how .bak.bak happened")
+	}
+	if _, err := os.Stat(filepath.Join(available, "app.bak.bak")); err == nil {
+		t.Fatal("a backup of a backup was written")
+	}
+}
+
+// Every RPM distribution, Alpine and Arch keep their sites in conf.d and have
+// no sites-available at all — most of the servers this runs on. There the
+// listing reports a name that already ends in .conf, and both delete and save
+// used to append a second one and act on app.conf.conf, which exists nowhere.
+func TestConfDLayoutSitesCanBeDeleted(t *testing.T) {
+	dir := t.TempDir()
+	confd := filepath.Join(dir, "conf.d")
+	if err := os.MkdirAll(confd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(confd, "app.conf"), []byte("server {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(dir, filepath.Join(t.TempDir(), "Caddyfile"))
+	hosts := svc.nginxVHosts()
+	if len(hosts) != 1 || hosts[0].Name != "app.conf" {
+		t.Fatalf("unexpected listing: %+v", hosts)
+	}
+	if hosts[0].EnabledPath != "" {
+		t.Error("conf.d has no symlink to toggle, and an empty EnabledPath is what says so")
+	}
+	if err := svc.DeleteSite(context.Background(), hosts[0].Name); err != nil {
+		t.Fatalf("delete under conf.d: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(confd, "app.conf")); err == nil {
+		t.Fatal("the file is still there")
+	}
+	if _, err := os.Stat(filepath.Join(confd, "app.conf.conf")); err == nil {
+		t.Fatal("a second suffix was appended")
+	}
+}
+
+// A file in conf.d that does not end in .conf is not included by nginx, so
+// reporting it as enabled is a site the page says is serving and is not.
+func TestConfDOnlyCountsDotConfAsActive(t *testing.T) {
+	dir := t.TempDir()
+	confd := filepath.Join(dir, "conf.d")
+	if err := os.MkdirAll(confd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"app.conf", "old-site"} {
+		if err := os.WriteFile(filepath.Join(confd, name), []byte("server {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, h := range New(dir, filepath.Join(t.TempDir(), "Caddyfile")).nginxVHosts() {
+		want := h.Name == "app.conf"
+		if h.Enabled != want {
+			t.Errorf("%s: enabled=%v, want %v", h.Name, h.Enabled, want)
+		}
+	}
+}
+
+// There is no enable/disable on a conf.d host, and saying which of the two
+// layouts this is beats "no such vhost" about a site plainly on the page.
+func TestVHostToggleExplainsItselfOnAConfDHost(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "conf.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := New(dir, filepath.Join(t.TempDir(), "Caddyfile")).
+		SetVHostEnabled(context.Background(), "app.conf", false)
+	if err == nil || !strings.Contains(err.Error(), "conf.d") {
+		t.Fatalf("unhelpful error: %v", err)
+	}
+}
+
+// The escape hatch was the one field an edit destroyed: extra configuration
+// was written into the file and dropped the next time the form read it back,
+// so opening a site and pressing save deleted directives nobody was shown.
+func TestCustomConfigurationSurvivesARoundTrip(t *testing.T) {
+	spec := proxySpec()
+	spec.BlockExploits = true
+	spec.Custom = "location /metrics {\n    deny all;\n}"
+	rendered, err := RenderNginx(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, managed := ParseSiteSpec("app", rendered)
+	if !managed {
+		t.Fatal("the marker was not recognised")
+	}
+	if back.Custom != spec.Custom {
+		t.Fatalf("custom block lost:\ngot  %q\nwant %q", back.Custom, spec.Custom)
+	}
+	if !back.BlockExploits {
+		t.Fatal("the probe blocks were dropped, so saving an edited site removes them")
+	}
+	again, err := RenderNginx(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != rendered {
+		t.Fatalf("second render differs:\n%s", again)
+	}
+}
+
+// An allow inside a location restricts that path. Hoisting it into the form's
+// site-wide list applied it to the whole site on the next save.
+func TestLocationAllowIsNotHoistedToTheServer(t *testing.T) {
+	spec, _ := ParseSiteSpec("app", `server {
+    server_name app.example.com;
+    location /admin {
+        allow 10.0.0.0/8;
+        deny all;
+        proxy_pass http://127.0.0.1:3000;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+    }
+}
+`)
+	if len(spec.AllowFrom) != 0 {
+		t.Fatalf("a location's allow became site-wide: %v", spec.AllowFrom)
+	}
+	if len(spec.DenyFrom) != 0 {
+		t.Fatalf("a location's deny became site-wide: %v", spec.DenyFrom)
+	}
+}
+
+// nginx takes the first matching location and ignores the rest, so a second
+// block for the same path is a site serving something other than the form
+// shows. The catch-all the renderer always writes counts as one of them.
+func TestDuplicateLocationsAreRefused(t *testing.T) {
+	spec := proxySpec()
+	spec.Locations = []SiteLocation{{Path: "/", Upstream: "http://127.0.0.1:4000"}}
+	if err := ValidateSpec(spec); err == nil {
+		t.Error("a second location for / was accepted")
+	}
+	spec.Locations = []SiteLocation{
+		{Path: "/api", Upstream: "http://127.0.0.1:4000"},
+		{Path: "/api", Upstream: "http://127.0.0.1:5000"},
+	}
+	if err := ValidateSpec(spec); err == nil {
+		t.Error("two locations for /api were accepted")
 	}
 }

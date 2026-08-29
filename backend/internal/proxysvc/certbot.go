@@ -144,13 +144,23 @@ func parseDaysLeft(note string) int {
 func renewalScheduled(ctx context.Context) (bool, string) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	for _, unit := range []string{"certbot.timer", "snap.certbot.renew.timer"} {
+	for _, unit := range []string{
+		"certbot.timer",            // Debian, Ubuntu, Arch
+		"certbot-renew.timer",      // Fedora, RHEL and the rest of the RPM world
+		"snap.certbot.renew.timer", // the snap
+	} {
 		out, err := hostexec.CommandOnHost(ctx, "systemctl", "is-active", unit).Output()
 		if err == nil && strings.TrimSpace(string(out)) == "active" {
 			return true, unit
 		}
 	}
-	for _, path := range []string{"/etc/cron.d/certbot", "/etc/cron.daily/certbot"} {
+	for _, path := range []string{
+		"/etc/cron.d/certbot", "/etc/cron.daily/certbot", "/etc/cron.weekly/certbot",
+		// Alpine has no systemd and no /etc/cron.daily either: busybox crond
+		// runs /etc/periodic, and a host renewing perfectly well there used
+		// to be told nothing was scheduled.
+		"/etc/periodic/daily/certbot", "/etc/periodic/weekly/certbot",
+	} {
 		if _, err := os.Stat(path); err == nil {
 			return true, path
 		}

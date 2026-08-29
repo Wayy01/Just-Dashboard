@@ -78,9 +78,13 @@ func (s *Server) handleSiteSpec(w http.ResponseWriter, r *http.Request) error {
 	// out to be a path is exactly what that check exists for.
 	var content string
 	var err error
+	// Both spellings of the conf.d layout: the listing on such a host reports
+	// a name that already ends in .conf, and a host that was set up by hand
+	// may have a file without it.
 	for _, candidate := range []string{
 		filepath.Join(s.Cfg.NginxDir, "sites-available", name),
 		filepath.Join(s.Cfg.NginxDir, "conf.d", name),
+		filepath.Join(s.Cfg.NginxDir, "conf.d", name+".conf"),
 	} {
 		content, err = s.modules.proxy.ReadConfig(candidate)
 		if err == nil {
@@ -315,8 +319,9 @@ func (s *Server) handleStreamList(w http.ResponseWriter, r *http.Request) error 
 }
 
 type streamRequest struct {
-	Spec   proxysvc.StreamSpec `json:"spec"`
-	Reload bool                `json:"reload"`
+	Spec      proxysvc.StreamSpec `json:"spec"`
+	Reload    bool                `json:"reload"`
+	Overwrite bool                `json:"overwrite"`
 }
 
 func (s *Server) handleStreamPreview(w http.ResponseWriter, r *http.Request) error {
@@ -339,7 +344,7 @@ func (s *Server) handleStreamApply(w http.ResponseWriter, r *http.Request) error
 	}
 	ctx, cancel := timeoutCtx(r, 60*time.Second)
 	defer cancel()
-	res, err := s.modules.proxy.ApplyStream(ctx, &req.Spec, req.Reload)
+	res, err := s.modules.proxy.ApplyStream(ctx, &req.Spec, req.Reload, req.Overwrite)
 	if err != nil {
 		if errors.Is(err, proxysvc.ErrInvalidConf) {
 			httpx.SetAudit(r, "proxy.stream.apply", req.Spec.Name, map[string]any{"result": "rejected"})
@@ -370,7 +375,7 @@ func (s *Server) handleStreamDelete(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (s *Server) handleAuthFileList(w http.ResponseWriter, r *http.Request) error {
-	httpx.JSON(w, http.StatusOK, proxysvc.ListAuthFiles())
+	httpx.JSON(w, http.StatusOK, s.modules.proxy.ListAuthFiles())
 	return nil
 }
 
@@ -389,7 +394,7 @@ func (s *Server) handleAuthUserSet(w http.ResponseWriter, r *http.Request) error
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	file, err := proxysvc.SetAuthUser(req.File, req.User, req.Password)
+	file, err := s.modules.proxy.SetAuthUser(req.File, req.User, req.Password)
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
@@ -401,7 +406,7 @@ func (s *Server) handleAuthUserSet(w http.ResponseWriter, r *http.Request) error
 
 func (s *Server) handleAuthUserRemove(w http.ResponseWriter, r *http.Request) error {
 	file, user := chi.URLParam(r, "file"), chi.URLParam(r, "user")
-	updated, err := proxysvc.RemoveAuthUser(file, user)
+	updated, err := s.modules.proxy.RemoveAuthUser(file, user)
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
@@ -412,7 +417,7 @@ func (s *Server) handleAuthUserRemove(w http.ResponseWriter, r *http.Request) er
 
 func (s *Server) handleAuthFileDelete(w http.ResponseWriter, r *http.Request) error {
 	file := chi.URLParam(r, "file")
-	if err := proxysvc.DeleteAuthFile(file); err != nil {
+	if err := s.modules.proxy.DeleteAuthFile(file); err != nil {
 		return httpx.BadRequest("%v", err)
 	}
 	httpx.SetAudit(r, "proxy.auth.delete", file, nil)

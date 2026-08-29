@@ -22,6 +22,14 @@ type DomainCheck struct {
 	// HostAddresses are this machine's own routable addresses, so the UI can
 	// show both sides of the comparison rather than only the verdict.
 	HostAddresses []string `json:"hostAddresses"`
+	// HostAddressesKnown is false when this machine has no globally routable
+	// address on any interface, which is every VPS behind provider NAT — AWS,
+	// GCP, Azure and Oracle all hand the instance a private address and map a
+	// public one in front of it. There the comparison cannot be made at all,
+	// and reporting "does not point here" for a correctly configured domain is
+	// worse than saying so: a check that could not run is not a failure any
+	// more than it is a pass.
+	HostAddressesKnown bool `json:"hostAddressesKnown"`
 	// PointsHere is true when at least one resolved address belongs to this
 	// machine.
 	PointsHere bool `json:"pointsHere"`
@@ -50,6 +58,7 @@ func CheckDomainDNS(ctx context.Context, domain string) *DomainCheck {
 	}
 	sort.Strings(check.Addresses)
 	check.HostAddresses = hostAddresses()
+	check.HostAddressesKnown = len(check.HostAddresses) > 0
 	check.PointsHere, check.BehindProxy = compareAddresses(check.Addresses, check.HostAddresses)
 	check.Summary = describeDomainCheck(check)
 	return check
@@ -129,6 +138,8 @@ func describeDomainCheck(c *DomainCheck) string {
 		return "Resolves to Cloudflare rather than to this server directly. That is normal behind a CDN, and it means an HTTP certificate challenge will not reach this host — use a DNS challenge, or turn the proxy off while issuing."
 	case len(c.Addresses) == 0:
 		return "The name resolves to nothing."
+	case !c.HostAddressesKnown:
+		return "Resolves to " + strings.Join(c.Addresses, ", ") + ". This machine has no public address of its own — the provider maps one in front of it, which is normal on AWS, Google Cloud, Azure and Oracle — so whether that is this server cannot be told from here. Check it against the address your provider shows for this instance."
 	default:
 		return "Resolves to " + strings.Join(c.Addresses, ", ") + ", which is not an address on this machine. Certificate issuance over HTTP will fail until the record points here."
 	}

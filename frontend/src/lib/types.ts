@@ -2407,6 +2407,13 @@ export type DomainCheck = {
   domain: string
   addresses: string[]
   hostAddresses: string[]
+  /**
+   * False on every VPS behind provider NAT — AWS, Google Cloud, Azure and
+   * Oracle all give the instance a private address and map a public one in
+   * front of it — where the comparison cannot be made at all. Rendered as
+   * "cannot tell", never as a mismatch.
+   */
+  hostAddressesKnown: boolean
   pointsHere: boolean
   behindProxy: boolean
   summary: string

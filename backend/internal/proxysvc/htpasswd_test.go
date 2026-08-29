@@ -1,6 +1,8 @@
 package proxysvc
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,8 +22,9 @@ func TestSetAuthUserRejectsBadInput(t *testing.T) {
 		{"staging", "admin", "short"},
 		{"staging", "admin", strings.Repeat("a", 73)},
 	}
+	svc := New(t.TempDir(), filepath.Join(t.TempDir(), "Caddyfile"))
 	for _, tc := range cases {
-		if _, err := SetAuthUser(tc.file, tc.user, tc.password); err == nil {
+		if _, err := svc.SetAuthUser(tc.file, tc.user, tc.password); err == nil {
 			t.Errorf("accepted %q/%q", tc.file, tc.user)
 		}
 	}
@@ -62,10 +65,39 @@ func TestHashesAreBcryptAndVerify(t *testing.T) {
 }
 
 func TestRemoveAuthUserRejectsBadFileNames(t *testing.T) {
-	if _, err := RemoveAuthUser("../x", "admin"); err == nil {
+	svc := New(t.TempDir(), filepath.Join(t.TempDir(), "Caddyfile"))
+	if _, err := svc.RemoveAuthUser("../x", "admin"); err == nil {
 		t.Error("accepted a path as a file name")
 	}
-	if err := DeleteAuthFile("../x"); err == nil {
+	if err := svc.DeleteAuthFile("../x"); err == nil {
 		t.Error("accepted a path as a file name")
+	}
+}
+
+// The password file lives under the configured nginx directory, not under a
+// hard-coded /etc/nginx: JD_NGINX_DIR exists for the hosts whose nginx is
+// somewhere else, and a file written where that nginx never looks is a site
+// that refuses every visitor with a 403.
+func TestAuthFilesLiveUnderTheConfiguredNginxDir(t *testing.T) {
+	dir := t.TempDir()
+	svc := New(dir, filepath.Join(t.TempDir(), "Caddyfile"))
+	file, err := svc.SetAuthUser("staging", "admin", "correcthorsebattery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(file.Path, dir+string(os.PathSeparator)) {
+		t.Fatalf("wrote outside the configured nginx dir: %s", file.Path)
+	}
+	if files := svc.ListAuthFiles(); len(files) != 1 || files[0].Name != "staging" {
+		t.Fatalf("listing did not find it back: %+v", files)
+	}
+	// 0640 is only safe once the group is nginx's; where that account cannot
+	// be resolved the file has to stay readable or the login never passes.
+	st, err := os.Stat(file.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := st.Mode().Perm(); mode != 0o640 && mode != 0o644 {
+		t.Fatalf("mode %o is neither group- nor world-readable", mode)
 	}
 }

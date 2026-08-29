@@ -120,12 +120,42 @@ func (s *Service) ListVHosts(ctx context.Context) ([]VHost, error) {
 	return out, nil
 }
 
+// backupSuffixes are the files that live beside a configuration and are not
+// one. nginx reads none of them — sites-enabled is a directory of symlinks and
+// conf.d is included as *.conf — but the listing used to show every one as a
+// site in its own right. That made deleting a site produce a second site
+// called <name>.bak, deleting *that* produce <name>.bak.bak, and a host where
+// the package manager had ever written an .dpkg-old show a duplicate of every
+// site it had touched.
+var backupSuffixes = []string{
+	".bak", ".old", ".orig", ".save", ".swp", ".tmp",
+	".rpmsave", ".rpmnew", ".dpkg-old", ".dpkg-new", ".dpkg-dist",
+	".ucf-old", ".ucf-new", ".ucf-dist",
+}
+
+// isBackupFile reports a file nginx will never read and the operator never
+// asked for. The trailing tilde is every editor's own backup.
+func isBackupFile(name string) bool {
+	if strings.HasSuffix(name, "~") {
+		return true
+	}
+	lower := strings.ToLower(name)
+	for _, suffix := range backupSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) nginxVHosts() []VHost {
 	available := filepath.Join(s.nginxDir, "sites-available")
 	enabled := filepath.Join(s.nginxDir, "sites-enabled")
 	entries, err := os.ReadDir(available)
 	if err != nil {
-		// Hosts without the Debian layout keep everything in conf.d.
+		// Hosts without the Debian layout keep everything in conf.d. That is
+		// every RPM distribution, Alpine and Arch — most of the servers this
+		// runs on.
 		available = filepath.Join(s.nginxDir, "conf.d")
 		entries, err = os.ReadDir(available)
 		if err != nil {
@@ -135,7 +165,7 @@ func (s *Service) nginxVHosts() []VHost {
 	}
 	out := []VHost{}
 	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || isBackupFile(e.Name()) {
 			continue
 		}
 		full := filepath.Join(available, e.Name())
@@ -149,8 +179,11 @@ func (s *Service) nginxVHosts() []VHost {
 			ServerNames: []string{}, Listen: []string{}, Upstreams: []string{},
 		}
 		if enabled == "" {
-			// In the conf.d layout every present file is active.
-			v.Enabled = true
+			// conf.d is included as *.conf, so the suffix is the whole
+			// difference between a file nginx reads and one it ignores.
+			// There is no symlink to toggle either way, which EnabledPath
+			// staying empty is what tells the UI.
+			v.Enabled = strings.HasSuffix(e.Name(), ".conf")
 		} else {
 			link := filepath.Join(enabled, e.Name())
 			if _, err := os.Lstat(link); err == nil {
@@ -234,6 +267,25 @@ func (s *Service) allowedPath(path string) (string, error) {
 	}
 	return "", fmt.Errorf("%w: %s", ErrUnsafePath, path)
 }
+
+// confdPath is where a site lives on a host with no sites-available. nginx
+// includes conf.d/*.conf, so the suffix is the difference between a file it
+// reads and one it ignores — and a name that already carries it, which is
+// exactly what the listing reports on such a host, must not gain a second one
+// and become app.conf.conf.
+func (s *Service) confdPath(name string) string {
+	if strings.HasSuffix(name, ".conf") {
+		return filepath.Join(s.nginxDir, "conf.d", name)
+	}
+	return filepath.Join(s.nginxDir, "conf.d", name+".conf")
+}
+
+// authDir and streamDir hang off the configured nginx directory rather than
+// off /etc/nginx, because JD_NGINX_DIR exists precisely for the hosts whose
+// nginx is somewhere else — and a password file written where that nginx never
+// looks is a site that refuses every visitor.
+func (s *Service) authDir() string   { return filepath.Join(s.nginxDir, "jd-auth") }
+func (s *Service) streamDir() string { return filepath.Join(s.nginxDir, "stream.d") }
 
 func (s *Service) ReadConfig(path string) (string, error) {
 	full, err := s.allowedPath(path)
@@ -450,6 +502,12 @@ func (s *Service) SetVHostEnabled(ctx context.Context, name string, enabled bool
 	}
 	available := filepath.Join(s.nginxDir, "sites-available", name)
 	link := filepath.Join(s.nginxDir, "sites-enabled", name)
+	if _, err := os.Stat(filepath.Dir(available)); err != nil {
+		// Saying which of the two layouts this host uses, rather than "no
+		// such vhost": on a conf.d host the site is there and it is the
+		// toggle that does not exist.
+		return fmt.Errorf("this host keeps its nginx sites in conf.d, where every file is active — there is no enable or disable to set. Delete the site, or rename its file so it no longer ends in .conf")
+	}
 	if _, err := os.Stat(available); err != nil {
 		return fmt.Errorf("no such vhost: %s", name)
 	}
