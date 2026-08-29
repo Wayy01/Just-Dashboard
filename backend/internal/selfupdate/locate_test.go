@@ -162,3 +162,53 @@ func TestLocateBelievesAnExplicitDirectory(t *testing.T) {
 		t.Fatalf("image %q, want the documented default when the listing cannot say", loc.Image)
 	}
 }
+
+// The listing reports a bare image ID once the tag has moved off the running
+// container's image, and that ID is the one thing on the machine that a
+// containerd-store daemon will collect out from under a running container. So
+// it is not a reference the updater may be given: the pinned name is.
+//
+// This is what "could not start the updater: No such image: sha256:…" was,
+// reported to an operator whose dashboard was working perfectly at the time.
+func TestLocateWillNotRunTheUpdaterFromAnImageID(t *testing.T) {
+	dir := checkout(t)
+	for _, id := range []string{
+		"sha256:8980bbe27b5066bc1fe1c0d6b46a27119f206df484209451acea07c08d912086",
+		"8980bbe27b50",
+	} {
+		list := lister(Sibling{
+			Name: "just-dashboard-backend-1", Service: "backend", Image: id, WorkDir: dir,
+			Mounts: []Mount{{Source: "/var/lib/jd", Destination: "/var/lib/jd"}},
+		})
+		loc, err := Locate(context.Background(), "", "/var/lib/jd", list)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc.Image != fallbackImage {
+			t.Fatalf("image %q for a listing reporting %q — the updater cannot run an ID that has been collected", loc.Image, id)
+		}
+	}
+}
+
+// And the other direction, which is the ordinary case: a name is a name, even
+// one this project did not choose, and must be passed through untouched.
+func TestLocateKeepsAnImageName(t *testing.T) {
+	dir := checkout(t)
+	for _, name := range []string{
+		"just-dashboard-backend:latest",
+		"ghcr.io/wayy01/just-dashboard-backend:0.6",
+		"deadbeef.example.com/backend:latest",
+	} {
+		list := lister(Sibling{
+			Name: "just-dashboard-backend-1", Service: "backend", Image: name, WorkDir: dir,
+			Mounts: []Mount{{Source: "/var/lib/jd", Destination: "/var/lib/jd"}},
+		})
+		loc, err := Locate(context.Background(), "", "/var/lib/jd", list)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc.Image != name {
+			t.Fatalf("image %q, want %q — the operator's own name was replaced", loc.Image, name)
+		}
+	}
+}

@@ -99,7 +99,7 @@ func Locate(ctx context.Context, explicitDir, dataDir string, list Lister) (*Loc
 		}
 		// The image is still worth discovering: it is what the updater runs.
 		if self := findSelf(ctx, dataDir, list); self != nil {
-			loc.Image, loc.Project, loc.Container = self.Image, self.Project, self.Name
+			loc.Image, loc.Project, loc.Container = namedImage(self.Image), self.Project, self.Name
 		}
 		if loc.Image == "" {
 			loc.Image = fallbackImage
@@ -118,7 +118,7 @@ func Locate(ctx context.Context, explicitDir, dataDir string, list Lister) (*Loc
 	}
 	loc := &Location{
 		Dir:       filepath.Clean(self.WorkDir),
-		Image:     self.Image,
+		Image:     namedImage(self.Image),
 		Project:   self.Project,
 		Container: self.Name,
 		Compose:   "docker-compose.yml",
@@ -151,6 +151,51 @@ func Locate(ctx context.Context, explicitDir, dataDir string, list Lister) (*Loc
 // about to be attempted on an install this code does not fully recognise —
 // guessing the documented name is better than refusing outright.
 const fallbackImage = "just-dashboard-backend:latest"
+
+// namedImage returns the listing's image reference if it is a name, and ""
+// if it is a bare image ID — which the caller treats as "the listing could not
+// say" and answers with fallbackImage.
+//
+// Docker's container listing does not report the reference a container was
+// created with. It reports the *tag*, and only while that tag still points at
+// the same image; the moment a rebuild moves just-dashboard-backend:latest
+// onto the new build, the still-running container's own image is untagged and
+// this field silently becomes sha256:… instead.
+//
+// That is not a weaker reference, it is a reference to the one image on the
+// machine with nothing holding it. On the containerd image store an untagged
+// image is collected even while a container runs from it — the container keeps
+// its unpacked snapshot and never notices, which is why the dashboard goes on
+// working — and `docker run sha256:…` then fails with "No such image" at
+// exactly the moment the operator asks for an upgrade. The classic image store
+// refuses that delete, so this failed only on newer daemons, and only after a
+// rebuild that did not recreate the backend.
+//
+// The name the compose file pins is the better answer in every case where the
+// two differ: it is a tag, so it moves *with* the rebuilds rather than being
+// orphaned by them, and the updater only needs an image carrying git and
+// compose — not this exact build of one.
+func namedImage(image string) string {
+	if strings.HasPrefix(image, "sha256:") || isHex(image) {
+		return ""
+	}
+	return image
+}
+
+// isHex reports whether s is a bare image ID written without its algorithm —
+// which is how the listing renders a short digest, and is never a valid
+// reference to hand to `docker run`.
+func isHex(s string) bool {
+	if len(s) < 12 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
+}
 
 // findSelf picks this dashboard's backend container out of the listing.
 func findSelf(ctx context.Context, dataDir string, list Lister) *Sibling {

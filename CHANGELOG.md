@@ -4,6 +4,17 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.6.2 — 29 August 2026
+
+**The updater runs an image that is still on the machine**
+
+Pressing Update on a recent Docker daemon could fail immediately with "could not start the updater: No such image: sha256:…", on a dashboard that was working perfectly at the time. Nothing was damaged and no upgrade was half-applied — the run died before it fetched anything — but the button did not work, and the reason it did not was invisible from the page.
+
+### Fixed
+
+- The in-app update no longer fails with "No such image" on Docker's containerd image store
+  - The updater runs the backend's own image as a sibling container — that image already carries git, the docker CLI and the compose plugin, so there is nothing to pull — and it took the reference for it from Docker's container listing. That listing reports a tag only while the tag still points at the same image: after a rebuild that moved just-dashboard-backend:latest onto the new build without recreating the backend, it reports a bare sha256 instead. On the containerd image store, which is the default on recent daemons, an untagged image is collected even while a container is running from it — the container keeps its unpacked snapshot and carries on working, which is why nothing looked wrong until the day you pressed Update. The name the compose file pins is used now: it is a tag, so it moves with the rebuilds rather than being orphaned by one.
+
 ## 0.6.1 — 29 August 2026
 
 **The last panels that ended at a shell prompt, and a dashboard rebuilt around one design system**
