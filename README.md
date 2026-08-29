@@ -6,7 +6,7 @@
 Metrics, Docker, processes, logs, a real shell, files, git, databases, the reverse proxy,
 the firewall, backups and deploys, behind a login that lives on your private network.
 
-**Version 0.6.2** · Go backend · Next.js frontend · one `docker compose` stack
+**Version 0.6.3** · Go backend · Next.js frontend · one `docker compose` stack
 
 [Install](#install) · [Security](#read-this-before-you-expose-it) · [The tour](#the-tour) · [Version](#version-and-updating) · [Configuration](#configuration-reference) · [Licence](#licence)
 
