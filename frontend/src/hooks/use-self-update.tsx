@@ -1,17 +1,17 @@
 "use client"
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { del, get, post } from "@/lib/api"
 import type { SelfUpdateReport, UpdateRun } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 
 /**
- * The dashboard's own version, shared by the sidebar notice and the Updates
+ * The dashboard's own version, shared by the sidebar notice and the Dashboard
  * page.
  *
  * A provider rather than a hook per component, for one reason and one gotcha.
- * The reason: both are on screen at once on /updates, and two polls of the
+ * The reason: both are on screen at once on /dashboard, and two polls of the
  * same three facts is one too many. The gotcha is the whole design problem of
  * this feature — **the backend goes away in the middle of the thing we are
  * watching**. An upgrade recreates the container serving this API, so the poll
@@ -19,6 +19,12 @@ import { useAuth } from "@/hooks/use-auth"
  * the update as broken at precisely the moment it is working. So the last good
  * report is kept (usePoll does that already), and a failure while a run was in
  * flight is rendered as "restarting", not as a fault.
+ *
+ * Every page load also *asks*: the first read carries `nudge`, which tells the
+ * server to check the repository behind the request rather than inside it, and
+ * one quick follow-up read picks the answer up. That is what makes a reload a
+ * way of finding out there is a new version, without making a reload wait on
+ * a network the server may not have.
  *
  * The frontend container is recreated too, so the page it is running is served
  * by something that is briefly not there. Nothing here can fix that — but the
@@ -28,6 +34,17 @@ import { useAuth } from "@/hooks/use-auth"
 
 const LIVE_POLL = 2000
 const IDLE_POLL = 5 * 60 * 1000
+/**
+ * The one quick re-read after a page load.
+ *
+ * The load itself asks the server to check (`nudge`), and that check happens
+ * *behind* the request rather than inside it — nothing about opening a page
+ * should wait fifteen seconds on a repository that is unreachable. So the
+ * first response is the cached answer, and this is what picks up the fresh one
+ * a second or two later. Exactly one of these: after it the poll drops to the
+ * idle cadence, because the question has been asked and answered.
+ */
+const SETTLE_POLL = 6000
 
 type SelfUpdateValue = {
   report: SelfUpdateReport | undefined
@@ -37,7 +54,7 @@ type SelfUpdateValue = {
   /** The API is unreachable and an upgrade we started explains why. */
   restarting: boolean
   refresh: () => void
-  /** Ask the repository now rather than waiting for the six-hourly check. */
+  /** Ask the repository now, and wait for the answer. */
   check: () => Promise<void>
   checking: boolean
   install: (confirm: string) => Promise<void>
@@ -64,6 +81,9 @@ function readSeen(): string {
 export function SelfUpdateProvider({ children }: { children: React.ReactNode }) {
   const { can } = useAuth()
   const [live, setLive] = useState(false)
+  // True until the load-time check has had a chance to land. See SETTLE_POLL.
+  const [settling, setSettling] = useState(true)
+  const readCount = useRef(0)
   const [checking, setChecking] = useState(false)
   const [seen, setSeen] = useState(readSeen)
 
@@ -77,12 +97,23 @@ export function SelfUpdateProvider({ children }: { children: React.ReactNode }) 
   // dropping back to the five-minute poll there would mean noticing it
   // finished five minutes later.
   const fetchReport = useCallback(async (signal: AbortSignal) => {
-    const next = await get<SelfUpdateReport>("/dashboard/update", undefined, signal)
+    const reads = ++readCount.current
+    // `nudge` on the first read of this browser's session is the whole of
+    // "check for updates when the page loads". It costs the server one
+    // conditional background fetch, floored at a few minutes, so a tab that is
+    // reloaded twenty times asks the repository once.
+    const query = reads === 1 ? { nudge: true } : undefined
+    const next = await get<SelfUpdateReport>("/dashboard/update", query, signal)
     setLive(next.run?.status === "running" || next.run?.status === "pending")
+    if (reads >= 2) setSettling(false)
     return next
   }, [])
 
-  const poll = usePoll(fetchReport, live ? LIVE_POLL : IDLE_POLL, [live])
+  const poll = usePoll(
+    fetchReport,
+    live ? LIVE_POLL : settling ? SETTLE_POLL : IDLE_POLL,
+    [live, settling],
+  )
   const { data: report, error, refresh } = poll
 
   const run = report?.run

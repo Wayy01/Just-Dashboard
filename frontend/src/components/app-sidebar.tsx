@@ -37,6 +37,7 @@ import {
   Search,
   ShieldCheck,
   Shield,
+  Sparkles,
   Siren,
   SquareTerminal,
   TerminalSquare,
@@ -171,7 +172,8 @@ export const NAV: { label: string; items: NavItem[] }[] = [
   {
     label: "Operations",
     items: [
-      { title: "Updates", href: "/updates", icon: PackageCheck },
+      { title: "Dashboard", href: "/dashboard", icon: Sparkles },
+      { title: "Packages", href: "/packages", icon: PackageCheck },
       { title: "Deployments", href: "/deploy", icon: Rocket },
       { title: "Backups", href: "/backups", icon: Archive },
       { title: "System users", href: "/system-users", icon: Users, capability: "system.admin" },

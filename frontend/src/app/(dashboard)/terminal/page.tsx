@@ -97,6 +97,8 @@ export default function TerminalPage() {
   // The navigation shortcut handlers, rebuilt each render and read by a
   // listener that is installed once. See where it is filled in below.
   const navigationRef = useRef<Partial<Record<ShortcutAction, () => void>>>({})
+  // The pane's own `focus()`, filled in by XtermPane.
+  const focusPaneRef = useRef<(() => void) | null>(null)
 
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<TerminalList>("/terminal/", undefined, signal),
@@ -280,31 +282,46 @@ export default function TerminalPage() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      // Only while focus is inside the workspace — the pane, the rail, the
-      // window strip or the tools panel. A navigation chord pressed while the
-      // app sidebar, the command palette or a dialog somewhere else on the
-      // page has focus is not aimed at this page, and firing it there is how
-      // Ctrl+Alt+W closed a tmux window while the operator was clicking around
-      // the file tree. Nothing focused (`target` is `document.body`) counts as
-      // outside too: the shortcuts follow the terminal, not the tab.
-      const root = workspaceRef.current
-      if (!root || !target || !root.contains(target)) return
-      // Not while somebody is typing into the rail's filter or renaming a row
-      // — but the terminal itself does not count, and that exclusion is the
-      // whole point. xterm takes keystrokes through a hidden
-      // `.xterm-helper-textarea`, so a plain "is the target a text field"
-      // guard suppresses every one of these shortcuts exactly when the
-      // terminal has focus, which is the only time anybody presses them.
-      if (target?.closest("input, textarea, [contenteditable=true]") && !target.closest(".xterm")) {
-        return
-      }
+      // **The shell has to have the keyboard.** These chords move sessions,
+      // close windows and kill panes, and the earlier rule — anywhere inside
+      // the workspace that is not a text field — fired every one of them from
+      // the file tree and the git panel too, which is how Ctrl+Alt+W closed a
+      // tmux window while the operator was clicking around somewhere else. So
+      // the keystroke has to have been aimed at the terminal itself.
+      //
+      // xterm takes keystrokes through a hidden `.xterm-helper-textarea`,
+      // which is why the "not while somebody is typing" guard every page like
+      // this carries cannot be written the usual way here: the plain form of
+      // it suppresses every one of these shortcuts exactly when the terminal
+      // has focus, which is the only time anybody presses them.
+      //
+      // Nothing focused counts as well. `document.body` is the target on a
+      // fresh load and after a pane is torn down, and refusing there left the
+      // whole set — "new session" included — unreachable by keyboard until
+      // something had been clicked. Everything else on the page belongs to
+      // whatever has the focus.
+      const inTerminal = Boolean(target?.closest(".xterm"))
+      const nothingFocused =
+        !target || target === document.body || target === document.documentElement
+      if (!inTerminal && !nothingFocused) return
       const action = actionFor(event, "navigation", keymap())
       if (!action) return
       const handler = navigationRef.current[action]
       if (!handler) return
+      // Focus sits on the body while a dialog is closing and after a focus
+      // restore, and a chord fired at the page behind a confirmation is the
+      // worst of both. Asked last on purpose: this listener sees every
+      // keystroke typed into the shell, and a document-wide selector match is
+      // not something to run on that path before knowing the key is a chord.
+      const modal = "[role=dialog][data-state=open], [role=alertdialog][data-state=open]"
+      if (document.querySelector(modal)) return
       event.preventDefault()
       event.stopPropagation()
       handler()
+      // Whatever it did, the keyboard belongs back in the shell: a shortcut
+      // that leaves the focus somewhere the next one does not work is worse
+      // than a shortcut that does nothing.
+      focusPaneRef.current?.()
     }
     window.addEventListener("keydown", onKey, { capture: true })
     return () => window.removeEventListener("keydown", onKey, { capture: true })
@@ -433,8 +450,21 @@ export default function TerminalPage() {
   const windowPatch = (index: number, body: Record<string, unknown>, failure: string) =>
     act(() => patch(`${persistent(tmuxName!)}/windows/${index}`, body), failure, true)
 
+  /**
+   * Puts the keyboard back in the shell, and does it now rather than when the
+   * request comes back.
+   *
+   * Every control that chooses a window or a pane is a button, and a button
+   * keeps the focus it was given — so choosing where to type used to leave the
+   * next keystroke going to the chip that was clicked. The switch itself is a
+   * round trip to tmux; the focus is not, and waiting for one to do the other
+   * is how a terminal comes to feel remote.
+   */
+  const focusTerminal = () => focusPaneRef.current?.()
+
   const splitActive = (vertical: boolean) => {
     if (!activeWindow || !tmuxName) return
+    focusTerminal()
     void act(
       () => post(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes`, { vertical }),
       "Could not split that window",
@@ -442,10 +472,15 @@ export default function TerminalPage() {
     )
   }
 
-  const selectPane = (pane: number) =>
-    activeWindow &&
-    tmuxName &&
-    act(
+  const selectWindow = (index: number) => {
+    focusTerminal()
+    windowPatch(index, { select: true }, "Could not switch window")
+  }
+
+  const selectPane = (pane: number) => {
+    if (!activeWindow || !tmuxName) return
+    focusTerminal()
+    void act(
       () =>
         patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
           select: true,
@@ -453,17 +488,39 @@ export default function TerminalPage() {
       "Could not focus that pane",
       true,
     )
+  }
 
-  const closeWindow = (index: number) =>
-    act(() => del(`${persistent(tmuxName!)}/windows/${index}`), "Could not close that window", true)
+  const zoomPane = (pane: number) => {
+    if (!activeWindow || !tmuxName) return
+    focusTerminal()
+    void act(
+      () =>
+        patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
+          zoom: true,
+        }),
+      "Could not zoom that pane",
+      true,
+    )
+  }
 
-  const closePane = (pane: number) =>
-    activeWindow &&
-    act(
+  const closeWindow = (index: number) => {
+    focusTerminal()
+    void act(
+      () => del(`${persistent(tmuxName!)}/windows/${index}`),
+      "Could not close that window",
+      true,
+    )
+  }
+
+  const closePane = (pane: number) => {
+    if (!activeWindow) return
+    focusTerminal()
+    void act(
       () => del(`${persistent(tmuxName!)}/windows/${activeWindow.index}/panes/${pane}`),
       "Could not close that pane",
       true,
     )
+  }
 
   /**
    * What every navigation shortcut does, rebuilt each render and handed to the
@@ -485,53 +542,53 @@ export default function TerminalPage() {
 
   const windowList = windows.data ?? []
   const paneList = panes.data ?? []
+  const sessions = data?.sessions ?? []
   const navigation: Partial<Record<ShortcutAction, () => void>> = {
     "session.new": () => void openSession(),
+    // Over every session in the rail, not only the ones this process is
+    // currently holding a PTY for. A workspace that nobody is attached to is
+    // still a session — picking it up is one request, and it is exactly what
+    // clicking the row does — so cycling past it silently was the shortcut
+    // doing nothing on a rail with two sessions in it, which reads as a
+    // shortcut that is broken rather than one that is being careful.
     "session.next": () => {
-      const at = live.findIndex((sess) => sess.id === active)
-      const next = step(live, at < 0 ? -1 : at, 1)
-      if (next?.id) setPicked(next.id)
+      const at = sessions.findIndex((sess) => sess.tmuxName === activeSession?.tmuxName)
+      const next = step(sessions, at < 0 ? -1 : at, 1)
+      if (next) void select(next)
     },
     "session.prev": () => {
-      const at = live.findIndex((sess) => sess.id === active)
-      const prev = step(live, at < 0 ? 0 : at, -1)
-      if (prev?.id) setPicked(prev.id)
+      const at = sessions.findIndex((sess) => sess.tmuxName === activeSession?.tmuxName)
+      const prev = step(sessions, at < 0 ? 0 : at, -1)
+      if (prev) void select(prev)
     },
-    "window.new": () =>
-      tmuxName &&
-      void act(() => post(`${persistent(tmuxName)}/windows`, {}), "Could not open a window", true),
+    "window.new": () => {
+      if (!tmuxName) return
+      void act(() => post(`${persistent(tmuxName)}/windows`, {}), "Could not open a window", true)
+    },
     "window.next": () => {
       const at = windowList.findIndex((w) => w.active)
       const next = step(windowList, at < 0 ? -1 : at, 1)
-      if (next) windowPatch(next.index, { select: true }, "Could not switch window")
+      if (next) selectWindow(next.index)
     },
     "window.prev": () => {
       const at = windowList.findIndex((w) => w.active)
       const prev = step(windowList, at < 0 ? 0 : at, -1)
-      if (prev) windowPatch(prev.index, { select: true }, "Could not switch window")
+      if (prev) selectWindow(prev.index)
     },
     "window.close": () => activeWindow && windowList.length > 1 && closeWindow(activeWindow.index),
     "pane.next": () => {
       const at = paneList.findIndex((pane) => pane.active)
       const next = step(paneList, at < 0 ? -1 : at, 1)
-      if (next) void selectPane(next.index)
+      if (next) selectPane(next.index)
     },
     "pane.prev": () => {
       const at = paneList.findIndex((pane) => pane.active)
       const prev = step(paneList, at < 0 ? 0 : at, -1)
-      if (prev) void selectPane(prev.index)
+      if (prev) selectPane(prev.index)
     },
     "pane.zoom": () => {
       const current = paneList.find((pane) => pane.active) ?? paneList[0]
-      if (!current || !activeWindow || !tmuxName) return
-      void act(
-        () =>
-          patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${current.index}`, {
-            zoom: true,
-          }),
-        "Could not zoom that pane",
-        true,
-      )
+      if (current) zoomPane(current.index)
     },
     "workspace.rail": () => setShowRail((v) => !v),
     "workspace.tools": () => setShowTools((v) => !v),
@@ -544,8 +601,8 @@ export default function TerminalPage() {
   }
   for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
     navigation[`session.${n}`] = () => {
-      const target = live[n - 1]
-      if (target?.id) setPicked(target.id)
+      const target = sessions[n - 1]
+      if (target) void select(target)
     }
     navigation[`window.${n}`] = () => {
       const target = windowList[n - 1]
@@ -742,7 +799,7 @@ export default function TerminalPage() {
               windows={windows.data ?? []}
               sessionName={tmuxName}
               sessionColour={activeSession?.colour}
-              onSelect={(index) => windowPatch(index, { select: true }, "Could not switch window")}
+              onSelect={(index) => selectWindow(index)}
               onRename={(index, name) =>
                 windowPatch(index, { name }, "Could not rename that window")
               }
@@ -759,13 +816,14 @@ export default function TerminalPage() {
               onSynchronize={(index, on) =>
                 windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
               }
-              onNew={() =>
-                act(
+              onNew={() => {
+                focusTerminal()
+                void act(
                   () => post(`${persistent(tmuxName)}/windows`, {}),
                   "Could not open a window",
                   true,
                 )
-              }
+              }}
               onClose={(index) => closeWindow(index)}
             />
           )}
@@ -773,27 +831,9 @@ export default function TerminalPage() {
           {tmuxName && activeWindow && (
             <PaneBar
               panes={panes.data ?? []}
-              onSelect={(pane) =>
-                act(
-                  () =>
-                    patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
-                      select: true,
-                    }),
-                  "Could not focus that pane",
-                  true,
-                )
-              }
-              onZoom={(pane) =>
-                act(
-                  () =>
-                    patch(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes/${pane}`, {
-                      zoom: true,
-                    }),
-                  "Could not zoom that pane",
-                  true,
-                )
-              }
-              onClose={(pane) => void closePane(pane)}
+              onSelect={(pane) => selectPane(pane)}
+              onZoom={(pane) => zoomPane(pane)}
+              onClose={(pane) => closePane(pane)}
             />
           )}
 
@@ -817,12 +857,27 @@ export default function TerminalPage() {
               // those would be a tmux subprocess per click.
               onCellClick={({ col, row }) => {
                 if (paneList.length < 2) return
-                const hit = paneList.find(
-                  (pane) =>
-                    col >= pane.left && col <= pane.right && row >= pane.top && row <= pane.bottom,
-                )
-                if (hit && !hit.active) void selectPane(hit.index)
+                const covers = (pane: TerminalPane) =>
+                  col >= pane.left && col <= pane.right && row >= pane.top && row <= pane.bottom
+                // The focused pane is asked first, and a click inside it ends
+                // there. That is the cheap half — a click in the pane that
+                // already has the keyboard is not worth a tmux subprocess —
+                // and the correct half: **a zoomed window's rectangles
+                // overlap**. tmux resizes the zoomed pane to the whole window
+                // and leaves every hidden pane's old rectangle exactly as it
+                // was, so searching in index order finds a pane that is not on
+                // screen and moves the focus into it. Testing the pane that
+                // fills the window first is what makes clicking a zoomed pane
+                // do nothing, which is what it should do.
+                const current = paneList.find((pane) => pane.active)
+                if (current && covers(current)) return
+                const hit = paneList.find((pane) => !pane.active && covers(pane))
+                if (hit) void selectPane(hit.index)
               }}
+              focusRef={focusPaneRef}
+              // These sessions are tmux's, so the pane may ask what the wheel
+              // did and put the operator back at the prompt before a keystroke.
+              copyMode
               // No minimum height: the pane is whatever is left after the
               // header and the strips, and a floor taller than that would
               // push the page past the window — which is the one thing a

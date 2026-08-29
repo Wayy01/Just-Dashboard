@@ -244,6 +244,8 @@ export function XtermPane({
   cwd,
   onOpenFiles,
   onCellClick,
+  focusRef,
+  copyMode,
   onToggleFullscreen,
   fullscreenActive,
 }: {
@@ -263,6 +265,28 @@ export function XtermPane({
    * can honestly report.
    */
   onCellClick?: (cell: { col: number; row: number }) => void
+  /**
+   * Handed a function that puts the keyboard back into this pane.
+   *
+   * The page calls it after every switch it offers — session, window, pane —
+   * because clicking a chip leaves the focus on the chip, and the next
+   * keystroke then goes to a button instead of to the shell that was just
+   * chosen. A ref rather than an imperative handle: the terminal is built
+   * inside an effect, and nothing here needs to re-render to hand it over.
+   */
+  focusRef?: React.RefObject<(() => void) | null>
+  /**
+   * Whether the socket on the other end is a tmux-backed session that
+   * understands the `exit-copy` and `sync-copy` control frames.
+   *
+   * It is off by default, and that default is load-bearing rather than
+   * cautious. The same component drives `docker exec`, whose handler writes
+   * **every frame that is not a resize straight into the container's stdin** —
+   * so a copy-mode question asked of a socket that has never heard of copy
+   * mode does not fail, it types `{"type":"sync-copy"}` at somebody's prompt.
+   * Only the terminal page, whose sessions are tmux's, turns it on.
+   */
+  copyMode?: boolean
   /**
    * When set, the fullscreen button and shortcut hand off to the caller instead
    * of fullscreening this pane alone. The terminal page uses it to take the
@@ -287,18 +311,35 @@ export function XtermPane({
     word: false,
   })
   const [atBottom, setAtBottom] = useState(true)
-  // Whether the wheel has taken this pane back through its history.
+  // Whether tmux has this pane scrolled back through its history — **as tmux
+  // reports it**, never as the browser guesses.
   //
   // It cannot be read from xterm. Under tmux the emulator's own scrollback
   // stays empty — tmux holds the alternate screen and repaints the viewport
   // rather than emitting lines — so the history belongs to tmux, and a wheel
-  // tick is forwarded to it. What tmux does with it is enter copy mode, which
-  // is a *mode*: keys become copy commands and the shell stops hearing them.
-  // Nobody reads that as a mode; they read it as the terminal having frozen.
-  // So the browser remembers that it scrolled, and the next keystroke asks the
-  // server to leave copy mode before it is delivered.
+  // tick is forwarded to it as a mouse report. What tmux *does* with that
+  // report is not the browser's to know, and assuming it was a scroll is the
+  // bug this flag used to have: tmux hands the wheel straight to the program
+  // in the pane whenever that program has asked for the mouse — tmux's own
+  // `mouse_any_flag`, which is on for every full-screen TUI, an editor, a
+  // pager, Claude Code. Nothing enters copy mode there and there is nothing to
+  // jump back from, so the affordance the browser drew from its own guess was
+  // a button offering to return a terminal that had never moved. The wheel
+  // only *asks* now, and `#{pane_in_mode}` coming back over the socket is what
+  // puts the button on screen.
   const [scrolledBack, setScrolledBack] = useState(false)
   const scrolledBackRef = useRef(false)
+  // A wheel tick has gone out and tmux has not yet said what became of it.
+  //
+  // The answer arrives a couple of hundred milliseconds later, and the first
+  // keystroke after a scroll routinely beats it. Copy mode is a mode in the vi
+  // sense — keys become copy commands and the shell stops hearing them — so
+  // that keystroke has to be preceded by the cancel or it is eaten, which
+  // reads as the terminal having frozen. Cancelling a pane that is not in a
+  // mode costs one `tmux send-keys -X cancel` that reports "not in a mode" and
+  // writes nothing to the program, so guessing wrong here is free and waiting
+  // is not.
+  const wheeledRef = useRef(false)
   const [shortcuts, setShortcuts] = useState(false)
   // What a guarded paste is holding: the bytes to send if it is confirmed,
   // and the readable version to show. They differ whenever the shell has
@@ -336,12 +377,25 @@ export function XtermPane({
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+  // Read inside the connect effect, which must not re-run when it changes,
+  // for the same reason the settings are.
+  const copyModeRef = useRef(copyMode)
+  useEffect(() => {
+    copyModeRef.current = copyMode
+  }, [copyMode])
   // Same reason as the settings ref: rebinding a shortcut must not tear down
   // the terminal and the PTY behind it.
   const keymapRef = useRef(map)
   useEffect(() => {
     keymapRef.current = map
   }, [map])
+  // The click handler is a native listener installed once with the terminal —
+  // see the mousedown listener below for why it cannot be a React prop — so
+  // the caller's callback reaches it through a ref rather than a closure.
+  const onCellClickRef = useRef(onCellClick)
+  useEffect(() => {
+    onCellClickRef.current = onCellClick
+  }, [onCellClick])
   // The key handler is installed once, before toggleFullscreen is defined.
   const fullscreenRef = useRef<(() => Promise<void>) | null>(null)
   // The caller's fullscreen override, mirrored into a ref for the same reason:
@@ -576,6 +630,12 @@ export function XtermPane({
         setError(undefined)
         sendResize()
         term.focus()
+        // The session may have been left scrolled back by whoever was here
+        // before — copy mode outlives the socket the way everything else in a
+        // tmux session does — and a pane that is in a mode reads as a pane
+        // that has frozen. One question on the way in is what makes the
+        // affordance appear for a state this tab did not create.
+        if (copyModeRef.current) socket.send(JSON.stringify({ type: "sync-copy" }))
       }
       socket.onmessage = (event) => {
         if (typeof event.data === "string") {
@@ -593,10 +653,14 @@ export function XtermPane({
               // The server is the only authority on whether tmux is still
               // scrolled away from the prompt — the browser forwards the wheel
               // tick but never learns what tmux did with it. This frame comes
-              // back after an `exit-copy` and after a `sync-copy` (sent while
-              // scrolling back down), so the jump-to-end affordance tracks the
-              // real mode rather than a guess that could stick on forever.
+              // back after an `exit-copy` and after a `sync-copy` (sent once
+              // the wheel settles, whichever way it went), so the jump-to-end
+              // affordance tracks the real mode rather than a guess that could
+              // stick on forever — or appear over a pane that never scrolled.
               const active = Boolean(msg.data?.active)
+              // tmux is at the prompt, so there is nothing left for the next
+              // keystroke to cancel either.
+              if (!active) wheeledRef.current = false
               scrolledBackRef.current = active
               setScrolledBack(active)
             }
@@ -619,12 +683,20 @@ export function XtermPane({
       }
       socket.onerror = () => setState("closed")
 
-      /** Puts the pane back at the prompt before a keystroke is delivered. */
+      /**
+       * Puts the pane back at the prompt before a keystroke is delivered.
+       *
+       * Sent on tmux's confirmed copy mode *or* on a wheel tick whose answer
+       * has not come back yet: the operator typing is the commonest way out of
+       * a scrolled-back terminal, and it must not have to wait for a round
+       * trip to work. See `wheeledRef` for why guessing wrong is free.
+       */
       const leaveCopyMode = () => {
-        if (!scrolledBackRef.current) return
+        if (!scrolledBackRef.current && !wheeledRef.current) return
+        wheeledRef.current = false
         scrolledBackRef.current = false
         setScrolledBack(false)
-        if (socket.readyState === WebSocket.OPEN) {
+        if (copyModeRef.current && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "exit-copy" }))
         }
       }
@@ -714,20 +786,22 @@ export function XtermPane({
       // `capture` it never runs at all: xterm binds its own wheel handler to
       // the viewport *inside* this element and stops the event there, so a
       // listener on the host only sees the ticks xterm did not want.
-      // A scroll back down cannot tell the browser when tmux has reached the
-      // bottom and left copy mode, so it asks — trailing-edge, once the wheel
-      // settles, rather than a frame. The server answers with a `copy-mode`
-      // frame carrying `#{pane_in_mode}`, which is what clears the
-      // jump-to-end affordance when the operator scrolls back by hand instead
-      // of pressing it.
+      // What the wheel did is tmux's to say, in both directions. Scrolling up
+      // moves the history only when the program in the pane has *not* asked
+      // for the mouse; scrolling down leaves copy mode only once it reaches
+      // the very bottom, which the browser cannot see either. So each gesture
+      // ends in one question — trailing-edge, once the wheel settles, rather
+      // than one a frame — and the `copy-mode` frame carrying
+      // `#{pane_in_mode}` is the answer that drives the affordance.
       let syncTimer: ReturnType<typeof setTimeout> | undefined
       const scheduleCopySync = () => {
+        if (!copyModeRef.current) return
         clearTimeout(syncTimer)
         syncTimer = setTimeout(() => {
           if (socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({ type: "sync-copy" }))
           }
-        }, 250)
+        }, 180)
       }
 
       const onWheel = (event: WheelEvent) => {
@@ -739,19 +813,44 @@ export function XtermPane({
           })
           return
         }
-        // The tick itself is xterm's to forward; this only records which way
-        // it went. Up means tmux is now in copy mode. Down asks the server
-        // whether tmux has left it yet — tmux drops copy mode only when the
-        // scroll reaches the very bottom, and the browser cannot tell how far
-        // back it is.
-        if (event.deltaY < 0) {
-          scrolledBackRef.current = true
-          setScrolledBack(true)
-        } else if (event.deltaY > 0 && scrolledBackRef.current) {
-          scheduleCopySync()
-        }
+        // The tick itself is xterm's to forward — it goes out as a mouse
+        // report and tmux decides what it means. This only notes that one
+        // went, so the next keystroke can cancel a mode that may now be on,
+        // and asks what actually happened once the wheel stops.
+        if (event.deltaY === 0) return
+        wheeledRef.current = true
+        scheduleCopySync()
       }
       host.addEventListener("wheel", onWheel, { passive: false, capture: true })
+
+      // Clicking inside a pane focuses it, which is what clicking inside
+      // anything does. tmux composes every pane into one screen before the PTY
+      // ever sees it, so there is no element to hang a handler on — only a
+      // cell. xterm publishes no pixel-to-cell mapping and does not need to:
+      // the grid is uniform, so the screen's box divided by the terminal's own
+      // rows and columns is exact.
+      //
+      // **Capture, and a native listener rather than a React prop.** With
+      // tmux's mouse mode on, xterm's selection service is disabled and its
+      // mousedown handler on `.xterm` calls `stopPropagation()` on exactly the
+      // clicks this pane takes back for the browser (see
+      // `forcePointerToSelect`). React binds at the root container, so a
+      // bubbling `onMouseDown` never ran and clicking the other half of a
+      // split silently did nothing — the pane bar was the only way to move the
+      // focus. The capture phase is above the element that stops the event.
+      const onMouseDownCapture = (event: MouseEvent) => {
+        const report = onCellClickRef.current
+        if (!report || event.button !== 0) return
+        const screen = host.querySelector(".xterm-screen")
+        if (!screen) return
+        const box = screen.getBoundingClientRect()
+        if (box.width === 0 || box.height === 0) return
+        const col = Math.floor(((event.clientX - box.left) / box.width) * term.cols)
+        const row = Math.floor(((event.clientY - box.top) / box.height) * term.rows)
+        if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return
+        report({ col, row })
+      }
+      host.addEventListener("mousedown", onMouseDownCapture, { capture: true })
 
       const observer = new ResizeObserver(sendResize)
       observer.observe(host)
@@ -760,6 +859,7 @@ export function XtermPane({
         observer.disconnect()
         clearTimeout(syncTimer)
         host.removeEventListener("wheel", onWheel, { capture: true })
+        host.removeEventListener("mousedown", onMouseDownCapture, { capture: true })
         for (const d of disposables) d.dispose()
         socket.close()
         term.dispose()
@@ -785,6 +885,17 @@ export function XtermPane({
     modeRef.current = mode
     if (termRef.current) termRef.current.options.theme = resolveTerminalTheme(mode)
   }, [mode])
+
+  // The caller's way back to the keyboard. Read through `termRef` at call
+  // time, so it keeps working across a reconnect rather than capturing the
+  // terminal that existed when the pane mounted.
+  useEffect(() => {
+    if (!focusRef) return
+    focusRef.current = () => termRef.current?.focus()
+    return () => {
+      focusRef.current = null
+    }
+  }, [focusRef])
 
   // Anything that changes the cell size changes the geometry, so the PTY has
   // to be told — otherwise the remote shell keeps wrapping for the old one.
@@ -1082,23 +1193,10 @@ export function XtermPane({
           ref={hostRef}
           className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
           style={bell ? undefined : { backgroundColor: "var(--background)" }}
-          // Clicking inside a pane focuses it, which is what clicking inside
-          // anything does. tmux composes every pane into one screen before the
-          // PTY ever sees it, so there is no element to hang a handler on —
-          // only a cell. xterm publishes no pixel-to-cell mapping and does not
-          // need to: the grid is uniform, so the screen's box divided by the
-          // terminal's own rows and columns is exact.
-          onMouseDown={(e) => {
-            const term = termRef.current
-            const screen = hostRef.current?.querySelector(".xterm-screen")
-            if (!onCellClick || !term || !screen || e.button !== 0) return
-            const box = screen.getBoundingClientRect()
-            if (box.width === 0 || box.height === 0) return
-            const col = Math.floor(((e.clientX - box.left) / box.width) * term.cols)
-            const row = Math.floor(((e.clientY - box.top) / box.height) * term.rows)
-            if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return
-            onCellClick({ col, row })
-          }}
+          // Click-to-focus-a-pane is a native capture listener installed with
+          // the terminal, not a prop here: xterm stops the event before it
+          // reaches React. See `onMouseDownCapture` in the connect effect.
+          //
           // Middle-click paste is the X11 convention every Linux operator has
           // in their fingers, and the browser does not provide it for us.
           onAuxClick={(e) => {
@@ -1123,10 +1221,11 @@ export function XtermPane({
               // the server's `copy-mode` reply is what actually settles the
               // flag.
               termRef.current?.scrollToBottom()
+              wheeledRef.current = false
               scrolledBackRef.current = false
               setScrolledBack(false)
               const socket = socketRef.current
-              if (socket?.readyState === WebSocket.OPEN) {
+              if (copyMode && socket?.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: "exit-copy" }))
               }
               termRef.current?.focus()

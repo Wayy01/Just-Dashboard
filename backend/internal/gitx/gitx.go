@@ -335,7 +335,30 @@ type Commit struct {
 	Delete   int       `json:"deletions"`
 	Files    int       `json:"files"`
 	IsMerge  bool      `json:"isMerge"`
-	ParentNo int       `json:"-"`
+	Parents  []string  `json:"parents,omitempty"`
+}
+
+// commitFields is the unit-separated pretty-format both Log and Graph read:
+// hash, short hash, subject, author, email, commit time, ref decoration, parents.
+const commitFields = "%H%x1f%h%x1f%s%x1f%an%x1f%ae%x1f%ct%x1f%D%x1f%P"
+
+// parseCommitLine reads one commitFields line into a Commit. The boolean is
+// false for a line that is not a commit record (a --shortstat line, blank).
+func parseCommitLine(line string) (Commit, bool) {
+	if !strings.Contains(line, "\x1f") {
+		return Commit{}, false
+	}
+	p := strings.Split(line, "\x1f")
+	if len(p) < 8 {
+		return Commit{}, false
+	}
+	c := Commit{SHA: p[0], Short: p[1], Subject: p[2], Author: p[3], Email: p[4], Refs: p[6]}
+	if secs, err := strconv.ParseInt(strings.TrimSpace(p[5]), 10, 64); err == nil {
+		c.At = time.Unix(secs, 0).UTC()
+	}
+	c.Parents = strings.Fields(p[7])
+	c.IsMerge = len(c.Parents) > 1
+	return c, true
 }
 
 // Log reads history for a ref. limit is clamped, because this feeds a page.
@@ -344,7 +367,7 @@ func (s *Service) Log(ctx context.Context, path, ref string, limit int) ([]Commi
 		limit = 100
 	}
 	args := []string{"log", "--max-count=" + strconv.Itoa(limit),
-		"--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ae%x1f%ct%x1f%D%x1f%P", "--shortstat"}
+		"--pretty=format:" + commitFields, "--shortstat"}
 	if ref != "" {
 		if err := ValidateRef(ref); err != nil {
 			return nil, err
@@ -364,19 +387,10 @@ func (s *Service) Log(ctx context.Context, path, ref string, limit int) ([]Commi
 		if line == "" {
 			continue
 		}
-		if strings.Contains(line, "\x1f") {
+		if c, ok := parseCommitLine(line); ok {
 			if cur != nil {
 				commits = append(commits, *cur)
 			}
-			p := strings.Split(line, "\x1f")
-			if len(p) < 8 {
-				continue
-			}
-			c := Commit{SHA: p[0], Short: p[1], Subject: p[2], Author: p[3], Email: p[4], Refs: p[6]}
-			if secs, err := strconv.ParseInt(p[5], 10, 64); err == nil {
-				c.At = time.Unix(secs, 0).UTC()
-			}
-			c.IsMerge = len(strings.Fields(p[7])) > 1
 			cur = &c
 			continue
 		}
@@ -417,6 +431,10 @@ type Branch struct {
 	At       time.Time `json:"at,omitempty"`
 	Ahead    int       `json:"ahead"`
 	Behind   int       `json:"behind"`
+	// Worktree is the path of another worktree that has this branch checked
+	// out, empty otherwise. git refuses to delete or switch such a branch even
+	// with -D, so the UI disables those actions and shows this as the reason.
+	Worktree string `json:"worktree,omitempty"`
 }
 
 func (s *Service) Branches(ctx context.Context, path string) ([]Branch, error) {
@@ -426,6 +444,7 @@ func (s *Service) Branches(ctx context.Context, path string) ([]Branch, error) {
 	format := strings.Join([]string{
 		"%(refname:short)", "%(HEAD)", "%(upstream:short)", "%(objectname:short)",
 		"%(contents:subject)", "%(committerdate:unix)", "%(upstream:track)", "%(refname)",
+		"%(symref)", "%(worktreepath)",
 	}, "%1f")
 	out, err := s.run(ctx, path, "for-each-ref", "--format="+format, "refs/heads", "refs/remotes")
 	if err != nil {
@@ -434,13 +453,24 @@ func (s *Service) Branches(ctx context.Context, path string) ([]Branch, error) {
 	branches := []Branch{}
 	for _, line := range nonEmptyLines(out) {
 		p := strings.Split(line, "\x1f")
-		if len(p) < 8 {
+		if len(p) < 10 {
+			continue
+		}
+		// refs/remotes/<remote>/HEAD is a symbolic ref pointing at the remote's
+		// default branch, not a branch of its own — listing it puts a phantom
+		// entry named after the remote next to the real ones.
+		if strings.TrimSpace(p[8]) != "" {
 			continue
 		}
 		b := Branch{
 			Name: p[0], Current: strings.TrimSpace(p[1]) == "*",
 			Upstream: p[2], Head: p[3], Subject: p[4],
 			Remote: strings.HasPrefix(p[7], "refs/remotes/"),
+		}
+		// %(worktreepath) is set for the current worktree too; only another
+		// one's checkout is a constraint the operator needs shown.
+		if wt := strings.TrimSpace(p[9]); wt != "" && !b.Current {
+			b.Worktree = wt
 		}
 		if secs, err := strconv.ParseInt(strings.TrimSpace(p[5]), 10, 64); err == nil {
 			b.At = time.Unix(secs, 0).UTC()

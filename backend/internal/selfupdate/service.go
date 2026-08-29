@@ -91,12 +91,17 @@ func (s *Service) Stop() { s.checker.Stop() }
 // the UI can say "checked eleven minutes ago, and could not reach GitHub"
 // without that reading as "there is no update".
 type CheckMeta struct {
-	Enabled   bool      `json:"enabled"`
-	CheckedAt time.Time `json:"checkedAt,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Source    string    `json:"source,omitempty"`
-	Repo      string    `json:"repo"`
-	Ref       string    `json:"ref"`
+	Enabled bool `json:"enabled"`
+	// A pointer, because `omitempty` does not omit a zero time.Time — it is a
+	// struct — and an install that has never checked was therefore sending
+	// 0001-01-01 down the wire, which the UI rendered as "checked 739855 days
+	// ago". Nil is the honest shape for "never", and the TypeScript side has
+	// always declared it optional.
+	CheckedAt *time.Time `json:"checkedAt,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	Repo      string     `json:"repo"`
+	Ref       string     `json:"ref"`
 }
 
 // Install is whether this particular install can upgrade itself, and if not,
@@ -132,14 +137,42 @@ type Report struct {
 	Log      string    `json:"log,omitempty"`
 }
 
-// Report answers where this install stands. refresh forces the online check
-// rather than reading the cache, subject to the checker's own floor.
-func (s *Service) Report(ctx context.Context, refresh bool) Report {
-	check := s.checker.Result()
-	if refresh {
+// Freshness is how hard the caller wants the online check chased.
+type Freshness int
+
+const (
+	// Cached is the ordinary poll: read what is known, and start a check only
+	// if the answer has gone properly stale.
+	Cached Freshness = iota
+	// OnLoad is a browser opening the dashboard. It still answers from the
+	// cache immediately — nothing about a page load should wait on the
+	// network — but it starts a check on a much shorter staleness floor, so
+	// the answer an operator gets is at most a few minutes old rather than a
+	// few hours. This is the whole of "check for updates on every reload".
+	OnLoad
+	// Forced is somebody pressing "check now", where waiting is what they
+	// asked for.
+	Forced
+)
+
+// nonZeroTime is nil for a time nobody has recorded.
+func nonZeroTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+// Report answers where this install stands.
+func (s *Service) Report(ctx context.Context, freshness Freshness) Report {
+	var check Check
+	switch freshness {
+	case Forced:
 		check, _ = s.checker.Refresh(ctx)
-	} else {
-		check = s.checker.NudgeIfStale(ctx)
+	case OnLoad:
+		check = s.checker.Nudge(nudgeInterval)
+	default:
+		check = s.checker.Nudge(checkInterval)
 	}
 
 	local := Local()
@@ -152,7 +185,7 @@ func (s *Service) Report(ctx context.Context, refresh bool) Report {
 		Breaking:  HasBreaking(check.Releases),
 		Check: CheckMeta{
 			Enabled:   check.Enabled,
-			CheckedAt: check.CheckedAt,
+			CheckedAt: nonZeroTime(check.CheckedAt),
 			Error:     check.Error,
 			Source:    check.Source,
 			Repo:      s.checker.Repo(),

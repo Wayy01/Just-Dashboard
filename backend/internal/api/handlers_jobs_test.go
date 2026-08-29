@@ -112,7 +112,7 @@ func TestJobCancel(t *testing.T) {
 // connection open for up to half an hour.
 func TestUpdatesApplyStartsAJob(t *testing.T) {
 	c, s := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/updates/apply", "",
+	w := c.do(http.MethodPost, "/api/v1/packages/upgrade", "",
 		map[string]string{"X-Confirm": "upgrade packages"})
 	if w.Code == http.StatusServiceUnavailable {
 		t.Skip("no package manager on this host")
@@ -139,7 +139,7 @@ func TestUpdatesApplyStartsAJob(t *testing.T) {
 // way around the typed phrase.
 func TestUpdatesApplyStillDemandsTheTypedPhrase(t *testing.T) {
 	c, _ := newClient(t)
-	w := c.do(http.MethodPost, "/api/v1/updates/apply", "", nil)
+	w := c.do(http.MethodPost, "/api/v1/packages/upgrade", "", nil)
 	if w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("got %d, want 428: %s", w.Code, w.Body.String())
 	}

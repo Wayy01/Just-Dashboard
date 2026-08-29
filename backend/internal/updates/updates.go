@@ -47,26 +47,6 @@ type Report struct {
 	Error             string    `json:"error,omitempty"`
 }
 
-// Report is produced by whichever manager claims the host.
-type Service struct{}
-
-func New() *Service { return &Service{} }
-
-// Available reports whether *any* supported package manager was found. It used
-// to mean "apt is installed", which made every RPM, Alpine and Arch host look
-// like a machine with nothing to update rather than one that was never
-// checked — the worst possible failure for a security signal.
-func (s *Service) Available() bool { return detect() != nil }
-
-// Manager names what runs this host, so the UI can say apt or dnf rather than
-// "packages".
-func (s *Service) Manager() string {
-	if m := detect(); m != nil {
-		return m.Name()
-	}
-	return ""
-}
-
 // Check lists what could be upgraded right now.
 //
 // It reads the package database already on disk rather than refreshing it: a

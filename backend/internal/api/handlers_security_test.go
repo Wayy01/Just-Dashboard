@@ -182,7 +182,7 @@ func TestNetworkProbeRejectsABadTarget(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d: %s", w.Code, w.Body.String())
 	}
-	w = c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"nmap","target":"example.com"}`, nil)
+	w = c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"exploit","target":"example.com"}`, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown tool accepted: %d", w.Code)
 	}
@@ -459,7 +459,7 @@ func TestReadonlyCannotChangeSSH(t *testing.T) {
 // security update from any other, on whatever this host runs.
 func TestUpdatesReportIsHonestAboutTheManager(t *testing.T) {
 	c, _ := newClient(t)
-	w := c.do(http.MethodGet, "/api/v1/updates/", "", nil)
+	w := c.do(http.MethodGet, "/api/v1/packages/updates", "", nil)
 	if w.Code == http.StatusServiceUnavailable {
 		t.Skip("no package manager on this host")
 	}

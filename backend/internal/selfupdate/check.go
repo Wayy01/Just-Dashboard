@@ -36,10 +36,24 @@ const (
 	// needs to read tags.
 	DefaultRef = "main"
 
-	// checkInterval is four times a day. A dashboard left open on a wall
-	// screen for a month should not become a thousand requests, and nobody
-	// ships a release that has to be noticed within the hour.
-	checkInterval = 6 * time.Hour
+	// checkInterval is the background timer, for a dashboard nobody has
+	// touched. It is deliberately slow: a wall screen left open for a month
+	// should not become a thousand requests, and the answer to "is there a
+	// newer version" changes a few times a year.
+	//
+	// The cadence that actually matters is nudgeInterval below, because the
+	// moment an operator wants a current answer is the moment they open the
+	// page — and that is a thing this can be told about rather than guessed at
+	// on a timer.
+	checkInterval = 2 * time.Hour
+	// nudgeInterval is the floor on the check a page load triggers.
+	//
+	// Every reload asks for one, so this is what keeps "check on every load"
+	// from meaning "a request per tab per navigation" on a dashboard somebody
+	// is clicking around. Five minutes is short enough that an operator who
+	// reloads because they are expecting a release gets the answer, and long
+	// enough that the twenty pages they open after that cost nothing.
+	nudgeInterval = 5 * time.Minute
 	// firstCheckDelay keeps the check out of the boot path. A server that
 	// cannot reach the internet should not spend its first seconds finding
 	// that out, and a crash-looping container should not retry a network call
@@ -174,7 +188,7 @@ func (c *Checker) Result() Check {
 	return out
 }
 
-// NudgeIfStale starts a check when the cached answer has gone stale and
+// Nudge starts a check when the cached answer is older than maxAge, and
 // returns the cached answer either way.
 //
 // It never waits, and that is the whole point of it. This runs on the status
@@ -183,10 +197,15 @@ func (c *Checker) Result() Check {
 // turn one unreachable registry into a dashboard whose every page load hangs
 // for fifteen seconds. The operator asking explicitly gets Refresh instead,
 // where waiting is what they asked for.
-func (c *Checker) NudgeIfStale(ctx context.Context) Check {
+//
+// maxAge is what separates the two callers: a background poll passes
+// checkInterval and almost never triggers anything, while a page load passes
+// nudgeInterval and is how a freshly opened dashboard has a current answer
+// within a second or two of being opened.
+func (c *Checker) Nudge(maxAge time.Duration) Check {
 	c.mu.Lock()
 	stale := c.enabled && !c.busy &&
-		(c.result.CheckedAt.IsZero() || time.Since(c.result.CheckedAt) >= checkInterval)
+		(c.result.CheckedAt.IsZero() || time.Since(c.result.CheckedAt) >= maxAge)
 	c.mu.Unlock()
 	if stale {
 		// Deliberately not the request's context: the answer outlives the

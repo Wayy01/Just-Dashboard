@@ -473,8 +473,8 @@ function UpdatesCard() {
   return (
     <ServiceCard
       icon={PackageCheck}
-      title="Updates"
-      href="/updates"
+      title="Dashboard"
+      href="/dashboard"
       loading={loading && !report}
       value={report ? (behind === 0 ? "Up to date" : `${behind} behind`) : undefined}
       hint={report ? `v${report.version}${report.breaking ? " · breaking change" : ""}` : undefined}

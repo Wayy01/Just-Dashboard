@@ -436,6 +436,110 @@ Exactly exit 1 counts as "a reboot is needed" — every other non-zero code is t
 tool failing, and reading those as yes puts a permanent reboot warning on a host
 that never asked for one.
 
+### The other half of a package manager
+
+"How far behind is this server" is the question you have *after* you already
+know what is on it and how to add to it, and both of those used to send the
+operator to an SSH session — which is the thing this product exists to avoid,
+and neither is harder to answer than the one that was already here. So
+`manager` embeds a second interface, `catalogue` (`catalogue.go` plus one file
+per family): `ListInstalled`, `Search`, `Info`, `Files`, and an
+`InstallCommand`/`RemoveCommand` pair returning argv for the same reason
+`UpgradeCommand` does. It is embedded rather than optional because all six can
+do all of it, and a compiler error is a better way to learn about the seventh
+than a page that renders empty.
+
+Four things are load-bearing:
+
+- **The installed set is read from the local database, never through the
+  front end.** dpkg answers for apt and `rpm -qa` answers for dnf, yum and
+  zypper — asking dnf would mean a metadata cache has to be present to answer a
+  question about this disk, which on a host whose repositories have gone stale
+  is an empty page rather than an answer.
+- **"Installed on purpose" is a different question on every one of them**, and
+  it is what makes a list of two thousand rows readable: `apt-mark showmanual`,
+  `dnf repoquery --userinstalled`, pacman's `Install Reason`, and — the cheap
+  one — Alpine's `/etc/apk/world`, which is a file rather than a command.
+  zypper keeps it inside libzypp with no supported query, so `Explicit` stays
+  false there and the filter is hidden rather than showing nothing.
+- **Ranking is done here, not by the tool.** A repository search is a substring
+  match over thousands of names, so `apt-cache search git` answers with `git`
+  somewhere around row four hundred. `rankResults` orders exact, then prefix,
+  then contained, then summary-only, identically for all six — so the results
+  do not reorder themselves when an operator moves from a Fedora host to a
+  Debian one. The cap is applied *after* ranking, and on apt before the
+  `apt-cache policy` call that fills the versions in, which is one subprocess
+  rather than sixty.
+- **A name-only search is widened to the descriptions when it comes back
+  thin.** Matching names is what makes `nginx` return nginx rather than the
+  four hundred packages that merely mention it — and it is also why "web
+  server" returned *nothing at all* on an archive carrying three hundred of
+  them, because no package is called that. Somebody who knows the name types
+  the name; somebody who does not types what the software does, and that
+  person is the entire reason the page exists. Under `thinSearch` results, each
+  manager runs its broader form (`apt-cache search` without `--names-only`,
+  `dnf search --all`, `zypper search -d`, `apk search -d`; pacman's `-Ss`
+  already covers both). That last bucket then needs a tie-break of its own —
+  everything in it is equally unmatched by name, and ordering on name length
+  put `nd` and `h2o` above nginx — so it is ranked by how many of the typed
+  words the summary actually carries.
+- **The index has an age, and it is on screen.** Every read here answers from
+  the package database already on disk, which is right — a search that
+  refreshed first would take a minute per keystroke — and it means the whole
+  page is only as current as the last `apt update`. On a server nobody logs
+  into, that timer is the first thing to stop, and a three-month-old index is a
+  catalogue silently missing every package added since. `IndexAge` reads it
+  from the manager's own cache (skipping lock files, which are touched by
+  operations that fetched nothing) and `RefreshCommand` fixes it. pacman
+  returns false there: a database refreshed without an upgrade is what turns
+  the next `pacman -S` into a partial upgrade, so on Arch the refresh *is* the
+  upgrade.
+- **Names are validated before they are arguments.** They never go through a
+  shell, so the worry is not quoting: it is that every one of these tools reads
+  a leading dash as a flag and several accept a path to a package *file* in the
+  same position, so an unvalidated name is not a package name at all.
+
+`protectedReason` is the removal guard, and it is deliberately narrow in the
+spirit of `guardSSHLockout`: the package manager itself, the init system, libc
+and the shell, sshd, docker (this dashboard runs on it), and a kernel. dpkg's
+own `Essential` flag is authority enough on its own. Everything else — including
+things that look important — goes through the ordinary confirmation, because a
+guard that second-guesses every risky removal is one nobody can work with.
+
+### "It is installed. Now what?"
+
+`usage.go` is the part nothing else in this class has, and it is the same
+argument `dockerx.Diagnose` makes: the facts are already on the machine and
+somebody still has to be told what they mean. A version, a size and a
+dependency list describe a package; they do not tell you that
+`postgresql-client-16` gave you a command called `psql`. So a package's own
+file list is read into the commands it put on the path, the manual pages it
+ships, the systemd units it registered, what it put in /etc, and its README —
+and the primary manual page is *rendered* next to them, so the answer to "how
+do I use this" is on the page rather than behind a shell.
+
+**Nothing here executes the package's own binaries**, and that is a rule rather
+than an omission. `foo --help` is the obvious way to get a usage summary and it
+means this route runs an arbitrary host binary as root for whoever asked — on a
+route that only needs `read`. Manual pages and documentation are text files.
+
+Three details are each a bug that was found by running it:
+
+- A command is a file whose **parent** is a bin directory. `/usr/bin` is itself
+  in every file list, and a binary in `/usr/lib/postgresql/16/bin` is on
+  nobody's path.
+- A page is recognised by a `manN` **component**, not by the literal
+  `/man/man` — a translated page lives under `/usr/share/man/de/man1`, which on
+  a host with any locale support is most of the manual.
+- The page to render is **ranked**, because the alphabetically first page a
+  package owns is almost never the one to read: openssh-client ships `scp`
+  before `ssh`, and coreutils ships `[` before everything, which rendered
+  TEST(1) as the manual for coreutils.
+
+`stripOverstrike` undoes nroff's backspace bold in four lines rather than
+shelling to `col -b`, which lives in util-linux-extra — the same package whose
+absence already costs this product the login records.
+
 ### sshd, and the guard that makes it offerable
 
 `netsec/sshd.go` reads the **effective** configuration — `sshd -T`, falling back to parsing
@@ -746,6 +850,101 @@ every volume at once — the alternative is an inspect per container on every po
 the health and uptime already resolved there. `Diagnose` inspects each container once and runs
 every rule against that one payload.
 
+### Logs: one filter, live or over history
+
+`internal/logsx` and `api/handlers_logs.go` were three products wearing one
+page. The grep box and the level chips were applied to *file* tails only —
+a docker, PM2 or journal source was delegated to a different handler that
+never saw them, so the filters silently did nothing on three of the six
+kinds. `/logs/search` and `/logs/logrotate` existed and nothing in the
+frontend called either. Export ignored the filter and handed back the whole
+file. And a rotated archive was unreachable, so "when did this start" could
+not be asked past last night's logrotate run — which is the question, and
+the reason people went back to ssh and zgrep.
+
+**One filter, compiled once, applied to every kind.** `logsx.Filter` is the
+single description of what the operator wants — query, exclusion, regex,
+case, levels — and `handleLogStream` now turns a file, a container, a PM2
+process and the journal into the same `logsx.Line` before filtering. A bad
+regular expression is refused *before* the socket upgrades, so it is an
+error on the form rather than a stream that opens and stays empty.
+`logsx.Collector` is the same idea for the history search: the filter, the
+window, the context lines, the result cap and the histogram are decided in
+one place, so searching a file, a container and the journal cannot answer
+the same question three different ways.
+
+**A filtered tail opens on n *matches*, not n lines.** `TailLines` scans
+backwards through the last 32 MB collecting matches, then follows from the
+byte the scan stopped at — a byte earlier duplicates a line, a byte later
+loses one. Without it, "the last 400 lines" of a log where one line in a
+thousand is an error is an empty page in front of a file full of them, and
+`Prefill` says which of "few matches" and "we only looked so far back" the
+short list means.
+
+**The archives are part of the log.** `Archives` finds the rotated
+generations next to a live file and orders them by mtime, because the two
+rotation schemes count in opposite directions — `syslog.1` is newer than
+`syslog.2`, `syslog-20240612` is older than `-20240613` — and concatenating
+them by name reports an incident running backwards. gzip and bzip2 are read
+transparently; xz and zstd are skipped rather than offered and then refused.
+
+**`unknown` is a level.** Most lines on a typical host carry no level word,
+so a level filter with no chip for them hid every unclassified line —
+including the continuation lines of the stack trace being hunted.
+
+**The journal's numbers and a text log's words are one vocabulary.**
+`LevelFromPriority` maps journald's priority onto the same scale, so one set
+of chips works everywhere, and `maxJournalPriority` pushes the *maximum*
+down to `journalctl -p 0..n` — only the maximum, since the chips are a set
+and `-p` takes a range, with the exact test still done here. A text filter
+is deliberately **not** pushed down: `journalctl -g` needs a build with
+PCRE2 and a version nobody can assume, so the window is widened instead.
+
+**Nothing is offered that cannot be opened.** `Discover` runs `Allow` over
+the well-known paths, because an install that narrowed `JD_LOG_ROOTS` used
+to get a rail full of files that refused to open.
+
+**Retention is a verdict, not a rule list.** `MatchRetention` answers the
+question logrotate's config would have been consulted for: the file with no
+rule governing it is the one that fills the disk, and it is precisely the
+entry a rule list cannot show. Two parser details are load-bearing and both
+were found by running it against a real host: a stanza's paths may be listed
+**one per line before the brace** — which is exactly how Debian ships
+rsyslog's, so reading only the brace line reported syslog, auth.log and
+kern.log as governed by nothing — and the global directives at the top of
+`logrotate.conf` sit at the same indentation as those paths and must not be
+mistaken for them. A rule that exists and has not run in a fortnight is
+reported as a warning, since that is the failure this panel is really for.
+
+Three details in the parsing are performance rather than correctness, and
+they are the difference between a history search being usable and not: a
+five-file scan of auth.log went from 19 s to 2 s. The level regex became a
+word scan with a map lookup (`detectLevel`); the timestamp layouts are
+chosen from the first byte instead of being tried in turn; and the
+case-insensitive substring test folds in place rather than lowercasing a
+copy of every line. The ISO timestamp is read as a *token* rather than by a
+fixed width — that one is correctness: slicing 25 characters chopped the
+zone off `2026-08-28T23:03:24.804642+02:00` and filed the line an hour
+wrong on every host that does not log in UTC. And `Filter.Highlights`
+returns **UTF-16** offsets, because Go counts bytes and the browser slices
+strings by code unit.
+
+On the frontend, `components/logs/` is the page. `filter-bar.tsx` holds the
+one filter and the Live/History switch — the two modes share it, because
+"these errors are scrolling past, when did they start" is one thought and
+not two forms. Live applies as you type (debounced; the socket restarts,
+which is what makes the prefill meaningful); History runs on Enter, because
+it scans the file and a keystroke-triggered version would queue a full pass
+over gigabytes per character. `log-console.tsx` leans on `content-visibility`
+rather than a virtualiser: the browser skips layout for off-screen rows
+while the scrollbar stays honest, wrapped rows keep their real heights and
+the browser's own find still works. **Pausing holds the incoming lines
+instead of dropping them** — the old pane called autoscroll "Paused", which
+meant reading a busy log cost you everything written while you read.
+`histogram.tsx` is the volume of matches by level over time, and clicking a
+column narrows the window to it, which is the fast path from a spike to the
+lines inside it.
+
 ### The terminal, and what keeps a session
 
 `internal/term` runs the PTYs. Three properties are load-bearing and easy to
@@ -865,7 +1064,27 @@ screen for the whole session, and xterm translates a wheel tick in the
 alternate screen into a cursor key, so scrolling up in a shell walked backwards
 through command history instead of showing what had scrolled past. The
 scrollback that matters is tmux's in any case; xterm's own stays empty because
-tmux repaints the viewport rather than emitting lines. The cost used to be that a plain
+tmux repaints the viewport rather than emitting lines.
+
+**What tmux then does with the tick is not the browser's to guess**, and the
+jump-to-end affordance in the pane used to guess it. tmux's own root binding is
+`if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode
+-e }` — so the wheel enters copy mode only when the program in the pane has
+*not* asked for the mouse. Every full-screen TUI has (an editor, a pager,
+Claude Code), and there the tick goes to the program, nothing scrolls, and a
+"Jump to the end" button drawn from the browser's own optimism offered to
+return a terminal that had never moved. So a wheel tick now only *asks*:
+`sync-copy` goes out once the gesture settles, in both directions, and
+`#{pane_in_mode}` coming back is the only thing that puts the button on screen.
+The keystroke path stays optimistic, because it has to be — copy mode eats the
+key that would have left it, and a cancel sent to a pane that is not in a mode
+prints "not in a mode" and writes nothing to the program, so guessing wrong
+there is free and waiting for the answer is not. Both frames are gated behind
+the pane's `copyMode` prop, which is **off by default**: the same component
+drives `docker exec`, whose handler writes every frame that is not a resize
+straight into the container's stdin, so a copy-mode question asked of a socket
+that has never heard of copy mode types `{"type":"sync-copy"}` at somebody's
+prompt. The cost used to be that a plain
 drag selected into tmux's copy buffer instead of the browser's — tmux clears
 its own selection on mouse-up, so text highlighted and unhighlighted inside one
 gesture and `getSelection()` stayed empty, which is what made the Copy button
@@ -1279,10 +1498,22 @@ is each line. Reading it needs no network: the compiled-in copy is what an insta
 `JD_UPDATE_CHECK=false` still shows.
 
 **The check is the only outbound request this product makes on its own initiative**, and it
-is kept deliberately small: one unauthenticated GET, four times a day, a user agent carrying
-the product and version and nothing else, and a switch to turn it off. A failure keeps the
-previous good answer rather than blanking the banner, because a dropped tunnel is a normal
-Tuesday here and a notice that flickers is one nobody trusts.
+is kept deliberately small: one unauthenticated GET, a user agent carrying the product and
+version and nothing else, and a switch to turn it off. A failure keeps the previous good
+answer rather than blanking the banner, because a dropped tunnel is a normal Tuesday here
+and a notice that flickers is one nobody trusts.
+
+Its cadence is two floors rather than a timer, because the moment somebody wants a current
+answer is the moment they open the page — which is a thing the browser can say rather than
+something to guess at. `Freshness` is the parameter: `Cached` is the ordinary poll and
+nudges only past `checkInterval` (two hours, for a dashboard nobody has touched), `OnLoad`
+is a browser that has just loaded the shell and nudges past `nudgeInterval` (five minutes),
+and `Forced` is somebody pressing "check now" and waits. Both nudges answer from the cache
+**immediately** and start the check behind the request — a version that blocked would turn
+one unreachable repository into a dashboard whose every page load hangs for fifteen seconds.
+The frontend half is one query parameter on the provider's first read plus a single quick
+re-read to collect the answer; the five-minute floor is what keeps "check on every load"
+from meaning a request per tab per navigation.
 
 **Where the install lives is discovered, not configured.** The dashboard asks Docker which
 container bind-mounts its own data directory — the directory holding the database this
@@ -1317,8 +1548,13 @@ watching**. A poll that fails while a run is in flight is rendered as "restartin
 an error, and the cadence is set from the fetch rather than from an effect so a failed fetch
 does not drop back to the five-minute interval. `components/update/` is the notice in the
 sidebar footer (which renders *nothing* when there is nothing to say), the release-notes
-sheet, and the panel at the top of `/updates` — where the dashboard's own version sits above
-the host's packages, because "what can be updated on this machine" is one question.
+sheet, and the panel at the top of `/dashboard`. That page is the dashboard's own version and
+nothing else: it used to be the top half of a page whose bottom half was apt, on the theory
+that "what can be updated on this machine" is one question. It is not — one of them is the
+operator's server and the other is the tool they are looking at it through, they are updated
+by completely different machinery, and the release notes, which are the part somebody
+actually reads before upgrading a root-equivalent panel, had nowhere to live but a sheet over
+a table of library versions.
 
 ### Deployment topology
 
@@ -1366,7 +1602,7 @@ silently browses the container's own empty filesystem.
 ## Frontend
 
 App Router, all pages `"use client"`, one page per feature under
-`src/app/(dashboard)/<feature>/page.tsx`. Seventeen routes plus `/login`.
+`src/app/(dashboard)/<feature>/page.tsx`. Eighteen routes plus `/login`.
 
 ### The shell
 
@@ -1427,7 +1663,7 @@ is.
 
 `components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 36 primitives). Prefer
 composing over editing these; feature-specific pieces live in `components/<feature>/`
-(`docker/`, `files/`, `metrics/`, `procs/`, `proxy/`, `security/`, `terminal/`).
+(`docker/`, `files/`, `metrics/`, `packages/`, `procs/`, `proxy/`, `security/`, `terminal/`).
 
 ### The editor is served from here, not from a CDN
 
@@ -1552,6 +1788,27 @@ lives next to the control rather than in a banner above it.
 join that makes the pages one product: the address the ban log keeps naming is the one that
 deserves a rule outliving the ban.
 
+### The packages panel
+
+`components/packages/` is two pieces and one rule. `install-panel.tsx` is the search box,
+and the list updates as you type — which is not decoration: the reason people open a
+terminal instead of a package page is that they do not know the name (it is
+`postgresql-client`, not `psql`; `build-essential`, not `gcc`), and a form where you type a
+guess and press a button to find out you were wrong is a form you use once.
+
+Install is one press, on the row. There was a tray — pick several, install them in one
+transaction — and the argument for it was real: three separate runs is three chances to be
+interrupted halfway. It cost a click and a concept on every single-package install, which is
+almost all of them, and the run it was protecting against is a job that survives the tab
+anyway. The command each button would run is its `title`, for the reason the firewall form
+and the Docker create form show theirs.
+
+`package-sheet.tsx` is one package, with a second tab that is the whole point of the
+feature — see "It is installed. Now what?" above for where its content comes from. The
+installed table is capped at 400 rendered rows with the count said plainly underneath: two
+thousand rows makes the tab unusable long before it runs out of memory, and a list that long
+is searched rather than read.
+
 ### The terminal panel
 
 `components/terminal/` is the rail, the strips and the tags; `components/xterm-pane.tsx` is
@@ -1620,8 +1877,17 @@ every pane into one screen before the PTY sees a byte, so the browser has a sing
 no element to hang a handler on — a click lands on a cell and nothing else. `Panes` therefore
 carries `pane_left/top/right/bottom`, `XtermPane` reports the clicked cell (the grid is uniform,
 so the screen's box divided by rows and columns is exact — xterm publishes no pixel-to-cell
-mapping), and the page finds the rectangle containing it. It no-ops for a single pane and for a
-click already inside the focused one, because either would be a tmux subprocess per click.
+mapping), and the page finds the rectangle containing it.
+
+Two details make it actually fire, and both were found the hard way. It is a **native listener
+in the capture phase**, not a React `onMouseDown`: with tmux's mouse mode on xterm disables its
+selection service, and the handler it keeps on `.xterm` calls `stopPropagation()` on exactly the
+clicks `forcePointerToSelect` hands back to the browser — React binds at the root container, so
+a bubbling handler was never called at all and the pane bar was the only way to move the focus.
+And the **focused pane's rectangle is tested first**, with a click inside it ending there: that
+is the cheap answer for the common case, and the correct one for a zoomed window, where tmux
+resizes the zoomed pane to the whole window and leaves every hidden pane's old rectangle exactly
+where it was. Searching in index order there finds a pane that is not on screen.
 
 **The navigation listener runs in the capture phase and must not skip the terminal.** Bubbling
 would land after xterm had already forwarded the keystroke, so Ctrl+Alt+→ would switch the
@@ -1629,6 +1895,18 @@ window *and* type an escape sequence at the prompt. And the usual "ignore keys w
 field has focus" guard has to make an exception for `.xterm`: xterm receives keystrokes through
 a hidden `.xterm-helper-textarea`, so the plain form of that guard disables every shortcut
 exactly when the terminal has focus, which is the only time anybody presses one.
+
+**They fire only where the shell has the keyboard.** These chords move sessions, close windows
+and kill panes; anywhere-inside-the-workspace was too wide a rule, and Ctrl+Alt+W closed a tmux
+window while the operator was clicking around the file tree. The target has to be inside
+`.xterm` — or nothing focused at all, which is what `document.body` means on a fresh load and is
+the difference between "new session" having a shortcut and not. A dialog open anywhere on the
+page vetoes the lot, because focus sits on the body while one is closing. The other half of the
+same rule is that **every switch hands the keyboard back**: the strips and the pane bar are
+buttons, and a button keeps the focus it was given, so choosing where to type used to leave the
+next keystroke going to the chip that was clicked. `XtermPane` takes a `focusRef` for it, and
+the page calls it before the request rather than after — the switch is a round trip to tmux, the
+focus is not.
 
 **The page has no header.** A terminal is the one screen whose content *is* the viewport, and a
 title band plus an explanatory notice cost about a fifth of the pane on a laptop. The
@@ -1746,7 +2024,8 @@ A change that weakens any of these has to say so explicitly:
    that also sweeps volumes (`docker system prune --volumes`), deleting a dashboard or Linux
    account, a recursive directory delete, `git discard` and `git reset --hard`, toggling the
    firewall, resetting it, switching the inbound default to deny, changing sshd's
-   configuration, revoking a certificate, applying package updates, and installing a new
+   configuration, revoking a certificate, applying package updates, **purging** a package
+   (removing it *and* deleting the configuration it left in /etc), and installing a new
    version of the dashboard itself.
 
    The 0.6.1 review narrowed this set. A prune that leaves volumes alone (`prune images`,
@@ -1790,7 +2069,9 @@ A change that weakens any of these has to say so explicitly:
    backup job or a deploy project, rolling back a deploy, disabling **or deleting** a vhost,
    deleting an nginx stream or an htpasswd file, deleting a git branch, adding, **editing** or
    deleting a firewall rule, tuning a fail2ban jail, unbanning an address, stopping a running
-   job, and closing a terminal session, window or pane.
+   job, closing a terminal session, window or pane, and **removing a package without purging
+   it** — which is undone by installing it again from the repository it came from, where the
+   /etc files somebody spent an afternoon on have no path back at all.
 
    Editing a firewall rule is a write and not a destructive one, and is mounted accordingly:
    the replacement goes in before the original comes out, so there is no moment the rule is
@@ -1801,7 +2082,8 @@ A change that weakens any of these has to say so explicitly:
    Several routes decide by content rather than by path, and the narrowing lives at the call
    site: `handleDBQuery` types only for `critical`, `handleFileDelete` only when `recursive`,
    `handleGitReset` only when `--hard`, `handleDBImport` only when `truncate`,
-   `handlePruneAll` only when `volumes=true`, and `composeNeedsPhrase` only for `down` — with
+   `handlePruneAll` only when `volumes=true`, `handlePackageRemove` only when `purge`, and
+   `composeNeedsPhrase` only for `down` — with
    `requireComposePhraseWS` applying the same narrowing on the socket so the two entry points
    cannot disagree. The frontend mirrors each with a conditional `phrase`, and the server
    re-decides regardless.
