@@ -221,3 +221,69 @@ func TestPruneAllTypesOnlyForTheVolumeSweep(t *testing.T) {
 		t.Fatalf("a volume-sparing prune asked for a phrase: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
 	}
 }
+
+// The reclaim surface, pinned in both directions.
+//
+// 0.6.4 fixed a page that promised tens of gigabytes and could not deliver any
+// of it: the build cache had no route at all, and the only image prune the UI
+// reached was the dangling one, which on a host that redeploys through compose
+// frees nothing. Both halves are easy to undo by accident — a route dropped
+// from the mount, or a phrase added to housekeeping somebody does weekly — so
+// each is asserted rather than left to the UI to demonstrate.
+func TestBuildCachePruneIsMountedAndUntyped(t *testing.T) {
+	c, _ := newClient(t)
+
+	w := c.do(http.MethodPost, "/api/v1/docker/build-cache/prune", "", nil)
+	if w.Code == http.StatusNotFound || w.Code == http.StatusMethodNotAllowed {
+		t.Fatalf("the build-cache prune is not mounted: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	// A cache is the definition of recoverable — the worst a wrong press costs
+	// is a slower next build — so it must not join the typed set. Every route
+	// added there makes the phrase weaker on the routes that need it.
+	if w.Code == http.StatusPreconditionRequired {
+		t.Fatalf("emptying a cache asked for a typed phrase: %s", strings.TrimSpace(w.Body.String()))
+	}
+}
+
+// The sweep the three reclaim buttons run. It reaches unused images and the
+// build cache and must still not stop for a phrase: none of it destroys
+// anything a registry or the next build cannot produce again.
+func TestTheReclaimSweepIsNotTyped(t *testing.T) {
+	c, _ := newClient(t)
+
+	w := c.do(http.MethodPost,
+		"/api/v1/docker/prune?allImages=true&buildCache=true&allBuildCache=true", "", nil)
+	if w.Code == http.StatusPreconditionRequired || w.Code == http.StatusPreconditionFailed {
+		t.Fatalf("the reclaim sweep asked for a phrase: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	// Adding volumes to the same sweep must still type, so the narrowing above
+	// cannot be widened into "prune is never typed".
+	if w := c.do(http.MethodPost,
+		"/api/v1/docker/prune?allImages=true&buildCache=true&volumes=true", "", nil); w.Code != http.StatusPreconditionRequired {
+		t.Fatalf("a sweep including volumes did not ask for a phrase: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+}
+
+// A reader must not be able to reclaim anything. The capability sits on the
+// route rather than on the button, and this is the assertion that keeps it
+// there when the mount is next rearranged.
+func TestReclaimRoutesRequireTheDestructiveCapability(t *testing.T) {
+	s := testServer(t)
+	token := signInAs(t, s, "readonly-reclaimer", auth.RoleReadOnly)
+	r := s.Routes()
+
+	for _, path := range []string{
+		"/api/v1/docker/prune",
+		"/api/v1/docker/prune?allImages=true&buildCache=true",
+		"/api/v1/docker/build-cache/prune",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Cookie", token)
+		req.RemoteAddr = "127.0.0.1:12345"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s as readonly got %d, want 403: %s", path, w.Code, strings.TrimSpace(w.Body.String()))
+		}
+	}
+}

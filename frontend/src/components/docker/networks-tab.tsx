@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   Select,
   SelectContent,
@@ -65,6 +66,12 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
   if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
 
+  // The three the Engine owns are never removable, so they are not "unused"
+  // in any sense the prune button should count.
+  const unused = (data ?? []).filter(
+    (n) => n.usedBy.length === 0 && !SYSTEM_NETWORKS.includes(n.name),
+  )
+
   return (
     <div className="space-y-4">
       <Panel>
@@ -73,12 +80,51 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
           title="Networks"
           description={`${data?.length ?? 0} defined on this daemon`}
           actions={
-            can("service.control") && (
-              <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
-                <Plus className="size-4" />
-                New network
-              </Button>
-            )
+            <>
+              {can("service.control") && (
+                <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+                  <Plus className="size-4" />
+                  New network
+                </Button>
+              )}
+              {/* POST /docker/networks/prune has existed since this tab did and
+                  nothing ever called it. A network left behind by a removed
+                  stack is invisible clutter that also holds a subnet out of the
+                  pool, which is what makes a later `compose up` fail to find
+                  one. */}
+              {can("destructive") && unused.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    confirm({
+                      title: "Remove unused networks",
+                      confirmLabel: "Remove",
+                      description: (
+                        <p>
+                          Removes the {unused.length} network
+                          {unused.length === 1 ? "" : "s"} nothing is attached to:{" "}
+                          <b>{unused.map((n) => n.name).join(", ")}</b>. Docker recreates a compose
+                          network the next time its stack comes up.
+                        </p>
+                      ),
+                      action: async () => {
+                        const rep = await post<{ items: string[] }>("/docker/networks/prune")
+                        notify.success(
+                          rep.items.length
+                            ? `Removed ${rep.items.length} network${rep.items.length === 1 ? "" : "s"}`
+                            : "Nothing to remove",
+                        )
+                        refresh()
+                      },
+                    })
+                  }
+                >
+                  <Trash2 className="size-4" />
+                  Prune
+                </Button>
+              )}
+            </>
           }
         />
         <PanelBody flush>
@@ -111,7 +157,18 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                   <TableCell className="font-mono text-[11px] text-muted-foreground">
                     {network.subnets.join(", ") || "—"}
                   </TableCell>
-                  <TableCell className="numeric text-right text-xs">{network.containers}</TableCell>
+                  <TableCell className="numeric text-right text-xs">
+                    {network.usedBy.length > 0 ? (
+                      <Tooltip>
+                        <TooltipTrigger className="cursor-default">
+                          {network.usedBy.length}
+                        </TooltipTrigger>
+                        <TooltipContent>{network.usedBy.join(", ")}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {can("destructive") && !SYSTEM_NETWORKS.includes(network.name) && (
                       <IconAction
@@ -124,8 +181,10 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                             description: (
                               <p>
                                 Removes <b>{network.name}</b>.
-                                {network.containers > 0
-                                  ? ` ${network.containers} container(s) are attached and will lose the names they use to reach each other on it.`
+                                {network.usedBy.length > 0
+                                  ? ` ${network.usedBy.join(", ")} ${
+                                      network.usedBy.length === 1 ? "is" : "are"
+                                    } attached and will lose the names they use to reach each other on it.`
                                   : " Nothing is attached to it."}
                               </p>
                             ),

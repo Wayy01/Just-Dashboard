@@ -173,6 +173,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodPost, "/prune", s.handle(s.handlePruneAll))
+			r.Method(http.MethodPost, "/build-cache/prune", s.handle(s.handleBuildCachePrune))
 		})
 	})
 }
@@ -769,6 +770,13 @@ func (s *Server) handleVolumePrune(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
+// handleNetworkList joins the network list to the containers attached to each
+// one, for the same reason handleVolumeList does.
+//
+// Docker's network listing leaves the container map empty — only an inspect
+// fills it — so the count this page used to show was structurally zero for
+// every network on every host, and the delete dialog read "nothing is attached
+// to it" over a network carrying a running stack.
 func (s *Server) handleNetworkList(w http.ResponseWriter, r *http.Request) error {
 	list, err := s.modules.docker.ListNetworks(r.Context())
 	if err != nil {
@@ -904,23 +912,58 @@ func (s *Server) stackAction(action dockerx.ComposeAction) httpx.Handler {
 }
 
 func (s *Server) handlePruneAll(w http.ResponseWriter, r *http.Request) error {
-	includeVolumes := r.URL.Query().Get("volumes") == "true"
-	allImages := r.URL.Query().Get("allImages") == "true"
-	// Only the volume sweep is typed for: a container, a network or an image
-	// comes back from a registry or a compose file, a volume comes back from
-	// nothing. Without volumes this is the routine housekeeping sweep and an
-	// ordinary confirmation is the right weight.
-	if includeVolumes {
+	opts := dockerx.PruneOptions{
+		Volumes:   r.URL.Query().Get("volumes") == "true",
+		AllImages: r.URL.Query().Get("allImages") == "true",
+		// The build cache is the largest line on any server that builds, and
+		// until 0.6.4 no route in the product could touch it: the dashboard
+		// reported tens of gigabytes as reclaimable and had nothing to reclaim
+		// it with. It is opt-in rather than always-on so the plain sweep still
+		// means what its dialog says.
+		BuildCache:    r.URL.Query().Get("buildCache") == "true",
+		AllBuildCache: r.URL.Query().Get("allBuildCache") == "true",
+	}
+	// Only the volume sweep is typed for: a container, a network, an image or
+	// a cache entry comes back from a registry, a compose file or the next
+	// build; a volume comes back from nothing. Without volumes this is the
+	// routine housekeeping sweep and an ordinary confirmation is the right
+	// weight — see invariant 3 on frequency rather than severity.
+	if opts.Volumes {
 		if err := httpx.RequireTypedConfirmation(w, r, "prune everything"); err != nil {
 			return err
 		}
 	}
-	reports, err := s.modules.docker.PruneAll(r.Context(), includeVolumes, allImages)
+	reports, err := s.modules.docker.PruneAll(r.Context(), opts)
 	if err != nil {
 		return s.dockerErr(err)
 	}
-	httpx.SetAudit(r, "docker.prune.all", "",
-		map[string]any{"volumes": includeVolumes, "allImages": allImages, "reports": reports})
+	httpx.SetAudit(r, "docker.prune.all", "", map[string]any{
+		"volumes": opts.Volumes, "allImages": opts.AllImages,
+		"buildCache": opts.BuildCache, "reports": reports,
+	})
 	httpx.JSON(w, http.StatusOK, reports)
+	return nil
+}
+
+// handleBuildCachePrune is the one line of `docker system df` that had no
+// button. BuildKit's cache is not in the image store, so neither the image
+// prune nor the "prune everything" sweep reached it, and on a server that
+// builds it is routinely the largest thing on the disk.
+//
+// Not typed: a cache is the definition of recoverable — the worst a wrong
+// press costs is a slower next build.
+func (s *Server) handleBuildCachePrune(w http.ResponseWriter, r *http.Request) error {
+	// Defaults to the wide sweep, because the figure this dashboard puts on
+	// screen is Docker's "reclaimable", which is what `-a` frees. A button
+	// quoting one number and running the command for a smaller one is how the
+	// last version of this feature came to look broken.
+	all := r.URL.Query().Get("all") != "false"
+	rep, err := s.modules.docker.PruneBuildCache(r.Context(), all)
+	if err != nil {
+		return s.dockerErr(err)
+	}
+	httpx.SetAudit(r, "docker.buildcache.prune", "",
+		map[string]any{"all": all, "reclaimed": rep.SpaceReclaimed, "entries": len(rep.Items)})
+	httpx.JSON(w, http.StatusOK, rep)
 	return nil
 }

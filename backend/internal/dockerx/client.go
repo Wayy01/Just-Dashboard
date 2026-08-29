@@ -91,6 +91,20 @@ func (c *Client) diskUsage(ctx context.Context) *dtypes.DiskUsage {
 	return &du
 }
 
+// forgetDiskUsage drops the cached reading so the next caller pays for a fresh
+// walk of the layer store.
+//
+// Every prune calls this, and the reason is the whole complaint it fixes: the
+// cache serves a stale value *immediately* and refreshes behind the request,
+// so without it the page that just reclaimed forty gigabytes redraws with the
+// figure it had before — which is indistinguishable from a button that did
+// nothing, and was exactly how a working prune came to look broken.
+func (c *Client) forgetDiskUsage() {
+	c.duMu.Lock()
+	c.duVal, c.duAt = nil, time.Time{}
+	c.duMu.Unlock()
+}
+
 // WarmCaches primes the expensive queries in the background so the first
 // operator to open a page does not pay for them.
 func (c *Client) WarmCaches() {

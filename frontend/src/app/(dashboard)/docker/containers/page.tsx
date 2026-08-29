@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
+import { prune, pruneSummary, RECLAIM_SAFE } from "@/lib/docker-prune"
 import { bytes, percent, truncateMiddle } from "@/lib/format"
 import type {
   Container,
@@ -106,7 +107,9 @@ export default function ContainersPage() {
 
   const act = async (container: Container, action: string, confirmText?: string) => {
     try {
-      await post(`/docker/containers/${container.id}/${action}`, undefined, { confirm: confirmText })
+      await post(`/docker/containers/${container.id}/${action}`, undefined, {
+        confirm: confirmText,
+      })
       notify.success(`${container.name} ${action}ed`)
     } catch (err) {
       notify.error(`Could not ${action} ${container.name}`, err)
@@ -167,11 +170,82 @@ export default function ContainersPage() {
             })
           }
           break
+        case "cap-logs":
+          if (finding.targetId && finding.target) {
+            confirm({
+              title: "Cap the log size",
+              confirmLabel: "Apply",
+              description: (
+                <>
+                  <p>
+                    <b>{finding.target}</b> will be replaced by an identical container that keeps 10
+                    MB of logs across three files instead of every line it has ever printed. Docker
+                    cannot change a log driver on a container that already exists, so the only way
+                    to set it is to rebuild it.
+                  </p>
+                  <p>
+                    Its volumes and settings come with it; the existing log file goes with the old
+                    container, and the service is interrupted for as long as it takes to start.
+                  </p>
+                </>
+              ),
+              action: async (phrase) => {
+                const spec = await get<ContainerSpec>(`/docker/containers/${finding.targetId}/spec`)
+                await post(
+                  `/docker/containers/${finding.targetId}/recreate`,
+                  {
+                    spec: {
+                      ...spec,
+                      logging: {
+                        driver: "json-file",
+                        options: { "max-size": "10m", "max-file": "3" },
+                      },
+                    },
+                  },
+                  { confirm: phrase },
+                )
+                health.refresh()
+              },
+            })
+          }
+          break
         case "stack.up":
           router.push("/docker/stacks")
           break
+        case "volumes":
+          router.push("/docker/volumes")
+          break
         case "prune":
-          router.push("/docker/images")
+          // Runs the sweep rather than linking to it. This used to push to the
+          // image list, where the only control prunes *dangling* images — so a
+          // finding announcing tens of gigabytes was answered by a button that
+          // on most hosts frees nothing, which is precisely how a working page
+          // came to read as broken. The scope here is the finding's own
+          // arithmetic: unused images plus build cache, never volumes.
+          confirm({
+            title: finding.title,
+            confirmLabel: "Reclaim",
+            description: (
+              <>
+                <p>
+                  Removes every image no container is using and the whole build cache, along with
+                  stopped containers and unused networks.
+                </p>
+                <p>
+                  Nothing a running container needs is touched, and <b>no volume is</b> — the images
+                  come back from their registries and the cache rebuilds itself, more slowly, on the
+                  next build.
+                </p>
+              </>
+            ),
+            action: async () => {
+              const reports = await prune(RECLAIM_SAFE)
+              const { reclaimed, message, failed } = pruneSummary(reports)
+              if (failed.length && reclaimed === 0) notify.error(message)
+              else notify.success(message)
+              health.refresh()
+            },
+          })
           break
         default:
           if (finding.targetId) setSelected(finding.targetId)
@@ -252,7 +326,9 @@ export default function ContainersPage() {
                   >
                     <TableCell>
                       <div className="max-w-[18rem] min-w-0">
-                        <RowLink onClick={() => setSelected(container.id)}>{container.name}</RowLink>
+                        <RowLink onClick={() => setSelected(container.id)}>
+                          {container.name}
+                        </RowLink>
                         {container.composeStack && (
                           <p className="truncate text-[11px] text-muted-foreground">
                             <Layers className="mr-1 inline size-3" />
@@ -277,7 +353,9 @@ export default function ContainersPage() {
                         </p>
                       ) : (
                         container.health && (
-                          <p className="mt-1 text-[11px] text-muted-foreground">{container.health}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {container.health}
+                          </p>
                         )
                       )}
                     </TableCell>
@@ -394,12 +472,12 @@ export default function ContainersPage() {
                                   <>
                                     <p>
                                       Pulls a newer <b>{container.image}</b> and replaces{" "}
-                                      <b>{container.name}</b> with a container built from it, keeping
-                                      every setting it has now.
+                                      <b>{container.name}</b> with a container built from it,
+                                      keeping every setting it has now.
                                     </p>
                                     <p>
-                                      Its volumes come with it. Anything written inside the container
-                                      rather than into a volume does not.
+                                      Its volumes come with it. Anything written inside the
+                                      container rather than into a volume does not.
                                     </p>
                                   </>
                                 ),

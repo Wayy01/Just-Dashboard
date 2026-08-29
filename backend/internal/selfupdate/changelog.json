@@ -1,5 +1,5 @@
 {
-  "latest": "0.6.3",
+  "latest": "0.6.4",
   "releases": [
     {
       "version": "0.6.3",
@@ -487,6 +487,64 @@
         {
           "kind": "added",
           "text": "Capability-based roles, API tokens, an audit trail and twelve themes"
+        }
+      ]
+    },
+    {
+      "version": "0.6.4",
+      "date": "2026-08-29",
+      "title": "The reclaim button reclaims",
+      "summary": "Docker's own accounting said forty-three gigabytes could be reclaimed on this server, and nothing in the dashboard could reclaim any of it. The button under that figure navigated to the image list, whose only control removes dangling images \u2014 of which a host that redeploys through compose usually has none \u2014 and the build cache, which was forty-one of those gigabytes, had no route in the product at all. This release is that gap closed, plus the two other places a Docker page was reporting a number it had never actually asked for.",
+      "changes": [
+        {
+          "kind": "fixed",
+          "text": "Reclaiming Docker disk now reclaims it, from the health finding, the Docker page and the new disk panel alike",
+          "detail": "The \"Reclaim it\" button under the health finding used to navigate to the image list rather than reclaim anything, and the prune it sent you to removes only dangling images \u2014 so on a server whose images all carry tags, every route to reclaiming disk freed nothing while the page promised tens of gigabytes. All three entry points now run the same sweep, and it is the one the figure describes: every image no container is using, plus the whole build cache, and never a volume."
+        },
+        {
+          "kind": "added",
+          "text": "The build cache can be emptied \u2014 on most servers it is the largest thing Docker is holding",
+          "detail": "BuildKit's cache lives outside the image store, so neither an image prune nor the \"prune everything\" sweep ever touched it, and no route in the product could. It is its own line in the disk panel with its own button, and it is part of the reclaim sweep. Emptying it costs a slower next build and nothing else."
+        },
+        {
+          "kind": "added",
+          "text": "A disk panel on the Docker images tab: where the space went, split into images, build cache, containers and volumes",
+          "detail": "The `docker system df` view, which is the first thing anybody runs on a server that has filled up. Every figure in it was already being computed and none of it was on screen. Each line says what is reclaimable and carries the button for it \u2014 except volumes, which are the one line here that is data rather than a copy of something fetchable, and are still removed one at a time from their own tab."
+        },
+        {
+          "kind": "fixed",
+          "text": "Reclaimable figures now match what a prune actually frees, rather than over-reporting by every shared layer",
+          "detail": "An unused image whose layers also belong to a running one frees almost nothing when it goes \u2014 python:3.11-slim measures 189 MB and gives back 2. The old sum counted the full size of everything unused, so the promise was always larger than the result. Both figures are now Docker's own, and a test drives a real daemon to keep them that way."
+        },
+        {
+          "kind": "fixed",
+          "text": "The disk figures refresh after a prune instead of redrawing the number they had before",
+          "detail": "The reading is cached for a minute and served stale while it refreshes behind the request, so a successful prune was followed by a page still showing the pre-prune total \u2014 which is indistinguishable from a button that did nothing. Every prune now drops the cached reading."
+        },
+        {
+          "kind": "fixed",
+          "text": "The networks tab shows how many containers are on each network, instead of zero for every one",
+          "detail": "Docker's network listing never fills in its container map \u2014 only an inspect does \u2014 so the count was structurally zero on every host, and the delete dialog told you nothing was attached to a network carrying a running stack. The membership is joined from the container list, which already carries it, and the dialog names the containers it would cut off."
+        },
+        {
+          "kind": "fixed",
+          "text": "The warning about data written inside a container instead of a volume now fires",
+          "detail": "It reads the container's writable layer size, and Docker omits that from a container listing unless it is explicitly asked for \u2014 so the value was always zero and the check had never once run, on any host, while the panel advertised it. It reads the figure from the disk-usage walk instead, which already computes it. On the server this was found on, it immediately reported 28.3 GB sitting in one container's own filesystem, due to be destroyed by its next update."
+        },
+        {
+          "kind": "added",
+          "text": "Buttons for removing stopped containers and unused networks, which had routes and no way to press them",
+          "detail": "Both endpoints have existed since their tabs did and nothing ever called either, so clearing up meant doing it one row at a time. An unused network also holds a subnet out of the pool, which is what makes a later `compose up` fail to find one."
+        },
+        {
+          "kind": "fixed",
+          "text": "Editing or recreating a container keeps its logging settings instead of resetting them to Docker's unlimited default",
+          "detail": "\"Edit\" here means read the container back and build it again, and the shape it was read into had no room for a log driver \u2014 so a container someone had capped came back out of an edit keeping every line it would ever print, in one file that is never rotated, with nothing on screen having changed. The `docker run` and compose previews show the setting too, so a command copied out of this dashboard carries it."
+        },
+        {
+          "kind": "added",
+          "text": "The warning about an uncapped log file now has a button that caps it",
+          "detail": "It described a fix the dashboard could perform and did not offer. Docker cannot change a log driver on a running container, so it rebuilds it with a 10 MB limit over three files \u2014 the same bargain the restart-policy fix makes, and the dialog says so."
         }
       ]
     }

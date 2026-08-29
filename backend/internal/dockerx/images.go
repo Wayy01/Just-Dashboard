@@ -116,6 +116,7 @@ func (c *Client) RemoveImage(ctx context.Context, id string, force, pruneChildre
 	if err != nil {
 		return nil, err
 	}
+	defer c.forgetDiskUsage()
 	out := []string{}
 	for _, r := range res {
 		if r.Deleted != "" {
@@ -134,6 +135,11 @@ type PruneReport struct {
 	Kind           string   `json:"kind"`
 	SpaceReclaimed uint64   `json:"spaceReclaimed"`
 	Items          []string `json:"items"`
+	// Error names the step that did not run. A sweep is several independent
+	// prunes and one of them failing is not a reason to abandon the rest, but
+	// it is a reason to say so: silently dropping the line made a refused
+	// prune indistinguishable from one that found nothing to do.
+	Error string `json:"error,omitempty"`
 }
 
 // PruneImages removes dangling images by default. Passing all=true removes
@@ -150,6 +156,7 @@ func (c *Client) PruneImages(ctx context.Context, all bool) (PruneReport, error)
 	if err != nil {
 		return PruneReport{}, err
 	}
+	defer c.forgetDiskUsage()
 	out := PruneReport{Kind: "images", SpaceReclaimed: rep.SpaceReclaimed, Items: []string{}}
 	for _, d := range rep.ImagesDeleted {
 		if d.Deleted != "" {
@@ -239,6 +246,7 @@ func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) erro
 	if err != nil {
 		return err
 	}
+	defer c.forgetDiskUsage()
 	return cli.VolumeRemove(ctx, name, force)
 }
 
@@ -255,7 +263,12 @@ func (c *Client) PruneVolumes(ctx context.Context) (PruneReport, error) {
 	if err != nil {
 		return PruneReport{}, err
 	}
-	return PruneReport{Kind: "volumes", SpaceReclaimed: rep.SpaceReclaimed, Items: rep.VolumesDeleted}, nil
+	defer c.forgetDiskUsage()
+	items := rep.VolumesDeleted
+	if items == nil {
+		items = []string{}
+	}
+	return PruneReport{Kind: "volumes", SpaceReclaimed: rep.SpaceReclaimed, Items: items}, nil
 }
 
 type Network struct {
@@ -270,6 +283,9 @@ type Network struct {
 	Labels     map[string]string `json:"labels"`
 	Subnets    []string          `json:"subnets"`
 	Containers int               `json:"containers"`
+	// UsedBy names the containers attached, so the delete dialog can say which
+	// ones rather than only how many.
+	UsedBy []string `json:"usedBy"`
 }
 
 func (c *Client) ListNetworks(ctx context.Context) ([]Network, error) {
@@ -281,14 +297,40 @@ func (c *Client) ListNetworks(ctx context.Context) ([]Network, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Membership is joined from the containers rather than read off the
+	// listing, because Docker's network *list* never populates the container
+	// map — only an inspect does. `len(n.Containers)` here is not "nothing is
+	// attached", it is "this endpoint does not say", and rendering it as a
+	// count produced a column of zeroes on every host and a delete dialog that
+	// told the operator nothing was attached to a network carrying a running
+	// stack.
+	//
+	// It costs one call for the whole table: a container's networks come free
+	// with the container listing, the same way its mounts do for the volumes
+	// view. An inspect per network would be one round trip per row.
+	members := map[string][]string{}
+	if containers, err := c.ListContainers(ctx, true); err == nil {
+		for _, ct := range containers {
+			for _, name := range ct.Networks {
+				members[name] = append(members[name], ct.Name)
+			}
+		}
+		for name := range members {
+			sort.Strings(members[name])
+		}
+	}
 	out := make([]Network, 0, len(items))
 	for _, n := range items {
 		nw := Network{
 			ID: n.ID, Name: n.Name, Driver: n.Driver, Scope: n.Scope,
 			Internal: n.Internal, Attachable: n.Attachable, IPv6: n.EnableIPv6,
 			Created: n.Created.UTC(), Labels: n.Labels, Subnets: []string{},
-			Containers: len(n.Containers),
+			UsedBy: members[n.Name],
 		}
+		if nw.UsedBy == nil {
+			nw.UsedBy = []string{}
+		}
+		nw.Containers = len(nw.UsedBy)
 		if nw.Labels == nil {
 			nw.Labels = map[string]string{}
 		}
@@ -319,12 +361,44 @@ func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 	return cli.NetworkRemove(ctx, id)
 }
 
+// DiskUsageLine is one row of `docker system df`: how many objects of a kind
+// exist, how many are in use, what they occupy and what pruning would give
+// back.
+//
+// Reclaimable is the field the whole page hangs off, and it is deliberately
+// not "the size of the things nothing is using". Layers are shared, so an
+// unused image whose every layer also belongs to a running one frees nothing
+// when it goes — python:3.11-slim measures 189 MB and gives back 2. Promising
+// the naive figure means a prune that reports a fraction of what the page
+// said, which reads as a broken button rather than as arithmetic.
+type DiskUsageLine struct {
+	Total       int   `json:"total"`
+	Active      int   `json:"active"`
+	Size        int64 `json:"size"`
+	Reclaimable int64 `json:"reclaimable"`
+}
+
 type DiskUsage struct {
 	LayersSize int64 `json:"layersSize"`
 	Images     int64 `json:"imagesSize"`
 	Containers int64 `json:"containersSize"`
 	Volumes    int64 `json:"volumesSize"`
 	BuildCache int64 `json:"buildCacheSize"`
+
+	// The breakdown behind the totals above, added rather than replacing them
+	// so nothing reading the flat fields had to change.
+	ImagesLine     DiskUsageLine `json:"images"`
+	ContainersLine DiskUsageLine `json:"containers"`
+	VolumesLine    DiskUsageLine `json:"volumes"`
+	BuildCacheLine DiskUsageLine `json:"buildCache"`
+}
+
+// Reclaimable is everything a prune could give back without touching a volume.
+// Volumes are excluded on purpose: they are the one Docker object that is the
+// data, and a headline figure that silently counted them would be inviting the
+// operator to reclaim their database.
+func (d DiskUsage) Reclaimable() int64 {
+	return d.ImagesLine.Reclaimable + d.ContainersLine.Reclaimable + d.BuildCacheLine.Reclaimable
 }
 
 func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
@@ -338,49 +412,131 @@ func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
 		return DiskUsage{}, ErrUnavailable
 	}
 	out := DiskUsage{LayersSize: du.LayersSize}
+
+	// Images. `Size - SharedSize` over the unused ones is Docker's own
+	// definition of reclaimable and is what `docker system df` prints; summing
+	// Size over-reports by every layer the unused image has in common with one
+	// that is running.
+	out.ImagesLine = DiskUsageLine{Total: len(du.Images), Size: du.LayersSize}
 	for _, i := range du.Images {
 		out.Images += i.Size
-	}
-	for _, ct := range du.Containers {
-		out.Containers += ct.SizeRw
-	}
-	for _, v := range du.Volumes {
-		if v.UsageData != nil {
-			out.Volumes += v.UsageData.Size
+		if i.Containers > 0 {
+			out.ImagesLine.Active++
+			continue
+		}
+		if i.Size >= 0 && i.SharedSize >= 0 {
+			out.ImagesLine.Reclaimable += i.Size - i.SharedSize
 		}
 	}
+
+	// Containers. Only the writable layer counts — the image underneath it is
+	// the images line's business, and adding it here would report the same
+	// bytes twice.
+	out.ContainersLine.Total = len(du.Containers)
+	for _, ct := range du.Containers {
+		out.Containers += ct.SizeRw
+		out.ContainersLine.Size += ct.SizeRw
+		if strings.EqualFold(ct.State, "running") {
+			out.ContainersLine.Active++
+		} else {
+			out.ContainersLine.Reclaimable += ct.SizeRw
+		}
+	}
+
+	out.VolumesLine.Total = len(du.Volumes)
+	for _, v := range du.Volumes {
+		if v.UsageData == nil {
+			continue
+		}
+		out.Volumes += v.UsageData.Size
+		out.VolumesLine.Size += v.UsageData.Size
+		if v.UsageData.RefCount > 0 {
+			out.VolumesLine.Active++
+		} else {
+			out.VolumesLine.Reclaimable += v.UsageData.Size
+		}
+	}
+
+	// Build cache. A shared record's bytes are already counted by the record
+	// it is shared with, so the size line skips them; without that the total
+	// exceeds what the disk actually holds.
+	out.BuildCacheLine.Total = len(du.BuildCache)
+	var inUse int64
 	for _, b := range du.BuildCache {
 		out.BuildCache += b.Size
+		if !b.Shared {
+			out.BuildCacheLine.Size += b.Size
+		}
+		if b.InUse {
+			out.BuildCacheLine.Active++
+			inUse += b.Size
+		}
+	}
+	out.BuildCacheLine.Reclaimable = out.BuildCacheLine.Size - inUse
+	if out.BuildCacheLine.Reclaimable < 0 {
+		out.BuildCacheLine.Reclaimable = 0
 	}
 	return out, nil
 }
 
-// PruneAll is the "reclaim everything" button: stopped containers, dangling
-// images, unused volumes and the build cache, reported as separate lines so
-// the operator can see exactly what went.
-func (c *Client) PruneAll(ctx context.Context, includeVolumes, allImages bool) ([]PruneReport, error) {
+// PruneOptions is what a sweep is allowed to touch. Every field defaults to
+// the conservative answer, so a zero value is `docker system prune`: stopped
+// containers, dangling images, unused networks and dangling build cache.
+type PruneOptions struct {
+	// Volumes is the only one that destroys data, which is why it is the only
+	// one behind a typed phrase at the route.
+	Volumes bool
+	// AllImages reaches tagged images no container is using, not merely the
+	// dangling ones. It is the difference between `docker image prune` and
+	// `docker image prune -a`, and on a server that has been up for a while it
+	// is the difference between reclaiming nothing and reclaiming gigabytes:
+	// an image left behind by a compose redeploy keeps its tag, so nothing is
+	// dangling and the conservative sweep frees zero bytes.
+	AllImages bool
+	// BuildCache reaches BuildKit's cache. Kept as its own flag rather than
+	// folded into AllImages because it is by far the largest line on a build
+	// server and the operator should be able to see it named.
+	BuildCache bool
+	// AllBuildCache is to BuildCache what AllImages is to images.
+	AllBuildCache bool
+}
+
+// PruneAll is the "reclaim everything" sweep, reported as separate lines so
+// the operator can see exactly what went and how much each part gave back.
+//
+// A failing step no longer takes the sweep down silently. Each prune used to
+// be `if err == nil` with no else, so a daemon that refused one of them
+// returned a short list that read as "there was nothing there" — the report
+// carries the error now and the caller can say which part did not run.
+func (c *Client) PruneAll(ctx context.Context, opts PruneOptions) ([]PruneReport, error) {
 	cli, err := c.api()
 	if err != nil {
 		return nil, err
 	}
+	defer c.forgetDiskUsage()
 	reports := []PruneReport{}
-
-	if rep, err := cli.ContainersPrune(ctx, filters.NewArgs()); err == nil {
-		reports = append(reports, PruneReport{
-			Kind: "containers", SpaceReclaimed: rep.SpaceReclaimed, Items: rep.ContainersDeleted,
-		})
-	}
-	if rep, err := c.PruneImages(ctx, allImages); err == nil {
-		reports = append(reports, rep)
-	}
-	if includeVolumes {
-		if rep, err := c.PruneVolumes(ctx); err == nil {
-			reports = append(reports, rep)
+	add := func(rep PruneReport, err error) {
+		if err != nil {
+			rep.Error = err.Error()
 		}
-	}
-	if rep, err := c.pruneNetworks(ctx); err == nil {
+		if rep.Items == nil {
+			rep.Items = []string{}
+		}
 		reports = append(reports, rep)
 	}
+
+	ctRep, err := cli.ContainersPrune(ctx, filters.NewArgs())
+	add(PruneReport{
+		Kind: "containers", SpaceReclaimed: ctRep.SpaceReclaimed, Items: ctRep.ContainersDeleted,
+	}, err)
+	add(c.PruneImages(ctx, opts.AllImages))
+	if opts.BuildCache {
+		add(c.PruneBuildCache(ctx, opts.AllBuildCache))
+	}
+	if opts.Volumes {
+		add(c.PruneVolumes(ctx))
+	}
+	add(c.pruneNetworks(ctx))
 	return reports, nil
 }
 
@@ -393,7 +549,11 @@ func (c *Client) pruneNetworks(ctx context.Context) (PruneReport, error) {
 	if err != nil {
 		return PruneReport{}, err
 	}
-	return PruneReport{Kind: "networks", Items: rep.NetworksDeleted}, nil
+	items := rep.NetworksDeleted
+	if items == nil {
+		items = []string{}
+	}
+	return PruneReport{Kind: "networks", Items: items}, nil
 }
 
 // ImageRef normalises a user-supplied reference so "nginx" pulls nginx:latest

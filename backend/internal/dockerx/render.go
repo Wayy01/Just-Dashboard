@@ -41,6 +41,15 @@ func (s ContainerSpec) RunCommand() string {
 		}
 		add("--restart", policy)
 	}
+	// Rendered so the command on screen is the container that would exist. A
+	// spec field the preview omits is one an operator copying the line out of
+	// this dashboard loses without being told.
+	if s.Logging.Driver != "" {
+		add("--log-driver", shellQuote(s.Logging.Driver))
+	}
+	for _, k := range sortedKeys(s.Logging.Options) {
+		add("--log-opt", shellQuote(k+"="+s.Logging.Options[k]))
+	}
 	for _, p := range s.Ports {
 		if p.HostPort == 0 {
 			add("--expose", portSpec(p.ContainerPort, p.Protocol))
@@ -304,6 +313,21 @@ func (s ContainerSpec) ComposeService(serviceName string) string {
 	if s.RestartPolicy != "" && s.RestartPolicy != "no" {
 		w(4, "restart: %s", s.RestartPolicy)
 	}
+	if s.Logging.Driver != "" || len(s.Logging.Options) > 0 {
+		w(4, "logging:")
+		if s.Logging.Driver != "" {
+			w(6, "driver: %s", s.Logging.Driver)
+		}
+		if len(s.Logging.Options) > 0 {
+			w(6, "options:")
+			for _, k := range sortedKeys(s.Logging.Options) {
+				// Quoted: compose reads an unquoted 10m as a string anyway,
+				// but max-file: 3 becomes an int and the daemon wants a
+				// string, which fails at `up` rather than here.
+				w(8, "%s: %q", k, s.Logging.Options[k])
+			}
+		}
+	}
 	if len(s.Command) > 0 {
 		w(4, "command: %s", yamlList(s.Command))
 	}
@@ -541,4 +565,19 @@ func ShortID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// sortedKeys keeps rendered output stable. Go randomises map iteration, and a
+// preview that reorders its own lines between two identical requests reads as
+// the server having changed its mind.
+func sortedKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

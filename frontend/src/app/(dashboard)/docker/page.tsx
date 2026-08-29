@@ -4,8 +4,8 @@ import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ArrowRight, CircleSlash, HeartPulse, Layers, Play, Plus, Trash2 } from "lucide-react"
 import { notify } from "@/lib/toast"
-import { get, post } from "@/lib/api"
-import { bytes } from "@/lib/format"
+import { get } from "@/lib/api"
+import { prune, pruneSummary, RECLAIM_SAFE } from "@/lib/docker-prune"
 import type { Container, ContainerSpec, DockerDiagnosis } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -69,20 +69,30 @@ export default function DockerOverviewPage() {
                 size="sm"
                 onClick={() =>
                   confirm({
-                    title: "Prune everything",
-                    confirmLabel: "Prune",
+                    title: "Reclaim disk",
+                    confirmLabel: "Reclaim",
                     description: (
-                      <p>
-                        Removes stopped containers, dangling images and unused networks. Volumes are
-                        left alone unless you prune them from the Volumes page.
-                      </p>
+                      <>
+                        <p>
+                          Removes stopped containers, unused networks, every image no container is
+                          using, and the build cache.
+                        </p>
+                        <p>
+                          Volumes are left alone — those hold data, and the Volumes page removes
+                          them one at a time. Everything else here comes back from a registry or
+                          rebuilds itself.
+                        </p>
+                      </>
                     ),
+                    // The same scope as the health finding's "Reclaim it" and
+                    // the disk panel's button. Three entry points running three
+                    // different sweeps is how one of them ended up freeing
+                    // nothing while the page promised forty gigabytes.
                     action: async () => {
-                      const reports = await post<{ kind: string; spaceReclaimed: number }[]>(
-                        "/docker/prune",
-                      )
-                      const total = reports.reduce((s, r) => s + r.spaceReclaimed, 0)
-                      notify.success(`Reclaimed ${bytes(total)}`)
+                      const reports = await prune(RECLAIM_SAFE)
+                      const { reclaimed, message, failed } = pruneSummary(reports)
+                      if (failed.length && reclaimed === 0) notify.error(message)
+                      else notify.success(message)
                       health.refresh()
                       list.refresh()
                     },
@@ -111,7 +121,12 @@ export default function DockerOverviewPage() {
           value={stopped}
           hint={stopped ? "not currently serving" : "everything is up"}
         />
-        <StatTile label="Compose stacks" icon={Layers} value={stacks.length} hint="labelled projects" />
+        <StatTile
+          label="Compose stacks"
+          icon={Layers}
+          value={stacks.length}
+          hint="labelled projects"
+        />
         <Link href="/docker/containers" className="block min-w-0">
           <StatTile
             className="h-full transition-colors hover:border-primary/30"

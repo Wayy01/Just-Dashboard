@@ -552,20 +552,37 @@ func (c *Client) PullAndReport(ctx context.Context, ref string, out chan<- PullP
 	return res, nil
 }
 
-// pruneBuildCache is part of "reclaim everything": BuildKit's cache lives
-// outside the image store and is routinely the largest single consumer on a
-// server that builds, which makes it the thing an operator most wants gone and
-// the thing `docker system df` reports separately.
-func (c *Client) pruneBuildCache(ctx context.Context) (PruneReport, error) {
+// PruneBuildCache reclaims BuildKit's cache, which lives outside the image
+// store and is routinely the largest single consumer on a server that builds —
+// which is why `docker system df` reports it as its own line and why an
+// operator staring at a full disk is nearly always staring at this.
+//
+// It is exported because it was not, and that was the bug: the helper existed,
+// its comment claimed it was "part of reclaim everything", and nothing in the
+// product ever called it. A dashboard reporting forty gigabytes of reclaimable
+// cache with no route able to reclaim any of it is worse than one that never
+// mentioned the cache at all.
+//
+// `all` is the difference between `docker builder prune` and `docker builder
+// prune -a`: without it only cache no longer reachable from any build is
+// removed, with it every entry not currently in use goes. The reclaimable
+// figure this dashboard reports is the second one, so the button that quotes
+// that figure passes true.
+func (c *Client) PruneBuildCache(ctx context.Context, all bool) (PruneReport, error) {
 	cli, err := c.api()
 	if err != nil {
 		return PruneReport{}, err
 	}
-	rep, err := cli.BuildCachePrune(ctx, build.CachePruneOptions{All: true})
+	rep, err := cli.BuildCachePrune(ctx, build.CachePruneOptions{All: all})
 	if err != nil {
 		return PruneReport{}, err
 	}
-	return PruneReport{Kind: "build cache", SpaceReclaimed: rep.SpaceReclaimed, Items: rep.CachesDeleted}, nil
+	defer c.forgetDiskUsage()
+	items := rep.CachesDeleted
+	if items == nil {
+		items = []string{}
+	}
+	return PruneReport{Kind: "build cache", SpaceReclaimed: rep.SpaceReclaimed, Items: items}, nil
 }
 
 // containerImageRefs is the set of image references containers are actually
