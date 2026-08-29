@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -32,26 +33,48 @@ type Source struct {
 	Size     int64      `json:"size,omitempty"`
 	Modified *time.Time `json:"modified,omitempty"`
 	Rotated  bool       `json:"rotated"`
+	// Archives counts the rotated generations sitting next to a live file, and
+	// ArchiveBytes their total size. A source that says "+ 7 archives, 2.1 GB"
+	// is telling the operator both that history is searchable past last
+	// night's rotation and where their disk went.
+	Archives     int   `json:"archives,omitempty"`
+	ArchiveBytes int64 `json:"archiveBytes,omitempty"`
+	// Detail is a one-line description of what this source actually is, for
+	// the reader who has never met auth.log. The point of a unified viewer is
+	// lost if choosing a source is still a guess.
+	Detail string `json:"detail,omitempty"`
+	// Status carries a live source's state — a container that is not running
+	// has logs worth reading and no new lines coming, and saying so is the
+	// difference between "stopped" and "the page is broken".
+	Status string `json:"status,omitempty"`
 }
 
 // wellKnown are the files an operator expects to find without hunting. Any
-// that do not exist on this host are simply skipped.
+// that do not exist on this host are simply skipped. Each carries the sentence
+// somebody needs to choose it, because "auth" and "secure" and "messages" are
+// only obvious to a reader who already knows which one holds sshd's refusals.
 var wellKnown = []struct {
-	path  string
-	label string
-	kind  SourceKind
+	path   string
+	label  string
+	kind   SourceKind
+	detail string
 }{
-	{"/var/log/syslog", "syslog", KindSystem},
-	{"/var/log/messages", "messages", KindSystem},
-	{"/var/log/auth.log", "auth", KindSystem},
-	{"/var/log/secure", "secure", KindSystem},
-	{"/var/log/kern.log", "kernel", KindSystem},
-	{"/var/log/dpkg.log", "dpkg", KindSystem},
-	{"/var/log/ufw.log", "ufw", KindSystem},
-	{"/var/log/fail2ban.log", "fail2ban", KindSystem},
-	{"/var/log/nginx/access.log", "nginx access", KindNginx},
-	{"/var/log/nginx/error.log", "nginx error", KindNginx},
-	{"/var/log/caddy/access.log", "caddy access", KindNginx},
+	{"/var/log/syslog", "syslog", KindSystem, "Everything the system logger was handed — the first place to look"},
+	{"/var/log/messages", "messages", KindSystem, "The RPM world's syslog: general system messages"},
+	{"/var/log/auth.log", "auth", KindSystem, "Logins, sudo and sshd — who got in and who was refused"},
+	{"/var/log/secure", "secure", KindSystem, "The RPM world's auth.log: logins, sudo and sshd"},
+	{"/var/log/kern.log", "kernel", KindSystem, "Kernel messages: hardware, filesystems, the OOM killer"},
+	{"/var/log/dpkg.log", "dpkg", KindSystem, "Every package installed, upgraded or removed, with timestamps"},
+	{"/var/log/apt/history.log", "apt history", KindSystem, "Package transactions as apt recorded them, with the command that ran"},
+	{"/var/log/ufw.log", "ufw", KindSystem, "Packets the firewall blocked or allowed, if logging is on"},
+	{"/var/log/fail2ban.log", "fail2ban", KindSystem, "Bans, unbans and the jails that issued them"},
+	{"/var/log/cloud-init.log", "cloud-init", KindSystem, "What the provider's first-boot provisioning did"},
+	{"/var/log/unattended-upgrades/unattended-upgrades.log", "unattended-upgrades", KindSystem, "Automatic security updates: what was applied overnight"},
+	{"/var/log/nginx/access.log", "nginx access", KindNginx, "Every request nginx served, with status and timing"},
+	{"/var/log/nginx/error.log", "nginx error", KindNginx, "Upstream failures, certificate problems, refused requests"},
+	{"/var/log/caddy/access.log", "caddy access", KindNginx, "Every request Caddy served"},
+	{"/var/log/mysql/error.log", "mysql error", KindApp, "MySQL/MariaDB startup, crashes and replication errors"},
+	{"/var/log/redis/redis-server.log", "redis", KindApp, "Redis startup, persistence and eviction"},
 }
 
 // Discover enumerates readable log files. It walks the configured roots so
@@ -60,50 +83,67 @@ func (s *Service) Discover(ctx context.Context) ([]Source, error) {
 	seen := map[string]bool{}
 	out := []Source{}
 
-	add := func(path, label string, kind SourceKind) {
-		if seen[path] {
+	add := func(p, label string, kind SourceKind, detail string) {
+		if p == "" || seen[p] {
 			return
 		}
-		st, err := os.Stat(path)
+		// A well-known path is only worth offering if this service may open
+		// it. JD_LOG_ROOTS defaults to /var/log so the list below is normally
+		// reachable in full — but an install that narrowed the roots used to
+		// get a rail full of files that refused to open, which is the same
+		// lie as a control that reports success and does nothing.
+		if err := s.Allow(p); err != nil {
+			return
+		}
+		st, err := os.Stat(p)
 		if err != nil || st.IsDir() {
 			return
 		}
-		seen[path] = true
+		seen[p] = true
 		mod := st.ModTime().UTC()
-		out = append(out, Source{
-			ID: path, Label: label, Kind: kind, Path: path,
+		src := Source{
+			ID: p, Label: label, Kind: kind, Path: p, Detail: detail,
 			Size: st.Size(), Modified: &mod,
-		})
+		}
+		for _, a := range Archives(p) {
+			src.Archives++
+			if ast, err := os.Stat(a); err == nil {
+				src.ArchiveBytes += ast.Size()
+			}
+		}
+		src.Rotated = src.Archives > 0
+		out = append(out, src)
 	}
 
 	for _, wk := range wellKnown {
-		add(wk.path, wk.label, wk.kind)
+		add(wk.path, wk.label, wk.kind, wk.detail)
 	}
 	for _, root := range s.roots {
-		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 			if err != nil || ctx.Err() != nil {
 				return nil
 			}
 			if d.IsDir() {
-				if strings.Count(strings.TrimPrefix(path, root), string(os.PathSeparator)) > 3 {
+				if strings.Count(strings.TrimPrefix(p, root), string(os.PathSeparator)) > 3 {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 			name := d.Name()
-			// Rotated and compressed archives are noise in a live viewer;
-			// they are reachable through the file manager if needed.
+			// Rotated and compressed archives are noise in a live viewer: they
+			// hang off their live file as an archive count instead, and the
+			// history search reads them from there.
 			if !strings.HasSuffix(name, ".log") && !strings.HasSuffix(name, ".err") && !strings.HasSuffix(name, ".out") {
 				return nil
 			}
-			if strings.HasSuffix(name, ".gz") || strings.HasSuffix(name, ".xz") {
+			if Compressed(p) {
 				return nil
 			}
 			kind := KindApp
-			if strings.Contains(path, "nginx") || strings.Contains(path, "caddy") {
+			if strings.Contains(p, "nginx") || strings.Contains(p, "caddy") {
 				kind = KindNginx
 			}
-			add(path, strings.TrimPrefix(path, root+string(os.PathSeparator)), kind)
+			add(p, strings.TrimPrefix(p, root+string(os.PathSeparator)), kind, "")
 			return nil
 		})
 	}
@@ -137,6 +177,82 @@ type RotateStatus struct {
 	LastRun   *time.Time   `json:"lastRun,omitempty"`
 }
 
+// Retention is the verdict for one file, in the spirit of netsec.Assess: the
+// rules are on disk already and nobody reads them, so the page answers the
+// question they were consulted for. A log with no rule matching it is the one
+// that fills the disk at 3am, and it is invisible in a rule list because it is
+// the entry that is not there.
+type Retention struct {
+	Managed   bool        `json:"managed"`
+	Rule      *RotateRule `json:"rule,omitempty"`
+	Pattern   string      `json:"pattern,omitempty"`
+	Summary   string      `json:"summary"`
+	Level     string      `json:"level"` // "ok" | "warn" | "unknown"
+	LastRun   *time.Time  `json:"lastRun,omitempty"`
+	Available bool        `json:"available"`
+}
+
+// MatchRetention finds the logrotate rule governing a path. logrotate takes
+// glob patterns, so this matches the way it does rather than by prefix, and a
+// directory-wide pattern (/var/log/nginx/*.log) is expected to cover a file
+// inside it.
+func MatchRetention(st *RotateStatus, filePath string, size int64) Retention {
+	r := Retention{Available: st.Available, LastRun: st.LastRun}
+	if !st.Available {
+		r.Level = "unknown"
+		r.Summary = "logrotate is not installed on this host, so nothing is trimming this file."
+		return r
+	}
+	for i := range st.Rules {
+		for _, pattern := range st.Rules[i].Patterns {
+			if ok, _ := path.Match(pattern, filePath); ok {
+				r.Managed, r.Rule, r.Pattern = true, &st.Rules[i], pattern
+				break
+			}
+		}
+		if r.Managed {
+			break
+		}
+	}
+	if !r.Managed {
+		r.Level = "warn"
+		r.Summary = "No logrotate rule matches this file. It grows until the disk is full."
+		if size > 0 && size < 16<<20 {
+			// Small and unmanaged is a note, not an alarm — plenty of
+			// application logs are written once at boot.
+			r.Level = "unknown"
+			r.Summary = "No logrotate rule matches this file, so nothing trims it. It is small so far."
+		}
+		return r
+	}
+	parts := []string{}
+	if r.Rule.Frequency != "" {
+		parts = append(parts, "rotated "+r.Rule.Frequency)
+	} else if r.Rule.Size != "" {
+		parts = append(parts, "rotated past "+r.Rule.Size)
+	} else {
+		parts = append(parts, "rotated")
+	}
+	if r.Rule.Rotate != "" {
+		parts = append(parts, r.Rule.Rotate+" kept")
+	}
+	if r.Rule.Compress {
+		parts = append(parts, "compressed")
+	}
+	r.Level = "ok"
+	r.Summary = strings.ToUpper(parts[0][:1]) + parts[0][1:] + ", " + strings.Join(parts[1:], ", ") + "."
+	if len(parts) == 1 {
+		r.Summary = strings.ToUpper(parts[0][:1]) + parts[0][1:] + "."
+	}
+	// A rule that exists and has not run in a fortnight is the failure this
+	// panel is really for: the config looks right and the disk fills anyway.
+	if st.LastRun != nil && time.Since(*st.LastRun) > 14*24*time.Hour {
+		r.Level = "warn"
+		r.Summary += " logrotate itself has not run since " + st.LastRun.Format("2 Jan") + " — the timer has stopped."
+	}
+	return r
+}
+
 // LogrotateStatus parses /etc/logrotate.conf and its drop-ins. The parser is
 // deliberately shallow — enough to report frequency, retention and compression
 // per pattern, which is what an operator checks — rather than a full
@@ -157,7 +273,8 @@ func LogrotateStatus(ctx context.Context) (*RotateStatus, error) {
 				names = append(names, filepath.Join("/etc/logrotate.d", e.Name()))
 			}
 		}
-		files = append(files, sortStrings(names)...)
+		sort.Strings(names)
+		files = append(files, names...)
 	}
 	for _, f := range files {
 		if ctx.Err() != nil {
@@ -176,8 +293,29 @@ func LogrotateStatus(ctx context.Context) (*RotateStatus, error) {
 	return st, nil
 }
 
-func parseLogrotateFile(path string) []RotateRule {
-	f, err := os.Open(path)
+// looksLikePattern separates the paths a stanza governs from the global
+// directives that sit at the same indentation in logrotate.conf. A pattern is
+// a path or a glob; a directive is a bare word.
+func looksLikePattern(field string) bool {
+	if field == "" {
+		return false
+	}
+	switch field[0] {
+	case '/', '"', '\'', '*', '~':
+		return true
+	}
+	return false
+}
+
+func trimQuotes(field string) string {
+	if len(field) >= 2 && (field[0] == '"' || field[0] == '\'') && field[len(field)-1] == field[0] {
+		return field[1 : len(field)-1]
+	}
+	return field
+}
+
+func parseLogrotateFile(p string) []RotateRule {
+	f, err := os.Open(p)
 	if err != nil {
 		return nil
 	}
@@ -185,25 +323,42 @@ func parseLogrotateFile(path string) []RotateRule {
 
 	rules := []RotateRule{}
 	var current *RotateRule
+	// A stanza's paths may be listed one per line before the brace, which is
+	// exactly how Debian ships rsyslog's: six paths and then `{`. Reading only
+	// the brace line meant syslog, auth.log, kern.log and three others were
+	// each reported as governed by no rule at all — a false "this file grows
+	// until the disk is full" on the six logs that matter most.
+	var pending []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasSuffix(line, "{") {
-			patterns := strings.Fields(strings.TrimSpace(strings.TrimSuffix(line, "{")))
-			current = &RotateRule{ConfigFile: path, Patterns: patterns, Options: []string{}}
-			continue
-		}
-		if line == "}" {
-			if current != nil {
-				rules = append(rules, *current)
-				current = nil
+		if current == nil {
+			if strings.HasSuffix(line, "{") {
+				for _, field := range strings.Fields(strings.TrimSuffix(line, "{")) {
+					pending = append(pending, trimQuotes(field))
+				}
+				current = &RotateRule{ConfigFile: p, Patterns: pending, Options: []string{}}
+				pending = nil
+				continue
+			}
+			fields := strings.Fields(line)
+			if looksLikePattern(fields[0]) {
+				for _, field := range fields {
+					pending = append(pending, trimQuotes(field))
+				}
+			} else {
+				// A global directive (weekly, su root adm, include …). Whatever
+				// paths came before it were not this stanza's.
+				pending = nil
 			}
 			continue
 		}
-		if current == nil {
+		if line == "}" {
+			rules = append(rules, *current)
+			current = nil
 			continue
 		}
 		fields := strings.Fields(line)

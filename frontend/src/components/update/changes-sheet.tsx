@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ArrowUpCircle, ChevronDown, History, Loader2, RefreshCw } from "lucide-react"
+import { ArrowUpCircle, ChevronDown, History, RefreshCw } from "lucide-react"
 import { relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { errorMessage } from "@/lib/api"
@@ -11,7 +11,7 @@ import { useSelfUpdate } from "@/hooks/use-self-update"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ReleaseList } from "@/components/update/release-notes"
 import { UpdateProgress } from "@/components/update/update-progress"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -171,7 +171,7 @@ export function ChangesSheet({
               disabled={checking || report?.check.enabled === false}
             >
               {checking ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <Spinner className="size-3.5" />
               ) : (
                 <RefreshCw className="size-3.5" />
               )}
@@ -188,7 +188,7 @@ export function ChangesSheet({
             )}
             {running && (
               <Button size="sm" disabled>
-                <Loader2 className="size-3.5 animate-spin" />
+                <Spinner className="size-3.5" />
                 Updating
               </Button>
             )}

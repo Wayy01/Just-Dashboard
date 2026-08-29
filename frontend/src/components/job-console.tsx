@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Ban, CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { Ban, CheckCircle2, XCircle } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import type { Job, JobLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/state"
 
 /**
  * Watching an operation that outlives the page.
@@ -24,12 +25,21 @@ import { Button } from "@/components/ui/button"
  * from the last sequence it saw, so a dropped connection costs nothing and a
  * console opened ten minutes late still shows everything from the beginning.
  */
-export function useJobConsole() {
+export function useJobConsole(options?: { onSuccess?: () => void }) {
   const [job, setJob] = useState<Job | null>(null)
   const [lines, setLines] = useState<JobLine[]>([])
   // The highest sequence seen, kept in a ref because a reconnect must ask for
   // what it actually missed rather than for what the first render knew about.
   const lastSeq = useRef(0)
+  // The status we last saw, so the running → succeeded edge can fire a
+  // callback (a page refreshing its data) without the page watching `job` in
+  // an effect. Held in a ref, and the callback too, so neither rebuilds the
+  // socket.
+  const lastStatus = useRef<Job["status"] | undefined>(undefined)
+  const onSuccessRef = useRef(options?.onSuccess)
+  useEffect(() => {
+    onSuccessRef.current = options?.onSuccess
+  })
 
   const onMessage = useCallback((envelope: Envelope) => {
     if (envelope.type === "output") {
@@ -50,7 +60,14 @@ export function useJobConsole() {
         return next.length > 4000 ? next.slice(next.length - 4000) : next
       })
     } else if (envelope.type === "job") {
-      setJob(envelope.data as Job)
+      const next = envelope.data as Job
+      // The edge into a finished run, however short — a job that goes
+      // pending → succeeded with no observed running frame still counts.
+      if (lastStatus.current !== "succeeded" && next.status === "succeeded") {
+        onSuccessRef.current?.()
+      }
+      lastStatus.current = next.status
+      setJob(next)
     }
   }, [])
 
@@ -66,6 +83,7 @@ export function useJobConsole() {
   /** Attaches to a job, replacing whatever was on screen. */
   const attach = useCallback((next: Job) => {
     lastSeq.current = 0
+    lastStatus.current = next.status
     setLines([])
     setJob(next)
   }, [])
@@ -75,6 +93,7 @@ export function useJobConsole() {
     try {
       const res = await get<{ job: Job; lines: JobLine[] }>(`/jobs/${id}`)
       lastSeq.current = res.lines.length > 0 ? res.lines[res.lines.length - 1].seq : 0
+      lastStatus.current = res.job.status
       setLines(res.lines)
       setJob(res.job)
     } catch (err) {
@@ -86,6 +105,7 @@ export function useJobConsole() {
     setJob(null)
     setLines([])
     lastSeq.current = 0
+    lastStatus.current = undefined
   }, [])
 
   const cancel = useCallback(async () => {
@@ -208,7 +228,7 @@ export function JobConsole({
 
 function JobIcon({ status }: { status: Job["status"] }) {
   if (status === "running")
-    return <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+    return <Spinner className="size-3.5 text-muted-foreground" />
   if (status === "succeeded") return <CheckCircle2 className="size-3.5 text-success" />
   if (status === "cancelled") return <Ban className="size-3.5 text-muted-foreground" />
   return <XCircle className="size-3.5 text-destructive" />
@@ -260,12 +280,8 @@ export function RecentJobs({
           onClick={() => onOpen(job.id)}
           title={`${job.title} · ${job.status}${job.startedBy ? ` · started by ${job.startedBy}` : ""}`}
           className={cn(
-            "flex max-w-56 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-colors hover:bg-[var(--row-hover)]",
-            job.status === "running"
-              ? "border-primary/30 bg-primary/[0.08]"
-              : job.status === "failed"
-                ? "border-destructive/30 text-destructive"
-                : "border-hairline text-muted-foreground",
+            "raised flex max-w-56 items-center gap-1.5 rounded-md border border-hairline bg-control px-2 py-1 text-[11px] transition-colors hover:bg-control-hover",
+            job.status === "failed" ? "text-destructive" : "text-muted-foreground",
           )}
         >
           <JobIcon status={job.status} />

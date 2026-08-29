@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowUpCircle, FileWarning, Loader2, RefreshCw, Sparkles } from "lucide-react"
+import { ArrowUpCircle, FileWarning, RefreshCw, Sparkles } from "lucide-react"
 import { errorMessage } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { notify } from "@/lib/toast"
@@ -10,7 +10,7 @@ import { useSelfUpdate } from "@/hooks/use-self-update"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ChangesSheet } from "@/components/update/changes-sheet"
 import { UpdateProgress } from "@/components/update/update-progress"
-import { ErrorState, Notice } from "@/components/state"
+import { ErrorState, Notice, Spinner } from "@/components/state"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 
@@ -89,7 +89,7 @@ export function DashboardUpdatePanel() {
                 }
               >
                 {checking ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner className="size-4" />
                 ) : (
                   <RefreshCw className="size-4" />
                 )}

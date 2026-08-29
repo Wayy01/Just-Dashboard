@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import type { FileEntry } from "@/lib/types"
@@ -9,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Spinner } from "@/components/state"
 import {
   Dialog,
   DialogContent,
@@ -200,7 +200,7 @@ function Body({
             Cancel
           </Button>
           <Button onClick={apply} disabled={busy || (!modeChanged && !ownerChanged)}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Apply
           </Button>
         </DialogFooter>

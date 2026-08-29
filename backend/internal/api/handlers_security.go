@@ -315,9 +315,6 @@ func (s *Server) handleDisconnectSession(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return httpx.BadRequest("invalid process id")
 	}
-	if err := httpx.RequireTypedConfirmation(w, r, "disconnect "+strconv.Itoa(pid)); err != nil {
-		return err
-	}
 	session, err := s.modules.netsec.Disconnect(r.Context(), int32(pid))
 	if err != nil {
 		return httpx.BadRequest("%v", err)
@@ -373,8 +370,16 @@ func (s *Server) handleNetworkProbe(w http.ResponseWriter, r *http.Request) erro
 		res, err = s.modules.netsec.Lookup(ctx, req.Target, req.Record)
 	case "port":
 		res, err = s.modules.netsec.PortCheck(ctx, req.Target, req.Port)
+	case "scan":
+		res, err = s.modules.netsec.PortScan(ctx, req.Target)
+	case "http":
+		res, err = s.modules.netsec.HTTPCheck(ctx, req.Target, req.Port)
+	case "tls":
+		res, err = s.modules.netsec.TLSCert(ctx, req.Target, req.Port)
+	case "whois":
+		res, err = s.modules.netsec.Whois(ctx, req.Target)
 	default:
-		return httpx.BadRequest("tool must be ping, traceroute, dns or port")
+		return httpx.BadRequest("tool must be ping, traceroute, dns, port, scan, http, tls or whois")
 	}
 	if err != nil {
 		return httpx.BadRequest("%v", err)

@@ -197,3 +197,27 @@ func TestAuthoriseSpecRejectsBlankBindSource(t *testing.T) {
 		}
 	}
 }
+
+// The 0.6.1 review took the typed phrase off `prune images`, `prune networks`,
+// `prune containers` and the "prune everything" sweep — each brings its objects
+// back from a registry or a compose file. The one prune that still types is the
+// volume sweep: a volume comes back from nothing. `handlePruneAll` reads that
+// from the query string, so the guard is by content, and both directions are
+// pinned here because the typed branch has no button in the UI to exercise it.
+func TestPruneAllTypesOnlyForTheVolumeSweep(t *testing.T) {
+	c, _ := newClient(t)
+
+	if w := c.do(http.MethodPost, "/api/v1/docker/prune?volumes=true", "", nil); w.Code != http.StatusPreconditionRequired {
+		t.Fatalf("a volume sweep without a phrase got %d, want 428: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	} else if !strings.Contains(w.Body.String(), `"phrase":"prune everything"`) {
+		t.Fatalf("phrase is not \"prune everything\": %s", strings.TrimSpace(w.Body.String()))
+	}
+
+	// The sweep the button actually runs. It may still fail for want of a Docker
+	// socket on the test host — the assertion is only that it did not stop for a
+	// confirmation.
+	w := c.do(http.MethodPost, "/api/v1/docker/prune", "", nil)
+	if w.Code == http.StatusPreconditionRequired || w.Code == http.StatusPreconditionFailed {
+		t.Fatalf("a volume-sparing prune asked for a phrase: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+}

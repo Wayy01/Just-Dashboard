@@ -27,6 +27,11 @@ import (
 // plus an upgrade argv. Nothing here shells through a shell; every argument is
 // its own element, as everywhere else in this codebase.
 type manager interface {
+	// The catalogue half — what is installed, what exists, and adding or
+	// removing one. It is embedded rather than optional because all six can
+	// do all of it, and a compiler error is a better way to learn about the
+	// seventh than a page that renders empty.
+	catalogue
 	// Name is what the UI shows: apt, dnf, apk, pacman, zypper.
 	Name() string
 	// Detect reports whether this host is run by this manager.

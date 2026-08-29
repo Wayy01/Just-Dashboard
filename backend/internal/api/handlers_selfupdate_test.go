@@ -52,7 +52,7 @@ func selfUpdateRouter(t *testing.T, role auth.Role) http.Handler {
 	})
 	// Prime the cache, so the handler is answering about a real published
 	// version rather than about an install that has never checked.
-	if rep := s.modules.selfUpdate.Report(context.Background(), true); !rep.Available {
+	if rep := s.modules.selfUpdate.Report(context.Background(), selfupdate.Forced); !rep.Available {
 		t.Fatalf("the fixture install does not see an update: %+v", rep)
 	}
 
@@ -147,7 +147,7 @@ func TestAnInstallWithNothingToRebuildSaysSo(t *testing.T) {
 		UpdateDir: filepath.Join(t.TempDir(), "not-here"),
 		Log:       s.Log,
 	})
-	rep := s.modules.selfUpdate.Report(context.Background(), false)
+	rep := s.modules.selfUpdate.Report(context.Background(), selfupdate.Cached)
 	if rep.Install.Supported {
 		t.Fatal("an install with no checkout reported that it can rebuild itself")
 	}

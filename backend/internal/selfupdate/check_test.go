@@ -132,7 +132,7 @@ func TestCheckDisabledMakesNoRequest(t *testing.T) {
 	if _, err := c.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	c.NudgeIfStale(context.Background())
+	c.Nudge(checkInterval)
 	if calls != 0 {
 		t.Fatalf("JD_UPDATE_CHECK=false still made %d request(s)", calls)
 	}

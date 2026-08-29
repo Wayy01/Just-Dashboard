@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/hooks/use-auth"
-import { DEFAULT_THEME, themeBootstrapScript } from "@/lib/themes"
+import { themeBootstrapScript } from "@/lib/themes"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -11,12 +11,12 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // The server has no way to know which theme this browser chose, so it always
-  // renders the default and the inline script below corrects the attributes
+  // The server has no way to know which mode this browser chose, so it always
+  // renders the default (dark) and the inline script below corrects the class
   // before the first paint. suppressHydrationWarning covers exactly that
   // divergence, which is confined to <html>.
   return (
-    <html lang="en" className="dark" data-theme={DEFAULT_THEME} suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript() }} />
       </head>

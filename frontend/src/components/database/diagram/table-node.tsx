@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils"
 import type { DbGraphColumn, DbGraphTable } from "@/lib/types"
 
 export const ROW_HEIGHT = 26
-export const HEADER_HEIGHT = 40
-export const NODE_WIDTH = 268
+export const HEADER_HEIGHT = 38
+export const NODE_WIDTH = 264
 
 export type TableNodeData = {
   table: DbGraphTable
@@ -28,9 +28,11 @@ export type TableNodeData = {
  * question nobody was asking. Every column is a row here, and every row is an
  * anchor: an edge lands on `orders.customer_id`, not on `orders`.
  *
- * Colour comes from the palette, so the diagram re-themes with everything else.
- * The key colours are the one deliberate constant, because they carry meaning
- * rather than decoration.
+ * The header takes the panel chrome (`surface-header`, a hairline under it) so
+ * a table reads as "name, then columns" the way every other panel in the
+ * product does. The two key colours are the one deliberate constant — gold for
+ * a primary key, blue for a foreign one, matching the edges — because they
+ * carry meaning rather than decoration and have to stay put across themes.
  */
 function TableNodeComponent({ data, selected }: NodeProps & { data: TableNodeData }) {
   const { table, dimmed, focused, keysOnly, onOpen } = data
@@ -43,36 +45,35 @@ function TableNodeComponent({ data, selected }: NodeProps & { data: TableNodeDat
     <div
       className={cn(
         "overflow-hidden rounded-lg border bg-card shadow-sm transition-opacity duration-200",
-        dimmed && "opacity-20",
-        focused && "ring-2 ring-primary",
-        selected && !focused && "ring-1 ring-primary/50",
+        dimmed && "opacity-25",
+        focused ? "ring-2 ring-chart-1" : selected && "ring-1 ring-chart-1/50",
       )}
       style={{ width: NODE_WIDTH }}
     >
       <button
         onClick={() => onOpen(table.schema, table.name)}
-        className="flex w-full items-center gap-2 border-b bg-primary/10 px-3 text-left transition-colors hover:bg-primary/20"
+        className="flex w-full items-center gap-2 border-b border-hairline bg-surface-header px-2.5 text-left transition-colors hover:bg-[var(--row-hover)]"
         style={{ height: HEADER_HEIGHT }}
         title={`Open ${table.name}`}
       >
-        <Table2 className="size-3.5 shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium">
+        <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold">
           {table.name}
         </span>
         {table.rows > 0 && (
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-            {table.rows.toLocaleString()}
+          <span className="shrink-0 rounded bg-muted px-1 text-[9.5px] font-medium tabular-nums text-muted-foreground">
+            {compactRows(table.rows)}
           </span>
         )}
       </button>
 
-      <div>
+      <div className="divide-y divide-hairline/50">
         {columns.map((c) => (
           <ColumnRow key={c.name} table={table.name} column={c} />
         ))}
         {hidden > 0 && (
           <div
-            className="flex items-center gap-1.5 px-3 text-[10px] text-muted-foreground"
+            className="flex items-center gap-1.5 bg-surface-sunken px-2.5 text-[10px] text-muted-foreground"
             style={{ height: ROW_HEIGHT }}
           >
             <Eye className="size-3" />
@@ -81,7 +82,7 @@ function TableNodeComponent({ data, selected }: NodeProps & { data: TableNodeDat
         )}
         {columns.length === 0 && (
           <div
-            className="px-3 text-[10px] italic text-muted-foreground"
+            className="px-2.5 text-[10px] text-muted-foreground italic"
             style={{ height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
           >
             no columns readable
@@ -100,15 +101,10 @@ function ColumnRow({ table, column }: { table: string; column: DbGraphColumn }) 
   const handleStyle = { opacity: 0, width: 1, height: 1, border: 0, minWidth: 0, minHeight: 0 }
   return (
     <div
-      className="relative flex items-center gap-1.5 px-3 hover:bg-accent/60"
+      className="relative flex items-center gap-2 px-2.5 transition-colors hover:bg-[var(--row-hover)]"
       style={{ height: ROW_HEIGHT }}
       title={`${column.name} · ${column.type}${column.nullable ? " · nullable" : " · not null"}`}
     >
-      {/* Four per column: a source and a target on each side. An edge needs a
-          source at one end and a target at the other, and which side each uses
-          depends on where the layout put the two tables — so all four have to
-          exist. A single type, or a missing side, drops the edge silently
-          rather than drawing it wrongly, which is exactly how this was found. */}
       <Handle
         type="source"
         position={Position.Left}
@@ -138,33 +134,44 @@ function ColumnRow({ table, column }: { table: string; column: DbGraphColumn }) 
         isConnectable={false}
       />
       {column.primaryKey ? (
-        <KeyRound className="size-3 shrink-0 text-amber-500" />
+        <KeyRound className="size-3 shrink-0 text-chart-2" />
       ) : column.foreignKey ? (
-        <Link2 className="size-3 shrink-0 text-sky-500" />
+        <Link2 className="size-3 shrink-0 text-chart-1" />
       ) : column.unique ? (
-        <Fingerprint className="size-3 shrink-0 text-muted-foreground/70" />
+        <Fingerprint className="size-3 shrink-0 text-muted-foreground/60" />
       ) : (
         <span className="size-3 shrink-0" />
       )}
       <span
         className={cn(
           "min-w-0 flex-1 truncate font-mono text-[11px]",
-          column.primaryKey && "font-medium",
+          column.primaryKey ? "font-semibold text-foreground" : "text-foreground/80",
         )}
       >
         {column.name}
       </span>
-      <span className="shrink-0 truncate font-mono text-[9.5px] text-muted-foreground">
+      <span
+        className={cn(
+          "shrink-0 truncate font-mono text-[10px]",
+          column.nullable ? "text-muted-foreground/60" : "text-muted-foreground",
+        )}
+      >
         {shortType(column.type)}
-        {!column.nullable && <span className="ml-0.5 text-destructive/70">*</span>}
       </span>
     </div>
   )
 }
 
+/** A row count for a 30px-wide chip: 1_234_567 → "1.2M", not "1,234,567". */
+function compactRows(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+  return `${(n / 1_000_000).toFixed(1)}M`
+}
+
 /**
  * Type names are for recognition here, not reproduction. "timestamp with time
- * zone" in a nine-pixel column pushes the name out of the box, and a reader
+ * zone" in a ten-pixel column pushes the name out of the box, and a reader
  * already knows what timestamptz means.
  */
 function shortType(type: string): string {

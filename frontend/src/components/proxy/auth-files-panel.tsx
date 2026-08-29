@@ -110,7 +110,6 @@ export function AuthFilesPanel() {
                   onClick={() =>
                     confirm({
                       title: `Delete ${file.name}`,
-                      phrase: file.name,
                       confirmLabel: "Delete",
                       description: (
                         <p className="text-destructive">
@@ -118,10 +117,8 @@ export function AuthFilesPanel() {
                           reload. Change those sites first.
                         </p>
                       ),
-                      action: async (c) => {
-                        await del(`/proxy/auth-files/${encodeURIComponent(file.name)}`, {
-                          confirm: c,
-                        })
+                      action: async () => {
+                        await del(`/proxy/auth-files/${encodeURIComponent(file.name)}`)
                         refresh()
                       },
                     })

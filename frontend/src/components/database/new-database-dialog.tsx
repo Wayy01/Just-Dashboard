@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Database, Link2, Loader2 } from "lucide-react"
+import { Database, Link2 } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { errorMessage, get, post } from "@/lib/api"
 import type { DbConnection, DbProvisionOption } from "@/lib/types"
@@ -121,7 +121,7 @@ export function NewDatabaseDialog({
 
         {busy ? (
           <div className="flex flex-col items-center gap-3 py-8 text-sm text-muted-foreground">
-            <Loader2 className="size-6 animate-spin text-primary" />
+            <Spinner className="size-6 text-primary" />
             {busy}
             <p className="text-[11px]">
               It connects itself when it is ready. This can take a minute the first time, while the
@@ -139,7 +139,7 @@ export function NewDatabaseDialog({
                     "flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
                     engine === o.engine
                       ? "border-primary bg-primary/10"
-                      : "border-border hover:bg-accent",
+                      : "raised border-border bg-control hover:bg-control-hover",
                   )}
                 >
                   <span className="flex items-center gap-1.5 text-[13px] font-medium">

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowUpCircle, CheckCircle2, Loader2, Sparkles, X, XCircle } from "lucide-react"
+import { ArrowUpCircle, CheckCircle2, Sparkles, X, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { phaseLabel, useSelfUpdate } from "@/hooks/use-self-update"
@@ -9,6 +9,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ChangesSheet } from "@/components/update/changes-sheet"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Spinner } from "@/components/state"
 
 /**
  * "There is a newer version", where the operator will see it.
@@ -90,7 +91,7 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
               )}
             >
               {running ? (
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner className="size-4" />
               ) : outcome?.status === "failed" ? (
                 <XCircle className="size-4" />
               ) : outcome?.status === "success" ? (
@@ -136,7 +137,7 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
             )}
           >
             {running ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <Spinner className="size-3.5" />
             ) : outcome?.status === "failed" ? (
               <XCircle className="size-3.5" />
             ) : outcome?.status === "success" ? (

@@ -10,7 +10,6 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  Loader2,
   Network,
   ScrollText,
   ShieldCheck,
@@ -22,7 +21,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Notice } from "@/components/state"
+import { Notice, Spinner } from "@/components/state"
 import { Logo } from "@/components/logo"
 
 type Step = "credentials" | "totp" | "enroll"
@@ -143,7 +142,7 @@ export default function LoginPage() {
 
           <Stepper current={recoveryCodes ? "totp" : step} />
 
-          <div className="mt-5 rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+          <div className="raised mt-5 rounded-2xl border bg-card p-5 sm:p-6">
             {recoveryCodes ? (
               <RecoveryCodes codes={recoveryCodes} onDone={finishEnrollment} />
             ) : (
@@ -202,7 +201,7 @@ export default function LoginPage() {
                       </div>
                     </div>
                     <Button type="submit" className="w-full" disabled={busy}>
-                      {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+                      {busy ? <Spinner className="size-4" /> : null}
                       Continue
                       {!busy && <ArrowRight className="size-4" />}
                     </Button>
@@ -233,7 +232,7 @@ export default function LoginPage() {
                       />
                     </div>
                     <Button type="submit" className="w-full" disabled={busy || !code}>
-                      {busy && <Loader2 className="size-4 animate-spin" />}
+                      {busy && <Spinner className="size-4" />}
                       Verify
                     </Button>
                     <button
@@ -259,7 +258,7 @@ export default function LoginPage() {
                         master key. It is shown to you exactly once, here.
                       </Notice>
                       <Button className="w-full" onClick={beginEnrollment} disabled={busy}>
-                        {busy && <Loader2 className="size-4 animate-spin" />}
+                        {busy && <Spinner className="size-4" />}
                         Generate a secret
                       </Button>
                     </div>
@@ -281,7 +280,7 @@ export default function LoginPage() {
                         />
                       </div>
                       <Button type="submit" className="w-full" disabled={busy || code.length < 6}>
-                        {busy && <Loader2 className="size-4 animate-spin" />}
+                        {busy && <Spinner className="size-4" />}
                         Enable two-factor
                       </Button>
                     </form>

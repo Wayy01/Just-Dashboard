@@ -182,7 +182,7 @@ func TestNetworkProbeRejectsABadTarget(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d: %s", w.Code, w.Body.String())
 	}
-	w = c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"nmap","target":"example.com"}`, nil)
+	w = c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"exploit","target":"example.com"}`, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown tool accepted: %d", w.Code)
 	}
@@ -214,10 +214,6 @@ func TestNewDestructiveRoutesDemandTheTypedPhrase(t *testing.T) {
 		{http.MethodPost, "/api/v1/firewall/policy", `{"direction":"incoming","policy":"deny"}`, "deny incoming"},
 		{http.MethodPost, "/api/v1/ssh/config", `{"settings":{"x11forwarding":"no"}}`, "change ssh"},
 		{http.MethodPost, "/api/v1/certificates/revoke", `{"name":"example.com"}`, "revoke example.com"},
-		{http.MethodDelete, "/api/v1/proxy/sites/example", ``, "example"},
-		{http.MethodDelete, "/api/v1/proxy/streams/example", ``, "example"},
-		{http.MethodDelete, "/api/v1/proxy/auth-files/staging", ``, "staging"},
-		{http.MethodPost, "/api/v1/ssh-sessions/4242/disconnect", `{}`, "disconnect 4242"},
 	}
 	for _, tc := range cases {
 		// A client per case. These are destructive routes, so they share the
@@ -243,6 +239,29 @@ func TestNewDestructiveRoutesDemandTheTypedPhrase(t *testing.T) {
 			w = c.do(tc.method, tc.path, tc.body, map[string]string{"X-Confirm": "yes"})
 			if w.Code != http.StatusPreconditionFailed {
 				t.Fatalf("wrong phrase got %d, want 412: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// And the other direction, the quiet one: a route that deletes something
+// recoverable must NOT ask for a typed phrase. Deleting a proxy site, a stream
+// or a password file recreates from the same form; disconnecting a login is a
+// SIGHUP the operator reconnects past. Each keeps the destructive capability,
+// the tighter budget and the audit entry — but a phrase in front of it is what
+// teaches an operator to type names without reading them.
+func TestRecoverableSecurityRoutesDoNotDemandAPhrase(t *testing.T) {
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodDelete, "/api/v1/proxy/sites/example", ``},
+		{http.MethodDelete, "/api/v1/proxy/streams/example", ``},
+		{http.MethodDelete, "/api/v1/proxy/auth-files/staging", ``},
+		{http.MethodPost, "/api/v1/ssh-sessions/4242/disconnect", `{}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			c, _ := newClient(t)
+			w := c.do(tc.method, tc.path, tc.body, nil)
+			if w.Code == http.StatusPreconditionRequired || w.Code == http.StatusPreconditionFailed {
+				t.Fatalf("route asked for a typed phrase: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
 			}
 		})
 	}
@@ -440,7 +459,7 @@ func TestReadonlyCannotChangeSSH(t *testing.T) {
 // security update from any other, on whatever this host runs.
 func TestUpdatesReportIsHonestAboutTheManager(t *testing.T) {
 	c, _ := newClient(t)
-	w := c.do(http.MethodGet, "/api/v1/updates/", "", nil)
+	w := c.do(http.MethodGet, "/api/v1/packages/updates", "", nil)
 	if w.Code == http.StatusServiceUnavailable {
 		t.Skip("no package manager on this host")
 	}

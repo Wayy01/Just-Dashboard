@@ -1,14 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, Radar } from "lucide-react"
+import { Radar } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { ProbeResult } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
-import { EmptyState, Notice } from "@/components/state"
+import { EmptyState, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,7 +27,17 @@ const TOOLS = [
   { key: "ping", label: "Ping", hint: "Can this server reach that host at all" },
   { key: "traceroute", label: "Traceroute", hint: "What is between them" },
   { key: "port", label: "Port check", hint: "Can this server open a TCP connection there" },
+  { key: "scan", label: "Port scan", hint: "Which of the common service ports answer on that host" },
+  { key: "http", label: "HTTP", hint: "What that host serves — status, redirects and headers" },
+  { key: "tls", label: "TLS cert", hint: "The certificate a TLS port presents, and whether it is trusted" },
+  { key: "whois", label: "Whois", hint: "Registration details for a domain or address" },
 ] as const
+
+// Which tools take a port, and so show the port field.
+const PORT_TOOLS = new Set(["port", "http", "tls"])
+// Which tools reach outward from this host, and so carry the directionality
+// warning: they prove what the server can reach, never what can reach it.
+const OUTWARD_TOOLS = new Set(["port", "scan"])
 
 /**
  * The tools an operator opens a terminal for, on the page where the question
@@ -90,6 +100,7 @@ export function ToolsPanel() {
             variant="outline"
             size="sm"
             aria-label="Which tool to run"
+            className="flex-wrap"
           >
             {TOOLS.map((t) => (
               <ToggleGroupItem key={t.key} value={t.key} className="px-2.5 text-[11px]">
@@ -128,7 +139,7 @@ export function ToolsPanel() {
                 </Select>
               </div>
             )}
-            {tool === "port" && (
+            {PORT_TOOLS.has(tool) && (
               <div className="w-28 space-y-1.5">
                 <Label htmlFor="probe-port">Port</Label>
                 <Input
@@ -140,16 +151,17 @@ export function ToolsPanel() {
               </div>
             )}
             <Button onClick={run} disabled={busy || !target.trim()}>
-              {busy && <Loader2 className="size-4 animate-spin" />}
+              {busy && <Spinner className="size-4" />}
               Run
             </Button>
           </div>
 
-          {tool === "port" && (
+          {OUTWARD_TOOLS.has(tool) && (
             <Notice title="This checks outward, not inward">
-              It proves the <b>server</b> can reach that address. Whether the internet can reach
-              this server cannot be answered from inside it — the Ports tab and the exposure grade
-              are the closest thing.
+              It proves what <b>this server</b> can reach, not what can reach it. Pointed at your
+              own public address the traffic can hairpin or be admitted by rules that never apply
+              to an outside visitor, so an open port here is not proof of exposure — the Ports tab
+              and the exposure grade are.
             </Notice>
           )}
 

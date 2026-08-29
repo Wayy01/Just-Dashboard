@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, BadgeCheck, Clock, Loader2, RefreshCw, ShieldX } from "lucide-react"
+import { AlertTriangle, BadgeCheck, Clock, RefreshCw, ShieldX } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import type { CertbotState, DNSProvider, Job } from "@/lib/types"
@@ -11,7 +11,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ImportDialog } from "@/components/proxy/import-dialog"
 import { JobConsole, RecentJobs, useJobConsole } from "@/components/job-console"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
-import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -159,7 +159,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
                     onClick={() => renew(ALL_CERTS, false)}
                   >
                     {busy === ALL_CERTS ? (
-                      <Loader2 className="size-4 animate-spin" />
+                      <Spinner className="size-4" />
                     ) : (
                       <RefreshCw className="size-3.5" />
                     )}
@@ -221,7 +221,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
                               disabled={busy === cert.name}
                               onClick={() => renew(cert.name, false)}
                             >
-                              {busy === cert.name && <Loader2 className="size-3 animate-spin" />}
+                              {busy === cert.name && <Spinner className="size-3" />}
                               Renew
                             </Button>
                             <Button
@@ -512,7 +512,7 @@ function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
               busy || !domains.trim() || !email.trim() || (method === "dns" && !dnsProvider)
             }
           >
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             {staging ? "Run the test" : "Issue"}
           </Button>
         </DialogFooter>

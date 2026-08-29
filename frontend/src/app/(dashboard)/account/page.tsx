@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Loader2, Lock, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
+import { KeyRound, Lock, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
@@ -11,7 +11,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
-import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, Notice, Spinner } from "@/components/state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -164,7 +164,7 @@ function SecurityTab() {
         </PanelBody>
         <PanelFooter>
           <Button size="sm" onClick={change} disabled={busy || !current || !next}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Change password
           </Button>
         </PanelFooter>

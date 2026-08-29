@@ -24,7 +24,7 @@ import { Detail, DetailList, Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
 import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice } from "@/components/state"
-import { StatusBadge } from "@/components/status-dot"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -122,7 +122,7 @@ export default function DeployPage() {
                 <Detail label="Last deploy">
                   {project.lastRun ? (
                     <span className="flex items-center gap-1.5">
-                      <StatusBadge state={project.lastRun.status} />
+                      <Status state={project.lastRun.status} />
                       {relativeTime(project.lastRun.startedAt)}
                     </span>
                   ) : (
@@ -352,7 +352,7 @@ function RunsTable({
                   {shortSha(run.fromCommit)} → {shortSha(run.toCommit)}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge state={run.status} />
+                  <Status state={run.status} />
                 </TableCell>
                 <TableCell>
                   <Button size="xs" variant="ghost" onClick={() => onSelect(run)}>

@@ -50,9 +50,9 @@ export function RelationEdge({
           relation.dimmed ? "opacity-10" : "opacity-100",
         )}
         style={{
-          stroke: relation.active ? "var(--color-primary)" : "var(--color-muted-foreground)",
+          stroke: relation.active ? "var(--color-chart-1)" : "var(--color-muted-foreground)",
           strokeWidth: relation.active ? 2 : 1.25,
-          strokeOpacity: relation.active ? 1 : 0.45,
+          strokeOpacity: relation.active ? 1 : 0.4,
         }}
       />
       {relation.active && rel && (

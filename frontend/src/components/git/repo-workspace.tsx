@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ArrowUpFromLine,
   GitBranch as GitBranchIcon,
+  GitFork,
   MoreHorizontal,
   RefreshCw,
   RotateCcw,
@@ -26,6 +27,7 @@ import { GitHelp } from "@/components/git/help"
 import { ChangesPanel } from "@/components/git/changes-panel"
 import { HistoryPanel } from "@/components/git/history-panel"
 import { BranchesPanel } from "@/components/git/branches-panel"
+import { GraphPanel } from "@/components/git/graph-panel"
 import { GitHubAccountControl } from "@/components/git/github-account"
 import { PullsPanel } from "@/components/git/pulls-panel"
 import { PreviewPanel, type GitPreview } from "@/components/git/preview-panel"
@@ -73,7 +75,14 @@ export function RepoWorkspace({
   const { confirm, dialog } = useConfirm()
   const [busy, setBusy] = useState<string>()
   const [tab, setTab] = useState("changes")
-  const [preview, setPreview] = useState<GitPreview | null>(null)
+  const [preview, setPreviewState] = useState<GitPreview | null>(null)
+  const [graphOpen, setGraphOpen] = useState(false)
+
+  // Opening a diff or a file takes the right column, so the graph steps aside.
+  const setPreview = useCallback((p: GitPreview | null) => {
+    setPreviewState(p)
+    if (p) setGraphOpen(false)
+  }, [])
 
   const canControl = can("service.control")
   const canDestruct = can("destructive")
@@ -157,6 +166,11 @@ export function RepoWorkspace({
             {head.remote ? ` · ${head.remote}` : ""}
           </p>
         </div>
+
+        <span className="flex-1" />
+
+        {/* Branch sits with the actions on the right, not centred against the
+            two-line title block where it read as floating between the rows. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button onClick={() => setTab("branches")} className="shrink-0">
@@ -174,7 +188,20 @@ export function RepoWorkspace({
         </Tooltip>
         <AheadBehind ahead={head.ahead} behind={head.behind} />
 
-        <span className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant={graphOpen ? "secondary" : "outline"}
+              onClick={() => setGraphOpen((v) => !v)}
+              aria-pressed={graphOpen}
+            >
+              <GitFork className="size-4" />
+              Graph
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>See every branch and where it forked</TooltipContent>
+        </Tooltip>
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -376,12 +403,20 @@ export function RepoWorkspace({
         </Panel>
 
         <Panel className="flex h-[26rem] shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink">
-          <PreviewPanel
-            preview={preview}
-            canWrite={canWrite}
-            onClose={() => setPreview(null)}
-            onChanged={() => status.refresh()}
-          />
+          {graphOpen ? (
+            <GraphPanel
+              repoPath={repo.path}
+              onClose={() => setGraphOpen(false)}
+              onSelectDiff={setPreview}
+            />
+          ) : (
+            <PreviewPanel
+              preview={preview}
+              canWrite={canWrite}
+              onClose={() => setPreview(null)}
+              onChanged={() => status.refresh()}
+            />
+          )}
         </Panel>
       </div>
       {dialog}

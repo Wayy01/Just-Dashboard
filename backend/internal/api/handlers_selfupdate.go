@@ -14,7 +14,7 @@ import (
 // to the next one.
 //
 // Mounted under /dashboard rather than /system because it is the one part of
-// this API that is not about the server: /updates is the host's packages, and
+// this API that is not about the server: /packages is the host's software, and
 // the two being confusable is exactly why they are named apart.
 func (s *Server) mountSelfUpdateRoutes(r chi.Router) {
 	r.Route("/dashboard", func(r chi.Router) {
@@ -46,10 +46,21 @@ func (s *Server) mountSelfUpdateRoutes(r chi.Router) {
 // notice need in one request, because they are on screen together and two
 // endpoints would mean two polls of the same three facts.
 //
-// refresh=true is the operator pressing "check now"; without it this reads the
-// cache and never waits on the network.
+// Three freshnesses, and the middle one is the interesting one. refresh=true
+// is the operator pressing "check now" and waits on the network. nudge=true is
+// a browser that has just loaded the dashboard: it answers from the cache
+// immediately and starts a check behind the request, which is what makes a
+// reload a way of asking without making a reload wait. Neither parameter is
+// the ordinary poll, which asks for nothing.
 func (s *Server) handleSelfUpdateStatus(w http.ResponseWriter, r *http.Request) error {
-	rep := s.modules.selfUpdate.Report(r.Context(), r.URL.Query().Get("refresh") == "true")
+	freshness := selfupdate.Cached
+	switch {
+	case r.URL.Query().Get("refresh") == "true":
+		freshness = selfupdate.Forced
+	case r.URL.Query().Get("nudge") == "true":
+		freshness = selfupdate.OnLoad
+	}
+	rep := s.modules.selfUpdate.Report(r.Context(), freshness)
 	httpx.JSON(w, http.StatusOK, rep)
 	return nil
 }
@@ -75,7 +86,7 @@ func (s *Server) handleSelfUpdateInstall(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rep := s.modules.selfUpdate.Report(r.Context(), false)
+	rep := s.modules.selfUpdate.Report(r.Context(), selfupdate.Cached)
 	if !rep.Install.Supported {
 		return httpx.Err(http.StatusServiceUnavailable, "update_unsupported", rep.Install.Reason)
 	}

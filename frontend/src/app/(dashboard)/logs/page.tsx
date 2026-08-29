@@ -1,57 +1,105 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
-import { Download, FileText, RefreshCw, ScrollText } from "lucide-react"
-import { notify } from "@/lib/toast"
-import { downloadUrl, get } from "@/lib/api"
-import { bytes, relativeTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
-import type { JournalEntry, LogLine, LogSource } from "@/lib/types"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
+import { History, RefreshCw, ScrollText, Search, SearchX, Waves } from "lucide-react"
+import { errorMessage, get } from "@/lib/api"
+import { plural } from "@/lib/format"
+import type {
+  LogLine,
+  LogRetention,
+  LogSearchResult,
+  LogSource,
+  LogSourceIndex,
+  LogStreamMeta,
+} from "@/lib/types"
+import { EMPTY_FILTER, filterQuery, isFilterActive, resolveRange } from "@/lib/log-filter"
+import type { LogFilterState, LogMode, LogTimeRange } from "@/components/logs/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
-import { Page, PageHeader, SearchInput } from "@/components/page"
-import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
-import { LogViewer } from "@/components/log-viewer"
-import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
+import { Page, PageHeader } from "@/components/page"
+import { EmptyState, ErrorState } from "@/components/state"
+import { Status } from "@/components/status-dot"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
+import { FilterBar } from "@/components/logs/filter-bar"
+import { Histogram } from "@/components/logs/histogram"
+import { LogConsole } from "@/components/logs/log-console"
+import { RetentionNote } from "@/components/logs/retention-note"
+import { SourceRail } from "@/components/logs/source-rail"
+import { ExportDialog } from "@/components/logs/export-dialog"
 
-const LOG_LIMIT = 8000
-const LEVELS = ["critical", "error", "warn", "info", "debug"] as const
+/** How many lines the live pane holds before the oldest fall off the top. */
+const LIVE_BUFFER = 4000
+
+/** The opening window a live tail asks for. */
+const TAIL_LINES = 500
 
 export default function LogsPage() {
-  const [picked, setPicked] = useState<LogSource | null>(null)
-  const [levels, setLevels] = useState<string[]>([])
-  const [grep, setGrep] = useState("")
-  const [appliedGrep, setAppliedGrep] = useState("")
+  const params = useSearchParams()
+  const sources = usePoll(
+    (signal) => get<LogSourceIndex>("/logs/sources", undefined, signal),
+    60000,
+  )
 
-  const sources = usePoll((signal) => get<LogSource[]>("/logs/sources", undefined, signal), 60000)
+  // The URL is where the reader arrived, not where they are now: it seeds the
+  // selection once so /logs?source=docker:abc from the container page lands on
+  // the right log, and is not kept in sync afterwards.
+  const [picked, setPicked] = useState<string | null>(() => params.get("source"))
+  const [mode, setMode] = useState<LogMode>(() =>
+    params.get("mode") === "search" ? "search" : "live",
+  )
+  const [filter, setFilter] = useState<LogFilterState>(() => ({
+    ...EMPTY_FILTER,
+    q: params.get("q") ?? "",
+  }))
+  const [unit, setUnit] = useState(() => params.get("unit") ?? "")
+  const [range, setRange] = useState<LogTimeRange>("24h")
+  const [since, setSince] = useState("")
+  const [until, setUntil] = useState("")
+  const [context, setContext] = useState(0)
+  const [archives, setArchives] = useState(false)
+  const [boot, setBoot] = useState(false)
 
   // The first source is streaming before you choose one. Landing on an empty
   // pane and a "pick something" sign wastes the visit: nine times out of ten
   // the answer is in syslog, and the operator can switch in one click if it is
   // not. Derived rather than stored, so no effect has to sync it.
-  const selected = picked ?? sources.data?.[0] ?? null
+  const selected: LogSource | null = useMemo(() => {
+    const list = sources.data?.sources ?? []
+    return list.find((s) => s.id === picked) ?? list[0] ?? null
+  }, [sources.data, picked])
+
+  // The journal is one source with a thousand faces, so the unit rides on the
+  // id rather than filling the rail with systemd's inventory.
+  const sourceId = useMemo(() => {
+    if (!selected) return ""
+    if (selected.kind === "journal" && unit) return `journal:${unit}`
+    return selected.id
+  }, [selected, unit])
+
+  useEffect(() => {
+    if (!sourceId) return
+    const url = new URL(window.location.href)
+    url.searchParams.set("source", sourceId)
+    if (mode === "search") url.searchParams.set("mode", "search")
+    else url.searchParams.delete("mode")
+    if (filter.q) url.searchParams.set("q", filter.q)
+    else url.searchParams.delete("q")
+    window.history.replaceState(null, "", url)
+  }, [sourceId, mode, filter.q])
 
   return (
     <Page fill>
       <PageHeader
         eyebrow="Server"
         title="Logs"
-        description="System, nginx, container, PM2 and application logs in one live view"
+        description="Files, containers, PM2 and the systemd journal — one filter, live or over history"
         actions={
           <>
-            {selected?.path && <DownloadDialog source={selected} />}
+            {sourceId && (
+              <ExportDialog sourceId={sourceId} source={selected} filter={filter} boot={boot} />
+            )}
             <Button variant="outline" size="sm" onClick={() => sources.refresh()}>
               <RefreshCw className="size-4" />
               Rescan
@@ -61,283 +109,636 @@ export default function LogsPage() {
       />
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] [&>*]:min-w-0">
-        <SourceList sources={sources} selected={selected} onSelect={setPicked} />
+        <SourceRail
+          index={sources.data}
+          loading={sources.loading}
+          error={sources.error}
+          selectedId={selected?.id ?? null}
+          onSelect={(source) => {
+            setPicked(source.id)
+            if (source.kind !== "journal") setUnit("")
+          }}
+        />
 
-        <div className="flex min-h-0 min-w-0 flex-col gap-3">
-          <Panel className="shrink-0">
-            <PanelToolbar className="border-b-0">
-              <form
-                className="flex min-w-56 flex-1 gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  setAppliedGrep(grep)
-                }}
-              >
-                <Input
-                  value={grep}
-                  onChange={(e) => setGrep(e.target.value)}
-                  placeholder="Server-side grep — matched before the lines are sent"
-                  className="h-8 flex-1 text-[13px]"
-                />
-                <Button type="submit" size="sm" variant="secondary">
-                  Apply
-                </Button>
-              </form>
-              <ToggleGroup
-                type="multiple"
-                value={levels}
-                onValueChange={setLevels}
-                variant="outline"
-                size="sm"
-              >
-                {LEVELS.map((level) => (
-                  <ToggleGroupItem key={level} value={level} className="px-2 text-[11px]">
-                    {level}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </PanelToolbar>
-          </Panel>
-
-          {selected ? (
-            // Keyed on everything that changes what the socket delivers, so a
-            // new filter starts a clean buffer instead of mixing results.
-            <LogStream
-              key={`${selected.id}|${appliedGrep}|${levels.join(",")}`}
-              source={selected}
-              grep={appliedGrep}
-              levels={levels}
-            />
-          ) : (
-            <EmptyState
-              className="flex-1"
-              icon={ScrollText}
-              title="Pick a log source"
-              description="Files, container output, PM2 processes and the systemd journal all stream here."
-            />
-          )}
-        </div>
+        {selected ? (
+          <LogWorkspace
+            key={sourceId}
+            source={selected}
+            sourceId={sourceId}
+            units={sources.data?.units ?? []}
+            mode={mode}
+            onModeChange={setMode}
+            filter={filter}
+            onFilterChange={setFilter}
+            unit={unit}
+            onUnitChange={setUnit}
+            range={range}
+            onRangeChange={setRange}
+            since={since}
+            until={until}
+            onSinceChange={setSince}
+            onUntilChange={setUntil}
+            onCustomRange={(from, to) => {
+              setRange("custom")
+              setSince(toLocalInput(from))
+              setUntil(toLocalInput(to))
+            }}
+            context={context}
+            onContextChange={setContext}
+            archives={archives}
+            onArchivesChange={setArchives}
+            boot={boot}
+            onBootChange={setBoot}
+          />
+        ) : (
+          <EmptyState
+            className="flex-1"
+            icon={ScrollText}
+            title={sources.loading ? "Looking for logs…" : "No log sources on this host"}
+            description={
+              sources.loading
+                ? undefined
+                : `Nothing readable was found under ${(sources.data?.roots ?? []).join(", ") || "the configured log roots"}. Containers, PM2 processes and the journal appear here too when they are present.`
+            }
+          />
+        )}
       </div>
     </Page>
   )
 }
 
-function LogStream({
-  source,
-  grep,
-  levels,
-}: {
+/** datetime-local wants the browser's own clock, not an ISO string in UTC. */
+function toLocalInput(date: Date) {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+type WorkspaceProps = {
   source: LogSource
-  grep: string
-  levels: string[]
-}) {
-  const [lines, setLines] = useState<LogLine[]>([])
+  sourceId: string
+  units: LogSourceIndex["units"]
+  mode: LogMode
+  onModeChange: (mode: LogMode) => void
+  filter: LogFilterState
+  onFilterChange: (filter: LogFilterState) => void
+  unit: string
+  onUnitChange: (unit: string) => void
+  range: LogTimeRange
+  onRangeChange: (range: LogTimeRange) => void
+  since: string
+  until: string
+  onSinceChange: (value: string) => void
+  onUntilChange: (value: string) => void
+  onCustomRange: (since: Date, until: Date) => void
+  context: number
+  onContextChange: (value: number) => void
+  archives: boolean
+  onArchivesChange: (value: boolean) => void
+  boot: boolean
+  onBootChange: (value: boolean) => void
+}
 
-  const onMessage = useCallback((envelope: Envelope) => {
-    if (envelope.type === "logs") {
-      const batch = envelope.data as LogLine[]
-      setLines((prev) => {
-        const next = [...prev, ...batch]
-        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
-      })
-    } else if (envelope.type === "journal") {
-      const batch = envelope.data as JournalEntry[]
-      setLines((prev) => {
-        const next = [
-          ...prev,
-          ...batch.map((e) => ({
-            text: e.message,
-            timestamp: e.timestamp,
-            level: e.priority <= 3 ? "error" : e.priority === 4 ? "warn" : "info",
-            source: e.syslogIdentifier,
-          })),
-        ]
-        return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
-      })
+function LogWorkspace(props: WorkspaceProps) {
+  const { source, sourceId, mode, filter, onFilterChange, onModeChange } = props
+
+  // The live filter trails what is being typed. Reconnecting the socket per
+  // keystroke would restart the tail four times a word; waiting for a button
+  // is the friction that made the old page's filter go unused. The pause is
+  // short enough to read as instant and long enough to type through.
+  const applied = useDebounced(filter, 400)
+  const live = useLiveTail(sourceId, mode === "live" ? applied : null, props.boot)
+  const search = useHistorySearch(props)
+
+  // Arriving on a shared link that already says "history, this term" should
+  // show the answer, not a form with the question typed into it. The workspace
+  // is keyed on the source, so this fires once per source rather than on every
+  // change to the filter.
+  const started = useRef(false)
+  const runSearch = search.run
+  useEffect(() => {
+    if (mode !== "search" || started.current) return
+    started.current = true
+    runSearch()
+  }, [mode, runSearch])
+
+  const lines = mode === "live" ? live.lines : (search.result?.lines ?? [])
+  const counts = useMemo(() => {
+    if (mode === "search") {
+      const totals: Record<string, number> = {}
+      for (const bucket of search.result?.histogram ?? []) {
+        for (const [level, n] of Object.entries(bucket.counts)) {
+          totals[level] = (totals[level] ?? 0) + n
+        }
+      }
+      return totals
     }
-  }, [])
+    const totals: Record<string, number> = {}
+    for (const line of live.lines) {
+      const level = line.level || "unknown"
+      totals[level] = (totals[level] ?? 0) + 1
+    }
+    return totals
+  }, [mode, live.lines, search.result])
 
-  const query = useMemo(
-    () => ({
-      source: source.id,
-      lines: 400,
-      q: grep || undefined,
-      levels: levels.length ? levels.join(",") : undefined,
-    }),
-    [source.id, grep, levels],
+  const retention = usePoll(
+    (signal) => get<LogRetention>("/logs/retention", { source: sourceId }, signal),
+    0,
+    [sourceId],
+    { enabled: Boolean(source.path) || source.kind === "pm2" },
   )
 
-  const { state } = useSocket("/logs/stream", { onMessage, query })
+  return (
+    <div className="flex min-h-0 min-w-0 flex-col gap-3">
+      <FilterBar
+        mode={mode}
+        onModeChange={(next) => {
+          onModeChange(next)
+          if (next === "search") search.run()
+        }}
+        filter={filter}
+        onFilterChange={onFilterChange}
+        onSubmit={() => {
+          if (mode === "search") search.run()
+          else onModeChange("search")
+        }}
+        searching={search.loading}
+        counts={counts}
+        source={source}
+        units={props.units}
+        unit={props.unit}
+        onUnitChange={props.onUnitChange}
+        range={props.range}
+        onRangeChange={(next) => {
+          props.onRangeChange(next)
+          if (mode === "search" && next !== "custom") search.run({ range: next })
+        }}
+        since={props.since}
+        until={props.until}
+        onSinceChange={props.onSinceChange}
+        onUntilChange={props.onUntilChange}
+        context={props.context}
+        onContextChange={(next) => {
+          props.onContextChange(next)
+          if (mode === "search") search.run({ context: next })
+        }}
+        archives={props.archives}
+        onArchivesChange={(next) => {
+          props.onArchivesChange(next)
+          if (mode === "search") search.run({ archives: next })
+        }}
+        boot={props.boot}
+        onBootChange={(next) => {
+          props.onBootChange(next)
+          if (mode === "search") search.run({ boot: next })
+        }}
+      />
+
+      {mode === "search" && (search.result?.histogram.length ?? 0) > 0 && (
+        <Histogram
+          buckets={search.result!.histogram}
+          bucketSeconds={search.result!.bucketSeconds ?? 60}
+          onZoom={(from, to) => {
+            props.onCustomRange(from, to)
+            search.run({ range: "custom", since: toLocalInput(from), until: toLocalInput(to) })
+          }}
+        />
+      )}
+
+      <LogConsole
+        className="min-h-0 flex-1"
+        lines={lines}
+        filter={applied}
+        showLineNumbers={mode === "search"}
+        // A file's "source" is the file already chosen in the rail, repeated
+        // on every line. The journal's is which unit spoke, which is the point.
+        showSource={source.kind === "journal"}
+        showFile={mode === "search" && (search.result?.files.length ?? 0) > 1}
+        paused={mode === "live" ? live.paused : undefined}
+        onPausedChange={mode === "live" ? live.setPaused : undefined}
+        held={live.held}
+        onClear={mode === "live" ? live.clear : undefined}
+        status={
+          mode === "live" ? (
+            <Status
+              state={live.state === "open" ? "running" : live.state === "connecting" ? "restarting" : "stopped"}
+              label={live.state === "open" ? "Live" : live.state === "connecting" ? "Connecting" : "Disconnected"}
+              className="text-[11px]"
+            />
+          ) : (
+            <SearchSummary result={search.result} loading={search.loading} />
+          )
+        }
+        actions={
+          mode === "live" && live.meta?.prefill && !live.meta.prefill.complete ? (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-normal"
+              title={live.meta.note}
+            >
+              partial history
+            </Badge>
+          ) : undefined
+        }
+        footer={
+          <>
+            {mode === "search" && search.result && <SearchFooter result={search.result} />}
+            {retention.data && <RetentionNote retention={retention.data} />}
+          </>
+        }
+        empty={
+          mode === "live" ? (
+            <LiveEmpty
+              state={live.state}
+              error={live.error}
+              filter={applied}
+              onSearchHistory={() => {
+                onModeChange("search")
+                search.run()
+              }}
+              onClearFilter={() => onFilterChange(EMPTY_FILTER)}
+            />
+          ) : (
+            <SearchEmpty
+              result={search.result}
+              loading={search.loading}
+              error={search.error}
+              source={source}
+              archives={props.archives}
+              onIncludeArchives={() => {
+                props.onArchivesChange(true)
+                search.run({ archives: true })
+              }}
+              onRun={() => search.run()}
+            />
+          )
+        }
+      />
+    </div>
+  )
+}
+
+function useDebounced<T>(value: T, delay: number): T {
+  const [settled, setSettled] = useState(value)
+  const key = JSON.stringify(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay)
+    return () => clearTimeout(timer)
+    // The value is an object rebuilt on every keystroke, so the identity is
+    // useless as a dependency and its content is what actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, delay])
+  return settled
+}
+
+/**
+ * The live tail.
+ *
+ * Pausing holds what arrives rather than dropping it, which is the difference
+ * between reading a busy log and choosing between reading and keeping. The
+ * held lines are counted and appended on resume.
+ */
+function useLiveTail(sourceId: string, filter: LogFilterState | null, boot: boolean) {
+  const [lines, setLines] = useState<LogLine[]>([])
+  const [meta, setMeta] = useState<LogStreamMeta | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [paused, setPaused] = useState(false)
+  // Held lines are state rather than a ref because the reset happens during
+  // render, and a ref written there is a value React never sees.
+  const [heldLines, setHeldLines] = useState<LogLine[]>([])
+  const pausedRef = useRef(false)
+
+  useEffect(() => {
+    pausedRef.current = paused
+  }, [paused])
+
+  const query = useMemo(
+    () =>
+      filter
+        ? {
+            source: sourceId,
+            lines: TAIL_LINES,
+            boot: boot ? "true" : undefined,
+            ...filterQuery(filter),
+          }
+        : { source: "" },
+    [sourceId, filter, boot],
+  )
+  const queryKey = JSON.stringify(query)
+
+  // A new filter is a new question: the socket restarts with a window that
+  // matches it, so mixing the answers would put lines the filter rejects above
+  // the ones it keeps. Reset during render rather than in an effect — the two
+  // differ by one frame, and that frame is the old log's tail drawn under the
+  // new question.
+  const [lastQuery, setLastQuery] = useState(queryKey)
+  if (lastQuery !== queryKey) {
+    setLastQuery(queryKey)
+    setLines([])
+    setMeta(null)
+    setError(null)
+    setHeldLines([])
+  }
+
+  const onMessage = useCallback((envelope: Envelope) => {
+    if (envelope.error) {
+      setError(envelope.error)
+      return
+    }
+    if (envelope.type === "meta") {
+      setMeta(envelope.data as LogStreamMeta)
+      return
+    }
+    if (envelope.type !== "logs") return
+    const batch = envelope.data as LogLine[]
+    if (pausedRef.current) {
+      setHeldLines((prev) => capLines([...prev, ...batch]))
+      return
+    }
+    setLines((prev) => capLines([...prev, ...batch]))
+  }, [])
+
+  const { state } = useSocket("/logs/stream", {
+    onMessage,
+    query,
+    enabled: Boolean(filter && sourceId),
+  })
+
+  const setPausedAndFlush = useCallback(
+    (next: boolean) => {
+      setPaused(next)
+      if (next) return
+      if (heldLines.length) setLines((prev) => capLines([...prev, ...heldLines]))
+      setHeldLines([])
+    },
+    [heldLines],
+  )
+
+  const clear = useCallback(() => {
+    setLines([])
+    setHeldLines([])
+  }, [])
+
+  return {
+    lines,
+    meta,
+    error,
+    state,
+    paused,
+    setPaused: setPausedAndFlush,
+    held: heldLines.length,
+    clear,
+  }
+}
+
+function capLines(lines: LogLine[]) {
+  return lines.length > LIVE_BUFFER ? lines.slice(lines.length - LIVE_BUFFER) : lines
+}
+
+/**
+ * The history search.
+ *
+ * It runs on Enter rather than as you type, and that is deliberate: this scans
+ * the file — and its rotated archives when asked — so a keystroke-triggered
+ * version would queue a full pass over gigabytes per character. The live mode
+ * next to it is the one that answers instantly.
+ */
+function useHistorySearch(props: WorkspaceProps) {
+  const [result, setResult] = useState<LogSearchResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  // Which answer is still wanted. A sequence number rather than the abort
+  // signal, because "this request was superseded" and "this request was
+  // cancelled" are different questions and only the first should decide
+  // whether to render — reading it off the signal left the pane stuck on
+  // "Searching…" forever the first time anything cancelled a live request.
+  const seq = useRef(0)
+  // The runner is called from event handlers that already know what changed,
+  // so the current values are read from a ref rather than from a closure that
+  // was built before the change landed.
+  const latest = useRef(props)
+  useEffect(() => {
+    latest.current = props
+  })
+
+  const run = useCallback(
+    async (
+      overrides: Partial<{
+        range: LogTimeRange
+        since: string
+        until: string
+        context: number
+        archives: boolean
+        boot: boolean
+      }> = {},
+    ) => {
+      const p = latest.current
+      const range = overrides.range ?? p.range
+      const window = resolveRange(
+        range,
+        overrides.since ?? p.since,
+        overrides.until ?? p.until,
+      )
+      const id = ++seq.current
+      abort.current?.abort()
+      const controller = new AbortController()
+      abort.current = controller
+      setLoading(true)
+      setError(null)
+      try {
+        const res = await get<LogSearchResult>(
+          "/logs/search",
+          {
+            source: p.sourceId,
+            ...filterQuery(p.filter),
+            ...window,
+            before: (overrides.context ?? p.context) || undefined,
+            after: (overrides.context ?? p.context) || undefined,
+            archives: (overrides.archives ?? p.archives) ? "true" : undefined,
+            boot: (overrides.boot ?? p.boot) ? "true" : undefined,
+            limit: 3000,
+          },
+          controller.signal,
+        )
+        if (id !== seq.current) return
+        setResult(res)
+      } catch (err) {
+        if (id !== seq.current) return
+        setError(errorMessage(err))
+        setResult(null)
+      } finally {
+        if (id === seq.current) setLoading(false)
+      }
+    },
+    [],
+  )
+
+  return { result, loading, error, run }
+}
+
+function SearchSummary({
+  result,
+  loading,
+}: {
+  result: LogSearchResult | null
+  loading: boolean
+}) {
+  if (loading) {
+    return <span className="text-[11px] text-muted-foreground">Searching…</span>
+  }
+  if (!result) return <span className="text-[11px] text-muted-foreground">History</span>
+  return (
+    <span className="numeric text-[11px] text-muted-foreground">
+      {plural(result.matched, "match", "matches")} in {result.scanned.toLocaleString()} lines ·{" "}
+      {result.tookMillis}ms
+    </span>
+  )
+}
+
+/**
+ * What was actually read. A search that spans a rotated set and finds
+ * everything in yesterday's file is saying something a merged total hides, and
+ * a truncated answer that does not admit it is worse than no answer.
+ */
+function SearchFooter({ result }: { result: LogSearchResult }) {
+  const notes: string[] = []
+  if (result.truncated) {
+    notes.push(
+      `Showing the most recent ${result.lines.length.toLocaleString()} of ${result.matched.toLocaleString()} matches — narrow the window to see the rest.`,
+    )
+  }
+  if (!result.complete) {
+    notes.push("The scan hit its time limit before reaching the end.")
+  }
+  const files = result.files.filter((f) => f.matched > 0 || f.error)
+  if (notes.length === 0 && files.length <= 1) return null
 
   return (
-    <LogViewer
-      // The pane owns the remaining height rather than growing with its
-      // content: the filters above stay put and the scrolling happens inside.
-      className="min-h-0 flex-1"
-      lines={lines}
-      onClear={() => setLines([])}
-      emptyMessage={state === "open" ? "Waiting for new lines…" : "Connecting…"}
-      toolbar={
-        <span
-          className={cn(
-            "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-            state === "open"
-              ? "border-success/25 bg-success/10 text-success"
-              : "border-border text-muted-foreground",
-          )}
-        >
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              state === "open" ? "bg-success" : "bg-muted-foreground",
-            )}
-          />
-          {state}
-        </span>
-      }
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline bg-surface-header px-3 py-1.5 text-[11px] text-muted-foreground">
+      {notes.map((note) => (
+        <span key={note}>{note}</span>
+      ))}
+      {files.length > 1 &&
+        files.map((file) => (
+          <span key={file.path} className="numeric" title={file.path}>
+            {file.name}
+            {file.archive && " (archive)"}: {file.error ?? `${file.matched.toLocaleString()} matched`}
+          </span>
+        ))}
+    </div>
+  )
+}
+
+function LiveEmpty({
+  state,
+  error,
+  filter,
+  onSearchHistory,
+  onClearFilter,
+}: {
+  state: string
+  error: string | null
+  filter: LogFilterState
+  onSearchHistory: () => void
+  onClearFilter: () => void
+}) {
+  if (error) {
+    return <ErrorState error={new Error(error)} className="max-w-lg" />
+  }
+  if (state !== "open") {
+    return (
+      <EmptyState
+        icon={Waves}
+        title={state === "connecting" ? "Connecting…" : "Not connected"}
+        description={
+          state === "connecting"
+            ? "Opening the stream."
+            : "The stream closed. It reconnects on its own; this page rides a tunnel that drops routinely."
+        }
+      />
+    )
+  }
+  if (isFilterActive(filter)) {
+    return (
+      <EmptyState
+        icon={SearchX}
+        title="Nothing in the recent window matches"
+        description="The filter was applied on the server, so this really is every matching line in the opening window — not a slice of it. History goes further back than a live tail can."
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button size="sm" onClick={onSearchHistory}>
+              <History className="size-3.5" />
+              Search this log&apos;s history
+            </Button>
+            <Button size="sm" variant="outline" onClick={onClearFilter}>
+              Clear the filter
+            </Button>
+          </div>
+        }
+      />
+    )
+  }
+  return (
+    <EmptyState
+      icon={Waves}
+      title="Nothing new yet"
+      description="This log is quiet. New lines appear here the moment they are written."
     />
   )
 }
 
-function SourceList({
-  sources,
-  selected,
-  onSelect,
+function SearchEmpty({
+  result,
+  loading,
+  error,
+  source,
+  archives,
+  onIncludeArchives,
+  onRun,
 }: {
-  sources: ReturnType<typeof usePoll<LogSource[]>>
-  selected: LogSource | null
-  onSelect: (source: LogSource) => void
+  result: LogSearchResult | null
+  loading: boolean
+  error: string | null
+  source: LogSource
+  archives: boolean
+  onIncludeArchives: () => void
+  onRun: () => void
 }) {
-  const [filter, setFilter] = useState("")
-
-  const grouped = useMemo(() => {
-    const needle = filter.trim().toLowerCase()
-    const map = new Map<string, LogSource[]>()
-    for (const s of sources.data ?? []) {
-      if (needle && !s.label.toLowerCase().includes(needle) && !s.kind.includes(needle)) continue
-      const list = map.get(s.kind) ?? []
-      list.push(s)
-      map.set(s.kind, list)
-    }
-    return [...map.entries()]
-  }, [sources.data, filter])
-
-  return (
-    // Below lg the grid stacks, and an uncapped source list would take half
-    // the window from the lines you came to read. Capped here rather than made
-    // scrollable-by-the-page, because the page is now exactly the viewport.
-    <Panel className="max-h-56 min-h-0 lg:max-h-full">
-      <PanelHeader
-        icon={ScrollText}
-        title="Sources"
-        description={`${sources.data?.length ?? 0} available`}
-      />
-      <PanelToolbar>
-        <SearchInput
-          containerClassName="w-full"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter sources"
-        />
-      </PanelToolbar>
-      <PanelBody flush scroll className="p-2">
-        {sources.loading && <LoadingRows className="p-2" />}
-        {sources.error && <ErrorState error={sources.error} className="m-2" />}
-        <div className="space-y-3">
-          {grouped.map(([kind, items]) => (
-            <div key={kind}>
-              <p className="eyebrow mb-1 px-2">{kind}</p>
-              <div className="space-y-0.5">
-                {items.map((source) => (
-                  <button
-                    key={source.id}
-                    onClick={() => onSelect(source)}
-                    // The selected source says so the same way the active nav
-                    // item does — one "you are here" language for both.
-                    className={cn(
-                      "flex w-full min-w-0 flex-col rounded-md px-2 py-1.5 text-left transition-colors",
-                      selected?.id === source.id
-                        ? "bg-primary/12 font-medium text-foreground"
-                        : "hover:bg-accent",
-                    )}
-                  >
-                    <span className="truncate text-[13px]">{source.label}</span>
-                    {source.size !== undefined && source.size > 0 && (
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {bytes(source.size)} · {relativeTime(source.modified)}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-          {!sources.loading && grouped.length === 0 && (
-            <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-              Nothing matches that filter.
-            </p>
-          )}
-        </div>
-      </PanelBody>
-    </Panel>
-  )
-}
-
-function DownloadDialog({ source }: { source: LogSource }) {
-  const [since, setSince] = useState("")
-  const [until, setUntil] = useState("")
-
-  const href = downloadUrl("/logs/download", {
-    path: source.path,
-    since: since ? new Date(since).toISOString() : undefined,
-    until: until ? new Date(until).toISOString() : undefined,
-  })
-
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Download className="size-4" />
-          Export
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Export {source.label}</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="since">From</Label>
-            <Input
-              id="since"
-              type="datetime-local"
-              value={since}
-              onChange={(e) => setSince(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="until">To</Label>
-            <Input
-              id="until"
-              type="datetime-local"
-              value={until}
-              onChange={(e) => setUntil(e.target.value)}
-            />
-          </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Leave both empty to export the whole file. Lines without a parseable timestamp are kept,
-            since they continue the record above them.
-          </p>
-        </div>
-        <DialogFooter>
-          <Button asChild onClick={() => notify.success("Export started")}>
-            <a href={href} download>
-              <FileText className="size-4" />
-              Download
-            </a>
+  if (loading) {
+    return <EmptyState icon={Search} title="Searching…" description="Reading the file server-side." />
+  }
+  if (error) {
+    return <ErrorState error={new Error(error)} className="max-w-lg" />
+  }
+  if (!result) {
+    return (
+      <EmptyState
+        icon={History}
+        title="Search the whole log, not just the tail"
+        description="Type a term and press Enter. The scan happens on the server, so this works on a file far too large to send to a browser — and it reads the rotated archives too, which is where last night's answer usually is."
+        action={
+          <Button size="sm" onClick={onRun}>
+            <Search className="size-3.5" />
+            Search
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        }
+      />
+    )
+  }
+  const hasArchives = (source.archives ?? 0) > 0
+  return (
+    <EmptyState
+      icon={SearchX}
+      title="No matches in that window"
+      description={`Scanned ${result.scanned.toLocaleString()} lines in ${result.tookMillis}ms. Widen the window, relax the level filter, or look further back.`}
+      action={
+        hasArchives && !archives ? (
+          <Button size="sm" onClick={onIncludeArchives}>
+            Include the {source.archives} rotated{" "}
+            {source.archives === 1 ? "archive" : "archives"}
+          </Button>
+        ) : undefined
+      }
+    />
   )
 }

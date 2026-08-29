@@ -1,6 +1,84 @@
 {
-  "latest": "0.6",
+  "latest": "0.6.1",
   "releases": [
+    {
+      "version": "0.6.1",
+      "date": "2026-08-29",
+      "title": "The last panels that ended at a shell prompt, and a dashboard rebuilt around one design system",
+      "summary": "Packages, logs and git history were the three pages that still sent you to ssh \u2014 to find out what a package is called, to grep the log that rotated last night, to see which branch a commit is on. They answer in the panel now. The shell around them was rebuilt at the same time: the four features that were a screen of tabs each became their own routes, twelve themes became one palette in light and dark, and every control in the app now looks like something you press.",
+      "changes": [
+        {
+          "kind": "added",
+          "text": "Packages: search the archive, install, remove, and see what a package actually put on your path",
+          "detail": "The reason people open a terminal instead of a package page is that they do not know the name \u2014 it is postgresql-client, not psql \u2014 so the list updates as you type, and a search that comes back thin is widened to the descriptions, because somebody who does not know the name types what the software does instead. Once a package is installed the second tab answers the question every other panel in this class leaves hanging: which commands it added, which units it registered, what it left in /etc, and its primary manual page rendered next to them. Nothing runs the package's own binaries to find out."
+        },
+        {
+          "kind": "added",
+          "text": "The package pages work on apt, dnf, yum, zypper, pacman and apk, and say how old the index is",
+          "detail": "Every read answers from the package database already on disk, which is right \u2014 a search that refreshed first would take a minute per keystroke \u2014 and it means the catalogue is only as current as the last refresh. On a server nobody logs into, that is the first timer to stop, so the age is on screen with the button that fixes it. Removing a package is an ordinary confirmation; purging one, which also deletes the configuration it left in /etc, asks you to type."
+        },
+        {
+          "kind": "added",
+          "text": "One log filter, applied to every source, over the rotated archives as well as the live file",
+          "detail": "The grep box and the level chips used to be applied to file tails only, so they silently did nothing on the docker, PM2 and journal sources. There is one filter now, compiled once and applied to all of them, and a filtered tail opens on n *matches* rather than n lines \u2014 \"the last 400 lines\" of a log where one line in a thousand is an error is an empty page in front of a file full of them. The rotated generations beside a file are read as part of it, gzip and bzip2 included, so \"when did this start\" can be asked past last night's logrotate run."
+        },
+        {
+          "kind": "added",
+          "text": "Log retention is reported as a verdict rather than as logrotate's rule list",
+          "detail": "The file with no rule governing it is the one that fills the disk, and it is exactly the entry a rule list cannot show. A rule that exists and has not run in a fortnight is reported too, since that is the failure this panel is really for."
+        },
+        {
+          "kind": "added",
+          "text": "A commit graph on the git page, drawn from the same walk that lists the commits",
+          "detail": "Which branch a commit is on, and where the branches met, is the part of git history that a flat list cannot say."
+        },
+        {
+          "kind": "added",
+          "text": "The dashboard's own version has a page of its own",
+          "detail": "It used to be the top half of a page whose bottom half was the host's packages, on the theory that \"what can be updated on this machine\" is one question. It is not \u2014 one of them is your server and the other is the tool you are looking at it through \u2014 and the release notes, which are the part somebody actually reads before upgrading a root-equivalent panel, had nowhere to live but a sheet over a table of library versions."
+        },
+        {
+          "kind": "changed",
+          "text": "Docker, Databases, Proxy and Security are each a set of pages now, not one screen of tabs",
+          "detail": "A sticky sub-nav strip, an Overview that points at the detail pages rather than piling everything onto one screen, and a sidebar entry that expands to its children instead of being both a link and a toggle. Metrics took over the old Overview body, which leaves Overview the landing it should always have been: host header, health, an hour of sparklines, recent activity, and a card per service."
+        },
+        {
+          "kind": "changed",
+          "text": "One palette in light and dark, instead of twelve themes",
+          "detail": "Twelve palettes meant twelve places for a colour to be almost right, and no way to tell which of them a screenshot came from. Every verdict in the app now renders through one accordion of findings rather than a stack of tinted alert boxes, and a live state is a coloured dot and a word rather than a filled pill \u2014 the tinted badges stay, but only for tags, which are a fixed property of a row and never a state."
+        },
+        {
+          "kind": "changed",
+          "text": "Every control looks like something you press",
+          "detail": "A button now has a face a shade lighter than the surface under it, a hairline of light along its top edge, a dark lip at the bottom and a shadow on the page below \u2014 inverting when you press it, so the control sits into the page. Cards make the same claim in the same language rather than in one of their own, and hovering settles a control towards the surface instead of lighting it up. The quiet actions at the end of a table row stay flat, because giving 142 of them a face turns every row into a strip of controls competing with its own data, and the nav stays a list for the same reason: the thing that should stand out in a column of forty-nine items is the one you are on."
+        },
+        {
+          "kind": "changed",
+          "text": "The typed confirmation is reserved for the actions that have no way back",
+          "detail": "A phrase in front of something recoverable is typed rather than read, and that habit is precisely what it is protecting on the routes that keep it. Deleting a proxy site, an nginx stream, an htpasswd file or a git branch, pruning images, networks or containers, and ending an SSH session all still stop you with a confirmation \u2014 they no longer ask you to type. What keeps the phrase is what costs you the machine or the data: the firewall and sshd, every DROP, TRUNCATE and restore, removing a volume, compose down, git discard and git reset --hard, and installing a new version of the dashboard itself."
+        },
+        {
+          "kind": "fixed",
+          "text": "Clicking a pane in the terminal focuses it, and a killed pane stops leaving a chip behind",
+          "detail": "Both were the pane list being polled only once the window already reported more than one pane \u2014 a count up to five seconds stale \u2014 so for the seconds after a split there was nothing to click, and for the seconds after a kill there was a chip pointing at a pane that no longer existed."
+        },
+        {
+          "kind": "fixed",
+          "text": "The terminal's jump-to-the-end button appears when tmux has actually scrolled",
+          "detail": "It used to appear on the first wheel-up whether or not anything moved \u2014 which under a full-screen program that wants the mouse is never \u2014 offering to return a terminal that had not gone anywhere, and its button called a scroll the emulator cannot perform under tmux. The pane now asks tmux whether the pane is in copy mode and believes the answer, in both directions."
+        },
+        {
+          "kind": "fixed",
+          "text": "Terminal shortcuts only fire where the shell has the keyboard",
+          "detail": "They move sessions, close windows and kill panes, and they were firing from anywhere on the page \u2014 so Ctrl+Alt+W closed a tmux window while the operator was clicking around the file tree."
+        },
+        {
+          "kind": "fixed",
+          "text": "Box-drawing characters in the terminal line up, and the terminal follows the theme",
+          "detail": "Block and box glyphs are drawn from a vector atlas rather than from the font, which spaced them wrong and broke the border of every full-screen program. The colours are derived from the live theme at runtime, with a neutral ramp mixed per mode so the dim colours stay legible on white as well as on near-black."
+        }
+      ]
+    },
     {
       "version": "0.6",
       "date": "2026-08-27",

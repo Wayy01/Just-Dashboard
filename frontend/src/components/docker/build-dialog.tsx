@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Hammer, Loader2 } from "lucide-react"
+import { Hammer } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import type { GitRepo } from "@/lib/types"
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { Spinner } from "@/components/state"
 import {
   Dialog,
   DialogContent,
@@ -187,7 +188,7 @@ export function BuildDialog({
           </Button>
           <Button onClick={build} disabled={runner.running || !dir.trim() || !tag.trim()}>
             {runner.running ? (
-              <Loader2 className="size-4 animate-spin" />
+              <Spinner className="size-4" />
             ) : (
               <Hammer className="size-4" />
             )}

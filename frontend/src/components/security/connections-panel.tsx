@@ -10,7 +10,8 @@ import { useAuth } from "@/hooks/use-auth"
 import { Metric, MetricStrip } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
-import { Badge } from "@/components/ui/badge"
+import { ReachBadge } from "@/components/security/reach-badge"
+import { Status } from "@/components/status-dot"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -44,6 +45,7 @@ export function ConnectionsPanel() {
   if (error) return <ErrorState error={error} />
 
   const peers = (data?.peers ?? []).filter((p) => scope === "all" || !p.private)
+  const fromInternet = (data?.peers ?? []).filter((p) => !p.private).length
 
   const block = async (ip: string) => {
     try {
@@ -65,14 +67,26 @@ export function ConnectionsPanel() {
       <PanelHeader
         icon={Network}
         title="Live connections"
-        description={`${data?.peers.length ?? 0} remote addresses`}
-      >
-        <MetricStrip className="ml-auto">
+        description="Who is talking to this machine right now"
+        actions={
+          <Status
+            verdict={fromInternet > 0 ? "notice" : "ok"}
+            label={
+              fromInternet > 0
+                ? `${fromInternet} from the internet`
+                : "none from the internet"
+            }
+          />
+        }
+      />
+      <PanelToolbar>
+        <MetricStrip>
+          <Metric label="remote addresses" value={data?.peers.length ?? 0} />
           <Metric label="sockets" value={data?.total ?? 0} />
           <Metric label="listening" value={data?.listening ?? 0} />
           <Metric label="loopback" value={data?.loopback ?? 0} hint="never left the machine" />
         </MetricStrip>
-      </PanelHeader>
+      </PanelToolbar>
       <PanelToolbar>
         <ToggleGroup
           type="single"
@@ -132,9 +146,7 @@ export function ConnectionsPanel() {
                     {peer.processes.join(", ") || "—"}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={peer.private ? "secondary" : "outline"} className="font-normal">
-                      {peer.private ? "private" : "internet"}
-                    </Badge>
+                    <ReachBadge scope={peer.private ? "private" : "internet"} />
                   </TableCell>
                   <TableCell>
                     {can("system.admin") && !peer.private && (

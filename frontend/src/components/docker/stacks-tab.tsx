@@ -2,15 +2,16 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { FolderPlus, Layers, Loader2, Play, Plus } from "lucide-react"
+import { FolderPlus, Layers, Play, Plus } from "lucide-react"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { ComposeStack } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, Spinner } from "@/components/state"
 import { StatusDot } from "@/components/status-dot"
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/panel"
+import { RowLink } from "@/components/page"
 import { PortLink, type ConfirmFn } from "@/components/docker/shared"
 import { StackDetailPanel } from "@/components/docker/stack-detail"
 import { Hint, Term } from "@/components/docker/explain"
@@ -145,9 +146,9 @@ function StackCard({
       <PanelHeader
         icon={Layers}
         title={
-          <button className="text-left hover:underline" onClick={onOpen}>
+          <RowLink className="text-[13px] leading-tight" onClick={onOpen}>
             {stack.name}
-          </button>
+          </RowLink>
         }
         description={stack.workingDir || "location unknown"}
         actions={
@@ -202,7 +203,7 @@ function StackCard({
             {can("service.control") && stack.running < stack.total && (
               <Button size="sm" variant="ghost" onClick={bringUp} disabled={busy}>
                 {busy ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <Spinner className="size-3.5" />
                 ) : (
                   <Play className="size-3.5" />
                 )}
@@ -312,7 +313,7 @@ function NewStackDialog({
             Cancel
           </Button>
           <Button onClick={create} disabled={busy || !name.trim()}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
+            {busy && <Spinner className="size-4" />}
             Create
           </Button>
         </DialogFooter>

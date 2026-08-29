@@ -549,9 +549,6 @@ func (s *Server) handleContainerRemove(w http.ResponseWriter, r *http.Request) e
 }
 
 func (s *Server) handleContainerPrune(w http.ResponseWriter, r *http.Request) error {
-	if err := httpx.RequireTypedConfirmation(w, r, "prune containers"); err != nil {
-		return err
-	}
 	space, deleted, err := s.modules.docker.PruneContainers(r.Context())
 	if err != nil {
 		return s.dockerErr(err)
@@ -710,13 +707,6 @@ func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) error
 
 func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) error {
 	all := r.URL.Query().Get("all") == "true"
-	phrase := "prune images"
-	if all {
-		phrase = "prune all images"
-	}
-	if err := httpx.RequireTypedConfirmation(w, r, phrase); err != nil {
-		return err
-	}
 	rep, err := s.modules.docker.PruneImages(r.Context(), all)
 	if err != nil {
 		return s.dockerErr(err)
@@ -914,11 +904,17 @@ func (s *Server) stackAction(action dockerx.ComposeAction) httpx.Handler {
 }
 
 func (s *Server) handlePruneAll(w http.ResponseWriter, r *http.Request) error {
-	if err := httpx.RequireTypedConfirmation(w, r, "prune everything"); err != nil {
-		return err
-	}
 	includeVolumes := r.URL.Query().Get("volumes") == "true"
 	allImages := r.URL.Query().Get("allImages") == "true"
+	// Only the volume sweep is typed for: a container, a network or an image
+	// comes back from a registry or a compose file, a volume comes back from
+	// nothing. Without volumes this is the routine housekeeping sweep and an
+	// ordinary confirmation is the right weight.
+	if includeVolumes {
+		if err := httpx.RequireTypedConfirmation(w, r, "prune everything"); err != nil {
+			return err
+		}
+	}
 	reports, err := s.modules.docker.PruneAll(r.Context(), includeVolumes, allImages)
 	if err != nil {
 		return s.dockerErr(err)

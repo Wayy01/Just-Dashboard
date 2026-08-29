@@ -803,6 +803,34 @@ export type LogSource = {
   size?: number
   modified?: string
   rotated: boolean
+  /** Rotated generations sitting next to a live file, and their total size. */
+  archives?: number
+  archiveBytes?: number
+  /** One line saying what this source actually holds, for the reader who has never met auth.log. */
+  detail?: string
+  /** A live source's state — a stopped container still has logs worth reading. */
+  status?: string
+}
+
+export type LogJournalUnit = {
+  name: string
+  description: string
+  active: string
+}
+
+/**
+ * Everything the viewer needs to offer a choice, in one request. The journal's
+ * units ship with the sources rather than from a second fetch: putting every
+ * unit in the source list would bury syslog under systemd's inventory, and
+ * loading them separately leaves the unit picker empty for a second after the
+ * journal is chosen, which reads as "this host has no units".
+ */
+export type LogSourceIndex = {
+  sources: LogSource[]
+  units: LogJournalUnit[]
+  roots: string[]
+  /** Why a source kind is absent — "no Docker here" is not the same as "no containers". */
+  missing: Record<string, string>
 }
 
 export type LogLine = {
@@ -811,11 +839,91 @@ export type LogLine = {
   timestamp?: string
   source?: string
   /**
-   * "stdout" or "stderr", sent only by the container log socket, which streams
-   * dockerx.LogLine rather than logsx.Line. File and journal tails do not have
-   * two streams to distinguish.
+   * "stdout" or "stderr", sent wherever the producer distinguishes them — a
+   * container and a PM2 process do, a plain file does not.
    */
   stream?: string
+  /** 1-based line number within its file, set by the history search. */
+  no?: number
+  /** True for a line included because it sits next to a match, not because it matched. */
+  context?: boolean
+  /** Which file of a rotated set this came from. */
+  file?: string
+  /** Byte ranges of the search term, computed server-side where the browser cannot re-run a Go regexp. */
+  match?: [number, number][]
+}
+
+/** One column of the search histogram, counted by level. */
+export type LogBucket = {
+  start: string
+  total: number
+  counts: Record<string, number>
+}
+
+export type LogSearchedFile = {
+  path: string
+  name: string
+  archive: boolean
+  scanned: number
+  matched: number
+  modified?: string
+  error?: string
+}
+
+export type LogSearchResult = {
+  lines: LogLine[]
+  scanned: number
+  matched: number
+  truncated: boolean
+  /** False when the scan ran out of time rather than out of file. */
+  complete: boolean
+  files: LogSearchedFile[]
+  histogram: LogBucket[]
+  bucketSeconds?: number
+  first?: string
+  last?: string
+  tookMillis: number
+}
+
+/** The frame the live socket opens with, before any lines. */
+export type LogStreamMeta = {
+  kind: LogSource["kind"]
+  label: string
+  path?: string
+  filtered: boolean
+  prefill?: { lines: number; complete: boolean }
+  archives?: number
+  note?: string
+}
+
+export type LogRotateRule = {
+  configFile: string
+  patterns: string[]
+  frequency?: string
+  rotate?: string
+  compress: boolean
+  size?: string
+  maxSize?: string
+  missingOk: boolean
+  options: string[]
+}
+
+export type LogRotateStatus = {
+  available: boolean
+  rules: LogRotateRule[]
+  stateFile?: string
+  lastRun?: string
+}
+
+/** The verdict for one file: is anything actually trimming this. */
+export type LogRetention = {
+  managed: boolean
+  rule?: LogRotateRule
+  pattern?: string
+  summary: string
+  level: "ok" | "warn" | "unknown"
+  lastRun?: string
+  available: boolean
 }
 
 export type JournalEntry = {
@@ -1508,6 +1616,16 @@ export type GitCommit = {
   deletions: number
   files: number
   isMerge: boolean
+  parents?: string[]
+}
+
+/** One node in the branch graph: a commit plus the lane its dot sits in. */
+export type GitGraphCommit = GitCommit & { col: number }
+
+export type GitGraph = {
+  commits: GitGraphCommit[]
+  /** How many lanes wide the busiest row gets — the canvas is sized from this. */
+  lanes: number
 }
 
 export type GitBranch = {
@@ -1520,6 +1638,9 @@ export type GitBranch = {
   at?: string
   ahead: number
   behind: number
+  /** Another worktree that has this branch checked out; git refuses to delete
+   *  or switch it even with -D. */
+  worktree?: string
 }
 
 export type GitResult = {
@@ -1636,6 +1757,110 @@ export type UpdateReport = {
   rebootPackages?: string[]
   lastChecked: string
   error?: string
+}
+
+// --- The host's software ---
+//
+// Mirrors internal/updates' catalogue half. The upgrade report above answers
+// "how far behind is this machine"; these answer "what is on it", "what else
+// is there" and — the one nothing in this class offers — "now that it is
+// installed, what do I type".
+
+export type InstalledPackage = {
+  name: string
+  version: string
+  arch?: string
+  summary?: string
+  /** Installed size in bytes, or absent where the manager reports none. */
+  size?: number
+  section?: string
+  /** Somebody asked for this, as opposed to it arriving as a dependency. */
+  explicit: boolean
+  /** The package database says the system does not work without it. */
+  essential?: boolean
+  /** The pending version, joined on from the upgrade report by the server. */
+  upgradable?: string
+  security?: boolean
+}
+
+export type PackageInventory = {
+  available: boolean
+  manager?: string
+  packages: InstalledPackage[]
+  explicitCount: number
+  totalSize?: number
+  upgradeCount: number
+  securityCount: number
+  canInstall: boolean
+  /**
+   * Whether "and delete its configuration" means anything here. RPM keeps a
+   * modified config file whatever it is asked, so the switch is hidden there
+   * rather than shown doing nothing.
+   */
+  canPurge: boolean
+  /**
+   * When the repository index was last refreshed. Everything on the page is
+   * read from that index, so a three-month-old one is a catalogue missing
+   * every package added since — absent where the manager cannot say.
+   */
+  indexAge?: string
+  canRefresh: boolean
+  readAt: string
+  error?: string
+}
+
+export type PackageSearchResult = {
+  name: string
+  version?: string
+  summary?: string
+  repository?: string
+  installed: boolean
+  installedVersion?: string
+}
+
+export type PackageDetail = {
+  name: string
+  version?: string
+  installedVersion?: string
+  installed: boolean
+  summary?: string
+  description?: string
+  homepage?: string
+  license?: string
+  section?: string
+  repository?: string
+  arch?: string
+  maintainer?: string
+  size?: number
+  dependencies?: string[]
+  essential?: boolean
+  /** Why the dashboard will not remove it; absent when it will. */
+  protected?: string
+  upgradable?: string
+}
+
+export type ManPage = {
+  name: string
+  /** The manual volume: 1 is a command, 5 a file format, 8 a root-only tool. */
+  section: string
+  path: string
+}
+
+/** What a package gives you and how to reach it, read from its own file list. */
+export type PackageUsage = {
+  package: string
+  commands?: string[]
+  manPages?: ManPage[]
+  services?: string[]
+  configFiles?: string[]
+  docs?: string[]
+  manual?: string
+  manualFor?: string
+  /** A page exists but `man` is not installed here, so it could not be read. */
+  manUnavailable?: string
+  truncated?: boolean
+  /** No commands, pages or units — a library other packages use. */
+  empty: boolean
 }
 
 /** How the dashboard itself can be reached, graded weakest-entry-first. */

@@ -56,7 +56,6 @@ export function HistoryPanel({
   const resetTo = (c: GitCommit) =>
     confirm({
       title: `Undo commits back to ${c.short}`,
-      phrase: "reset branch",
       confirmLabel: "Undo to here",
       description: (
         <div className="space-y-1.5">
@@ -68,8 +67,8 @@ export function HistoryPanel({
           <p className="text-muted-foreground">Your files are not touched. Nothing is deleted.</p>
         </div>
       ),
-      action: async (conf) => {
-        await post("/git/reset", { ref: c.sha, hard: false }, { confirm: conf, query: { path: repoPath } })
+      action: async () => {
+        await post("/git/reset", { ref: c.sha, hard: false }, { query: { path: repoPath } })
         log.refresh()
         onChanged()
       },

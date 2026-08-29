@@ -1,10 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { CheckCircle2, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/state"
 
 /**
  * Watching a long command run, instead of waiting for one.
@@ -151,7 +152,7 @@ export function RunConsole({
       )}
     >
       <div className="flex items-center gap-2 border-b border-hairline bg-surface-header px-3 py-1.5">
-        {state === "running" && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        {state === "running" && <Spinner className="size-3.5 text-muted-foreground" />}
         {state === "ok" && <CheckCircle2 className="size-3.5 text-success" />}
         {state === "failed" && <XCircle className="size-3.5 text-destructive" />}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">

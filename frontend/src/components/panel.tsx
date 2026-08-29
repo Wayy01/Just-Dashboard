@@ -14,13 +14,18 @@ import { cn } from "@/lib/utils"
  * of padding sharing the body's ground — that is what makes a panel legible as
  * "chrome, then content" at a glance, and what lets a toolbar or a full-bleed
  * table sit flush beneath it without inventing a second edge.
+ *
+ * `shadow-sm` reads as nothing next to a border in most palettes, but this
+ * one's shadow scale is a real part of its look — soft in light, a deliberate
+ * lifted halo in dark — so a panel with no shadow at all was the one place in
+ * the app the theme wasn't actually showing up.
  */
 export function Panel({ className, children, ...props }: React.ComponentProps<"section">) {
   return (
     <section
       data-slot="panel"
       className={cn(
-        "flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground",
+        "raised flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground",
         className,
       )}
       {...props}

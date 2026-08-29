@@ -9,7 +9,6 @@ import {
   Download,
   Hammer,
   HardDrive,
-  Loader2,
   RefreshCw,
   Trash2,
 } from "lucide-react"
@@ -19,11 +18,11 @@ import { bytes, relativeTime } from "@/lib/format"
 import type { DockerImage, ImageDetail, ImageUpdateStatus } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice } from "@/components/state"
+import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice, Spinner } from "@/components/state"
 import { IconAction } from "@/components/icon-action"
 import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
-import { Detail, DetailList, SearchInput } from "@/components/page"
+import { Detail, DetailList, RowLink, SearchInput } from "@/components/page"
 import type { ConfirmFn } from "@/components/docker/shared"
 import { Hint, Term } from "@/components/docker/explain"
 import { usePullProgress } from "@/components/docker/create-container"
@@ -155,7 +154,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                 onClick={recheck}
                 disabled={checking}
               >
-                {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                {checking ? <Spinner /> : <RefreshCw />}
               </IconAction>
               {can("service.control") && (
                 <>
@@ -178,7 +177,6 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                   onClick={() =>
                     confirm({
                       title: "Prune images",
-                      phrase: "prune images",
                       confirmLabel: "Prune",
                       description: (
                         <p>
@@ -187,12 +185,8 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                           can need them.
                         </p>
                       ),
-                      action: async (c) => {
-                        const rep = await post<{ spaceReclaimed: number }>(
-                          "/docker/images/prune",
-                          undefined,
-                          { confirm: c },
-                        )
+                      action: async () => {
+                        const rep = await post<{ spaceReclaimed: number }>("/docker/images/prune")
                         notify.success(`Reclaimed ${bytes(rep.spaceReclaimed)}`)
                         refresh()
                       },
@@ -237,12 +231,9 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                   >
                     <TableCell>
                       <div className="max-w-[26rem] min-w-0">
-                        <button
-                          className="truncate text-left font-mono text-xs hover:underline"
-                          onClick={() => setSelected(image.id)}
-                        >
+                        <RowLink mono onClick={() => setSelected(image.id)}>
                           {image.repoTags.length ? image.repoTags.join(", ") : <em>untagged</em>}
-                        </button>
+                        </RowLink>
                         <p className="font-mono text-[11px] text-muted-foreground">
                           {image.id.replace("sha256:", "").slice(0, 12)}
                         </p>
@@ -616,7 +607,7 @@ function PullDialog({
           </Button>
           <Button onClick={start} disabled={!ref.trim() || pull.active}>
             {pull.active ? (
-              <Loader2 className="size-4 animate-spin" />
+              <Spinner className="size-4" />
             ) : (
               <HardDrive className="size-4" />
             )}

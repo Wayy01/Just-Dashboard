@@ -65,43 +65,155 @@ import {
 
 type Query = Record<string, string | number | boolean | undefined | null>
 
+type XtermTheme = NonNullable<Terminal["options"]["theme"]>
+
 /**
- * xterm cannot read the theme tokens: it parses colours itself and does not
- * understand `oklch()` or `var()`. So the terminal gets two hand-picked
- * palettes and follows the active theme's mode rather than its hue — which is
- * the part that matters, since a black pane in the middle of a light page is
- * the one place a palette can be actively unreadable.
+ * The last resort when a canvas 2D context is unavailable (a headless or
+ * locked-down browser). The runtime resolver below is what actually runs.
  */
-const TERMINAL_THEMES = {
+/**
+ * The neutral ANSI ramp (colours 0, 8, 7, 15) as a fraction of ink mixed into
+ * paper. `--foreground` and `--background` swap roles between modes, so one
+ * formula cannot give "a dark grey" in both: in dark mode a little ink lifts
+ * off the near-black ground; in light mode colour 0 has to sit near the ink or
+ * it vanishes on white. Colour 8 (`brightBlack`) is the most-used of the four —
+ * git hashes, vim comments, `ls -l` metadata — so it is kept clearly legible
+ * either way.
+ */
+const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> = {
+  dark: { black: 18, brightBlack: 44, white: 74 },
+  light: { black: 86, brightBlack: 56, white: 44 },
+}
+
+/** cyan has no near-200° token in the palette, so it is the one hardcoded hue. */
+const TERMINAL_CYAN: Record<"dark" | "light", string> = {
+  dark: "#4cc4cc",
+  light: "#0e7490",
+}
+
+/**
+ * The last resort when a canvas 2D context is unavailable (a headless or
+ * locked-down browser). The runtime resolver below is what actually runs.
+ */
+const TERMINAL_FALLBACK: Record<"dark" | "light", XtermTheme> = {
   dark: {
-    background: "#0e1117",
-    foreground: "#e3e6ee",
-    cursor: "#e4e4e7",
-    selectionBackground: "#3f3f46",
-    black: "#18181b",
-    red: "#f87171",
-    green: "#4ade80",
-    yellow: "#fbbf24",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#e4e4e7",
+    background: "#141414",
+    foreground: "#fafafa",
+    cursor: "#fafafa",
+    selectionBackground: "rgba(200,160,60,0.3)",
+    black: "#333333",
+    red: "#e5484d",
+    green: "#46a758",
+    yellow: "#d9a441",
+    blue: "#5b7fdb",
+    magenta: "#8e6fd6",
+    cyan: TERMINAL_CYAN.dark,
+    white: "#c2c2c6",
+    brightBlack: "#6b6b6b",
+    brightWhite: "#fafafa",
   },
   light: {
-    background: "#fbfbfd",
-    foreground: "#26262b",
-    cursor: "#3f3f46",
-    selectionBackground: "#c7d2fe",
-    black: "#26262b",
-    red: "#b91c1c",
-    green: "#15803d",
-    yellow: "#a16207",
-    blue: "#1d4ed8",
-    magenta: "#7e22ce",
-    cyan: "#0e7490",
-    white: "#52525b",
+    background: "#ffffff",
+    foreground: "#0a0a0a",
+    cursor: "#0a0a0a",
+    selectionBackground: "rgba(60,110,220,0.22)",
+    black: "#242424",
+    red: "#c62a2f",
+    green: "#2f7d3a",
+    yellow: "#9a6b1f",
+    blue: "#2f52c4",
+    magenta: "#6b46c1",
+    cyan: TERMINAL_CYAN.light,
+    white: "#8a8a8a",
+    brightBlack: "#6b6b6b",
+    brightWhite: "#0a0a0a",
   },
-} as const
+}
+
+/**
+ * xterm parses colours itself and understands neither `oklch()` nor `var()`,
+ * so the palette can't be handed the theme tokens directly. Instead a hidden
+ * probe borrows each token the way any element would — `color: var(--x)` — and
+ * its resolved computed colour is normalised through a canvas, which accepts
+ * every form `getComputedStyle` returns and hands back `#rrggbb`. The result
+ * tracks the active theme in both modes with only cyan hard-coded: the
+ * background is the app's, the accents are the chart colours the rest of the
+ * UI uses, and the neutral ramp is mixed from foreground and background so it
+ * stays legible whichever mode is on.
+ */
+function resolveTerminalTheme(mode: "dark" | "light"): XtermTheme {
+  if (typeof document === "undefined") return TERMINAL_FALLBACK[mode]
+  const ctx = document.createElement("canvas").getContext("2d")
+  if (!ctx) return TERMINAL_FALLBACK[mode]
+
+  const probe = document.createElement("span")
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"
+  document.body.appendChild(probe)
+
+  const read = (expr: string, fallback: string) => {
+    // A sentinel first: an expression the browser rejects outright (a typo in
+    // a function name) leaves `color` at the sentinel rather than erroring, so
+    // that is the signal to fall back.
+    probe.style.color = "rgb(1, 2, 3)"
+    probe.style.color = expr
+    const raw = getComputedStyle(probe).color
+    if (!raw || raw === "rgb(1, 2, 3)") return fallback
+    try {
+      ctx.fillStyle = "#000"
+      ctx.fillStyle = raw
+      return ctx.fillStyle
+    } catch {
+      return fallback
+    }
+  }
+  const token = (name: string, fallback: string) => read(`var(${name})`, fallback)
+  const mix = (a: string, pct: number, b: string, fallback: string) =>
+    read(`color-mix(in oklab, var(${a}) ${pct}%, var(${b}))`, fallback)
+  const withAlpha = (hex: string, a: number) =>
+    /^#[0-9a-f]{6}$/i.test(hex)
+      ? hex +
+        Math.round(a * 255)
+          .toString(16)
+          .padStart(2, "0")
+      : hex
+
+  const fb = TERMINAL_FALLBACK[mode]
+  const n = NEUTRAL_INK[mode]
+  const fg = token("--foreground", fb.foreground!)
+  const bg = token("--background", fb.background!)
+  const red = token("--destructive", fb.red!)
+  const green = token("--success", fb.green!)
+  const yellow = token("--warning", fb.yellow!)
+  const blue = token("--chart-1", fb.blue!)
+  const magenta = token("--chart-4", fb.magenta!)
+  const cyan = TERMINAL_CYAN[mode]
+
+  const theme = {
+    background: bg,
+    foreground: fg,
+    cursor: token("--primary", fg),
+    cursorAccent: bg,
+    selectionBackground: withAlpha(token("--ring", fb.blue!), 0.3),
+    black: mix("--foreground", n.black, "--background", fb.black!),
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white: mix("--foreground", n.white, "--background", fb.white!),
+    brightBlack: mix("--foreground", n.brightBlack, "--background", fb.brightBlack!),
+    brightRed: red,
+    brightGreen: green,
+    brightYellow: yellow,
+    brightBlue: blue,
+    brightMagenta: magenta,
+    brightCyan: cyan,
+    brightWhite: fg,
+  }
+  probe.remove()
+  return theme
+}
 
 /** The control keys a strip can send. Bytes, not tmux key names: these go
  *  straight down the same socket a keypress would, so the shell cannot tell
@@ -132,6 +244,8 @@ export function XtermPane({
   cwd,
   onOpenFiles,
   onCellClick,
+  focusRef,
+  copyMode,
   onToggleFullscreen,
   fullscreenActive,
 }: {
@@ -151,6 +265,28 @@ export function XtermPane({
    * can honestly report.
    */
   onCellClick?: (cell: { col: number; row: number }) => void
+  /**
+   * Handed a function that puts the keyboard back into this pane.
+   *
+   * The page calls it after every switch it offers — session, window, pane —
+   * because clicking a chip leaves the focus on the chip, and the next
+   * keystroke then goes to a button instead of to the shell that was just
+   * chosen. A ref rather than an imperative handle: the terminal is built
+   * inside an effect, and nothing here needs to re-render to hand it over.
+   */
+  focusRef?: React.RefObject<(() => void) | null>
+  /**
+   * Whether the socket on the other end is a tmux-backed session that
+   * understands the `exit-copy` and `sync-copy` control frames.
+   *
+   * It is off by default, and that default is load-bearing rather than
+   * cautious. The same component drives `docker exec`, whose handler writes
+   * **every frame that is not a resize straight into the container's stdin** —
+   * so a copy-mode question asked of a socket that has never heard of copy
+   * mode does not fail, it types `{"type":"sync-copy"}` at somebody's prompt.
+   * Only the terminal page, whose sessions are tmux's, turns it on.
+   */
+  copyMode?: boolean
   /**
    * When set, the fullscreen button and shortcut hand off to the caller instead
    * of fullscreening this pane alone. The terminal page uses it to take the
@@ -175,18 +311,35 @@ export function XtermPane({
     word: false,
   })
   const [atBottom, setAtBottom] = useState(true)
-  // Whether the wheel has taken this pane back through its history.
+  // Whether tmux has this pane scrolled back through its history — **as tmux
+  // reports it**, never as the browser guesses.
   //
   // It cannot be read from xterm. Under tmux the emulator's own scrollback
   // stays empty — tmux holds the alternate screen and repaints the viewport
   // rather than emitting lines — so the history belongs to tmux, and a wheel
-  // tick is forwarded to it. What tmux does with it is enter copy mode, which
-  // is a *mode*: keys become copy commands and the shell stops hearing them.
-  // Nobody reads that as a mode; they read it as the terminal having frozen.
-  // So the browser remembers that it scrolled, and the next keystroke asks the
-  // server to leave copy mode before it is delivered.
+  // tick is forwarded to it as a mouse report. What tmux *does* with that
+  // report is not the browser's to know, and assuming it was a scroll is the
+  // bug this flag used to have: tmux hands the wheel straight to the program
+  // in the pane whenever that program has asked for the mouse — tmux's own
+  // `mouse_any_flag`, which is on for every full-screen TUI, an editor, a
+  // pager, Claude Code. Nothing enters copy mode there and there is nothing to
+  // jump back from, so the affordance the browser drew from its own guess was
+  // a button offering to return a terminal that had never moved. The wheel
+  // only *asks* now, and `#{pane_in_mode}` coming back over the socket is what
+  // puts the button on screen.
   const [scrolledBack, setScrolledBack] = useState(false)
   const scrolledBackRef = useRef(false)
+  // A wheel tick has gone out and tmux has not yet said what became of it.
+  //
+  // The answer arrives a couple of hundred milliseconds later, and the first
+  // keystroke after a scroll routinely beats it. Copy mode is a mode in the vi
+  // sense — keys become copy commands and the shell stops hearing them — so
+  // that keystroke has to be preceded by the cancel or it is eaten, which
+  // reads as the terminal having frozen. Cancelling a pane that is not in a
+  // mode costs one `tmux send-keys -X cancel` that reports "not in a mode" and
+  // writes nothing to the program, so guessing wrong here is free and waiting
+  // is not.
+  const wheeledRef = useRef(false)
   const [shortcuts, setShortcuts] = useState(false)
   // What a guarded paste is holding: the bytes to send if it is confirmed,
   // and the readable version to show. They differ whenever the shell has
@@ -224,12 +377,25 @@ export function XtermPane({
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+  // Read inside the connect effect, which must not re-run when it changes,
+  // for the same reason the settings are.
+  const copyModeRef = useRef(copyMode)
+  useEffect(() => {
+    copyModeRef.current = copyMode
+  }, [copyMode])
   // Same reason as the settings ref: rebinding a shortcut must not tear down
   // the terminal and the PTY behind it.
   const keymapRef = useRef(map)
   useEffect(() => {
     keymapRef.current = map
   }, [map])
+  // The click handler is a native listener installed once with the terminal —
+  // see the mousedown listener below for why it cannot be a React prop — so
+  // the caller's callback reaches it through a ref rather than a closure.
+  const onCellClickRef = useRef(onCellClick)
+  useEffect(() => {
+    onCellClickRef.current = onCellClick
+  }, [onCellClick])
   // The key handler is installed once, before toggleFullscreen is defined.
   const fullscreenRef = useRef<(() => Promise<void>) | null>(null)
   // The caller's fullscreen override, mirrored into a ref for the same reason:
@@ -249,12 +415,14 @@ export function XtermPane({
     // xterm touches `window` at import time, so it is loaded in the effect
     // rather than at module scope where the server render would break.
     ;(async () => {
-      const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-web-links"),
-        import("@xterm/addon-search"),
-      ])
+      const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }, { WebglAddon }] =
+        await Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+          import("@xterm/addon-web-links"),
+          import("@xterm/addon-search"),
+          import("@xterm/addon-webgl"),
+        ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
 
@@ -306,7 +474,7 @@ export function XtermPane({
         // "none" over a scrollback full of matches, which is worse than not
         // showing a count at all.
         allowProposedApi: true,
-        theme: { ...TERMINAL_THEMES[modeRef.current] },
+        theme: resolveTerminalTheme(modeRef.current),
       })
       termRef.current = term
       const fit = new FitAddon()
@@ -330,7 +498,36 @@ export function XtermPane({
       forcePointerToSelect(term)
       fit.fit()
 
+      // The WebGL renderer, loaded once the pane has its real size. xterm's
+      // core ships only the DOM renderer, which draws box-drawing and block
+      // characters from the font — and most system monospace fonts space those
+      // wrong, so tmux's pane borders came through with gaps and any TUI that
+      // paints with ▀▄█ (htop's meters, a banner) rendered broken while plain
+      // text was fine. The WebGL renderer draws those glyphs itself from a
+      // vector atlas, so they line up regardless of the font.
+      //
+      // It tracks dirty rows rather than repainting everything, and misses the
+      // wholesale change when an app switches to the alternate screen — the
+      // first row of a full-screen TUI (Claude Code, vim, less) came through
+      // blank. `onBufferChange` forces the full repaint that the switch needs.
+      // On GPU context loss the addon disposes itself and xterm falls straight
+      // back to the DOM renderer.
       const disposables: IDisposable[] = []
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        term.loadAddon(webgl)
+        disposables.push(term.buffer.onBufferChange(() => term.refresh(0, term.rows - 1)))
+        requestAnimationFrame(() => {
+          if (disposed) return
+          fit.fit()
+          term.refresh(0, term.rows - 1)
+        })
+      } catch {
+        // No WebGL in this browser — the DOM renderer is the fallback and needs
+        // nothing done.
+      }
+
       disposables.push(
         search.onDidChangeResults((r) =>
           setMatches({ index: r?.resultIndex ?? -1, count: r?.resultCount ?? 0 }),
@@ -364,6 +561,20 @@ export function XtermPane({
           if (!settingsRef.current.copyOnSelect) return
           const selection = term.getSelection()
           if (selection) void navigator.clipboard?.writeText(selection).catch(() => {})
+        }),
+      )
+      // The geometry itself is what the PTY has to be told about, so the send
+      // hangs off the change rather than off each caller that might cause one
+      // (a fit after the WebGL load, a container resize, a font change). An
+      // Ink-based TUI redraws entirely from the size it was last given, so a
+      // fit that nobody forwarded is a full-screen app painting for the wrong
+      // window — a blank or garbled first row.
+      disposables.push(
+        term.onResize(({ rows, cols }) => {
+          const socket = socketRef.current
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "resize", rows, cols }))
+          }
         }),
       )
 
@@ -419,6 +630,12 @@ export function XtermPane({
         setError(undefined)
         sendResize()
         term.focus()
+        // The session may have been left scrolled back by whoever was here
+        // before — copy mode outlives the socket the way everything else in a
+        // tmux session does — and a pane that is in a mode reads as a pane
+        // that has frozen. One question on the way in is what makes the
+        // affordance appear for a state this tab did not create.
+        if (copyModeRef.current) socket.send(JSON.stringify({ type: "sync-copy" }))
       }
       socket.onmessage = (event) => {
         if (typeof event.data === "string") {
@@ -432,6 +649,20 @@ export function XtermPane({
               term.writeln(`\r\n\x1b[31m${msg.error}\x1b[0m`)
             } else if (msg.type === "scrollback") {
               replaying = true
+            } else if (msg.type === "copy-mode") {
+              // The server is the only authority on whether tmux is still
+              // scrolled away from the prompt — the browser forwards the wheel
+              // tick but never learns what tmux did with it. This frame comes
+              // back after an `exit-copy` and after a `sync-copy` (sent once
+              // the wheel settles, whichever way it went), so the jump-to-end
+              // affordance tracks the real mode rather than a guess that could
+              // stick on forever — or appear over a pane that never scrolled.
+              const active = Boolean(msg.data?.active)
+              // tmux is at the prompt, so there is nothing left for the next
+              // keystroke to cancel either.
+              if (!active) wheeledRef.current = false
+              scrolledBackRef.current = active
+              setScrolledBack(active)
             }
           } catch {
             term.write(event.data)
@@ -452,12 +683,20 @@ export function XtermPane({
       }
       socket.onerror = () => setState("closed")
 
-      /** Puts the pane back at the prompt before a keystroke is delivered. */
+      /**
+       * Puts the pane back at the prompt before a keystroke is delivered.
+       *
+       * Sent on tmux's confirmed copy mode *or* on a wheel tick whose answer
+       * has not come back yet: the operator typing is the commonest way out of
+       * a scrolled-back terminal, and it must not have to wait for a round
+       * trip to work. See `wheeledRef` for why guessing wrong is free.
+       */
       const leaveCopyMode = () => {
-        if (!scrolledBackRef.current) return
+        if (!scrolledBackRef.current && !wheeledRef.current) return
+        wheeledRef.current = false
         scrolledBackRef.current = false
         setScrolledBack(false)
-        if (socket.readyState === WebSocket.OPEN) {
+        if (copyModeRef.current && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "exit-copy" }))
         }
       }
@@ -547,6 +786,24 @@ export function XtermPane({
       // `capture` it never runs at all: xterm binds its own wheel handler to
       // the viewport *inside* this element and stops the event there, so a
       // listener on the host only sees the ticks xterm did not want.
+      // What the wheel did is tmux's to say, in both directions. Scrolling up
+      // moves the history only when the program in the pane has *not* asked
+      // for the mouse; scrolling down leaves copy mode only once it reaches
+      // the very bottom, which the browser cannot see either. So each gesture
+      // ends in one question — trailing-edge, once the wheel settles, rather
+      // than one a frame — and the `copy-mode` frame carrying
+      // `#{pane_in_mode}` is the answer that drives the affordance.
+      let syncTimer: ReturnType<typeof setTimeout> | undefined
+      const scheduleCopySync = () => {
+        if (!copyModeRef.current) return
+        clearTimeout(syncTimer)
+        syncTimer = setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "sync-copy" }))
+          }
+        }, 180)
+      }
+
       const onWheel = (event: WheelEvent) => {
         if (event.ctrlKey) {
           event.preventDefault()
@@ -556,25 +813,53 @@ export function XtermPane({
           })
           return
         }
-        // The tick itself is xterm's to forward; this only records which way
-        // it went. Up means tmux is now in copy mode. Down does *not* clear
-        // the flag — tmux leaves copy mode only when the scroll reaches the
-        // very bottom, and the browser cannot tell how far back it is — so the
-        // flag is cleared by the server instead, which asks tmux whether there
-        // is a mode to leave before it cancels one.
-        if (event.deltaY < 0) {
-          scrolledBackRef.current = true
-          setScrolledBack(true)
-        }
+        // The tick itself is xterm's to forward — it goes out as a mouse
+        // report and tmux decides what it means. This only notes that one
+        // went, so the next keystroke can cancel a mode that may now be on,
+        // and asks what actually happened once the wheel stops.
+        if (event.deltaY === 0) return
+        wheeledRef.current = true
+        scheduleCopySync()
       }
       host.addEventListener("wheel", onWheel, { passive: false, capture: true })
+
+      // Clicking inside a pane focuses it, which is what clicking inside
+      // anything does. tmux composes every pane into one screen before the PTY
+      // ever sees it, so there is no element to hang a handler on — only a
+      // cell. xterm publishes no pixel-to-cell mapping and does not need to:
+      // the grid is uniform, so the screen's box divided by the terminal's own
+      // rows and columns is exact.
+      //
+      // **Capture, and a native listener rather than a React prop.** With
+      // tmux's mouse mode on, xterm's selection service is disabled and its
+      // mousedown handler on `.xterm` calls `stopPropagation()` on exactly the
+      // clicks this pane takes back for the browser (see
+      // `forcePointerToSelect`). React binds at the root container, so a
+      // bubbling `onMouseDown` never ran and clicking the other half of a
+      // split silently did nothing — the pane bar was the only way to move the
+      // focus. The capture phase is above the element that stops the event.
+      const onMouseDownCapture = (event: MouseEvent) => {
+        const report = onCellClickRef.current
+        if (!report || event.button !== 0) return
+        const screen = host.querySelector(".xterm-screen")
+        if (!screen) return
+        const box = screen.getBoundingClientRect()
+        if (box.width === 0 || box.height === 0) return
+        const col = Math.floor(((event.clientX - box.left) / box.width) * term.cols)
+        const row = Math.floor(((event.clientY - box.top) / box.height) * term.rows)
+        if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return
+        report({ col, row })
+      }
+      host.addEventListener("mousedown", onMouseDownCapture, { capture: true })
 
       const observer = new ResizeObserver(sendResize)
       observer.observe(host)
 
       cleanup = () => {
         observer.disconnect()
+        clearTimeout(syncTimer)
         host.removeEventListener("wheel", onWheel, { capture: true })
+        host.removeEventListener("mousedown", onMouseDownCapture, { capture: true })
         for (const d of disposables) d.dispose()
         socket.close()
         term.dispose()
@@ -598,8 +883,19 @@ export function XtermPane({
 
   useEffect(() => {
     modeRef.current = mode
-    if (termRef.current) termRef.current.options.theme = { ...TERMINAL_THEMES[mode] }
+    if (termRef.current) termRef.current.options.theme = resolveTerminalTheme(mode)
   }, [mode])
+
+  // The caller's way back to the keyboard. Read through `termRef` at call
+  // time, so it keeps working across a reconnect rather than capturing the
+  // terminal that existed when the pane mounted.
+  useEffect(() => {
+    if (!focusRef) return
+    focusRef.current = () => termRef.current?.focus()
+    return () => {
+      focusRef.current = null
+    }
+  }, [focusRef])
 
   // Anything that changes the cell size changes the geometry, so the PTY has
   // to be told — otherwise the remote shell keeps wrapping for the old one.
@@ -896,24 +1192,11 @@ export function XtermPane({
         <div
           ref={hostRef}
           className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
-          style={bell ? undefined : { backgroundColor: TERMINAL_THEMES[mode].background }}
-          // Clicking inside a pane focuses it, which is what clicking inside
-          // anything does. tmux composes every pane into one screen before the
-          // PTY ever sees it, so there is no element to hang a handler on —
-          // only a cell. xterm publishes no pixel-to-cell mapping and does not
-          // need to: the grid is uniform, so the screen's box divided by the
-          // terminal's own rows and columns is exact.
-          onMouseDown={(e) => {
-            const term = termRef.current
-            const screen = hostRef.current?.querySelector(".xterm-screen")
-            if (!onCellClick || !term || !screen || e.button !== 0) return
-            const box = screen.getBoundingClientRect()
-            if (box.width === 0 || box.height === 0) return
-            const col = Math.floor(((e.clientX - box.left) / box.width) * term.cols)
-            const row = Math.floor(((e.clientY - box.top) / box.height) * term.rows)
-            if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return
-            onCellClick({ col, row })
-          }}
+          style={bell ? undefined : { backgroundColor: "var(--background)" }}
+          // Click-to-focus-a-pane is a native capture listener installed with
+          // the terminal, not a prop here: xterm stops the event before it
+          // reaches React. See `onMouseDownCapture` in the connect effect.
+          //
           // Middle-click paste is the X11 convention every Linux operator has
           // in their fingers, and the browser does not provide it for us.
           onAuxClick={(e) => {
@@ -932,15 +1215,18 @@ export function XtermPane({
               // Two scrollbacks can be behind this: the emulator's, when
               // there is no tmux, and tmux's own. Ending both is what "the
               // end" means, and the second one is also what gives the pane
-              // its keyboard back.
+              // its keyboard back. `exit-copy` goes out unconditionally —
+              // tmux can be in a mode the browser never recorded, and a cancel
+              // sent to a pane that is not in one is a harmless no-op — and
+              // the server's `copy-mode` reply is what actually settles the
+              // flag.
               termRef.current?.scrollToBottom()
-              if (scrolledBackRef.current) {
-                scrolledBackRef.current = false
-                setScrolledBack(false)
-                const socket = socketRef.current
-                if (socket?.readyState === WebSocket.OPEN) {
-                  socket.send(JSON.stringify({ type: "exit-copy" }))
-                }
+              wheeledRef.current = false
+              scrolledBackRef.current = false
+              setScrolledBack(false)
+              const socket = socketRef.current
+              if (copyMode && socket?.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "exit-copy" }))
               }
               termRef.current?.focus()
             }}

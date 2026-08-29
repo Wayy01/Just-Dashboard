@@ -78,7 +78,6 @@ export function BranchesPanel({
   const remove = (b: GitBranch, force: boolean) =>
     confirm({
       title: `${force ? "Force delete" : "Delete"} branch ${b.name}`,
-      phrase: "delete branch",
       confirmLabel: force ? "Force delete" : "Delete",
       description: force ? (
         <p className="text-destructive">
@@ -91,8 +90,8 @@ export function BranchesPanel({
           has commits not merged anywhere, so nothing is lost by accident.
         </p>
       ),
-      action: async (c) => {
-        await post("/git/branch/delete", { ref: b.name, hard: force }, { confirm: c, query: q })
+      action: async () => {
+        await post("/git/branch/delete", { ref: b.name, hard: force }, { query: q })
         branches.refresh()
         onChanged()
       },
@@ -144,12 +143,24 @@ export function BranchesPanel({
                 {b.name}
                 {b.current && <span className="ml-2 text-[10px] text-success">current</span>}
               </p>
-              {b.subject && (
-                <p className="truncate text-[11px] text-muted-foreground">{b.subject}</p>
+              {b.worktree ? (
+                <p className="truncate text-[11px] text-muted-foreground" title={b.worktree}>
+                  checked out in {b.worktree}
+                </p>
+              ) : (
+                b.subject && (
+                  <p className="truncate text-[11px] text-muted-foreground">{b.subject}</p>
+                )
               )}
             </div>
             <AheadBehind ahead={b.ahead} behind={b.behind} />
-            {canControl && !b.current && (
+            {/* A branch another worktree has checked out cannot be switched to
+                or deleted — not even with -D — so the actions are withheld and
+                the row says why rather than offering a button that errors. */}
+            {b.worktree && (
+              <span className="shrink-0 text-[10px] text-muted-foreground">in use</span>
+            )}
+            {canControl && !b.current && !b.worktree && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -165,7 +176,7 @@ export function BranchesPanel({
                 <TooltipContent>{`Check out ${b.name}`}</TooltipContent>
               </Tooltip>
             )}
-            {canDestruct && !b.current && (
+            {canDestruct && !b.current && !b.worktree && (
               <DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger asChild>

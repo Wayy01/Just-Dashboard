@@ -7,7 +7,7 @@ import { get } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { GitRepo } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
-import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Page, PageHeader, RowLink, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
 import { AheadBehind } from "@/components/git/ahead-behind"
 import { GitHelp } from "@/components/git/help"
@@ -146,12 +146,7 @@ export default function GitPage() {
                     <TableRow key={repo.path} className="group" onActivate={() => setSelected(repo)}>
                       <TableCell>
                         <div className="max-w-[22rem] min-w-0">
-                          <button
-                            className="truncate text-left text-[13px] font-medium hover:underline"
-                            onClick={() => setSelected(repo)}
-                          >
-                            {repo.name}
-                          </button>
+                          <RowLink onClick={() => setSelected(repo)}>{repo.name}</RowLink>
                           <p
                             className="truncate font-mono text-[11px] text-muted-foreground"
                             title={repo.path}

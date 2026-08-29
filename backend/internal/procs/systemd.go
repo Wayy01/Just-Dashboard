@@ -221,25 +221,84 @@ type JournalEntry struct {
 // JournalCommand builds a journalctl invocation. JSON output is used rather
 // than the default text so message boundaries and priorities survive
 // multi-line log records intact.
+// JournalOptions is everything the unified log viewer can ask the journal
+// for. It exists because the journal is the one source where narrowing the
+// query is not an optimisation: `journalctl -n 300` hands back the last three
+// hundred *records*, and filtering those in this process for the one level the
+// operator asked about routinely leaves an empty page in front of a journal
+// full of matches. Pushing the window down to journalctl is what makes "the
+// last 300 errors" mean what it says.
+type JournalOptions struct {
+	Unit       string
+	Identifier string
+	// Lines caps the tail. Zero means no cap, which is what a search over an
+	// explicit time window wants — there the window is the bound.
+	Lines  int
+	Follow bool
+	Since  string
+	Until  string
+	// MaxPriority narrows to `-p 0..n` when non-negative. Only a maximum is
+	// pushed down, never the exact set: journalctl takes a range and the
+	// operator's chips are a set, so the range is the cheap over-approximation
+	// and the exact test still happens here.
+	MaxPriority int
+	Boot        bool
+	Kernel      bool
+}
+
+// JournalCommand is the tail form kept for the per-unit views, which want the
+// last n records of one unit and nothing else.
 func JournalCommand(ctx context.Context, unit string, lines int, follow bool, since string) (*exec.Cmd, error) {
-	args := []string{"--output=json", "--no-pager"}
-	if unit != "" {
-		if err := ValidateName(unit); err != nil {
-			return nil, err
-		}
-		args = append(args, "-u", unit)
-	}
 	if lines <= 0 || lines > 20000 {
 		lines = 300
 	}
-	args = append(args, "-n", strconv.Itoa(lines))
-	if since != "" {
-		if !safeTimeSpec.MatchString(since) {
-			return nil, fmt.Errorf("%w: since=%q", ErrInvalidName, since)
+	return JournalCommandOpts(ctx, JournalOptions{
+		Unit: unit, Lines: lines, Follow: follow, Since: since, MaxPriority: -1,
+	})
+}
+
+func JournalCommandOpts(ctx context.Context, opts JournalOptions) (*exec.Cmd, error) {
+	args := []string{"--output=json", "--no-pager"}
+	if opts.Unit != "" {
+		if err := ValidateName(opts.Unit); err != nil {
+			return nil, err
 		}
-		args = append(args, "--since", since)
+		args = append(args, "-u", opts.Unit)
 	}
-	if follow {
+	if opts.Identifier != "" {
+		if err := ValidateName(opts.Identifier); err != nil {
+			return nil, err
+		}
+		args = append(args, "-t", opts.Identifier)
+	}
+	if opts.Lines > 20000 {
+		opts.Lines = 20000
+	}
+	if opts.Lines > 0 {
+		args = append(args, "-n", strconv.Itoa(opts.Lines))
+	}
+	for _, spec := range []struct {
+		flag  string
+		value string
+	}{{"--since", opts.Since}, {"--until", opts.Until}} {
+		if spec.value == "" {
+			continue
+		}
+		if !safeTimeSpec.MatchString(spec.value) {
+			return nil, fmt.Errorf("%w: %s=%q", ErrInvalidName, spec.flag, spec.value)
+		}
+		args = append(args, spec.flag, spec.value)
+	}
+	if opts.MaxPriority >= 0 && opts.MaxPriority <= 7 {
+		args = append(args, "-p", "0.."+strconv.Itoa(opts.MaxPriority))
+	}
+	if opts.Boot {
+		args = append(args, "-b")
+	}
+	if opts.Kernel {
+		args = append(args, "-k")
+	}
+	if opts.Follow {
 		args = append(args, "-f")
 	}
 	cmd := exec.CommandContext(ctx, "journalctl", args...)

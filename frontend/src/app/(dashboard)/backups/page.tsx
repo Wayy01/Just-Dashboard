@@ -13,7 +13,7 @@ import { Detail, DetailList, Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
 import { EmptyState, ErrorState, LoadingPanel, Spinner } from "@/components/state"
-import { StatusBadge } from "@/components/status-dot"
+import { Status } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -118,7 +118,7 @@ export default function BackupsPage() {
                 <Detail label="Last run">
                   {job.lastRun ? (
                     <span className="flex items-center gap-1.5">
-                      <StatusBadge state={job.lastRun.status} />
+                      <Status state={job.lastRun.status} />
                       {relativeTime(job.lastRun.startedAt)}
                     </span>
                   ) : (
@@ -254,7 +254,7 @@ function HistorySheet({
                         <p className="text-[11px] text-muted-foreground">{run.trigger}</p>
                       </TableCell>
                       <TableCell>
-                        <StatusBadge state={run.status} />
+                        <Status state={run.status} />
                       </TableCell>
                       <TableCell className="numeric text-right font-mono text-xs">
                         {run.sizeBytes ? bytes(run.sizeBytes) : "—"}
