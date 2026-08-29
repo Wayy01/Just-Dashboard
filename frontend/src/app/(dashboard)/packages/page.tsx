@@ -18,6 +18,7 @@ import { notify } from "@/lib/toast"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { InstalledPackage, Job, PackageInventory, UpdateReport } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -67,8 +68,12 @@ export default function PackagesPage() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [filter, setFilter] = useState("")
-  const [scope, setScope] = useState<Scope>("explicit")
-  const [bySize, setBySize] = useState(false)
+  // How the inventory is arranged, and which half of the page you were on.
+  // The search box above is not remembered: it is the question, not the
+  // furniture.
+  const [tab, setTab] = useViewState("packages.tab", "installed")
+  const [scope, setScope] = useViewState<Scope>("packages.scope", "explicit")
+  const [bySize, setBySize] = useViewState("packages.by-size", false)
   const [inspect, setInspect] = useState<string | null>(null)
   const [applying, setApplying] = useState(false)
 
@@ -336,7 +341,7 @@ export default function PackagesPage() {
       )}
 
       {data?.available && (
-        <Tabs defaultValue="installed">
+        <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="installed">Installed</TabsTrigger>
             <TabsTrigger value="updates">

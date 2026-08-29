@@ -21,6 +21,7 @@ import {
 import { notify } from "@/lib/toast"
 import { get, post, put, ApiError } from "@/lib/api"
 import type { ComposeService, ComposeValidation, LogLine, StackDetail } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { useAuth } from "@/hooks/use-auth"
 import { usePoll } from "@/hooks/use-poll"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
@@ -91,7 +92,7 @@ function StackBody({
   confirm: ConfirmFn
 }) {
   const { can } = useAuth()
-  const [tab, setTab] = useState("services")
+  const [tab, setTab] = useViewState("docker.stack.tab", "services")
   const runner = useRunConsole()
 
   const { data, error, loading, refresh } = usePoll<StackDetail>(

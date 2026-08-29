@@ -6,6 +6,7 @@ import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { ApiToken, DashboardUser, Role, SessionInfo } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -44,6 +45,7 @@ import {
 } from "@/components/ui/dialog"
 
 export default function AccountPage() {
+  const [tab, setTab] = useViewState("account.tab", "security")
   const { status, can } = useAuth()
 
   return (
@@ -66,7 +68,7 @@ export default function AccountPage() {
           </span>
         }
       />
-      <Tabs defaultValue="security" className="min-w-0 gap-4">
+      <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-4">
         <TabsList>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>

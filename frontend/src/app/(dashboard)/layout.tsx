@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { useViewState } from "@/lib/view-state"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { MetricsStream } from "@/hooks/use-metrics"
@@ -14,6 +15,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { status, loading } = useAuth()
   const router = useRouter()
+  const [sidebarOpen, setSidebarOpen] = useViewState("shell.sidebar", true)
 
   // Redirecting here is a convenience, not a security control: every API call
   // behind this shell is independently authenticated by the server.
@@ -30,7 +32,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           provider is also what keeps the poll alive across the moment the
           backend restarts itself during an upgrade. */}
       <SelfUpdateProvider>
-        <SidebarProvider style={{ "--sidebar-width": "15.5rem" } as React.CSSProperties}>
+        {/* The rail's collapsed state is controlled from here rather than left
+            to the provider's own `useState`, which starts expanded on every
+            load: a rail collapsed for the width it gives back is collapsed for
+            the same reason on the next visit. */}
+        <SidebarProvider
+          open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
+          style={{ "--sidebar-width": "15.5rem" } as React.CSSProperties}
+        >
           {/* Owns the metrics socket for the whole shell, so the Overview charts
             and the top bar's vitals keep filling while you are on another
             page. Renders nothing. */}

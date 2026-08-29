@@ -6,6 +6,7 @@ import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { SSHKey, SystemUser } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader } from "@/components/page"
@@ -39,7 +40,7 @@ import {
 
 export default function SystemUsersPage() {
   const { confirm, dialog } = useConfirm()
-  const [showSystem, setShowSystem] = useState(false)
+  const [showSystem, setShowSystem] = useViewState("system-users.show-system", false)
   const [keysFor, setKeysFor] = useState<string | null>(null)
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<SystemUser[]>("/system-users/", { system: showSystem }, signal),

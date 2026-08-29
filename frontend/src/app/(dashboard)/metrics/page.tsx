@@ -17,6 +17,7 @@ import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { bytes, percent, rate } from "@/lib/format"
 import type { DirEntry, MetricEvent, Snapshot } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { useMetrics } from "@/hooks/use-metrics"
 import {
   useHealth,
@@ -499,7 +500,9 @@ function ProcessorPanel({
   model: string
   now: Snapshot
 }) {
-  const [view, setView] = useState<"total" | "modes">("total")
+  // Total or the four modes. Somebody chasing steal on a VPS wants the
+  // breakdown every time they open the page, not once.
+  const [view, setView] = useViewState<"total" | "modes">("metrics.cpu.view", "total")
   const breakdown = view === "modes"
 
   return (

@@ -18,6 +18,7 @@ import { del, downloadUrl, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
 import type { FileEntry, FileListing, GitFileChange } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -78,7 +79,7 @@ export function FileTree({
   onChanged: () => void
   onOpenInFiles?: (path: string) => void
 }) {
-  const [showHidden, setShowHidden] = useState(false)
+  const [showHidden, setShowHidden] = useViewState("files.tree.hidden", false)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root]))
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({})
   const [loading, setLoading] = useState<Set<string>>(new Set())

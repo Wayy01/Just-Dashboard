@@ -17,6 +17,7 @@ import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
 import { cn, ringSafeScroll } from "@/lib/utils"
 import type { DbConnection, DbTable, MongoCollectionInfo, QueryResult } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import type { useConfirm } from "@/components/confirm-dialog"
@@ -70,6 +71,7 @@ const PAGE = 100
  */
 export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: ConfirmFn }) {
   const { can } = useAuth()
+  const [tab, setTab] = useViewState("db.mongo.tab", "documents")
   const [database, setDatabase] = useState(conn.database)
   const [collection, setCollection] = useState<string>()
   const [filter, setFilter] = useState("{}")
@@ -280,7 +282,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
       </Panel>
 
       <div className="flex min-w-0 flex-col gap-4">
-        <Tabs defaultValue="documents" className="min-w-0 gap-4">
+        <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-4">
           <TabsList>
             <TabsTrigger value="documents">Documents</TabsTrigger>
             <TabsTrigger value="indexes">Indexes</TabsTrigger>

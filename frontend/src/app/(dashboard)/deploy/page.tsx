@@ -17,6 +17,7 @@ import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { relativeTime, shortSha, timestamp } from "@/lib/format"
 import type { DeployCommit, DeployProject, DeployRun, EnvVar } from "@/lib/types"
+import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -266,6 +267,7 @@ function ProjectSheet({
   onOpenChange: (open: boolean) => void
   onChanged: () => void
 }) {
+  const [tab, setTab] = useViewState("deploy.project.tab", "runs")
   const [logFor, setLogFor] = useState<DeployRun | null>(null)
 
   return (
@@ -277,7 +279,7 @@ function ProjectSheet({
       description={project?.repoPath}
     >
       {project && (
-        <Tabs defaultValue="runs" className="min-w-0 gap-3">
+        <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-3">
           <TabsList>
             <TabsTrigger value="runs">Runs</TabsTrigger>
             <TabsTrigger value="rollback">Rollback</TabsTrigger>
