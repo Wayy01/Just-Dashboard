@@ -1652,9 +1652,8 @@ fourteen products. **Reach for `Panel`/`Page`, not raw `Card`, and add a variant
 than a one-off in a feature page.** `components/state.tsx` covers the non-happy paths the
 same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, `Notice`.
 
-**A control with an edge stands up off the page.** `raised` (a `@utility` in `globals.css`,
-next to the `.card-sheen` it is the control-scale version of) is three lines drawn from the
-`--raise-*` tokens: a hairline of light along the top edge, a dark lip at the bottom, and a
+**Anything meant to sit in front of what is behind it stands up off the page.** `raised` (a
+`@utility` in `globals.css`) is three lines drawn from the `--raise-*` tokens: a hairline of light along the top edge, a dark lip at the bottom, and a
 shadow underneath — inverting on `:active` so the thing sits *into* the page while pressed.
 The tokens are translucent black and white rather than colours, because the same three lines
 have to sit on top of a white primary, a red destructive and a near-black outline alike; and
@@ -1662,6 +1661,18 @@ have to sit on top of a white primary, a red destructive and a near-black outlin
 button" has one answer. Light mode is not the dark values scaled — the gloss sits on the
 variant's colour rather than on the page, so a value tuned against white turns light mode's
 black primary into a glossy sweep.
+
+It covers cards as well as controls, and that is not incidental. There used to be a second
+class, `.card-sheen`, which drew a gradient on a panel while this drew three lines on a
+button — so a card and a button were making the same claim in two visual languages, and only
+one of them was convincing. They are the same claim, so they are the same code: a card is a
+very large button that nobody presses. A surface wanting a deeper shadow overrides the token
+(`[--raise-drop:var(--shadow-lg)]` on the terminal's floating confirm) rather than adding a
+`shadow-*` utility, which would win the cascade and silently delete the shine and the lip.
+
+The sidebar is on it too, top-level items and sub-items alike, which is why `SidebarMenu` and
+`SidebarMenuSub` sit at `gap-1.5` rather than `gap-1`: forty-nine raised pills stacked four
+pixels apart read as one ridged slab instead of as forty-nine things you can press.
 
 The line is the one a reader can see: **a border or a fill gets `raised`; ghost and link do
 not.** Ghost is 142 of the app's ~400 buttons — the quiet action at the end of a table row —

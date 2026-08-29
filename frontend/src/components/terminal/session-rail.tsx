@@ -506,7 +506,7 @@ function SessionRow({
         !active && !colour && "hover:border-hairline hover:bg-[var(--row-hover)]",
         !active && colour && "hover:brightness-110",
         active && "shadow-xs",
-        active && !colour && !windowOver && "card-sheen bg-card",
+        active && !colour && !windowOver && "raised bg-card",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
       // The selected row is lifted into a card — the design system's own

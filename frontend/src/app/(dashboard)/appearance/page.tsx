@@ -72,7 +72,7 @@ function ModeOption({
       onClick={() => onPick(mode)}
       aria-pressed={active}
       className={cn(
-        "card-sheen group min-w-0 rounded-xl border bg-card p-2 text-left transition-all",
+        "raised group min-w-0 rounded-xl border bg-card p-2 text-left transition-all",
         "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
         active
           ? "border-primary ring-[3px] ring-primary/25"

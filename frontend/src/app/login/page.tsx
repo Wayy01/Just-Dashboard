@@ -142,7 +142,7 @@ export default function LoginPage() {
 
           <Stepper current={recoveryCodes ? "totp" : step} />
 
-          <div className="card-sheen mt-5 rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+          <div className="raised mt-5 rounded-2xl border bg-card p-5 sm:p-6">
             {recoveryCodes ? (
               <RecoveryCodes codes={recoveryCodes} onDone={finishEnrollment} />
             ) : (

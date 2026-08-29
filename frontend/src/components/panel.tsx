@@ -25,7 +25,7 @@ export function Panel({ className, children, ...props }: React.ComponentProps<"s
     <section
       data-slot="panel"
       className={cn(
-        "card-sheen flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm",
+        "raised flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground",
         className,
       )}
       {...props}

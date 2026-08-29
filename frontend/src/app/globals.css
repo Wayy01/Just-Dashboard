@@ -112,8 +112,8 @@
      light mode's black primary and its red destructive a gloss strong enough
      to be visible against white is a full light-to-dark sweep down the face:
      the glassy 2005 button, arrived at by tuning against the wrong surface. */
-  --raise-shine: oklch(1 0 0 / 0.55);
-  --raise-gloss: oklch(1 0 0 / 0.16);
+  --raise-shine: oklch(1 0 0 / 0.44);
+  --raise-gloss: oklch(1 0 0 / 0.13);
   --raise-lip: oklch(0 0 0 / 0.08);
   --raise-press: oklch(0 0 0 / 0.07);
   --raise-drop:
@@ -190,16 +190,17 @@
      A button in this product is a physical object: a face a shade lighter than
      the surface under it, a hairline of light along its top edge where a lamp
      above would catch it, a dark lip at the bottom, and a shadow on the page
-     below. `.card-sheen` already says this about a panel; these are the same
-     sentence at control scale, and together they are what make a button read
-     as something to press rather than as a rectangle of colour.
+     below. Together they are what make a button read as something to press
+     rather than as a rectangle of colour — and the same three lines, at a
+     larger scale, are what make a panel read as a surface rather than as a
+     region of slightly different grey.
 
      Held as translucent black and white rather than as opaque colours, because
      the same three lines have to sit on top of every variant's own background
      — a white primary, a red destructive, a near-black outline — and a token
      that named a colour could only ever be right for one of them. */
-  --raise-shine: oklch(1 0 0 / 0.13);
-  --raise-gloss: oklch(1 0 0 / 0.055);
+  --raise-shine: oklch(1 0 0 / 0.1);
+  --raise-gloss: oklch(1 0 0 / 0.045);
   --raise-lip: oklch(0 0 0 / 0.3);
   --raise-press: oklch(0 0 0 / 0.24);
   --raise-drop:
@@ -450,32 +451,27 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
   }
-
-  /* The faint lift every card in this theme has — a sheen off the top edge
-   * rather than a flat fill, which is what actually reads as "this surface is
-   * raised" next to the shadow. Kept to a few percent of `--foreground` so it
-   * survives being sat on top of by any text or icon without needing its own
-   * contrast exception, and expressed as a gradient rather than a second
-   * colour token because it is the same relationship — a touch lighter than
-   * the card, fading back to it — in both modes. */
-  .card-sheen {
-    background-image: linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--card) 100%, var(--foreground) 4%),
-      var(--card) 60%
-    );
-  }
 }
 
-/* The lift, at control scale.
+/* The lift. One definition, for every surface in the app that is meant to sit
+   in front of the one behind it — a button, a select, a tab, a nav item, a
+   panel, a stat tile, the sign-in card.
 
-   A `@utility` rather than a class in `@layer components` next to
-   `.card-sheen`, for one reason: a tab is only raised while it is the active
-   one, and `data-[state=active]:raised` is a variant Tailwind can only compose
-   onto a utility. It also settles the ordering — `box-shadow` here would
-   otherwise be overridden by any `shadow-*` utility that happened to land on
-   the same element, which is why the variants that take this drop the
-   `shadow-xs` they used to carry.
+   This began as two: `.card-sheen` drew a gradient on a panel and this drew
+   three lines on a control, which meant a card and a button were making the
+   same claim in two visual languages and only one of them was convincing.
+   They are the same claim, so they are now the same code — a card is just a
+   very large button that nobody presses.
+
+   A `@utility` rather than a class in `@layer components`, for two reasons: a
+   tab is only raised while it is the active one, and `data-[state=active]:raised`
+   is a variant Tailwind can only compose onto a utility; and it settles the
+   ordering, since `box-shadow` in the components layer is overridden by any
+   `shadow-*` utility landing on the same element. That is why everything
+   taking this drops the `shadow-*` it used to carry — and why a surface
+   wanting a deeper drop overrides the token (`[--raise-drop:var(--shadow-lg)]`
+   on the floating confirm) rather than adding a second shadow that would
+   silently delete the shine and the lip.
 
    Three lines, drawn from the tokens in `.light`/`.dark`: a hairline of light
    on the top edge, a dark lip on the bottom, and a shadow on the page. The

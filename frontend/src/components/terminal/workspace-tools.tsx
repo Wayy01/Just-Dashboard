@@ -559,7 +559,7 @@ function InlineConfirm({ request, onClose }: { request: ConfirmRequest; onClose:
   }, [])
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 p-3 backdrop-blur-sm">
-      <div className="card-sheen w-full max-w-sm rounded-xl border bg-card p-4 shadow-lg">
+      <div className="raised [--raise-drop:var(--shadow-lg)] w-full max-w-sm rounded-xl border bg-card p-4">
         <p className="text-[13px] font-medium">{request.title}</p>
         {request.body && (
           <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{request.body}</div>

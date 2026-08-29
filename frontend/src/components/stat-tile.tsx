@@ -33,7 +33,7 @@ export function StatTile({
   return (
     <div
       className={cn(
-        "card-sheen flex min-w-0 flex-col gap-2.5 rounded-xl border bg-card p-4 text-card-foreground",
+        "raised flex min-w-0 flex-col gap-2.5 rounded-xl border bg-card p-4 text-card-foreground",
         className,
       )}
     >

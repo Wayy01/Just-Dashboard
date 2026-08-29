@@ -323,7 +323,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
             <button
               key={template.id}
               onClick={() => onPick(template.spec())}
-              className="card-sheen min-w-0 rounded-lg border border-hairline bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-[var(--row-hover)]"
+              className="raised min-w-0 rounded-lg border border-hairline bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-[var(--row-hover)]"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-[13px] font-medium">{template.name}</span>
