@@ -165,7 +165,7 @@ export function WindowStrip({
       */}
       {active?.synchronized && (
         <button
-          className="flex items-center gap-1 rounded-md border border-warning/50 bg-warning/12 px-1.5 py-0.5 text-[10px] text-warning"
+          className="raised flex items-center gap-1 rounded-md border border-warning/50 bg-warning/12 px-1.5 py-0.5 text-[10px] text-warning"
           onClick={() => onSynchronize(active.index, false)}
         >
           <AlertTriangle className="size-3" />

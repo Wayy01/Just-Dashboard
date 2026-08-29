@@ -139,7 +139,7 @@ export function NewDatabaseDialog({
                     "flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
                     engine === o.engine
                       ? "border-primary bg-primary/10"
-                      : "border-border hover:bg-accent",
+                      : "raised border-border bg-control hover:bg-control-hover",
                   )}
                 >
                   <span className="flex items-center gap-1.5 text-[13px] font-medium">

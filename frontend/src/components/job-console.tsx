@@ -280,7 +280,7 @@ export function RecentJobs({
           onClick={() => onOpen(job.id)}
           title={`${job.title} · ${job.status}${job.startedBy ? ` · started by ${job.startedBy}` : ""}`}
           className={cn(
-            "flex max-w-56 items-center gap-1.5 rounded-md border border-hairline px-2 py-1 text-[11px] transition-colors hover:bg-[var(--row-hover)]",
+            "raised flex max-w-56 items-center gap-1.5 rounded-md border border-hairline bg-control px-2 py-1 text-[11px] transition-colors hover:bg-control-hover",
             job.status === "failed" ? "text-destructive" : "text-muted-foreground",
           )}
         >

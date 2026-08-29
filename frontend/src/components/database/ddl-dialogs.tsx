@@ -654,7 +654,7 @@ function FlagToggle({
         "inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[10px] font-medium tracking-wide uppercase transition-colors",
         on
           ? "border-primary bg-primary/15 text-primary"
-          : "border-border text-muted-foreground hover:bg-accent",
+          : "raised border-border bg-control text-muted-foreground hover:bg-control-hover",
       )}
     >
       {children}

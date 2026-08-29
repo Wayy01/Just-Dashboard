@@ -318,7 +318,7 @@ function CommandChip({ command }: { command: string }) {
           .then(() => notify.success(`Copied ${command}`))
           .catch(() => notify.error("Could not copy", "the browser refused clipboard access"))
       }}
-      className="group inline-flex items-center gap-1.5 rounded-md border border-hairline bg-muted/40 px-2 py-1 font-mono text-xs transition-colors hover:bg-muted"
+      className="raised group inline-flex items-center gap-1.5 rounded-md border border-hairline bg-muted/40 px-2 py-1 font-mono text-xs transition-colors hover:bg-muted"
     >
       <Terminal className="size-3 text-muted-foreground" />
       {command}

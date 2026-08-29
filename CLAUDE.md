@@ -1652,6 +1652,26 @@ fourteen products. **Reach for `Panel`/`Page`, not raw `Card`, and add a variant
 than a one-off in a feature page.** `components/state.tsx` covers the non-happy paths the
 same way: `Spinner`, `LoadingRows`, `LoadingPanel`, `EmptyState`, `ErrorState`, `Notice`.
 
+**A control with an edge stands up off the page.** `raised` (a `@utility` in `globals.css`,
+next to the `.card-sheen` it is the control-scale version of) is three lines drawn from the
+`--raise-*` tokens: a hairline of light along the top edge, a dark lip at the bottom, and a
+shadow underneath — inverting on `:active` so the thing sits *into* the page while pressed.
+The tokens are translucent black and white rather than colours, because the same three lines
+have to sit on top of a white primary, a red destructive and a near-black outline alike; and
+`--control`/`--control-hover` are the resting face those variants share, so "how light is a
+button" has one answer. Light mode is not the dark values scaled — the gloss sits on the
+variant's colour rather than on the page, so a value tuned against white turns light mode's
+black primary into a glossy sweep.
+
+The line is the one a reader can see: **a border or a fill gets `raised`; ghost and link do
+not.** Ghost is 142 of the app's ~400 buttons — the quiet action at the end of a table row —
+and giving it a face turns every row into a strip of controls competing with its own data.
+Inputs and textareas stay flat for the same reason from the other side: a field is something
+you type into, and a page where the fields and the buttons are equally raised has no
+hierarchy left. Where a control is a *toggle*, the unpressed state is the raised one
+(`ddl-dialogs.tsx`'s chips, the engine picker) — pressing it puts it down, which is what
+"selected" should look like once everything else on screen is physical.
+
 `components/logo.tsx` is the third, and it is smaller than it looks: the logo is the
 wordmark and nothing else — "Just" in `text-primary`, "Dashboard" in the text colour, the
 version as small muted text beside it. No mark, no tile, no strapline. It is the only

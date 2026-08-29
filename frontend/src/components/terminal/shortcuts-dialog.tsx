@@ -153,7 +153,7 @@ export function ShortcutsDialog({
                           isRecording
                             ? "animate-pulse border-primary bg-primary/15 text-primary"
                             : chord
-                              ? "border-hairline bg-surface-sunken text-foreground hover:border-primary/50"
+                              ? "raised border-hairline bg-control text-foreground hover:border-primary/50"
                               : "border-dashed border-hairline text-muted-foreground hover:border-primary/50",
                         )}
                       >

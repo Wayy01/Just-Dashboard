@@ -100,6 +100,24 @@
   --shadow-lg: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 4px 6px -1px hsl(0 0% 0% / 0.08);
   --shadow-xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.08), 0px 8px 10px -1px hsl(0 0% 0% / 0.08);
   --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.2);
+
+  /* Raised controls — see the note on these in `.dark`.
+
+     The shine survives the trip to light mode because the face is a step off
+     white rather than white itself, so a pure-white top edge still reads
+     against it. What has to come down hard is the drop — a shadow tuned to
+     separate a control from a near-black page is a smudge on a white one — and
+     the gloss, which is the one value that cannot simply be scaled from the
+     dark set. It sits on top of the *variant's* colour, not on the page, so on
+     light mode's black primary and its red destructive a gloss strong enough
+     to be visible against white is a full light-to-dark sweep down the face:
+     the glassy 2005 button, arrived at by tuning against the wrong surface. */
+  --raise-shine: oklch(1 0 0 / 0.55);
+  --raise-gloss: oklch(1 0 0 / 0.16);
+  --raise-lip: oklch(0 0 0 / 0.08);
+  --raise-press: oklch(0 0 0 / 0.07);
+  --raise-drop:
+    0 1px 1px 0 oklch(0 0 0 / 0.05), 0 2px 4px -2px oklch(0 0 0 / 0.07);
 }
 
 .dark {
@@ -166,6 +184,26 @@
   --shadow-lg: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 4px 6px -6px hsl(0 0% 0% / 0.6);
   --shadow-xl: 0px 10px 30px -5px hsl(0 0% 0% / 0.6), 0px 8px 10px -6px hsl(0 0% 0% / 0.6);
   --shadow-2xl: 0px 10px 30px -5px hsl(0 0% 0% / 1.5);
+
+  /* Raised controls.
+
+     A button in this product is a physical object: a face a shade lighter than
+     the surface under it, a hairline of light along its top edge where a lamp
+     above would catch it, a dark lip at the bottom, and a shadow on the page
+     below. `.card-sheen` already says this about a panel; these are the same
+     sentence at control scale, and together they are what make a button read
+     as something to press rather than as a rectangle of colour.
+
+     Held as translucent black and white rather than as opaque colours, because
+     the same three lines have to sit on top of every variant's own background
+     — a white primary, a red destructive, a near-black outline — and a token
+     that named a colour could only ever be right for one of them. */
+  --raise-shine: oklch(1 0 0 / 0.13);
+  --raise-gloss: oklch(1 0 0 / 0.055);
+  --raise-lip: oklch(0 0 0 / 0.3);
+  --raise-press: oklch(0 0 0 / 0.24);
+  --raise-drop:
+    0 1px 1.5px 0 oklch(0 0 0 / 0.4), 0 2px 5px -2px oklch(0 0 0 / 0.35);
 }
 
 /* ---------------------------------------------------------------------------
@@ -214,6 +252,15 @@
      row are the same gesture and should land the same way. In light mode the
      old value mixed 18% ink into near-white and read as a grey slab. */
   --menu-hover: color-mix(in oklab, var(--muted) 75%, transparent);
+
+  /* The resting face of a raised control: a step lighter than the card it sits
+     on, which on the dark mode is what puts a button *in front of* the page
+     rather than flush with it. Outline and secondary buttons, select triggers
+     and toggles all take it, so "how light is a button" has one answer instead
+     of one per component — and it moves with the palette rather than being a
+     hex somebody matched by eye. */
+  --control: color-mix(in oklab, var(--card) 94%, var(--foreground) 6%);
+  --control-hover: color-mix(in oklab, var(--card) 89%, var(--foreground) 11%);
 
   /* Colour tags, for the terminal rail: a folder, the sessions inside it and
      the windows inside those.
@@ -282,6 +329,9 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
 
   --color-surface-header: var(--surface-header);
   --color-surface-sunken: var(--surface-sunken);
@@ -414,6 +464,41 @@
       color-mix(in oklab, var(--card) 100%, var(--foreground) 4%),
       var(--card) 60%
     );
+  }
+}
+
+/* The lift, at control scale.
+
+   A `@utility` rather than a class in `@layer components` next to
+   `.card-sheen`, for one reason: a tab is only raised while it is the active
+   one, and `data-[state=active]:raised` is a variant Tailwind can only compose
+   onto a utility. It also settles the ordering — `box-shadow` here would
+   otherwise be overridden by any `shadow-*` utility that happened to land on
+   the same element, which is why the variants that take this drop the
+   `shadow-xs` they used to carry.
+
+   Three lines, drawn from the tokens in `.light`/`.dark`: a hairline of light
+   on the top edge, a dark lip on the bottom, and a shadow on the page. The
+   gloss fades out by the halfway mark rather than running the full height,
+   because a gradient that reaches the bottom edge reads as a two-tone fill
+   instead of as a curved surface catching a light. */
+@utility raised {
+  background-image: linear-gradient(180deg, var(--raise-gloss), transparent 55%);
+  box-shadow:
+    inset 0 1px 0 0 var(--raise-shine),
+    inset 0 -1px 0 0 var(--raise-lip),
+    var(--raise-drop);
+
+  /* Pressed: the light moves to the other side. The gloss inverts into a
+     shadow cast from the top edge inwards and the drop goes away entirely, so
+     the control sits down *into* the page instead of standing on it — which is
+     the only reason it was worth drawing standing up. Guarded on `:disabled`
+     and `aria-disabled` rather than trusting `pointer-events-none`: Radix
+     disables its triggers with the attribute, and those still take a pointer. */
+  &:active:not(:disabled):not([aria-disabled="true"]) {
+    background-image: linear-gradient(180deg, var(--raise-press), transparent 60%);
+    box-shadow: inset 0 1px 2px 0 var(--raise-press);
+    transform: translateY(1px);
   }
 }
 
