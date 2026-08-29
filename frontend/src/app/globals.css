@@ -112,6 +112,10 @@
      light mode's black primary and its red destructive a gloss strong enough
      to be visible against white is a full light-to-dark sweep down the face:
      the glassy 2005 button, arrived at by tuning against the wrong surface. */
+  /* Darker on hover, and only a little: on a near-white face a small step
+     towards black is already a large perceptual move. */
+  --control-hover: color-mix(in oklab, var(--control) 94%, #000 6%);
+
   --raise-shine: oklch(1 0 0 / 0.44);
   --raise-gloss: oklch(1 0 0 / 0.13);
   --raise-lip: oklch(0 0 0 / 0.08);
@@ -199,6 +203,11 @@
      the same three lines have to sit on top of every variant's own background
      — a white primary, a red destructive, a near-black outline — and a token
      that named a colour could only ever be right for one of them. */
+  /* Darker on hover. Sized to stay clear of `--card` underneath it — a hover
+     that lands on the card's own value reads as the button going flush with
+     the page rather than as it responding. */
+  --control-hover: color-mix(in oklab, var(--control) 88%, #000 12%);
+
   --raise-shine: oklch(1 0 0 / 0.1);
   --raise-gloss: oklch(1 0 0 / 0.045);
   --raise-lip: oklch(0 0 0 / 0.3);
@@ -259,9 +268,18 @@
      rather than flush with it. Outline and secondary buttons, select triggers
      and toggles all take it, so "how light is a button" has one answer instead
      of one per component — and it moves with the palette rather than being a
-     hex somebody matched by eye. */
+     hex somebody matched by eye.
+
+     `--control-hover` is per mode rather than computed here with it, because
+     the two are not the same operation. This token used to mix *more
+     foreground* into the card for both, which on light mode is black and
+     darkens the face — and on dark mode is white, so the button lit up under
+     the pointer and read as the one thing on the page being switched on. A
+     control should settle towards the surface as you approach it, the way it
+     settles all the way in when pressed; and "a bit darker" is a different
+     distance on a near-black face than on a near-white one, so each mode
+     names its own. */
   --control: color-mix(in oklab, var(--card) 94%, var(--foreground) 6%);
-  --control-hover: color-mix(in oklab, var(--card) 89%, var(--foreground) 11%);
 
   /* Colour tags, for the terminal rail: a folder, the sessions inside it and
      the windows inside those.

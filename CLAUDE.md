@@ -1658,7 +1658,9 @@ shadow underneath — inverting on `:active` so the thing sits *into* the page w
 The tokens are translucent black and white rather than colours, because the same three lines
 have to sit on top of a white primary, a red destructive and a near-black outline alike; and
 `--control`/`--control-hover` are the resting face those variants share, so "how light is a
-button" has one answer. Light mode is not the dark values scaled — the gloss sits on the
+button" has one answer. The hover goes *darker*, and is named per mode rather than computed
+with the resting face: mixing more `--foreground` in served light mode, where the foreground
+is black, and lit the button up under the pointer on dark mode, where it is white. Light mode is not the dark values scaled — the gloss sits on the
 variant's colour rather than on the page, so a value tuned against white turns light mode's
 black primary into a glossy sweep.
 
