@@ -249,3 +249,78 @@ func TestUFWParsesAPortWrittenWithoutAProtocol(t *testing.T) {
 		t.Errorf("range = %q", st.Rules[2].Port)
 	}
 }
+
+// An application profile names a destination port, and ufw only reads it as
+// one inside a `to` clause.
+//
+// Both other placements were worse than an error. `ufw allow in app OpenSSH`
+// is refused outright with "Need 'to' or 'from' clause", so choosing a profile
+// and nothing else — the whole point of the profile picker — never worked on
+// any host. And `ufw allow in from 10.0.0.0/8 app OpenSSH` is *accepted*, and
+// binds the profile to the source port: a rule admitting traffic that came
+// from port 22 rather than traffic going to it. Verified against a real ufw
+// with --dry-run, which prints the tuple it would write.
+func TestUFWAppProfileGoesInATargetClause(t *testing.T) {
+	cases := []struct {
+		name string
+		req  RuleRequest
+		want string
+	}{
+		{"profile alone", RuleRequest{Action: "allow", Direction: "in", App: "Nginx Full"},
+			"ufw allow in from any to any app Nginx Full"},
+		{"profile with a source", RuleRequest{Action: "allow", Direction: "in", App: "Nginx Full", From: "10.0.0.0/8"},
+			"ufw allow in from 10.0.0.0/8 to any app Nginx Full"},
+		{"profile with a comment", RuleRequest{Action: "allow", Direction: "in", App: "Nginx Full", Comment: "web"},
+			"ufw allow in from any to any app Nginx Full comment web"},
+		{"profile inserted", RuleRequest{Action: "allow", Direction: "in", App: "Nginx Full", Position: 2},
+			"ufw insert 2 allow in from any to any app Nginx Full"},
+	}
+	for _, tc := range cases {
+		f := &fakeUFW{replies: map[string]string{}}
+		f.install(t)
+		if _, err := (ufwBackend{}).AddRule(context.Background(), tc.req); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(f.calls) != 1 || f.calls[0] != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, f.calls, tc.want)
+		}
+	}
+}
+
+// A rule with a destination address prints it in front of the port, so the
+// port is the last field of the column rather than the whole of it. Taking the
+// column put the address into the port, and everything keyed off the port went
+// quiet with it: no service name, no "this is open to the world" warning, and
+// an edit that read the rule back with a port nothing could parse.
+func TestUFWParsesADestinationThatCarriesAnAddress(t *testing.T) {
+	r := parseUFWRule(1, "10.0.0.5 5432/tcp             ALLOW IN    Anywhere")
+	if r.Port != "5432" || r.Protocol != "tcp" {
+		t.Fatalf("port=%q proto=%q", r.Port, r.Protocol)
+	}
+	annotateRule(&r)
+	if r.Service == "" {
+		t.Error("the catalogue could not name a port it plainly knows")
+	}
+	bare := parseUFWRule(2, "192.168.0.0/24 8000           ALLOW IN    Anywhere")
+	if bare.Port != "8000" {
+		t.Fatalf("bare port on an address rule: %q", bare.Port)
+	}
+}
+
+// `ufw route` rules print ALLOW FWD, and ufw-docker writes a great many of
+// them. Unrecognised, the word became part of the source address — and a rule
+// with no direction is read as inbound, which is how a host whose only rules
+// were forwarding rules satisfied the "something is allowed in" test guarding
+// the inbound default-deny switch.
+func TestUFWRecognisesForwardRules(t *testing.T) {
+	r := parseUFWRule(1, "Anywhere                      ALLOW FWD   172.17.0.0/16")
+	if r.Direction != "FWD" {
+		t.Fatalf("direction %q", r.Direction)
+	}
+	if r.From != "172.17.0.0/16" {
+		t.Fatalf("from %q — the direction leaked into the source", r.From)
+	}
+	if admitsAnything([]Rule{r}) {
+		t.Error("a forwarding rule was counted as admitting inbound traffic")
+	}
+}

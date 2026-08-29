@@ -97,3 +97,53 @@ func TestParseLastHonoursTheLimit(t *testing.T) {
 		t.Fatalf("returned %d records for a limit of 2", len(got))
 	}
 }
+
+// The posture check counted failed logins as the length of a 500-record
+// listing of the whole of btmp. Two things were wrong with that and they
+// pointed in opposite directions: the "sustained attempts" threshold of 2000
+// could never be reached by a number that stopped at 500, and the 200-attempt
+// notice fired forever on any host whose btmp had ever accumulated that many —
+// which is every host with a public SSH port, regardless of this week.
+func TestCountWithinBoundsTheWindow(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { t := now.Add(-d); return &t }
+	records := []LoginRecord{
+		{LoginTime: at(time.Hour)},
+		{LoginTime: at(48 * time.Hour)},
+		{LoginTime: at(30 * 24 * time.Hour)},
+		{LoginTime: nil}, // unparsed: not evidence of anything
+	}
+	vol := countWithin(records, 7*24*time.Hour, now)
+	if vol.Count != 2 {
+		t.Fatalf("counted %d, want the two inside the week", vol.Count)
+	}
+	if vol.Capped {
+		t.Error("a short listing is not a capped one")
+	}
+	if vol.Window != 7*24*time.Hour {
+		t.Errorf("window %v", vol.Window)
+	}
+}
+
+// Running out of sample inside the window makes the count a floor, and a floor
+// quoted as a total is the kind of number people go on to reason from.
+func TestCountWithinReportsACappedSample(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-time.Hour)
+	records := make([]LoginRecord, failedLoginSample)
+	for i := range records {
+		at := recent
+		records[i] = LoginRecord{LoginTime: &at}
+	}
+	vol := countWithin(records, 7*24*time.Hour, now)
+	if !vol.Capped || vol.Count != failedLoginSample {
+		t.Fatalf("count=%d capped=%v", vol.Count, vol.Capped)
+	}
+	// A full sample that reaches back past the window is not capped: the
+	// window closed before the sample did.
+	old := now.Add(-30 * 24 * time.Hour)
+	records[len(records)-1] = LoginRecord{LoginTime: &old}
+	if vol := countWithin(records, 7*24*time.Hour, now); vol.Capped {
+		t.Error("reported a cap where the window ran out first")
+	}
+}

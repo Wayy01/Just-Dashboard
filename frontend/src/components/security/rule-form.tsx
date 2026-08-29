@@ -143,12 +143,16 @@ const SOURCE_PRESETS = [
  * all, so the round trip has to undo that or every edit would come back with a
  * literal source of "Anywhere" and be refused as not an address. A rule with
  * no port was written from an application profile, and its target is that
- * profile's name.
+ * profile's name — except when the destination is "Anywhere", which is what a
+ * source-only rule (`deny from 203.0.113.9`) prints there. Read as a profile
+ * name that becomes `app Anywhere`, which is not a profile on any host.
  */
 function fieldsOf(rule?: FirewallRule) {
   const from = rule?.from ?? ""
   const anywhere = from === "" || /^anywhere/i.test(from)
-  const profile = rule && !rule.port && rule.to && !/^\d/.test(rule.to) ? rule.to : ""
+  const to = rule?.to ?? ""
+  const profile =
+    rule && !rule.port && to && !/^\d/.test(to) && !/^anywhere/i.test(to) ? to : ""
   return {
     action: (rule?.action ?? "allow").toLowerCase(),
     direction: (rule?.direction ?? "in").toLowerCase() === "out" ? "out" : "in",

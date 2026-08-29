@@ -133,14 +133,20 @@ func parseUFWRule(num int, body string) Rule {
 		body = body[:idx]
 	}
 	fields := strings.Fields(body)
-	// ufw's layout is: <to> <ACTION> <IN|OUT> <from>
+	// ufw's layout is: <to> <ACTION> <IN|OUT|FWD> <from>
 	for i, f := range fields {
 		upper := strings.ToUpper(f)
 		if upper == "ALLOW" || upper == "DENY" || upper == "REJECT" || upper == "LIMIT" {
 			r.Action = upper
 			r.To = strings.Join(fields[:i], " ")
 			rest := fields[i+1:]
-			if len(rest) > 0 && (rest[0] == "IN" || rest[0] == "OUT") {
+			// FWD is what `ufw route` rules print, and ufw-docker writes a
+			// great many of them. Left unrecognised the word became part of
+			// the source address, and a rule with no direction is read as
+			// inbound — which is how a host whose only rules were forwarding
+			// rules satisfied the "something is allowed in" test that guards
+			// the inbound default-deny switch.
+			if len(rest) > 0 && (rest[0] == "IN" || rest[0] == "OUT" || rest[0] == "FWD") {
 				r.Direction = rest[0]
 				rest = rest[1:]
 			}
@@ -160,9 +166,14 @@ func parseUFWRule(num int, body string) Rule {
 	if trimmed, ok := strings.CutSuffix(r.From, " (v6)"); ok {
 		r.IPv6, r.From = true, trimmed
 	}
-	if to, proto, ok := strings.Cut(r.To, "/"); ok {
+	// A rule with a destination address prints it in front of the port —
+	// "10.0.0.5 5432/tcp" — so the port is the last field, not the whole
+	// column. Taking the column put the address into the port and everything
+	// keyed off the port went quiet: no service name, no warning, and an edit
+	// that read the rule back with a port nothing could parse.
+	if to, proto, ok := strings.Cut(lastField(r.To), "/"); ok {
 		r.Port, r.Protocol = to, proto
-	} else if bareUFWPortRe.MatchString(r.To) {
+	} else if bareUFWPortRe.MatchString(lastField(r.To)) {
 		// `ufw allow 6379` is legal and writes a rule for both protocols, so
 		// the destination is a bare number with no slash to cut on. Left
 		// unparsed the rule carries no port, and everything keyed off the port
@@ -170,9 +181,18 @@ func parseUFWRule(num int, body string) Rule {
 		// in front of "Redis is open to the world" — the reason the catalogue
 		// exists — never fires on the one spelling a newcomer is most likely
 		// to have typed.
-		r.Port = r.To
+		r.Port = lastField(r.To)
 	}
 	return r
+}
+
+// lastField is the port half of ufw's destination column, which carries an
+// address in front of it whenever the rule names one.
+func lastField(s string) string {
+	if i := strings.LastIndexByte(strings.TrimSpace(s), ' '); i >= 0 {
+		return strings.TrimSpace(s)[i+1:]
+	}
+	return strings.TrimSpace(s)
 }
 
 // bareUFWPortRe matches a destination that is only a port, a range or a list.
@@ -185,28 +205,37 @@ func (ufwBackend) AddRule(ctx context.Context, req RuleRequest) (string, error) 
 		args = append(args, "insert", strconv.Itoa(req.Position))
 	}
 	args = append(args, req.Action, req.Direction)
+	// An application profile names a *destination* port, and ufw only reads it
+	// as one inside a `to` clause. Both other placements are worse than an
+	// error: `allow in app OpenSSH` is refused outright with "Need 'to' or
+	// 'from' clause", so picking a profile and nothing else never worked at
+	// all; and `allow in from 10.0.0.0/8 app OpenSSH` is *accepted* and binds
+	// the profile to the source port instead — a rule that admits traffic
+	// coming *from* port 22 rather than going to it, which is not what the
+	// form said and does not do anything the operator wanted.
+	dest := req.To != "" || req.Port != "" || req.App != ""
 	if req.From != "" {
 		args = append(args, "from", req.From)
-	} else if req.To != "" || req.Port != "" {
+	} else if dest {
 		// ufw's grammar wants a source before a destination, and "any" is how
 		// it spells "unrestricted" in that position.
 		args = append(args, "from", "any")
 	}
-	if req.To != "" || req.Port != "" {
-		dest := "any"
+	if dest {
+		target := "any"
 		if req.To != "" {
-			dest = req.To
+			target = req.To
 		}
-		args = append(args, "to", dest)
+		args = append(args, "to", target)
+		if req.App != "" {
+			args = append(args, "app", req.App)
+		}
 		if req.Port != "" {
 			args = append(args, "port", req.Port)
 		}
 		if req.Protocol != "" {
 			args = append(args, "proto", req.Protocol)
 		}
-	}
-	if req.App != "" {
-		args = append(args, "app", req.App)
 	}
 	if req.Comment != "" {
 		args = append(args, "comment", req.Comment)

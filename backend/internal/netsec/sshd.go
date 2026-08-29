@@ -162,6 +162,15 @@ func (s *Service) SSHDStatus(ctx context.Context) *SSHDConfig {
 	}
 	for _, def := range sshDirectives {
 		value := def.canonical(first(values[def.Key], def.Default))
+		if def.Key == "port" && len(cfg.Socket.Ports) > 0 {
+			// On a socket-activated host sshd_config's Port is read, resolved,
+			// reported by `sshd -T` and ignored. Showing it in the control
+			// meant the header said "Port 2222 · held by ssh.socket" while the
+			// field beneath it said 22 — and the apply path, which compares
+			// against the socket, then read a save of that displayed value as
+			// a request to move SSH back onto it.
+			value = cfg.Socket.Ports[0]
+		}
 		if def.Kind == "list" {
 			// sshd accumulates these across every line that sets them, so the
 			// first value alone would silently hide the rest.

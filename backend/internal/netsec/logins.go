@@ -52,6 +52,58 @@ func (s *Service) FailedLogins(ctx context.Context, limit int) ([]LoginRecord, e
 	return runLast(ctx, "lastb", limit)
 }
 
+// failedLoginSample is how far back the posture check reads. Larger than the
+// page's own limit on purpose: the verdict's thresholds are counts, and a
+// sample smaller than the highest of them makes that threshold unreachable
+// however busy the host is.
+const failedLoginSample = 5000
+
+// FailedLoginVolume counts recent failed attempts.
+//
+// The count needs a window and a sample big enough to fill it, and the posture
+// check had neither: it took the length of a 500-record listing of the whole
+// file. So the "sustained attempts" threshold of 2000 could never be reached
+// by a number that stopped at 500, and the notice threshold of 200 fired on
+// any host whose btmp had ever accumulated that many — which is every host
+// with a public SSH port, permanently, regardless of what happened this week.
+type FailedLoginVolume struct {
+	Count  int           `json:"count"`
+	Window time.Duration `json:"window"`
+	// Capped reports that the sample ran out before the window did, so the
+	// count is a floor rather than a total.
+	Capped bool `json:"capped"`
+}
+
+func (s *Service) FailedLoginVolume(ctx context.Context, window time.Duration) (FailedLoginVolume, error) {
+	records, err := s.FailedLogins(ctx, failedLoginSample)
+	if err != nil {
+		return FailedLoginVolume{}, err
+	}
+	return countWithin(records, window, time.Now()), nil
+}
+
+// countWithin is the counting itself, separated from the subprocess so the
+// window arithmetic can be tested without a btmp.
+func countWithin(records []LoginRecord, window time.Duration, now time.Time) FailedLoginVolume {
+	vol := FailedLoginVolume{Window: window, Capped: len(records) >= failedLoginSample}
+	cutoff := now.Add(-window)
+	for _, r := range records {
+		// A record with no timestamp is one the parser could not read, not one
+		// from outside the window; counting it would inflate the figure the
+		// verdict is built on.
+		if r.LoginTime == nil || r.LoginTime.Before(cutoff) {
+			continue
+		}
+		vol.Count++
+	}
+	// The listing is newest-first, so running out of sample inside the window
+	// is the only way the cap matters. Past the window the cap says nothing.
+	if vol.Capped && vol.Count < len(records) {
+		vol.Capped = false
+	}
+	return vol
+}
+
 func runLast(ctx context.Context, tool string, limit int) ([]LoginRecord, error) {
 	if limit <= 0 {
 		limit = 100

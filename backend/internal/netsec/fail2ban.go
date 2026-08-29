@@ -132,12 +132,26 @@ func (s *Service) Unban(ctx context.Context, jail, ip string) (string, error) {
 	return run(ctx, "fail2ban-client", "set", jail, "unbanip", ip)
 }
 
-func (s *Service) Ban(ctx context.Context, jail, ip string) (string, error) {
+// Ban adds an address to a jail, which is to say it installs a firewall drop
+// for it.
+//
+// callerIP is why this takes an argument the unban does not: a ban is a deny
+// rule wearing a different name, and banning the address you are connected
+// from severs the session exactly the way an inbound deny would. The firewall
+// page has refused that since it shipped; this route reached the same outcome
+// from a different button with nothing in the way. Narrow like every other
+// guard here — only the certain case, the caller's own address.
+func (s *Service) Ban(ctx context.Context, jail, ip, callerIP string) (string, error) {
 	if !jailNameRe.MatchString(jail) {
 		return "", fmt.Errorf("invalid jail name %q", jail)
 	}
-	if net.ParseIP(ip) == nil {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
 		return "", fmt.Errorf("%q is not a valid IP address", ip)
+	}
+	if caller := net.ParseIP(callerIP); caller != nil && caller.Equal(parsed) {
+		return "", fmt.Errorf("%w: %s is the address you are connected from, and a ban installs a firewall drop for it",
+			ErrLockout, ip)
 	}
 	return run(ctx, "fail2ban-client", "set", jail, "banip", ip)
 }
@@ -311,7 +325,21 @@ func (s *Service) IgnoreIP(ctx context.Context, jail, ip string, add bool) (stri
 	if !add {
 		verb = "delignoreip"
 	}
-	return run(ctx, "fail2ban-client", "set", jail, verb, ip)
+	out, err := run(ctx, "fail2ban-client", "set", jail, verb, ip)
+	if err != nil {
+		return out, err
+	}
+	// Written to disk as well, for the reason SetJailParams is: addignoreip
+	// changes the running server and nothing else, so the allowlist somebody
+	// adds after banning themselves is gone at the next restart — silently,
+	// with the page still showing it. The list is read back rather than
+	// computed here, because fail2ban is the one that knows what it now holds.
+	if cfg, cerr := s.JailConfig(ctx, jail); cerr == nil {
+		if _, perr := s.PersistJailValue(jail, "ignoreip", strings.Join(cfg.IgnoreIP, " ")); perr != nil {
+			return out, fmt.Errorf("applied to the running fail2ban, but not written to disk, so it will be lost on restart: %w", perr)
+		}
+	}
+	return out, nil
 }
 
 // UnbanAll releases every address a jail currently holds.

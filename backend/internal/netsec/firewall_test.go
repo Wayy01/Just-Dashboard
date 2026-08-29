@@ -502,3 +502,70 @@ func TestReplaceRuleRefusesAnUnknownFirewalldRule(t *testing.T) {
 		}
 	}
 }
+
+// A rule's port may be a list or a range — both are forms this dashboard's own
+// rule form writes — and an exact-string lookup matched neither. So a rule
+// opening Redis as part of a list carried no service name and, far worse, none
+// of the warning the catalogue exists to raise.
+func TestAnnotateHandlesPortListsAndRanges(t *testing.T) {
+	list := Rule{Action: "ALLOW", From: "Anywhere", To: "6379,6380/tcp", Port: "6379,6380", Protocol: "tcp"}
+	annotateRule(&list)
+	if list.Service != "Redis" || list.Danger == "" {
+		t.Fatalf("list: service=%q danger=%q", list.Service, list.Danger)
+	}
+	rng := Rule{Action: "ALLOW", From: "Anywhere", To: "5430:5440/tcp", Port: "5430:5440", Protocol: "tcp"}
+	annotateRule(&rng)
+	if rng.Service != "PostgreSQL" || rng.Danger == "" {
+		t.Fatalf("range: service=%q danger=%q", rng.Service, rng.Danger)
+	}
+	// A range with nothing catalogued in it stays unannotated rather than
+	// borrowing the name of whatever happened to be nearby.
+	quiet := Rule{Action: "ALLOW", From: "Anywhere", To: "40000:40010/tcp", Port: "40000:40010", Protocol: "tcp"}
+	annotateRule(&quiet)
+	if quiet.Service != "" || quiet.Danger != "" {
+		t.Fatalf("quiet range annotated: %q / %q", quiet.Service, quiet.Danger)
+	}
+	// A restricted source still earns the name and not the warning.
+	restricted := Rule{Action: "ALLOW", From: "10.0.0.0/8", To: "6379,6380/tcp", Port: "6379,6380", Protocol: "tcp"}
+	annotateRule(&restricted)
+	if restricted.Service != "Redis" || restricted.Danger != "" {
+		t.Fatalf("restricted: service=%q danger=%q", restricted.Service, restricted.Danger)
+	}
+}
+
+// The port pattern bounds the digits, not the numbers: 0 and 99999 are five
+// digits or fewer and neither is a port, and a backwards range is accepted by
+// the pattern and refused by every tool underneath — with an error naming
+// none of the four fields on the form.
+func TestNormaliseRuleBoundsPortNumbers(t *testing.T) {
+	for _, bad := range []string{"0", "99999", "8010:8000", "80,0", "70000:70010", "22:"} {
+		if _, err := normaliseRule(RuleRequest{Action: "allow", Port: bad, Protocol: "tcp"}); err == nil {
+			t.Errorf("accepted port %q", bad)
+		}
+	}
+	for _, ok := range []string{"1", "65535", "8000:8010", "80,443", "80,8000:8010"} {
+		if _, err := normaliseRule(RuleRequest{Action: "allow", Port: ok, Protocol: "tcp"}); err != nil {
+			t.Errorf("refused port %q: %v", ok, err)
+		}
+	}
+}
+
+// A forwarding rule is neither inbound nor outbound, and the rule form has no
+// way to say so — so reopening one would offer to save it back as an inbound
+// rule and quietly change what it does. ufw-docker writes a great many of them.
+func TestReplaceRuleRefusesAForwardingRule(t *testing.T) {
+	b := editable(BackendUFW)
+	b.rules = []Rule{
+		{Number: 1, Action: "ALLOW", Direction: "FWD", To: "Anywhere", From: "172.17.0.0/16"},
+	}
+	_, err := replaceRule(t.Context(), b, 1,
+		RuleRequest{Action: "allow", Port: "80", Protocol: "tcp"}, "203.0.113.9")
+	if err == nil || !strings.Contains(err.Error(), "FWD") {
+		t.Fatalf("a forwarding rule was edited: %v", err)
+	}
+	for _, call := range b.calls {
+		if strings.HasPrefix(call, "add") || strings.HasPrefix(call, "delete") {
+			t.Fatalf("the firewall was written to: %v", b.calls)
+		}
+	}
+}

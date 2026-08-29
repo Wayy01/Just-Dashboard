@@ -493,8 +493,8 @@
     {
       "version": "0.6.4",
       "date": "2026-08-29",
-      "title": "The reclaim button reclaims",
-      "summary": "Docker's own accounting said forty-three gigabytes could be reclaimed on this server, and nothing in the dashboard could reclaim any of it. The button under that figure navigated to the image list, whose only control removes dangling images \u2014 of which a host that redeploys through compose usually has none \u2014 and the build cache, which was forty-one of those gigabytes, had no route in the product at all. This release is that gap closed, plus the two other places a Docker page was reporting a number it had never actually asked for.",
+      "title": "Controls that do what the page says they do",
+      "summary": "Docker's own accounting said forty-three gigabytes could be reclaimed on this server, and nothing in the dashboard could reclaim any of it. The button under that figure navigated to the image list, whose only control removes dangling images \u2014 of which a host that redeploys through compose usually has none \u2014 and the build cache, which was forty-one of those gigabytes, had no route in the product at all.\n\nPulling that thread ran through the proxy and security pages, which had the same shape of problem in a dozen places: a control that reported success and changed nothing, or changed something other than what it said. Deleting a proxy site left a copy the list showed as a second site, so deleting that produced a third called .bak.bak. Choosing an application profile in the firewall form wrote a rule for the wrong end of the connection. Allowlisting your own address in fail2ban lasted until its next restart. Under most of them was an assumption about what a Linux server looks like \u2014 that nginx keeps its sites in sites-available, that a machine knows its own public address, that a password file root can read is one nginx can read \u2014 each false on a large share of the servers this runs on, and each perfectly true on the one it was written against.",
       "changes": [
         {
           "kind": "fixed",
@@ -545,6 +545,106 @@
           "kind": "added",
           "text": "The warning about an uncapped log file now has a button that caps it",
           "detail": "It described a fix the dashboard could perform and did not offer. Docker cannot change a log driver on a running container, so it rebuilds it with a 10 MB limit over three files \u2014 the same bargain the restart-policy fix makes, and the dialog says so."
+        },
+        {
+          "kind": "fixed",
+          "text": "Deleting a proxy site no longer leaves a second site called <name>.bak behind",
+          "detail": "The delete keeps the previous file beside the original \u2014 validation catches a broken config, not a correct one that says the wrong thing, and the only cure for the second is the version before it \u2014 but the site list showed every file in the directory, so the copy appeared as a site of its own and deleting that one produced .bak.bak. nginx reads none of these: sites-enabled is a directory of symlinks and conf.d is included as *.conf. The listing skips them now, along with the .dpkg-old and .rpmsave files a package upgrade leaves next to a config it touched, which used to show as a duplicate of every site apt had ever updated."
+        },
+        {
+          "kind": "fixed",
+          "text": "Sites can be deleted and edited on hosts that keep their nginx config in conf.d",
+          "detail": "Which is every RPM distribution, Alpine and Arch \u2014 most of the servers this runs on. There the site list reports a name that already ends in .conf, and both delete and save appended a second one and acted on app.conf.conf, which exists nowhere: delete answered \"no such site\" about a site plainly on the page, and save wrote a duplicate while leaving the original serving. The enable switch is gone on those hosts too, replaced by \"always on\", because conf.d has no symlink to toggle and the control could only ever return an error."
+        },
+        {
+          "kind": "fixed",
+          "text": "Basic auth on a site now works \u2014 the password file is readable by the server that has to read it",
+          "detail": "nginx opens auth_basic_user_file in a worker, which runs as www-data, nginx or http depending on the distribution, not as the root that wrote it. The file was 0640 root:root, so every visitor to a password-protected site got a 403 and the error log said \"Permission denied\" \u2014 which reads exactly like a wrong password. The group is handed to whoever this host's nginx.conf names, and where that account cannot be resolved the file is world-readable instead, which is what htpasswd itself produces and is a great deal better than a login nobody can pass."
+        },
+        {
+          "kind": "fixed",
+          "text": "Extra configuration and the probe blocks survive an edit instead of being deleted by it",
+          "detail": "The site form's escape hatch was the one field saving destroyed: anything typed into \"Extra configuration\" was written into the file and silently dropped the next time the form read it back, so opening a site and pressing save removed directives nobody was shown. The \"Block common probes\" switch was the same \u2014 it read back as off, so an edit turned it off. Both round-trip now, and a test renders, parses and re-renders to keep them that way."
+        },
+        {
+          "kind": "fixed",
+          "text": "A restriction on one path stays on that path when a site is saved again",
+          "detail": "An allow list inside a location block was read back as the site's own, so editing a site whose /admin was limited to a private range and saving applied that limit to the whole site \u2014 locking every visitor out of a site that had been public."
+        },
+        {
+          "kind": "fixed",
+          "text": "\"Does this domain point here?\" says it cannot tell, rather than reporting a correct domain as wrong",
+          "detail": "The check compared the domain's addresses against this machine's own routable ones. A VPS behind provider NAT has none \u2014 AWS, Google Cloud, Azure and Oracle all give the instance a private address and map a public one in front of it \u2014 so on all four the answer was always \"this is not an address on this machine\", in front of a domain that was configured perfectly. A check that could not run is not a failure any more than it is a pass, and it now says which it is."
+        },
+        {
+          "kind": "fixed",
+          "text": "A DNS certificate plugin is found whatever Python the host ships",
+          "detail": "The search named two interpreter versions, so RHEL 9 on python3.9 and Debian 13 and Fedora on 3.13 were all told a plugin they had installed was missing \u2014 a refusal in front of a wildcard certificate that would have been issued. The renewal check grew the same treatment: Fedora and RHEL schedule certbot-renew.timer rather than certbot.timer, and Alpine runs it out of /etc/periodic, so all three used to be warned that nothing was renewing while something was."
+        },
+        {
+          "kind": "fixed",
+          "text": "A new stream no longer silently replaces an existing one of the same name",
+          "detail": "\"New stream\" and \"Edit this stream\" post to one route, and only the site form was passing the flag that tells them apart \u2014 so a forwarding rule could stop pointing where it used to with nothing said. The stream page also stops reporting nginx as reading these when the include is present but commented out, which is exactly how it arrives when somebody pastes the snippet and thinks about it."
+        },
+        {
+          "kind": "fixed",
+          "text": "Saving a site reports it as enabled only when it actually is",
+          "detail": "If the symlink into sites-enabled could not be written \u2014 a read-only directory, or a real file sitting where the link belongs \u2014 the failure was swallowed and the page said the site was live. A link left pointing at a different file was the same story with a worse ending: the new config was never in nginx's include tree at all. Both are handled now, and a save that cannot enable the site undoes itself rather than leaving a file nobody can see."
+        },
+        {
+          "kind": "fixed",
+          "text": "Password files and stream configs follow JD_NGINX_DIR instead of assuming /etc/nginx",
+          "detail": "Both were written to a hard-coded path, so a host whose nginx lives somewhere else \u2014 which is the only reason that setting exists \u2014 got files in a directory its nginx never reads. The listening-ports page had a smaller version of the same problem: every connected UDP socket was counted as something the server was accepting on, so an ordinary DNS lookup showed up as an open port."
+        },
+        {
+          "kind": "fixed",
+          "text": "Firewall rules written from an application profile now open the port they name",
+          "detail": "Picking \"Nginx Full\" or \"OpenSSH\" and nothing else was refused outright by ufw \u2014 \"Need 'to' or 'from' clause\" \u2014 so the profile picker never worked on any host for the case it exists for. Adding a source made it worse rather than better: ufw accepted the rule and bound the profile to the *source* port, so what landed in the firewall admitted traffic coming from port 22 rather than going to it. A profile is a destination, and it is written inside a `to` clause now. Each argument list this form builds is checked against a real ufw with --dry-run in the test suite."
+        },
+        {
+          "kind": "fixed",
+          "text": "A rule with a destination address is read correctly, warnings and all",
+          "detail": "ufw prints the address in front of the port \u2014 \"10.0.0.5 5432/tcp\" \u2014 and the whole column was taken as the port. Everything keyed off the port went quiet with it: no service name, no \"this database is open to the world\" warning, and an edit that read the rule back with a port nothing could parse. Port lists and ranges get the same treatment, so a rule opening Redis as `6379,6380` now raises the warning it always should have."
+        },
+        {
+          "kind": "fixed",
+          "text": "Forwarding rules are recognised instead of being read as inbound ones",
+          "detail": "`ufw route` rules print ALLOW FWD, and ufw-docker writes a great many of them. The word was read as part of the source address, and a rule with no direction counts as inbound \u2014 so a host whose only rules were forwarding rules satisfied the \"something is allowed in\" test that guards switching the inbound default to deny. They are also no longer editable from the rule form, which has no way to express one and would have saved it back as an inbound rule."
+        },
+        {
+          "kind": "fixed",
+          "text": "Editing a rule that names only a source no longer tries to write it as an application profile",
+          "detail": "ufw prints \"Anywhere\" as the destination of a `deny from 203.0.113.9`, and the form read any non-numeric destination as a profile name \u2014 so reopening such a rule offered to save `app Anywhere`, which is not a profile on any host."
+        },
+        {
+          "kind": "fixed",
+          "text": "fail2ban will not ban the address you are connected from",
+          "detail": "A ban installs a firewall drop, so banning yourself severs the session exactly the way an inbound deny rule would. The firewall page has refused that since it shipped and the ban route reached the same outcome with nothing in the way. Same guard, same narrowness: only the caller's own address is refused."
+        },
+        {
+          "kind": "fixed",
+          "text": "A fail2ban allowlist entry survives a restart instead of disappearing at one",
+          "detail": "`addignoreip` changes the running server and nothing else, so the address an operator allowlists after banning themselves was gone the next time fail2ban restarted \u2014 silently, with the page still showing it. It is written into the same jail.d drop-in the ban time and retry count already used, which fail2ban reads last."
+        },
+        {
+          "kind": "fixed",
+          "text": "The security verdict counts failed logins over a week, not over the whole of btmp",
+          "detail": "The figure was the length of a capped 500-record listing of the entire failed-login file. So the \"sustained attempts\" threshold of 2000 could never be reached however hard a host was being hit, and the 200-attempt notice fired permanently on every server with a public SSH port regardless of what happened this week. It is a count inside a window now, and where the sample runs out it says \"at least\" rather than quoting a floor as a total."
+        },
+        {
+          "kind": "fixed",
+          "text": "The SSH port control shows the port SSH is actually on",
+          "detail": "On a socket-activated host \u2014 Ubuntu 24.04 and later by default \u2014 systemd holds the listener and sshd_config's Port is read, resolved and ignored. The panel header said \"Port 2222 \u00b7 held by ssh.socket\" while the field under it said 22, and saving that displayed value read as a request to move SSH back onto it."
+        },
+        {
+          "kind": "fixed",
+          "text": "Ports are checked for being ports, not for being five digits or fewer",
+          "detail": "0, 99999 and a range written backwards all matched the pattern and were refused three layers down by whichever tool ran, with an error naming none of the four fields on the form."
+        },
+        {
+          "kind": "fixed",
+          "text": "The login pages say why they are empty, and name the package that fixes it",
+          "detail": "\"wtmp is not being written here\" was the wrong diagnosis: the records are there and it is `last` and `lastb` that are missing, from util-linux-extra, which minimal cloud images leave out. The posture verdict already said so; the panel does now too. A null MX in the DNS tool also reads as a null MX rather than as a preference followed by a blank."
         }
       ]
     }
