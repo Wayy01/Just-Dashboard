@@ -3,29 +3,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import {
+  ArrowMove,
   ArrowUp,
   ChevronDown,
   ChevronUp,
-  ClipboardPaste,
-  FileArchive,
-  FilePlus,
-  FileSearch,
+  Clipboard,
+  CloudUpload,
+  Cross,
+  FileZip,
+  FolderOpen,
   FolderPlus,
-  FolderTree,
-  LayoutGrid,
-  Link2,
-  ListTree,
-  PanelLeft,
-  PanelRight,
+  GridSquare,
+  Linked,
+  ListUnordered,
+  MagnifyingGlass,
+  Monorepo,
   Plus,
-  Rows3,
-  Scissors,
-  Search,
-  SlidersHorizontal,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react"
+  PlusSquareSmall,
+  PreviewDocument,
+  SettingsSliders,
+  SidebarLeft,
+  SidebarRight,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { API_BASE, del, downloadUrl, get, post, put } from "@/lib/api"
 import { truncateMiddle } from "@/lib/format"
@@ -506,7 +506,7 @@ export default function FilesPage() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="outline" size="sm" onClick={() => setQuickOpen(true)}>
-                  <Search className="size-4" />
+                  <MagnifyingGlass className="size-4" />
                   Find
                   <kbd className="ml-1 hidden rounded border border-hairline px-1 text-[10px] text-muted-foreground sm:inline">
                     ⌃P
@@ -528,7 +528,7 @@ export default function FilesPage() {
                   aria-label="Toggle the places and folder rail"
                   onClick={() => setShowRail((v) => !v)}
                 >
-                  <PanelLeft className="size-4" />
+                  <SidebarLeft className="size-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{showRail ? "Hide the rail" : "Show places and folders"}</TooltipContent>
@@ -541,7 +541,7 @@ export default function FilesPage() {
                   aria-label="Toggle the preview pane"
                   onClick={() => setShowPreview((v) => !v)}
                 >
-                  <PanelRight className="size-4" />
+                  <SidebarRight className="size-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
@@ -571,7 +571,7 @@ export default function FilesPage() {
                     onSymlink={() => setSymlinkOpen(true)}
                   />
                   <Button size="sm" onClick={() => uploadRef.current?.click()}>
-                    <Upload className="size-4" />
+                    <CloudUpload className="size-4" />
                     Upload
                   </Button>
                   <input
@@ -687,9 +687,9 @@ export default function FilesPage() {
           {clip && (
             <div className="flex items-center gap-2 border-b border-hairline bg-primary/[0.06] px-3 py-1.5 text-xs">
               {clip.mode === "cut" ? (
-                <Scissors className="size-3.5 text-primary" />
+                <ArrowMove className="size-3.5 text-primary" />
               ) : (
-                <ClipboardPaste className="size-3.5 text-primary" />
+                <Clipboard className="size-3.5 text-primary" />
               )}
               <span className="text-muted-foreground">
                 {clip.paths.length} item{clip.paths.length === 1 ? "" : "s"} ready to{" "}
@@ -698,12 +698,12 @@ export default function FilesPage() {
               <span className="flex-1" />
               {canWrite && (
                 <Button size="xs" onClick={paste}>
-                  <ClipboardPaste className="size-3.5" />
+                  <Clipboard className="size-3.5" />
                   Paste here
                 </Button>
               )}
               <Button size="xs" variant="ghost" onClick={() => setClip(null)}>
-                <X className="size-3.5" />
+                <Cross className="size-3.5" />
               </Button>
             </div>
           )}
@@ -753,7 +753,7 @@ export default function FilesPage() {
                 {entries.length === 0 ? (
                   <EmptyState
                     className="m-4"
-                    icon={FolderTree}
+                    icon={FolderOpen}
                     title="This directory is empty"
                     description={canWrite ? "Drop files here to upload, or use New." : undefined}
                   />
@@ -868,7 +868,7 @@ export default function FilesPage() {
                     <TableRow>
                       <TableCell colSpan={7} className="p-0">
                         <EmptyState
-                          icon={FolderTree}
+                          icon={FolderOpen}
                           title="This directory is empty"
                           description={
                             canWrite ? "Drop files here to upload, or use New." : undefined
@@ -940,9 +940,9 @@ export default function FilesPage() {
 function ViewSwitcher({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
   const options: { id: ViewMode; label: string; icon: React.ComponentType<{ className?: string }> }[] =
     [
-      { id: "list", label: "Details", icon: Rows3 },
-      { id: "grid", label: "Tiles", icon: LayoutGrid },
-      { id: "tree", label: "Tree", icon: ListTree },
+      { id: "list", label: "Details", icon: ListUnordered },
+      { id: "grid", label: "Tiles", icon: GridSquare },
+      { id: "tree", label: "Tree", icon: Monorepo },
     ]
   return (
     <div className="raised flex items-center gap-0.5 rounded-md border bg-control p-0.5">
@@ -1006,7 +1006,7 @@ function ArrangeMenu({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="xs" className="text-muted-foreground">
-          <SlidersHorizontal className="size-3.5" />
+          <SettingsSliders className="size-3.5" />
           Arrange
         </Button>
       </DropdownMenuTrigger>
@@ -1124,7 +1124,7 @@ function SelectionActions({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="outline" size="sm" onClick={onCopy}>
-                <ClipboardPaste className="size-4" />
+                <Clipboard className="size-4" />
                 Copy
               </Button>
             </TooltipTrigger>
@@ -1133,7 +1133,7 @@ function SelectionActions({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="outline" size="sm" onClick={onCut}>
-                <Scissors className="size-4" />
+                <ArrowMove className="size-4" />
                 Cut
               </Button>
             </TooltipTrigger>
@@ -1145,7 +1145,7 @@ function SelectionActions({
         <TooltipTrigger asChild>
           <Button variant="outline" size="sm" asChild>
             <a href={archiveHref} download>
-              <FileArchive className="size-4" />
+              <FileZip className="size-4" />
               Archive
             </a>
           </Button>
@@ -1156,7 +1156,7 @@ function SelectionActions({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="outline" size="sm" className="text-destructive" onClick={onDelete}>
-              <Trash2 className="size-4" />
+              <Trash className="size-4" />
               Delete
             </Button>
           </TooltipTrigger>
@@ -1166,7 +1166,7 @@ function SelectionActions({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button variant="ghost" size="sm" aria-label="Clear selection" onClick={onClear}>
-            <X className="size-4" />
+            <Cross className="size-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Clear the selection</TooltipContent>
@@ -1198,11 +1198,11 @@ function NewMenu({
           Folder
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onFile}>
-          <FilePlus className="size-3.5" />
+          <PlusSquareSmall className="size-3.5" />
           File
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onSymlink}>
-          <Link2 className="size-3.5" />
+          <Linked className="size-3.5" />
           Symlink
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -1343,7 +1343,7 @@ function SearchDialog({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button variant="outline" size="icon-sm" aria-label="Search inside files" onClick={() => setOpen(true)}>
-            <FileSearch className="size-4" />
+            <PreviewDocument className="size-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Search inside file contents</TooltipContent>

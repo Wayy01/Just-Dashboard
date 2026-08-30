@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { ArrowRight, CircleSlash, HeartPulse, Layers, Play, Plus, Trash2 } from "lucide-react"
+import { ArrowRight, Heart, Layers, Play, Plus, Slash, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import { prune, pruneSummary, RECLAIM_SAFE } from "@/lib/docker-prune"
@@ -99,7 +99,7 @@ export default function DockerOverviewPage() {
                   })
                 }
               >
-                <Trash2 className="size-4" />
+                <Trash className="size-4" />
                 Prune
               </Button>
             )}
@@ -117,7 +117,7 @@ export default function DockerOverviewPage() {
         />
         <StatTile
           label="Stopped"
-          icon={CircleSlash}
+          icon={Slash}
           value={stopped}
           hint={stopped ? "not currently serving" : "everything is up"}
         />
@@ -131,7 +131,7 @@ export default function DockerOverviewPage() {
           <StatTile
             className="h-full transition-colors hover:border-primary/30"
             label="Health"
-            icon={HeartPulse}
+            icon={Heart}
             value={healthLabel(status)}
             tone={status === "critical" ? "danger" : status === "warning" ? "warning" : "success"}
             hint={

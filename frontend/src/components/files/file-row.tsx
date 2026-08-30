@@ -1,6 +1,6 @@
 "use client"
 
-import { Download, MoreHorizontal, Pencil } from "lucide-react"
+import { Download, MoreHorizontal, Pencil } from "@/components/icons"
 import { downloadUrl } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"

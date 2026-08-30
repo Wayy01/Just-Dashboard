@@ -1,6 +1,6 @@
 "use client"
 
-import { Clock, HardDrive, Home, Star, StarOff, X } from "lucide-react"
+import { Clock, Cross, Home, Servers, Star, StarFill } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { truncateMiddle } from "@/lib/format"
 import type { FileBookmark, FilePlaces } from "@/lib/types"
@@ -69,7 +69,7 @@ export function PlacesRail({
               place.kind === "home" ? (
                 <Home className="size-3.5 text-primary" />
               ) : place.kind === "root" ? (
-                <HardDrive className="size-3.5 text-muted-foreground" />
+                <Servers className="size-3.5 text-muted-foreground" />
               ) : (
                 <FileIcon
                   entry={{ name: baseOf(place.path), isDir: true, isSymlink: false } as never}
@@ -96,7 +96,7 @@ export function PlacesRail({
                   onClick={toggleStar}
                   aria-label={starred ? "Remove this folder from Starred" : "Star this folder"}
                 >
-                  {starred ? <StarOff /> : <Star />}
+                  {starred ? <StarFill /> : <Star />}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
@@ -130,7 +130,7 @@ export function PlacesRail({
                     onBookmarksChange(bookmarks.filter((b) => b.path !== bookmark.path))
                   }}
                 >
-                  <X />
+                  <Cross />
                 </Button>
               )
             }
@@ -201,8 +201,12 @@ function Row({
     <div
       className={cn(
         "group/row flex w-full items-center gap-1 rounded-md pr-1 transition-colors",
+        // A selected row is a solid `bg-primary`, so every glyph inside it has
+        // to come from the row rather than carry its own colour: `--file-icon-colour`
+        // reaches FileIcon's inline style, and `text-current` overrides the
+        // fixed `text-primary`/`text-muted-foreground` on the place icons.
         active
-          ? "bg-primary text-primary-foreground"
+          ? "bg-primary text-primary-foreground [--file-icon-colour:currentColor] [&_svg]:text-current"
           : "hover:bg-accent hover:text-accent-foreground",
       )}
     >

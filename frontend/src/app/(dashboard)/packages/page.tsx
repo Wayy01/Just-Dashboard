@@ -2,17 +2,16 @@
 
 import { useMemo, useState } from "react"
 import {
-  ArrowUpCircle,
-  Boxes,
-  DownloadCloud,
-  HardDrive,
-  Hand,
-  Package,
-  PackageCheck,
-  RefreshCw,
-  RotateCcw,
-  ShieldAlert,
-} from "lucide-react"
+  ArrowCircleUp,
+  Box,
+  CloudDownload,
+  Pause,
+  Puzzle,
+  RefreshClockwise,
+  RotateCounterClockwise,
+  Servers,
+  ShieldOff,
+} from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import { bytes, relativeTime } from "@/lib/format"
@@ -201,7 +200,7 @@ export default function PackagesPage() {
                 disabled={applying}
                 onClick={() => void refreshIndex()}
               >
-                <DownloadCloud className="size-4" />
+                <CloudDownload className="size-4" />
                 Refresh index
               </Button>
             )}
@@ -214,7 +213,7 @@ export default function PackagesPage() {
                 updates.refresh()
               }}
             >
-              <RefreshCw className="size-4" />
+              <RefreshClockwise className="size-4" />
               Re-read
             </Button>
           </>
@@ -224,7 +223,7 @@ export default function PackagesPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 [&>*]:min-w-0">
         <StatTile
           label="Installed"
-          icon={Boxes}
+          icon={Box}
           value={data?.available ? data.packages.length.toLocaleString() : data ? "n/a" : "—"}
           hint={
             data?.manager
@@ -236,7 +235,7 @@ export default function PackagesPage() {
         />
         <StatTile
           label="Installed by hand"
-          icon={Hand}
+          icon={Pause}
           value={knowsExplicit ? data!.explicitCount.toLocaleString() : "—"}
           hint={
             knowsExplicit
@@ -248,7 +247,7 @@ export default function PackagesPage() {
         />
         <StatTile
           label="Updates"
-          icon={PackageCheck}
+          icon={Puzzle}
           value={data?.available ? (data.upgradeCount ?? 0) : "—"}
           tone={
             (data?.securityCount ?? 0) > 0
@@ -269,7 +268,7 @@ export default function PackagesPage() {
         />
         <StatTile
           label="On disk"
-          icon={HardDrive}
+          icon={Servers}
           value={data?.totalSize ? bytes(data.totalSize) : "—"}
           hint="what the installed packages occupy"
         />
@@ -280,12 +279,12 @@ export default function PackagesPage() {
       {canUpgrade && report?.securityFiltering && (report?.securityCount ?? 0) > 0 && (
         <Panel>
           <PanelHeader
-            icon={ShieldAlert}
+            icon={ShieldOff}
             title={`${report.securityCount} security update${report.securityCount === 1 ? "" : "s"} outstanding`}
             description="Apply these first — the full upgrade can wait for a quieter moment"
             actions={
               <Button size="sm" disabled={applying} onClick={() => upgrade(true)}>
-                <ShieldAlert className="size-4" />
+                <ShieldOff className="size-4" />
                 Install security updates
               </Button>
             }
@@ -294,7 +293,7 @@ export default function PackagesPage() {
       )}
 
       {report?.rebootRequired && (
-        <Notice tone="warning" icon={RotateCcw} title="This server needs a reboot">
+        <Notice tone="warning" icon={RotateCounterClockwise} title="This server needs a reboot">
           An installed update cannot take effect until the machine restarts
           {report.rebootPackages?.length
             ? `: ${report.rebootPackages.slice(0, 6).join(", ")}`
@@ -304,7 +303,7 @@ export default function PackagesPage() {
       )}
 
       {indexStale && (
-        <Notice tone="warning" icon={DownloadCloud} title="The package index is out of date">
+        <Notice tone="warning" icon={CloudDownload} title="The package index is out of date">
           This host last fetched its repository list {relativeTime(data!.indexAge)}, and everything
           on this page — what is available, what is behind — is read from it. Refresh it to search
           against what the repositories actually carry now.
@@ -328,14 +327,14 @@ export default function PackagesPage() {
 
       {data && !data.available && (
         <EmptyState
-          icon={PackageCheck}
+          icon={Puzzle}
           title="No supported package manager"
           description="This host does not appear to use apt, dnf, yum, zypper, pacman or apk, so there is nothing here to list, add or remove."
         />
       )}
 
       {data?.available && data.error && (
-        <Notice tone="warning" icon={ShieldAlert} title="Could not read the package database">
+        <Notice tone="warning" icon={ShieldOff} title="Could not read the package database">
           <span className="font-mono text-xs">{data.error}</span>
         </Notice>
       )}
@@ -361,7 +360,7 @@ export default function PackagesPage() {
           <TabsContent value="installed">
             <Panel>
               <PanelHeader
-                icon={Package}
+                icon={Puzzle}
                 title="Installed packages"
                 description={`${visible.length.toLocaleString()} shown of ${data.packages.length.toLocaleString()}`}
                 actions={
@@ -371,7 +370,7 @@ export default function PackagesPage() {
                     onClick={() => setBySize((v) => !v)}
                     title="Sort by what each package occupies"
                   >
-                    <HardDrive className="size-4" />
+                    <Servers className="size-4" />
                     {bySize ? "By size" : "By name"}
                   </Button>
                 }
@@ -398,7 +397,7 @@ export default function PackagesPage() {
               <PanelBody flush>
                 {visible.length === 0 ? (
                   <EmptyState
-                    icon={Package}
+                    icon={Puzzle}
                     title={
                       effectiveScope === "upgradable" && !filter
                         ? "Everything is up to date"
@@ -436,7 +435,7 @@ export default function PackagesPage() {
           <TabsContent value="updates">
             <Panel>
               <PanelHeader
-                icon={ArrowUpCircle}
+                icon={ArrowCircleUp}
                 title="Waiting to be upgraded"
                 description={
                   report
@@ -451,7 +450,7 @@ export default function PackagesPage() {
                       disabled={applying}
                       onClick={() => upgrade(false)}
                     >
-                      <ArrowUpCircle className="size-4" />
+                      <ArrowCircleUp className="size-4" />
                       Upgrade all {report?.packages.length ?? data.upgradeCount}
                     </Button>
                   )
@@ -462,7 +461,7 @@ export default function PackagesPage() {
                   <LoadingPanel />
                 ) : !report || report.packages.length === 0 ? (
                   <EmptyState
-                    icon={PackageCheck}
+                    icon={Puzzle}
                     title="Everything is up to date"
                     description={
                       report?.securityFiltering

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { FileText } from "lucide-react"
+import { FileText } from "@/components/icons"
 import { get } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { AuditEntry } from "@/lib/types"

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Lock, Plus, Trash2, Unlock, UserPlus, Users } from "lucide-react"
+import { Key, LockClosed, LockOpen, Plus, Trash, UserPlus, Users } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -137,14 +137,14 @@ export default function SystemUsersPage() {
                     <TableCell>
                       <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                         <Button size="xs" variant="ghost" onClick={() => setKeysFor(user.username)}>
-                          <KeyRound className="size-3" />
+                          <Key className="size-3" />
                           {user.sshKeyCount}
                         </Button>
                         <IconAction
                           label={user.locked ? "Unlock" : "Lock"}
                           onClick={() => setLocked(user, !user.locked)}
                         >
-                          {user.locked ? <Unlock /> : <Lock />}
+                          {user.locked ? <LockOpen /> : <LockClosed />}
                         </IconAction>
                         <IconAction
                           label="Delete"
@@ -169,7 +169,7 @@ export default function SystemUsersPage() {
                             })
                           }
                         >
-                          <Trash2 />
+                          <Trash />
                         </IconAction>
                       </div>
                     </TableCell>
@@ -339,7 +339,7 @@ function SSHKeysSheet({
         open={username !== null}
         onOpenChange={onOpenChange}
         width="md"
-        icon={KeyRound}
+        icon={Key}
         title={`SSH keys for ${username ?? ""}`}
         description={data?.path}
       >
@@ -386,14 +386,14 @@ function SSHKeysSheet({
                     })
                   }
                 >
-                  <Trash2 />
+                  <Trash />
                 </Button>
               </div>
             </div>
           ))}
 
           {data?.keys.length === 0 && !loading && (
-            <EmptyState icon={KeyRound} title="No authorised keys" />
+            <EmptyState icon={Key} title="No authorised keys" />
           )}
 
           <div className="space-y-2 border-t border-hairline pt-4">

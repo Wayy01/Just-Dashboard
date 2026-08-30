@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ChevronRight, CornerDownLeft, Folder, Home, Pencil } from "lucide-react"
+import { ChevronRight, CornerDownLeft, FolderClosed, Home, Pencil } from "@/components/icons"
 import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { FileEntry } from "@/lib/types"
@@ -168,7 +168,7 @@ function SiblingMenu({ dir, onNavigate }: { dir: string; onNavigate: (path: stri
         {entries?.length === 0 && <DropdownMenuItem disabled>No folders here</DropdownMenuItem>}
         {entries?.map((entry) => (
           <DropdownMenuItem key={entry.path} onSelect={() => onNavigate(entry.path)}>
-            <Folder className="size-3.5 fill-primary/20 text-primary" />
+            <FolderClosed className="size-3.5 fill-primary/20 text-primary" />
             <span className="truncate">{entry.name}</span>
           </DropdownMenuItem>
         ))}
@@ -306,7 +306,7 @@ function PathInput({
               onMouseEnter={() => setHighlight(i)}
               onClick={() => (entry.isDir ? accept(entry) : onSubmit(entry.path))}
             >
-              <Folder
+              <FolderClosed
                 className={cn(
                   "size-3.5 shrink-0",
                   entry.isDir ? "fill-primary/20 text-primary" : "opacity-0",

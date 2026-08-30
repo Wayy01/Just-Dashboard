@@ -1,34 +1,42 @@
 "use client"
 
 import {
-  Binary,
-  Braces,
-  Container,
+  AcronymCsv,
+  AcronymGif,
+  AcronymJpg,
+  AcronymJson,
+  AcronymMarkdown,
+  AcronymSvg,
+  Archive,
+  BlendMode,
+  Box,
+  Code,
+  CodeBracket,
+  Cpu,
   Database,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileCog,
-  FileImage,
-  FileKey,
-  FileSpreadsheet,
+  File,
   FileText,
-  FileTerminal,
-  FileType,
-  FileVideo,
-  Folder,
-  FolderCog,
-  FolderGit2,
+  FileZip,
+  FolderClosed,
+  FolderMinus,
   FolderOpen,
+  GitBranch,
   Globe,
   Home,
-  Link as LinkIcon,
-  Lock,
-  Package,
-  Palette,
-  Server,
-  type LucideIcon,
-} from "lucide-react"
+  Image,
+  Key,
+  Link,
+  LockClosed,
+  Logs,
+  Music,
+  Puzzle,
+  Servers,
+  SettingsGear,
+  Terminal,
+  TextFormat,
+  Video,
+  type Icon,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { FileEntry } from "@/lib/types"
 
@@ -53,6 +61,21 @@ import type { FileEntry } from "@/lib/types"
  * is something the eye picks up in a directory or two — code is blue, data is
  * amber, media is pink, keys and certificates are green because they are the
  * ones you must not paste into a chat window.
+ *
+ * **The acronym badges are the one exception, and they do not break that
+ * rule — they sidestep it.** Geist draws a small lettered plate for a handful
+ * of formats (`JSON`, `CSV`, `MD`, `SVG`, `JPG`, `GIF`), and a badge that
+ * spells the extension is the opposite of a legend: there is nothing to
+ * memorise, it says what it is. They keep their category's hue, so the colour
+ * system is untouched and a `.csv` is still the green of tabular data. The
+ * language-branded plates in the same family — the solid `TS` and `JS` — are
+ * deliberately *not* used: they are filled where every other glyph here is an
+ * outline, so in a directory of source files they shout over their neighbours
+ * and undo the even rhythm the categories exist to produce. Source is `Code`
+ * in code blue, whatever language it is written in.
+ *
+ * The glyphs are Geist and drawn on a 16px grid, which is the size a row
+ * renders them at — see `components/icons.tsx`.
  */
 export type FileTone =
   | "slate"
@@ -66,32 +89,37 @@ export type FileTone =
   | "primary"
 
 export type FileKind = {
-  icon: LucideIcon
+  icon: Icon
   tone: FileTone
   /** What this is, in the words somebody would use out loud. */
   label: string
 }
 
-const CODE: FileKind = { icon: FileCode, tone: "blue", label: "Source code" }
+const CODE: FileKind = { icon: Code, tone: "blue", label: "Source code" }
 const MARKUP: FileKind = { icon: Globe, tone: "violet", label: "Markup" }
-const STYLE: FileKind = { icon: Palette, tone: "violet", label: "Stylesheet" }
-const DATA: FileKind = { icon: Braces, tone: "amber", label: "Structured data" }
-const SHEET: FileKind = { icon: FileSpreadsheet, tone: "green", label: "Tabular data" }
+const STYLE: FileKind = { icon: BlendMode, tone: "violet", label: "Stylesheet" }
+const DATA: FileKind = { icon: CodeBracket, tone: "amber", label: "Structured data" }
+const JSON_: FileKind = { icon: AcronymJson, tone: "amber", label: "JSON" }
+const SHEET: FileKind = { icon: AcronymCsv, tone: "green", label: "Tabular data" }
 const SQL: FileKind = { icon: Database, tone: "amber", label: "SQL" }
 const DOC: FileKind = { icon: FileText, tone: "slate", label: "Document" }
-const IMAGE: FileKind = { icon: FileImage, tone: "pink", label: "Image" }
-const VIDEO: FileKind = { icon: FileVideo, tone: "violet", label: "Video" }
-const AUDIO: FileKind = { icon: FileAudio, tone: "cyan", label: "Audio" }
-const ARCHIVE: FileKind = { icon: FileArchive, tone: "amber", label: "Archive" }
-const SHELL: FileKind = { icon: FileTerminal, tone: "green", label: "Shell script" }
-const CONFIG: FileKind = { icon: FileCog, tone: "cyan", label: "Configuration" }
-const SECRET: FileKind = { icon: FileKey, tone: "green", label: "Key or certificate" }
-const BINARY: FileKind = { icon: Binary, tone: "red", label: "Binary" }
-const FONT: FileKind = { icon: FileType, tone: "violet", label: "Font" }
-const LOG: FileKind = { icon: FileText, tone: "amber", label: "Log" }
-const PACKAGE: FileKind = { icon: Package, tone: "red", label: "Package" }
-const DOCKER: FileKind = { icon: Container, tone: "blue", label: "Container build" }
-const PLAIN: FileKind = { icon: FileText, tone: "slate", label: "File" }
+const MARKDOWN: FileKind = { icon: AcronymMarkdown, tone: "slate", label: "Markdown" }
+const IMAGE: FileKind = { icon: Image, tone: "pink", label: "Image" }
+const SVG: FileKind = { icon: AcronymSvg, tone: "pink", label: "Vector image" }
+const JPEG: FileKind = { icon: AcronymJpg, tone: "pink", label: "Image" }
+const GIF: FileKind = { icon: AcronymGif, tone: "pink", label: "Animation" }
+const VIDEO: FileKind = { icon: Video, tone: "violet", label: "Video" }
+const AUDIO: FileKind = { icon: Music, tone: "cyan", label: "Audio" }
+const ARCHIVE: FileKind = { icon: FileZip, tone: "amber", label: "Archive" }
+const SHELL: FileKind = { icon: Terminal, tone: "green", label: "Shell script" }
+const CONFIG: FileKind = { icon: SettingsGear, tone: "cyan", label: "Configuration" }
+const SECRET: FileKind = { icon: Key, tone: "green", label: "Key or certificate" }
+const BINARY: FileKind = { icon: Cpu, tone: "red", label: "Binary" }
+const FONT: FileKind = { icon: TextFormat, tone: "violet", label: "Font" }
+const LOG: FileKind = { icon: Logs, tone: "amber", label: "Log" }
+const PACKAGE: FileKind = { icon: Puzzle, tone: "red", label: "Package" }
+const DOCKER: FileKind = { icon: Box, tone: "blue", label: "Container build" }
+const PLAIN: FileKind = { icon: File, tone: "slate", label: "File" }
 
 const BY_EXTENSION: Record<string, FileKind> = {
   // Code
@@ -103,18 +131,18 @@ const BY_EXTENSION: Record<string, FileKind> = {
   // Shell and automation
   sh: SHELL, bash: SHELL, zsh: SHELL, fish: SHELL, ps1: SHELL, bat: SHELL, cmd: SHELL,
   // Markup and style
-  html: MARKUP, htm: MARKUP, xml: MARKUP, svg: IMAGE,
+  html: MARKUP, htm: MARKUP, xml: MARKUP, svg: SVG,
   css: STYLE, scss: STYLE, sass: STYLE, less: STYLE,
   // Data
-  json: DATA, jsonc: DATA, json5: DATA, yaml: DATA, yml: DATA, toml: DATA,
-  proto: DATA, graphql: DATA, gql: DATA, ndjson: DATA,
+  json: JSON_, jsonc: JSON_, json5: JSON_, yaml: DATA, yml: DATA, toml: DATA,
+  proto: DATA, graphql: DATA, gql: DATA, ndjson: JSON_,
   csv: SHEET, tsv: SHEET, xlsx: SHEET, xls: SHEET, ods: SHEET,
   sql: SQL, db: SQL, sqlite: SQL, sqlite3: SQL, dump: SQL,
   // Documents
-  md: DOC, mdx: DOC, txt: DOC, rst: DOC, adoc: DOC, pdf: DOC, doc: DOC, docx: DOC,
+  md: MARKDOWN, mdx: MARKDOWN, txt: DOC, rst: DOC, adoc: DOC, pdf: DOC, doc: DOC, docx: DOC,
   log: LOG,
   // Media
-  png: IMAGE, jpg: IMAGE, jpeg: IMAGE, gif: IMAGE, webp: IMAGE, avif: IMAGE,
+  png: IMAGE, jpg: JPEG, jpeg: JPEG, gif: GIF, webp: IMAGE, avif: IMAGE,
   bmp: IMAGE, ico: IMAGE, tiff: IMAGE, heic: IMAGE, psd: IMAGE,
   mp4: VIDEO, webm: VIDEO, mkv: VIDEO, mov: VIDEO, avi: VIDEO, ogv: VIDEO,
   mp3: AUDIO, wav: AUDIO, flac: AUDIO, ogg: AUDIO, m4a: AUDIO, aac: AUDIO,
@@ -144,33 +172,33 @@ const BY_NAME: Record<string, FileKind> = {
   "compose.yml": DOCKER,
   "compose.yaml": DOCKER,
   ".dockerignore": DOCKER,
-  makefile: { icon: FileCog, tone: "cyan", label: "Makefile" },
-  gnumakefile: { icon: FileCog, tone: "cyan", label: "Makefile" },
+  makefile: { icon: SettingsGear, tone: "cyan", label: "Makefile" },
+  gnumakefile: { icon: SettingsGear, tone: "cyan", label: "Makefile" },
   caddyfile: CONFIG,
   vagrantfile: CONFIG,
   procfile: CONFIG,
   gemfile: CODE,
   rakefile: CODE,
-  "package.json": { icon: Package, tone: "red", label: "npm manifest" },
-  "package-lock.json": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "bun.lock": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "bun.lockb": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "yarn.lock": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "pnpm-lock.yaml": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "go.sum": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "cargo.lock": { icon: Lock, tone: "slate", label: "Lockfile" },
-  "go.mod": { icon: Package, tone: "cyan", label: "Go module" },
-  "cargo.toml": { icon: Package, tone: "red", label: "Cargo manifest" },
-  "requirements.txt": { icon: Package, tone: "blue", label: "Python requirements" },
+  "package.json": { icon: Puzzle, tone: "red", label: "npm manifest" },
+  "package-lock.json": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "bun.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "bun.lockb": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "yarn.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "pnpm-lock.yaml": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "go.sum": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "cargo.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
+  "go.mod": { icon: Puzzle, tone: "cyan", label: "Go module" },
+  "cargo.toml": { icon: Puzzle, tone: "red", label: "Cargo manifest" },
+  "requirements.txt": { icon: Puzzle, tone: "blue", label: "Python requirements" },
   license: { icon: FileText, tone: "slate", label: "Licence" },
   "license.md": { icon: FileText, tone: "slate", label: "Licence" },
   readme: { icon: FileText, tone: "cyan", label: "Readme" },
-  "readme.md": { icon: FileText, tone: "cyan", label: "Readme" },
+  "readme.md": { icon: AcronymMarkdown, tone: "cyan", label: "Readme" },
   changelog: DOC,
-  "changelog.md": DOC,
-  ".gitignore": { icon: FolderGit2, tone: "slate", label: "git exclusions" },
+  "changelog.md": MARKDOWN,
+  ".gitignore": { icon: GitBranch, tone: "slate", label: "git exclusions" },
   ".gitconfig": CONFIG,
-  ".env": { icon: FileKey, tone: "amber", label: "Environment file" },
+  ".env": { icon: Key, tone: "amber", label: "Environment file" },
   ".bashrc": SHELL,
   ".zshrc": SHELL,
   ".profile": SHELL,
@@ -178,34 +206,41 @@ const BY_NAME: Record<string, FileKind> = {
   ".editorconfig": CONFIG,
   authorized_keys: SECRET,
   known_hosts: SECRET,
-  passwd: { icon: FileKey, tone: "red", label: "Account database" },
-  shadow: { icon: FileKey, tone: "red", label: "Password hashes" },
+  passwd: { icon: Key, tone: "red", label: "Account database" },
+  shadow: { icon: Key, tone: "red", label: "Password hashes" },
   fstab: CONFIG,
   hosts: CONFIG,
   crontab: CONFIG,
 }
 
-/** Folders whose name says more than "folder" does. */
+/**
+ * Folders whose name says more than "folder" does.
+ *
+ * The build and dependency directories take `FolderMinus` rather than a
+ * folder-with-a-gear: what they have in common is not that they are
+ * configured, it is that nothing in them is yours to edit, and a folder with
+ * a minus in it says "walk past this one" at a glance.
+ */
 const FOLDERS_BY_NAME: Record<string, FileKind> = {
-  ".git": { icon: FolderGit2, tone: "amber", label: "git repository" },
-  node_modules: { icon: FolderCog, tone: "slate", label: "Installed packages" },
-  vendor: { icon: FolderCog, tone: "slate", label: "Vendored dependencies" },
-  ".next": { icon: FolderCog, tone: "slate", label: "Build output" },
-  dist: { icon: FolderCog, tone: "slate", label: "Build output" },
-  build: { icon: FolderCog, tone: "slate", label: "Build output" },
-  target: { icon: FolderCog, tone: "slate", label: "Build output" },
-  etc: { icon: FolderCog, tone: "cyan", label: "Configuration" },
+  ".git": { icon: GitBranch, tone: "amber", label: "git repository" },
+  node_modules: { icon: FolderMinus, tone: "slate", label: "Installed packages" },
+  vendor: { icon: FolderMinus, tone: "slate", label: "Vendored dependencies" },
+  ".next": { icon: FolderMinus, tone: "slate", label: "Build output" },
+  dist: { icon: FolderMinus, tone: "slate", label: "Build output" },
+  build: { icon: FolderMinus, tone: "slate", label: "Build output" },
+  target: { icon: FolderMinus, tone: "slate", label: "Build output" },
+  etc: { icon: SettingsGear, tone: "cyan", label: "Configuration" },
   home: { icon: Home, tone: "primary", label: "Home directories" },
   root: { icon: Home, tone: "primary", label: "root's home" },
-  var: { icon: Server, tone: "amber", label: "Variable data" },
-  log: { icon: Server, tone: "amber", label: "Logs" },
-  logs: { icon: Server, tone: "amber", label: "Logs" },
+  var: { icon: Servers, tone: "amber", label: "Variable data" },
+  log: { icon: Logs, tone: "amber", label: "Logs" },
+  logs: { icon: Logs, tone: "amber", label: "Logs" },
   www: { icon: Globe, tone: "violet", label: "Web root" },
   public: { icon: Globe, tone: "violet", label: "Public assets" },
-  ssl: { icon: FileKey, tone: "green", label: "Certificates" },
-  ssh: { icon: FileKey, tone: "green", label: "SSH configuration" },
-  ".ssh": { icon: FileKey, tone: "green", label: "SSH keys" },
-  backups: { icon: FileArchive, tone: "amber", label: "Backups" },
+  ssl: { icon: Key, tone: "green", label: "Certificates" },
+  ssh: { icon: Key, tone: "green", label: "SSH configuration" },
+  ".ssh": { icon: Key, tone: "green", label: "SSH keys" },
+  backups: { icon: Archive, tone: "amber", label: "Backups" },
 }
 
 const TONE_VAR: Record<FileTone, string> = {
@@ -231,7 +266,7 @@ const TONE_VAR: Record<FileTone, string> = {
 export function fileKind(name: string, isDir = false): FileKind {
   const lower = name.toLowerCase()
   if (isDir) {
-    return FOLDERS_BY_NAME[lower] ?? { icon: Folder, tone: "primary", label: "Folder" }
+    return FOLDERS_BY_NAME[lower] ?? { icon: FolderClosed, tone: "primary", label: "Folder" }
   }
   if (BY_NAME[lower]) return BY_NAME[lower]
 
@@ -266,6 +301,24 @@ export function toneColour(tone: FileTone): string {
  * A symlink keeps its target's icon and gains the link glyph as a corner
  * badge rather than replacing it: what a link points at is the useful fact,
  * and the old listing threw it away to draw a chain on every one of them.
+ *
+ * **The colour is a fallback, not a fixed value.** A row that selects itself
+ * with a solid `bg-primary` — the places rail does — is white in dark mode and
+ * black in light, and a tone painted straight onto the glyph is then a folder
+ * the same colour as the thing behind it: `primary` on `bg-primary` is
+ * invisible in *both* themes, which is the one way to get it wrong twice. The
+ * tone is therefore the fallback of `--file-icon-colour`, so any ancestor can
+ * say "in here, icons are my foreground" by setting that one property. It has
+ * to be a custom property rather than a class because this is an inline style,
+ * and nothing but inline beats inline.
+ *
+ * A directory used to be tinted with `fill-current/15` to set it apart from a
+ * file. That worked on a stroked set, whose paths carry no fill of their own
+ * and so inherit one; every path in this set paints itself `currentColor`, so
+ * the class is now a no-op that only looks like it does something. It is gone,
+ * and nothing replaces it — `FolderClosed` and `FolderOpen` are already a
+ * different silhouette from every file glyph, which is the distinction the
+ * tint was standing in for.
  */
 export function FileIcon({
   entry,
@@ -280,16 +333,20 @@ export function FileIcon({
   badgeClassName?: string
 }) {
   const kind = kindOfEntry(entry)
-  const Icon = entry.isDir && open ? FolderOpen : kind.icon
+  const Glyph = entry.isDir && open ? FolderOpen : kind.icon
   return (
     <span className={cn("relative inline-flex shrink-0", className)}>
-      <Icon
-        className={cn("size-full", entry.isDir && "fill-current/15")}
-        style={{ color: entry.linkBroken ? "var(--tag-red)" : TONE_VAR[kind.tone] }}
+      <Glyph
+        className="size-full"
+        style={{
+          color: `var(--file-icon-colour, ${
+            entry.linkBroken ? "var(--tag-red)" : TONE_VAR[kind.tone]
+          })`,
+        }}
         aria-hidden
       />
       {entry.isSymlink && (
-        <LinkIcon
+        <Link
           className={cn(
             "absolute -right-0.5 -bottom-0.5 size-1/2 rounded-[2px] bg-card text-muted-foreground",
             badgeClassName,

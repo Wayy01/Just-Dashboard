@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Check, LogOut, Moon, Sun } from "lucide-react"
+import { Check, Logout, Moon, Sun } from "@/components/icons"
 import { useAuth } from "@/hooks/use-auth"
 import { useTheme } from "@/hooks/use-theme"
 import { NAV, PERSONAL_NAV } from "@/components/app-sidebar"
@@ -147,7 +147,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: bool
                 </CommandItem>
               ))}
               <CommandItem value="sign out logout" onSelect={() => run(() => void logout())}>
-                <LogOut className="size-4" />
+                <Logout className="size-4" />
                 Sign out
               </CommandItem>
             </CommandGroup>

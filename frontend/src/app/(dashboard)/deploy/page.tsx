@@ -2,17 +2,17 @@
 
 import { useState } from "react"
 import {
+  ClockRewind,
+  CloudUpload,
   Copy,
   Eye,
   EyeOff,
   GitBranch,
-  History,
-  KeyRound,
+  Key,
   Plus,
-  Rocket,
-  RotateCcw,
-  Trash2,
-} from "lucide-react"
+  RotateCounterClockwise,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { relativeTime, shortSha, timestamp } from "@/lib/format"
@@ -82,7 +82,7 @@ export default function DeployPage() {
       {error && <ErrorState error={error} />}
       {data?.length === 0 && (
         <EmptyState
-          icon={Rocket}
+          icon={CloudUpload}
           title="No projects configured"
           description="Point a project at a git checkout with a compose file, then deploy it from here or from CI."
         />
@@ -92,7 +92,7 @@ export default function DeployPage() {
         {data?.map((project) => (
           <Panel key={project.id}>
             <PanelHeader
-              icon={Rocket}
+              icon={CloudUpload}
               title={project.name}
               description={project.repoPath}
               actions={
@@ -134,12 +134,12 @@ export default function DeployPage() {
             </PanelBody>
             <PanelFooter>
               <Button size="sm" variant="outline" onClick={() => setDetailFor(project)}>
-                <History className="size-3.5" />
+                <ClockRewind className="size-3.5" />
                 History
               </Button>
               {can("service.control") && (
                 <Button size="sm" onClick={() => deploy(project)}>
-                  <Rocket className="size-3.5" />
+                  <CloudUpload className="size-3.5" />
                   Deploy
                 </Button>
               )}
@@ -168,7 +168,7 @@ export default function DeployPage() {
                       })
                     }
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash className="size-3.5" />
                   </Button>
                 </>
               )}
@@ -198,7 +198,7 @@ function HookDialog({ project }: { project: DeployProject }) {
     <Dialog>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
-          <KeyRound className="size-3.5" />
+          <Key className="size-3.5" />
           Webhook
         </Button>
       </DialogTrigger>
@@ -228,7 +228,7 @@ function HookDialog({ project }: { project: DeployProject }) {
             </div>
           </div>
           {secret ? (
-            <Notice tone="warning" icon={KeyRound} title="New secret — copy it now">
+            <Notice tone="warning" icon={Key} title="New secret — copy it now">
               <code className="font-mono text-xs break-all">{secret}</code>
             </Notice>
           ) : (
@@ -274,7 +274,7 @@ function ProjectSheet({
     <SidePanel
       open={project !== null}
       onOpenChange={onOpenChange}
-      icon={Rocket}
+      icon={CloudUpload}
       title={project?.name ?? "Project"}
       description={project?.repoPath}
     >
@@ -324,7 +324,7 @@ function RunsTable({
     [project.id],
   )
   if (loading) return <LoadingRows />
-  if (!data?.runs.length) return <EmptyState icon={History} title="No deployments yet" />
+  if (!data?.runs.length) return <EmptyState icon={ClockRewind} title="No deployments yet" />
 
   return (
     <Panel>
@@ -434,7 +434,7 @@ function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () =
                       })
                     }
                   >
-                    <RotateCcw className="size-3.5" />
+                    <RotateCounterClockwise className="size-3.5" />
                     Roll back
                   </Button>
                 )
@@ -477,7 +477,7 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
 
   return (
     <div className="space-y-4">
-      <Notice icon={KeyRound} title="Encrypted at rest">
+      <Notice icon={Key} title="Encrypted at rest">
         These are written into the project&apos;s .env at deploy time. Revealing them is a separate
         action that is recorded in the audit log.
       </Notice>
@@ -508,7 +508,7 @@ function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () 
                     onChanged()
                   }}
                 >
-                  <Trash2 />
+                  <Trash />
                 </Button>
               )}
             </div>
@@ -613,7 +613,7 @@ function ProjectDialog({ onDone }: { onDone: () => void }) {
         </DialogHeader>
 
         {secret ? (
-          <Notice tone="warning" icon={KeyRound} title="Webhook secret — shown once">
+          <Notice tone="warning" icon={Key} title="Webhook secret — shown once">
             <code className="font-mono text-xs break-all">{secret}</code>
           </Notice>
         ) : (

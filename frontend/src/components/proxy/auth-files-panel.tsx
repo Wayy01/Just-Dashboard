@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Plus, Trash2, UserMinus } from "lucide-react"
+import { Key, Plus, Trash, UserMinus } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { AuthFile } from "@/lib/types"
@@ -56,7 +56,7 @@ export function AuthFilesPanel() {
     <>
       <Panel>
         <PanelHeader
-          icon={KeyRound}
+          icon={Key}
           title="Password files"
           description="For sites put behind a login. Hashed with bcrypt here, so the password never reaches a command line."
           actions={<AuthUserDialog files={data ?? []} onDone={refresh} />}
@@ -64,7 +64,7 @@ export function AuthFilesPanel() {
         <PanelBody className={data?.length ? "space-y-2.5" : undefined}>
           {!data?.length ? (
             <EmptyState
-              icon={KeyRound}
+              icon={Key}
               title="No password files yet"
               description="Create one, then choose it in a site's password field to put that site behind a login."
             />
@@ -124,7 +124,7 @@ export function AuthFilesPanel() {
                     })
                   }
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash className="size-3.5" />
                   Delete file
                 </Button>
               </div>

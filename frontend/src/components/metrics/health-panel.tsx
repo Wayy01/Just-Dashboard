@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from "lucide-react"
+import { CheckCircle, Information, ShieldOff, Warning } from "@/components/icons"
 import { relativeTime } from "@/lib/format"
 import type { Health } from "@/lib/types"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
@@ -29,7 +29,7 @@ export function HealthPanel({
   if (loading && !health) {
     return (
       <Panel className={className}>
-        <PanelHeader icon={ShieldAlert} title="Health" />
+        <PanelHeader icon={ShieldOff} title="Health" />
         <PanelBody className="space-y-2">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-4 w-64" />
@@ -44,7 +44,7 @@ export function HealthPanel({
   return (
     <Panel className={className}>
       <PanelHeader
-        icon={ok ? CheckCircle2 : iconFor(health.status)}
+        icon={ok ? CheckCircle : iconFor(health.status)}
         title="Health"
         description={`Checked ${relativeTime(health.checkedAt)}${
           health.recorded ? " · against the last hour" : ""
@@ -78,8 +78,8 @@ function verdictLabel(status: Health["status"]) {
 }
 
 function iconFor(level: string) {
-  if (level === "critical") return ShieldAlert
-  if (level === "warning") return AlertTriangle
-  if (level === "notice") return Info
-  return CheckCircle2
+  if (level === "critical") return ShieldOff
+  if (level === "warning") return Warning
+  if (level === "notice") return Information
+  return CheckCircle
 }

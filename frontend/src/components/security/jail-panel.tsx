@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Ban, Settings2, X } from "lucide-react"
+import { Cross, SettingsSliders, Slash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { Fail2banJail, JailConfig, JailParamResult } from "@/lib/types"
@@ -59,14 +59,14 @@ export function JailPanel({
   return (
     <Panel>
       <PanelHeader
-        icon={Ban}
+        icon={Slash}
         title={jail.name}
         description={`${jail.currentlyBanned} banned now · ${jail.totalBanned} total · ${jail.currentlyFailed} failing`}
         actions={
           canManage && (
             <>
               <Button size="xs" variant="ghost" onClick={() => setTuning(true)}>
-                <Settings2 className="size-3.5" />
+                <SettingsSliders className="size-3.5" />
                 Tune
               </Button>
               <Button
@@ -277,7 +277,7 @@ function JailTuning({
                       }
                     }}
                   >
-                    <X className="size-3" />
+                    <Cross className="size-3" />
                   </button>
                 </Badge>
               ))}

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Box } from "lucide-react"
+import { Box } from "@/components/icons"
 import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { usePoll } from "@/hooks/use-poll"

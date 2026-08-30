@@ -4,12 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ChevronRight,
   Download,
-  FilePlus,
   FolderOpen,
   FolderPlus,
-  RefreshCw,
-  Trash2,
-} from "lucide-react"
+  PlusSquareSmall,
+  RefreshClockwise,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -218,7 +218,7 @@ export function FileTree({
                 setCreating({ parent: root, kind: "file" })
               }}
             >
-              <FilePlus className="size-3.5" />
+              <PlusSquareSmall className="size-3.5" />
             </TreeButton>
             <TreeButton
               label="New folder here"
@@ -245,7 +245,7 @@ export function FileTree({
           </TreeButton>
         )}
         <TreeButton label="Refresh" onClick={() => reload(root)}>
-          <RefreshCw className="size-3.5" />
+          <RefreshClockwise className="size-3.5" />
         </TreeButton>
       </div>
 
@@ -448,7 +448,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
                 label="New file here"
                 onClick={() => props.onStartCreate(entry.path, "file")}
               >
-                <FilePlus className="size-3" />
+                <PlusSquareSmall className="size-3" />
               </TreeButton>
               <TreeButton
                 label="New folder here"
@@ -471,7 +471,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
               className="text-destructive"
               onClick={() => props.onDelete(entry, props.parent)}
             >
-              <Trash2 className="size-3" />
+              <Trash className="size-3" />
             </TreeButton>
           )}
         </div>
@@ -510,7 +510,7 @@ function CreateRow({
       {kind === "folder" ? (
         <FolderPlus className="size-4 shrink-0 text-primary" />
       ) : (
-        <FilePlus className="size-4 shrink-0 text-muted-foreground" />
+        <PlusSquareSmall className="size-4 shrink-0 text-muted-foreground" />
       )}
       <Input
         ref={ref}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Asterisk, Check, ChevronDown, KeyRound, Plus, Trash2 } from "lucide-react"
+import { Check, ChevronDown, Key, Plus, Star, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { plural } from "@/lib/format"
@@ -177,7 +177,7 @@ export function CreateTableDialog({
                       onClick={() => setCol(i, { primaryKey: !c.primaryKey })}
                       title="Primary key"
                     >
-                      <KeyRound className="size-3" />
+                      <Key className="size-3" />
                       PK
                     </FlagToggle>
                     <FlagToggle
@@ -185,7 +185,7 @@ export function CreateTableDialog({
                       onClick={() => setCol(i, { notNull: !c.notNull })}
                       title="Not null — every row must have a value"
                     >
-                      <Asterisk className="size-3" />
+                      <Star className="size-3" />
                       Req
                     </FlagToggle>
                   </div>
@@ -197,7 +197,7 @@ export function CreateTableDialog({
                     onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}
                     title={columns.length === 1 ? "A table needs a column" : "Remove this column"}
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash className="size-3.5" />
                   </Button>
                 </div>
               ))}

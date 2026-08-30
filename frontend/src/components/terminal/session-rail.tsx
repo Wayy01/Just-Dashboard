@@ -2,21 +2,20 @@
 
 import { useMemo, useRef, useState } from "react"
 import {
+  BlendMode,
   ChevronDown,
-  Folder,
+  Cross,
+  FolderClosed,
   FolderOpen,
   FolderPlus,
+  MagnifyingGlass,
   MoreHorizontal,
-  Palette,
   Pencil,
   Pin,
-  PinOff,
   Plus,
-  Search,
   Terminal,
-  Trash2,
-  X,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { relativeTime, truncateMiddle } from "@/lib/format"
 import type { TerminalFolder, TerminalWorkspace } from "@/lib/types"
@@ -156,7 +155,7 @@ export function SessionRail({
     <div className={cn("flex min-h-0 w-full shrink-0 flex-col gap-2 lg:w-72", className)}>
       <div className="flex items-center gap-1">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <MagnifyingGlass className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={filter}
             spellCheck={false}
@@ -333,7 +332,7 @@ function FolderGroup({
               color: tagVar(folder.colour) ?? "var(--color-muted-foreground)",
             }}
           >
-            {collapsed ? <Folder className="size-3" /> : <FolderOpen className="size-3" />}
+            {collapsed ? <FolderClosed className="size-3" /> : <FolderOpen className="size-3" />}
           </span>
           <span
             className="eyebrow truncate"
@@ -384,7 +383,7 @@ function FolderGroup({
                 className="gap-2 text-xs"
                 onSelect={() => onDeleteFolder(folder)}
               >
-                <Trash2 className="size-3.5" />
+                <Trash className="size-3.5" />
                 Delete folder
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -593,7 +592,7 @@ function SessionRow({
           className="size-6"
           onClick={() => onTogglePinned(session)}
         >
-          {session.favourite ? <PinOff /> : <Pin />}
+          {session.favourite ? <Pin /> : <Pin />}
         </IconAction>
         {/* Closing is the third thing anybody does to a session and it was two
             clicks down a menu. It is still in the menu for anybody who goes
@@ -603,7 +602,7 @@ function SessionRow({
           className="size-6 text-muted-foreground hover:text-destructive"
           onClick={() => onClose(session)}
         >
-          <X />
+          <Cross />
         </IconAction>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -628,7 +627,7 @@ function SessionRow({
             />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger className="gap-2 text-xs">
-                <Folder className="size-3.5" />
+                <FolderClosed className="size-3.5" />
                 Move to
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-44">
@@ -657,7 +656,7 @@ function SessionRow({
               className="gap-2 text-xs"
               onSelect={() => onClose(session)}
             >
-              <X className="size-3.5" />
+              <Cross className="size-3.5" />
               Close session
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -680,7 +679,7 @@ function ColourSubmenu({
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger className="gap-2 text-xs">
-        <Palette className="size-3.5" />
+        <BlendMode className="size-3.5" />
         Colour
         <span className="flex-1" />
         <TagSwatch colour={colour} />

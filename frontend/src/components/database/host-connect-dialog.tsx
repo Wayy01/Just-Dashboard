@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Server } from "lucide-react"
+import { Key, Servers } from "@/components/icons"
 import { errorMessage, post } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import type { DbConnection, DbCredentialServer, DbDriver } from "@/lib/types"
@@ -92,7 +92,7 @@ export function HostConnectDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Server className="size-4" />
+            <Servers className="size-4" />
             Connect {server.driver} on this server
           </DialogTitle>
           <DialogDescription>
@@ -175,7 +175,7 @@ export function HostConnectDialog({
             Cancel
           </Button>
           <Button disabled={busy || !name.trim()} onClick={connect}>
-            {busy ? <Spinner className="size-4" /> : <KeyRound className="size-4" />}
+            {busy ? <Spinner className="size-4" /> : <Key className="size-4" />}
             Connect
           </Button>
         </DialogFooter>

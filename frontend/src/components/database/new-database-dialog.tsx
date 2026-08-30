@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Database, Link2 } from "lucide-react"
+import { Database, Linked } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { errorMessage, get, post } from "@/lib/api"
 import type { DbConnection, DbProvisionOption } from "@/lib/types"
@@ -202,7 +202,7 @@ export function NewDatabaseDialog({
               onConnectManually()
             }}
           >
-            <Link2 className="size-3.5" />
+            <Linked className="size-3.5" />
             Connect one somewhere else instead
           </Button>
           <div className="flex gap-2">

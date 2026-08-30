@@ -2,16 +2,16 @@
 
 import { useMemo, useState } from "react"
 import {
-  ArrowDownToLine,
   Box,
-  CheckCircle2,
-  CircleHelp,
+  CheckCircle,
+  ChevronDoubleDown,
   Download,
-  Hammer,
-  HardDrive,
-  RefreshCw,
-  Trash2,
-} from "lucide-react"
+  Question,
+  RefreshClockwise,
+  Servers,
+  Trash,
+  Wrench,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
@@ -145,7 +145,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
       {outdated.length > 0 && (
         <Notice
           title={`${outdated.length} running image${outdated.length === 1 ? " has" : "s have"} a newer version`}
-          icon={ArrowDownToLine}
+          icon={ChevronDoubleDown}
         >
           <p>
             {outdated.map((u) => u.ref).join(", ")} — the tag now points somewhere else in the
@@ -167,7 +167,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                 onClick={recheck}
                 disabled={checking}
               >
-                {checking ? <Spinner /> : <RefreshCw />}
+                {checking ? <Spinner /> : <RefreshClockwise />}
               </IconAction>
               {can("service.control") && (
                 <>
@@ -178,7 +178,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                   {/* The link to the git panel: a repository the dashboard
                       already pulls is a build context. */}
                   <Button size="sm" variant="outline" onClick={() => setBuilding(true)}>
-                    <Hammer className="size-4" />
+                    <Wrench className="size-4" />
                     Build
                   </Button>
                 </>
@@ -206,7 +206,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                     })
                   }
                 >
-                  <Trash2 className="size-4" />
+                  <Trash className="size-4" />
                   Prune dangling
                 </Button>
               )}
@@ -305,7 +305,7 @@ export function ImagesTab({ confirm }: { confirm: ConfirmFn }) {
                               })
                             }
                           >
-                            <Trash2 />
+                            <Trash />
                           </IconAction>
                         )}
                       </div>
@@ -367,7 +367,7 @@ function UpdateBadge({
   if (status.state === "current") {
     return (
       <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <CheckCircle2 className="size-3 text-success" />
+        <CheckCircle className="size-3 text-success" />
         current
       </span>
     )
@@ -378,7 +378,7 @@ function UpdateBadge({
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="flex cursor-help items-center gap-1.5 text-[11px] text-muted-foreground">
-          <CircleHelp className="size-3" />
+          <Question className="size-3" />
           {status.state === "local" ? "built here" : "not checked"}
         </span>
       </TooltipTrigger>
@@ -619,7 +619,7 @@ function PullDialog({
             Close
           </Button>
           <Button onClick={start} disabled={!ref.trim() || pull.active}>
-            {pull.active ? <Spinner className="size-4" /> : <HardDrive className="size-4" />}
+            {pull.active ? <Spinner className="size-4" /> : <Servers className="size-4" />}
             Pull
           </Button>
         </DialogFooter>

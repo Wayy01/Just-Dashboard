@@ -2,14 +2,14 @@
 
 import Link from "next/link"
 import {
-  Cable,
-  Network,
-  Radar,
+  Bug,
+  Connection,
+  Crosshair,
+  NetworkDevice,
   Shield,
-  Siren,
-  TerminalSquare,
+  TerminalWindow,
   Users,
-} from "lucide-react"
+} from "@/components/icons"
 import type { SecurityFinding } from "@/lib/types"
 import { Page, PageHeader, Section } from "@/components/page"
 import { Panel, PanelBody } from "@/components/panel"
@@ -25,12 +25,12 @@ const FIREWALL_HREF = "/security/firewall"
 const AREAS: { area: Area | Area[]; href: string; title: string; icon: typeof Shield; blurb: string }[] =
   [
     { area: "firewall", href: FIREWALL_HREF, title: "Firewall", icon: Shield, blurb: "Inbound rules and default policy" },
-    { area: "ssh", href: "/security/ssh", title: "SSH", icon: TerminalSquare, blurb: "sshd's effective configuration" },
-    { area: "intrusion", href: "/security/intrusion", title: "Intrusion", icon: Siren, blurb: "fail2ban jails and ban activity" },
-    { area: "ports", href: "/security/connections", title: "Connections", icon: Network, blurb: "Live TCP connections in and out" },
+    { area: "ssh", href: "/security/ssh", title: "SSH", icon: TerminalWindow, blurb: "sshd's effective configuration" },
+    { area: "intrusion", href: "/security/intrusion", title: "Intrusion", icon: Bug, blurb: "fail2ban jails and ban activity" },
+    { area: "ports", href: "/security/connections", title: "Connections", icon: NetworkDevice, blurb: "Live TCP connections in and out" },
     { area: [], href: "/security/logins", title: "Logins", icon: Users, blurb: "Who is on the host, and who has been" },
-    { area: [], href: "/security/network", title: "Network", icon: Cable, blurb: "Interfaces, routes and listeners" },
-    { area: [], href: "/security/tools", title: "Tools", icon: Radar, blurb: "Port scan and TLS probe" },
+    { area: [], href: "/security/network", title: "Network", icon: Connection, blurb: "Interfaces, routes and listeners" },
+    { area: [], href: "/security/tools", title: "Tools", icon: Crosshair, blurb: "Port scan and TLS probe" },
   ]
 
 export default function SecurityOverviewPage() {

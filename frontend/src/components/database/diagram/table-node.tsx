@@ -2,7 +2,7 @@
 
 import { memo } from "react"
 import { Handle, Position, type NodeProps } from "@xyflow/react"
-import { Eye, Fingerprint, KeyRound, Link2, Table2 } from "lucide-react"
+import { Eye, Fingerprint, Key, Layout, Linked } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { DbGraphColumn, DbGraphTable } from "@/lib/types"
 
@@ -56,7 +56,7 @@ function TableNodeComponent({ data, selected }: NodeProps & { data: TableNodeDat
         style={{ height: HEADER_HEIGHT }}
         title={`Open ${table.name}`}
       >
-        <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
+        <Layout className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold">
           {table.name}
         </span>
@@ -134,9 +134,9 @@ function ColumnRow({ table, column }: { table: string; column: DbGraphColumn }) 
         isConnectable={false}
       />
       {column.primaryKey ? (
-        <KeyRound className="size-3 shrink-0 text-chart-2" />
+        <Key className="size-3 shrink-0 text-chart-2" />
       ) : column.foreignKey ? (
-        <Link2 className="size-3 shrink-0 text-chart-1" />
+        <Linked className="size-3 shrink-0 text-chart-1" />
       ) : column.unique ? (
         <Fingerprint className="size-3 shrink-0 text-muted-foreground/60" />
       ) : (

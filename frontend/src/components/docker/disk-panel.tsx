@@ -1,6 +1,6 @@
 "use client"
 
-import { HardDrive, Trash2 } from "lucide-react"
+import { Servers, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -60,7 +60,7 @@ export function DiskPanel({ confirm, onPruned }: { confirm: ConfirmFn; onPruned?
   return (
     <Panel>
       <PanelHeader
-        icon={HardDrive}
+        icon={Servers}
         title="Disk"
         description={
           data
@@ -96,7 +96,7 @@ export function DiskPanel({ confirm, onPruned }: { confirm: ConfirmFn; onPruned?
                 })
               }
             >
-              <Trash2 className="size-4" />
+              <Trash className="size-4" />
               Reclaim {bytes(safe)}
             </Button>
           )

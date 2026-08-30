@@ -2,19 +2,19 @@
 
 import { useMemo, useState } from "react"
 import {
+  AcronymJson,
+  CloudUpload,
+  Copy,
+  Cross,
   Database,
   Download,
-  FileJson,
-  ClipboardCopy,
-  Filter as FilterIcon,
+  Filter,
   Hash,
+  Layout,
   MoreHorizontal,
   Plus,
-  Table2,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
@@ -488,7 +488,7 @@ export function BrowseTab({
 
       <Panel>
         <PanelHeader
-          icon={Table2}
+          icon={Layout}
           title={table ?? "Pick a table"}
           description={
             rows.data
@@ -508,13 +508,13 @@ export function BrowseTab({
                 )}
                 {selected.size > 0 && (
                   <Button size="sm" variant="outline" onClick={copySelectedAsInsert}>
-                    <ClipboardCopy className="size-3.5" />
+                    <Copy className="size-3.5" />
                     Copy {selected.size} as SQL
                   </Button>
                 )}
                 {canEditRows && selected.size > 0 && (
                   <Button size="sm" variant="destructive" onClick={deleteSelected}>
-                    <Trash2 className="size-3.5" />
+                    <Trash className="size-3.5" />
                     Delete {selected.size}
                   </Button>
                 )}
@@ -523,7 +523,7 @@ export function BrowseTab({
                   variant={showFilters ? "default" : "ghost"}
                   onClick={() => setShowFilters((v) => !v)}
                 >
-                  <FilterIcon className="size-3.5" />
+                  <Filter className="size-3.5" />
                   Filter
                   {activeFilters.length > 0 && ` (${activeFilters.length})`}
                 </Button>
@@ -613,7 +613,7 @@ export function BrowseTab({
 
         <PanelBody flush>
           {rows.error && <ErrorState error={rows.error} className="m-4" />}
-          {!table && <EmptyState icon={Table2} title="Select a table to browse" />}
+          {!table && <EmptyState icon={Layout} title="Select a table to browse" />}
           {table && rows.data && (
             <>
               {canWrite && pk.length === 0 && detail.data && (
@@ -762,12 +762,12 @@ function TableMenu({
           Export CSV
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onExport("json")}>
-          <FileJson className="size-3.5" />
+          <AcronymJson className="size-3.5" />
           Export JSON
         </DropdownMenuItem>
         {canWrite && (
           <DropdownMenuItem onClick={onImport}>
-            <Upload className="size-3.5" />
+            <CloudUpload className="size-3.5" />
             Import data…
           </DropdownMenuItem>
         )}
@@ -785,11 +785,11 @@ function TableMenu({
             <DropdownMenuItem onClick={onRename}>Rename table…</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onTruncate}>
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
               Empty table…
             </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={onDrop}>
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
               Drop table…
             </DropdownMenuItem>
           </>
@@ -847,7 +847,7 @@ function FilterRow({
         placeholder={needsValue ? "value" : ""}
       />
       <Button size="icon" variant="ghost" className="size-7" onClick={onRemove}>
-        <X className="size-3.5" />
+        <Cross className="size-3.5" />
       </Button>
     </div>
   )

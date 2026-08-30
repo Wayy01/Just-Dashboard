@@ -1,7 +1,15 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, Lock, Monitor, Plus, ShieldCheck, Trash2, UserCog } from "lucide-react"
+import {
+  DesktopDevice,
+  Key,
+  LockClosed,
+  Plus,
+  ShieldCheck,
+  Trash,
+  UserSettings,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
@@ -125,7 +133,7 @@ function SecurityTab() {
     <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
       <Panel>
         <PanelHeader
-          icon={Lock}
+          icon={LockClosed}
           title="Change password"
           description="At least 12 characters, mixing three character classes"
         />
@@ -189,7 +197,7 @@ function SecurityTab() {
         <PanelBody className="space-y-3">
           {codes ? (
             <>
-              <Notice tone="warning" icon={KeyRound} title="New recovery codes">
+              <Notice tone="warning" icon={Key} title="New recovery codes">
                 The previous set no longer works. These are shown only now.
               </Notice>
               <Well className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -242,7 +250,7 @@ function SessionsTab() {
   return (
     <Panel>
       <PanelHeader
-        icon={Monitor}
+        icon={DesktopDevice}
         title="Active sessions"
         description="Signing one out takes effect immediately"
       />
@@ -296,7 +304,7 @@ function SessionsTab() {
             {data?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="p-0">
-                  <EmptyState icon={Monitor} title="No sessions" />
+                  <EmptyState icon={DesktopDevice} title="No sessions" />
                 </TableCell>
               </TableRow>
             )}
@@ -318,7 +326,7 @@ function TokensTab() {
     <>
       <Panel>
         <PanelHeader
-          icon={KeyRound}
+          icon={Key}
           title="API tokens"
           description="A token can never exceed the role of the account that minted it, and is demoted automatically if that account is"
           actions={<CreateTokenDialog onDone={refresh} />}
@@ -381,7 +389,7 @@ function TokensTab() {
                             })
                           }
                         >
-                          <Trash2 />
+                          <Trash />
                         </Button>
                       )}
                     </TableCell>
@@ -391,7 +399,7 @@ function TokensTab() {
                   <TableRow>
                     <TableCell colSpan={6} className="p-0">
                       <EmptyState
-                        icon={KeyRound}
+                        icon={Key}
                         title="No tokens"
                         description="Mint one to script against this dashboard from CI or a cron job."
                       />
@@ -461,7 +469,7 @@ function CreateTokenDialog({ onDone }: { onDone: () => void }) {
         </DialogHeader>
 
         {secret ? (
-          <Notice tone="warning" icon={KeyRound} title="Copy it now — it is not shown again">
+          <Notice tone="warning" icon={Key} title="Copy it now — it is not shown again">
             <code className="font-mono text-xs break-all">{secret}</code>
           </Notice>
         ) : (
@@ -541,7 +549,7 @@ function UsersTab() {
     <>
       <Panel>
         <PanelHeader
-          icon={UserCog}
+          icon={UserSettings}
           title="Dashboard users"
           description="Separate from the host's own Linux accounts"
           actions={<CreateDashboardUserDialog onDone={refresh} />}
@@ -645,7 +653,7 @@ function UsersTab() {
                             })
                           }
                         >
-                          <Trash2 />
+                          <Trash />
                         </Button>
                       </div>
                     </TableCell>
@@ -686,7 +694,7 @@ function CreateDashboardUserDialog({ onDone }: { onDone: () => void }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm">
-          <UserCog className="size-4" />
+          <UserSettings className="size-4" />
           New user
         </Button>
       </DialogTrigger>

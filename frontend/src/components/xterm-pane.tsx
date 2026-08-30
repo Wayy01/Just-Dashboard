@@ -6,25 +6,25 @@ import type { SearchAddon } from "@xterm/addon-search"
 import {
   ArrowDown,
   ArrowUp,
-  CaseSensitive,
-  ChevronsDown,
+  ChevronDoubleDown,
+  Command,
   Copy,
+  Cross,
   Download,
   FolderOpen,
-  Keyboard,
-  Maximize2,
-  Minimize2,
+  Fullscreen,
+  FullscreenClose,
+  Lightning,
+  MagnifyingGlass,
   Minus,
   Plus,
-  Regex,
-  RotateCw,
-  Search,
-  Settings2,
-  Trash2,
-  WholeWord,
-  X,
-  Zap,
-} from "lucide-react"
+  RotateClockwise,
+  SettingsSliders,
+  SlashForward,
+  TextTitle,
+  TextUppercase,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { wsUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -1032,21 +1032,21 @@ export function XtermPane({
               on={findOptions.caseSensitive}
               onClick={() => setFindOptions((o) => ({ ...o, caseSensitive: !o.caseSensitive }))}
             >
-              <CaseSensitive className="size-3.5" />
+              <TextUppercase className="size-3.5" />
             </FindToggle>
             <FindToggle
               label="Whole word"
               on={findOptions.word}
               onClick={() => setFindOptions((o) => ({ ...o, word: !o.word }))}
             >
-              <WholeWord className="size-3.5" />
+              <TextTitle className="size-3.5" />
             </FindToggle>
             <FindToggle
               label="Regular expression"
               on={findOptions.regex}
               onClick={() => setFindOptions((o) => ({ ...o, regex: !o.regex }))}
             >
-              <Regex className="size-3.5" />
+              <SlashForward className="size-3.5" />
             </FindToggle>
             <PaneButton label="Previous match" onClick={() => runSearch("previous")}>
               <ArrowUp className="size-3.5" />
@@ -1062,7 +1062,7 @@ export function XtermPane({
                 termRef.current?.focus()
               }}
             >
-              <X className="size-3.5" />
+              <Cross className="size-3.5" />
             </PaneButton>
           </div>
         ) : (
@@ -1071,7 +1071,7 @@ export function XtermPane({
               label={`Search scrollback (${formatChord(map["terminal.search"])})`}
               onClick={() => setSearching(true)}
             >
-              <Search className="size-3.5" />
+              <MagnifyingGlass className="size-3.5" />
             </PaneButton>
 
             <SnippetMenu snippets={snippets} onSend={(command) => send(command + "\r")} />
@@ -1114,7 +1114,7 @@ export function XtermPane({
                 termRef.current?.focus()
               }}
             >
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
             </PaneButton>
 
             <PaneButton
@@ -1137,7 +1137,7 @@ export function XtermPane({
               label={`Keyboard shortcuts (${formatChord(map["terminal.shortcuts"])})`}
               onClick={() => setShortcuts(true)}
             >
-              <Keyboard className="size-3.5" />
+              <Command className="size-3.5" />
             </PaneButton>
 
             <PaneButton
@@ -1149,9 +1149,9 @@ export function XtermPane({
               onClick={onToggleFullscreen ?? toggleFullscreen}
             >
               {(onToggleFullscreen ? fullscreenActive : fullscreen) ? (
-                <Minimize2 className="size-3.5" />
+                <FullscreenClose className="size-3.5" />
               ) : (
-                <Maximize2 className="size-3.5" />
+                <Fullscreen className="size-3.5" />
               )}
             </PaneButton>
           </>
@@ -1176,7 +1176,7 @@ export function XtermPane({
             The connection to this session ended. It is still running on the server.
           </span>
           <Button size="xs" variant="outline" onClick={() => setGeneration((g) => g + 1)}>
-            <RotateCw className="size-3" />
+            <RotateClockwise className="size-3" />
             Reconnect
           </Button>
         </div>
@@ -1231,7 +1231,7 @@ export function XtermPane({
               termRef.current?.focus()
             }}
           >
-            <ChevronsDown className="size-3" />
+            <ChevronDoubleDown className="size-3" />
             Jump to the end
           </Button>
         )}
@@ -1355,7 +1355,7 @@ function SnippetMenu({
               aria-label="Send a saved command"
               className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
             >
-              <Zap className="size-3.5" />
+              <Lightning className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
@@ -1393,7 +1393,7 @@ function SettingsMenu() {
               aria-label="Terminal settings"
               className="size-7 shrink-0 p-0 text-muted-foreground hover:text-foreground"
             >
-              <Settings2 className="size-3.5" />
+              <SettingsSliders className="size-3.5" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>

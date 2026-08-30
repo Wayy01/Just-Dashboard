@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRight, ScanSearch, Search } from "lucide-react"
+import { ArrowRight, Inspect, MagnifyingGlass } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { get } from "@/lib/api"
@@ -64,7 +64,7 @@ export function SearchTab({
   return (
     <Panel>
       <PanelHeader
-        icon={ScanSearch}
+        icon={Inspect}
         title="Find a value"
         description="Search every table in the schema for a value, without knowing where it lives"
       />
@@ -77,7 +77,7 @@ export function SearchTab({
           containerClassName="sm:w-96"
         />
         <Button size="sm" onClick={run} disabled={busy || !needle.trim()}>
-          {busy ? <Spinner /> : <Search className="size-3.5" />}
+          {busy ? <Spinner /> : <MagnifyingGlass className="size-3.5" />}
           Search
         </Button>
         {result && (
@@ -90,7 +90,7 @@ export function SearchTab({
       <PanelBody flush>
         {!result && !busy && (
           <EmptyState
-            icon={ScanSearch}
+            icon={Inspect}
             title="Search the whole schema"
             description="Every column of every table is compared as text, so an integer id and a uuid match as readily as a name. Views are skipped, and the scan is bounded so it stays safe to run against a live database."
           />
@@ -111,7 +111,7 @@ export function SearchTab({
             )}
             {result.matches.length === 0 ? (
               <EmptyState
-                icon={ScanSearch}
+                icon={Inspect}
                 title={`No row contains “${ran}”`}
                 description={`Searched ${plural(result.tablesScanned, "table")}.`}
               />

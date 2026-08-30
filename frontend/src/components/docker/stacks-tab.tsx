@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { FolderPlus, Layers, Play, Plus } from "lucide-react"
+import { FolderPlus, Layers, Play, Plus } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { ComposeStack } from "@/lib/types"

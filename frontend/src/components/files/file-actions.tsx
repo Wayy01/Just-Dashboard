@@ -2,21 +2,21 @@
 
 import Link from "next/link"
 import {
+  ArrowMove,
   Clipboard,
   Copy,
   CornerUpRight,
   Download,
-  FileArchive,
+  FileZip,
   FolderOpen,
   GitBranch,
-  ImageIcon,
+  Image as ImageIcon,
   Pencil,
-  Scissors,
   Shield,
   Star,
-  TerminalSquare,
-  Trash2,
-} from "lucide-react"
+  TerminalWindow,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { downloadUrl } from "@/lib/api"
 import type { FileEntry } from "@/lib/types"
@@ -113,7 +113,7 @@ export function FileActionsMenu({
               }
               download
             >
-              <FileArchive className="size-3.5" />
+              <FileZip className="size-3.5" />
               Download as .tar.gz
             </a>
           </DropdownMenuItem>
@@ -130,7 +130,7 @@ export function FileActionsMenu({
                 deep links the other pages already accept. */}
             <DropdownMenuItem asChild>
               <Link href={`/terminal?cwd=${encodeURIComponent(entry.path)}`}>
-                <TerminalSquare className="size-3.5" />
+                <TerminalWindow className="size-3.5" />
                 Open a shell here
               </Link>
             </DropdownMenuItem>
@@ -163,7 +163,7 @@ export function FileActionsMenu({
               Copy
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={actions.onCut}>
-              <Scissors className="size-3.5" />
+              <ArrowMove className="size-3.5" />
               Cut
             </DropdownMenuItem>
             {archive && (
@@ -192,7 +192,7 @@ export function FileActionsMenu({
               className="text-destructive focus:text-destructive"
               onSelect={actions.onDelete}
             >
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
               Delete
             </DropdownMenuItem>
           </>

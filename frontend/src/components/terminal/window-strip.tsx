@@ -2,22 +2,21 @@
 
 import { useRef, useState } from "react"
 import {
-  AlertTriangle,
   Bell,
-  Columns2,
-  LayoutGrid,
-  Link2,
-  Link2Off,
-  Maximize2,
+  BlendMode,
+  Cross,
+  Footer,
+  Fullscreen,
+  GridSquare,
+  Linked,
   MoreHorizontal,
-  Palette,
   Pencil,
   Plus,
-  Rows2,
-  SquareTerminal,
-  Unlink,
-  X,
-} from "lucide-react"
+  SidebarRight,
+  Slash,
+  TerminalWindow as TerminalWindowIcon,
+  Warning,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { TerminalPane, TerminalWindow } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -145,14 +144,14 @@ export function WindowStrip({
             className="size-6"
             onClick={() => onSplit(active.index, true)}
           >
-            <Columns2 />
+            <SidebarRight />
           </IconAction>
           <IconAction
             label="Split into two panes, one above the other"
             className="size-6"
             onClick={() => onSplit(active.index, false)}
           >
-            <Rows2 />
+            <Footer />
           </IconAction>
         </>
       )}
@@ -168,9 +167,9 @@ export function WindowStrip({
           className="raised flex items-center gap-1 rounded-md border border-warning/50 bg-warning/12 px-1.5 py-0.5 text-[10px] text-warning"
           onClick={() => onSynchronize(active.index, false)}
         >
-          <AlertTriangle className="size-3" />
+          <Warning className="size-3" />
           Typing goes to every pane
-          <Unlink className="size-3" />
+          <Slash className="size-3" />
         </button>
       )}
     </div>
@@ -258,12 +257,12 @@ function WindowChip({
         {tag ? (
           <TagSwatch colour={colour} className="size-1.5" />
         ) : (
-          <SquareTerminal className="size-3" />
+          <TerminalWindowIcon className="size-3" />
         )}
         <span className="max-w-32 truncate">{win.name}</span>
         {win.panes > 1 && <span className="numeric text-[9px] opacity-70">{win.panes}p</span>}
-        {win.zoomed && <Maximize2 className="size-2.5 text-primary" />}
-        {win.synchronized && <Link2 className="size-2.5 text-warning" />}
+        {win.zoomed && <Fullscreen className="size-2.5 text-primary" />}
+        {win.synchronized && <Linked className="size-2.5 text-warning" />}
         {/*
           A bell is louder than activity because it is the shell asking for
           attention rather than merely producing output. Neither is shown on
@@ -294,7 +293,7 @@ function WindowChip({
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="gap-2 text-xs">
-              <Palette className="size-3.5" />
+              <BlendMode className="size-3.5" />
               Colour
               <span className="flex-1" />
               <TagSwatch colour={colour} />
@@ -305,16 +304,16 @@ function WindowChip({
           </DropdownMenuSub>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="gap-2 text-xs" onSelect={() => onSplit(true)}>
-            <Columns2 className="size-3.5" />
+            <SidebarRight className="size-3.5" />
             Split side by side
           </DropdownMenuItem>
           <DropdownMenuItem className="gap-2 text-xs" onSelect={() => onSplit(false)}>
-            <Rows2 className="size-3.5" />
+            <Footer className="size-3.5" />
             Split top and bottom
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="gap-2 text-xs">
-              <LayoutGrid className="size-3.5" />
+              <GridSquare className="size-3.5" />
               Arrange panes
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-44">
@@ -334,9 +333,9 @@ function WindowChip({
             onSelect={() => onSynchronize(!win.synchronized)}
           >
             {win.synchronized ? (
-              <Link2Off className="size-3.5" />
+              <Slash className="size-3.5" />
             ) : (
-              <Link2 className="size-3.5" />
+              <Linked className="size-3.5" />
             )}
             {win.synchronized ? "Stop synchronised typing" : "Type into every pane at once"}
           </DropdownMenuItem>
@@ -344,7 +343,7 @@ function WindowChip({
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" className="gap-2 text-xs" onSelect={onClose}>
-                <X className="size-3.5" />
+                <Cross className="size-3.5" />
                 Close window
               </DropdownMenuItem>
             </>
@@ -358,7 +357,7 @@ function WindowChip({
           className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
           onClick={onClose}
         >
-          <X className="size-3" />
+          <Cross className="size-3" />
         </button>
       )}
     </div>
@@ -424,14 +423,14 @@ export function PaneBar({
             className="size-4 opacity-0 transition-opacity group-hover:opacity-100 [&_svg:not([class*='size-'])]:size-3"
             onClick={() => onZoom(pane.index)}
           >
-            <Maximize2 />
+            <Fullscreen />
           </IconAction>
           <IconAction
             label="Close this pane"
             className="size-4 text-destructive opacity-0 transition-opacity group-hover:opacity-100 [&_svg:not([class*='size-'])]:size-3"
             onClick={() => onClose(pane.index)}
           >
-            <X />
+            <Cross />
           </IconAction>
         </div>
       ))}

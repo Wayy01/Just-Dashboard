@@ -2,13 +2,13 @@
 
 import { useState } from "react"
 import {
-  AlertTriangle,
-  CheckCircle2,
+  CheckCircle,
   ChevronDown,
-  Info,
-  Stethoscope,
-  XCircle,
-} from "lucide-react"
+  CrossCircle,
+  Information,
+  Lifebuoy,
+  Warning,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { DockerDiagnosis, DockerFinding } from "@/lib/types"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
@@ -34,9 +34,9 @@ const LEVEL: Record<
   string,
   { icon: React.ComponentType<{ className?: string }>; tone: string; label: string }
 > = {
-  critical: { icon: XCircle, tone: "text-destructive", label: "Broken" },
-  warning: { icon: AlertTriangle, tone: "text-warning", label: "Worth fixing" },
-  notice: { icon: Info, tone: "text-muted-foreground", label: "Worth knowing" },
+  critical: { icon: CrossCircle, tone: "text-destructive", label: "Broken" },
+  warning: { icon: Warning, tone: "text-warning", label: "Worth fixing" },
+  notice: { icon: Information, tone: "text-muted-foreground", label: "Worth knowing" },
 }
 
 export type FindingAction = (finding: DockerFinding) => void
@@ -61,7 +61,7 @@ export function DiagnosisPanel({
   return (
     <Panel className={className}>
       <PanelHeader
-        icon={Stethoscope}
+        icon={Lifebuoy}
         title="What needs attention"
         description={
           diagnosis.findings.length === 0
@@ -89,7 +89,7 @@ export function DiagnosisPanel({
       <PanelBody className={diagnosis.findings.length ? "space-y-2" : undefined}>
         {diagnosis.findings.length === 0 ? (
           <div className="flex items-center gap-3 text-[13px]">
-            <CheckCircle2 className="size-4 shrink-0 text-success" />
+            <CheckCircle className="size-4 shrink-0 text-success" />
             <span className="min-w-0">
               Nothing is failing, restarting in a loop, published wider than it needs to be, or
               quietly filling the disk.

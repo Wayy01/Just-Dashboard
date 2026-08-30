@@ -1,7 +1,16 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Activity, Clock, Cpu, ListChecks, Play, RotateCw, Square, Trash2 } from "lucide-react"
+import {
+  ChartActivity,
+  Clock,
+  Cpu,
+  ListOrdered,
+  Play,
+  RotateClockwise,
+  StopCircle,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, duration, percent, relativeTime } from "@/lib/format"
@@ -96,14 +105,14 @@ function PM2Tab() {
   if (!data?.available) {
     return (
       <EmptyState
-        icon={Activity}
+        icon={ChartActivity}
         title="PM2 is not installed"
         description="Install PM2 on this host to manage node applications from here."
       />
     )
   }
   if (data.processes.length === 0) {
-    return <EmptyState icon={Activity} title="PM2 is running but manages no processes" />
+    return <EmptyState icon={ChartActivity} title="PM2 is running but manages no processes" />
   }
 
   const act = async (proc: PM2Process, action: string, confirmText?: string) => {
@@ -120,7 +129,7 @@ function PM2Tab() {
     <>
       <Panel>
         <PanelHeader
-          icon={Activity}
+          icon={ChartActivity}
           title="PM2 applications"
           description={`${online} online of ${data.processes.length}`}
         />
@@ -195,7 +204,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <RotateCw />
+                            <RotateClockwise />
                           </IconAction>
                           <IconAction
                             label="Stop"
@@ -212,7 +221,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <Square />
+                            <StopCircle />
                           </IconAction>
                           <IconAction
                             label="Delete"
@@ -234,7 +243,7 @@ function PM2Tab() {
                               })
                             }
                           >
-                            <Trash2 />
+                            <Trash />
                           </IconAction>
                         </>
                       )}
@@ -279,7 +288,7 @@ function SystemdTab() {
   if (loading) return <LoadingPanel />
   if (error) return <ErrorState error={error} />
   if (!data?.available)
-    return <EmptyState icon={ListChecks} title="systemd is not available on this host" />
+    return <EmptyState icon={ListOrdered} title="systemd is not available on this host" />
 
   const act = async (unit: SystemdUnit, action: string, confirmText?: string) => {
     await post(`/systemd/${encodeURIComponent(unit.name)}/${action}`, undefined, {
@@ -295,7 +304,7 @@ function SystemdTab() {
     <>
       <Panel>
         <PanelHeader
-          icon={ListChecks}
+          icon={ListOrdered}
           title="systemd units"
           description={`${visible.length} shown of ${data.units.length}`}
           actions={
@@ -387,7 +396,7 @@ function SystemdTab() {
                               })
                             }
                           >
-                            <RotateCw />
+                            <RotateClockwise />
                           </IconAction>
                           {unit.activeState === "active" && (
                             <IconAction
@@ -405,7 +414,7 @@ function SystemdTab() {
                                 })
                               }
                             >
-                              <Square />
+                              <StopCircle />
                             </IconAction>
                           )}
                         </>
@@ -431,7 +440,7 @@ function SystemdTab() {
               {visible.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="p-0">
-                    <EmptyState icon={ListChecks} title="No units match" />
+                    <EmptyState icon={ListOrdered} title="No units match" />
                   </TableCell>
                 </TableRow>
               )}

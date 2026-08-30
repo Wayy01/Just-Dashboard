@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ArrowUpCircle, ChevronDown, History, RefreshCw } from "lucide-react"
+import { ArrowCircleUp, ChevronDown, ClockRewind, RefreshClockwise } from "@/components/icons"
 import { relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { errorMessage } from "@/lib/api"
@@ -142,7 +142,7 @@ export function ChangesSheet({
                     onClick={() => setShowEarlier((v) => !v)}
                     className="flex w-full items-center gap-1.5 rounded-lg py-1 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
                   >
-                    <History className="size-3.5 text-muted-foreground" />
+                    <ClockRewind className="size-3.5 text-muted-foreground" />
                     <span className="eyebrow flex-1">Earlier releases ({earlier.length})</span>
                     <ChevronDown
                       className={cn(
@@ -173,7 +173,7 @@ export function ChangesSheet({
               {checking ? (
                 <Spinner className="size-3.5" />
               ) : (
-                <RefreshCw className="size-3.5" />
+                <RefreshClockwise className="size-3.5" />
               )}
               Check now
             </Button>
@@ -182,7 +182,7 @@ export function ChangesSheet({
             </span>
             {canInstall && (
               <Button size="sm" onClick={startInstall}>
-                <ArrowUpCircle className="size-3.5" />
+                <ArrowCircleUp className="size-3.5" />
                 Update to {target}
               </Button>
             )}

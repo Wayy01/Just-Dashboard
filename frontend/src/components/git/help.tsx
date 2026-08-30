@@ -1,6 +1,6 @@
 "use client"
 
-import { GraduationCap, HelpCircle } from "lucide-react"
+import { BookOpen, Question } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -105,7 +105,7 @@ export function GitExplain({ name, className }: { name: string; className?: stri
           aria-label={`What is ${entry?.title ?? name}?`}
           className={cn("text-muted-foreground transition-colors hover:text-foreground", className)}
         >
-          <HelpCircle className="size-3.5" />
+          <Question className="size-3.5" />
         </button>
       </HoverCardTrigger>
       <HoverCardContent className="w-80 text-xs leading-relaxed">
@@ -129,7 +129,7 @@ export function GitHelp() {
     <Popover>
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm">
-          <GraduationCap className="size-4" />
+          <BookOpen className="size-4" />
           New to git?
         </Button>
       </PopoverTrigger>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, CheckCircle2, Upload } from "lucide-react"
+import { CheckCircle, CloudUpload, Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import type { ImportResult } from "@/lib/types"
@@ -69,7 +69,7 @@ export function ImportDialog({ onDone }: { onDone: () => void }) {
     >
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
-          <Upload className="size-3.5" />
+          <CloudUpload className="size-3.5" />
           Import
         </Button>
       </DialogTrigger>
@@ -84,7 +84,7 @@ export function ImportDialog({ onDone }: { onDone: () => void }) {
 
         {result ? (
           <div className="space-y-3">
-            <Notice tone="success" icon={CheckCircle2} title={`${result.name} is on disk`}>
+            <Notice tone="success" icon={CheckCircle} title={`${result.name} is on disk`}>
               <div className="space-y-1">
                 <p>
                   Certificate: <code className="font-mono">{result.certPath}</code>
@@ -99,7 +99,7 @@ export function ImportDialog({ onDone }: { onDone: () => void }) {
               </div>
             </Notice>
             {result.warnings.map((warning) => (
-              <Notice key={warning} tone="warning" icon={AlertTriangle} title="Worth knowing">
+              <Notice key={warning} tone="warning" icon={Warning} title="Worth knowing">
                 {warning}
               </Notice>
             ))}

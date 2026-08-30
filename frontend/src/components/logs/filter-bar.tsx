@@ -2,16 +2,16 @@
 
 import { useEffect, useRef, useState } from "react"
 import {
-  CaseSensitive,
   Check,
   ChevronDown,
-  Loader2,
-  Radio,
-  Regex,
-  Search,
-  SlidersHorizontal,
-  X,
-} from "lucide-react"
+  Cross,
+  LoaderCircle,
+  MagnifyingGlass,
+  Rss,
+  SettingsSliders,
+  SlashForward,
+  TextUppercase,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { bytes } from "@/lib/format"
 import type { LogJournalUnit, LogSource } from "@/lib/types"
@@ -136,11 +136,11 @@ export function FilterBar({
           size="sm"
         >
           <ToggleGroupItem value="live" className="gap-1.5 px-2.5 text-xs">
-            <Radio className="size-3.5" />
+            <Rss className="size-3.5" />
             Live
           </ToggleGroupItem>
           <ToggleGroupItem value="search" className="gap-1.5 px-2.5 text-xs">
-            <Search className="size-3.5" />
+            <MagnifyingGlass className="size-3.5" />
             History
           </ToggleGroupItem>
         </ToggleGroup>
@@ -152,7 +152,7 @@ export function FilterBar({
             onSubmit()
           }}
         >
-          <Search className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
+          <MagnifyingGlass className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
           <Input
             ref={queryRef}
             value={filter.q}
@@ -173,19 +173,19 @@ export function FilterBar({
                 className="size-6"
                 onClick={() => set({ q: "" })}
               >
-                <X className="size-3" />
+                <Cross className="size-3" />
               </Button>
             )}
             <InputToggle
               active={filter.regex}
               onClick={() => set({ regex: !filter.regex })}
-              icon={Regex}
+              icon={SlashForward}
               hint="Treat the search as a regular expression (RE2, the same one the server runs)"
             />
             <InputToggle
               active={!filter.ignoreCase}
               onClick={() => set({ ignoreCase: !filter.ignoreCase })}
-              icon={CaseSensitive}
+              icon={TextUppercase}
               hint="Match case exactly"
             />
           </div>
@@ -193,7 +193,7 @@ export function FilterBar({
 
         {mode === "search" && (
           <Button size="sm" onClick={onSubmit} disabled={searching} className="h-8">
-            {searching ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+            {searching ? <LoaderCircle className="size-3.5 animate-spin" /> : <MagnifyingGlass className="size-3.5" />}
             Search
           </Button>
         )}
@@ -204,7 +204,7 @@ export function FilterBar({
           className="h-8 gap-1.5"
           onClick={() => setOpen((v) => !v)}
         >
-          <SlidersHorizontal className="size-3.5" />
+          <SettingsSliders className="size-3.5" />
           More
           {advancedCount > 0 && <span className="numeric text-[10px]">{advancedCount}</span>}
           <ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />

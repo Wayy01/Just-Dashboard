@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Hammer } from "lucide-react"
+import { Wrench } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import type { GitRepo } from "@/lib/types"
@@ -92,7 +92,7 @@ export function BuildDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Hammer className="size-4" />
+            <Wrench className="size-4" />
             Build an image
           </DialogTitle>
           <DialogDescription>
@@ -190,7 +190,7 @@ export function BuildDialog({
             {runner.running ? (
               <Spinner className="size-4" />
             ) : (
-              <Hammer className="size-4" />
+              <Wrench className="size-4" />
             )}
             Build
           </Button>

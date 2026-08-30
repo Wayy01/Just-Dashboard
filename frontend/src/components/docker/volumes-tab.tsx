@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { FolderTree, HardDrive, Plus, Trash2 } from "lucide-react"
+import { FolderOpen, Plus, Servers, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes, truncateMiddle } from "@/lib/format"
@@ -67,7 +67,7 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
     <div className="space-y-4">
       <Panel>
         <PanelHeader
-          icon={HardDrive}
+          icon={Servers}
           title="Volumes"
           description={
             unused.length > 0
@@ -117,7 +117,7 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                     })
                   }
                 >
-                  <Trash2 className="size-4" />
+                  <Trash className="size-4" />
                   Prune unused
                 </Button>
               )}
@@ -190,7 +190,7 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                           })
                         }
                       >
-                        <Trash2 />
+                        <Trash />
                       </IconAction>
                     )}
                   </TableCell>
@@ -200,7 +200,7 @@ export function VolumesTab({ confirm }: { confirm: ConfirmFn }) {
                 <TableRow>
                   <TableCell colSpan={4} className="p-0">
                     <EmptyState
-                      icon={HardDrive}
+                      icon={Servers}
                       title="No volumes"
                       description={
                         <>
@@ -264,7 +264,7 @@ function VolumeDetailPanel({
     <SidePanel
       open={name !== null}
       onOpenChange={onOpenChange}
-      icon={HardDrive}
+      icon={Servers}
       title={name ?? "Volume"}
       description={data?.mountpoint}
     >
@@ -290,7 +290,7 @@ function VolumeDetailPanel({
           {data.mountpoint && (
             <Button size="sm" variant="outline" asChild>
               <Link href={`/files?path=${encodeURIComponent(data.mountpoint)}`}>
-                <FolderTree className="size-3.5" />
+                <FolderOpen className="size-3.5" />
                 Browse its contents
               </Link>
             </Button>

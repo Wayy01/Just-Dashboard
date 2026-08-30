@@ -3,18 +3,17 @@
 import { useMemo } from "react"
 import Link from "next/link"
 import {
-  Activity,
   ArrowRight,
   Box,
+  ChartActivity,
+  CloudUpload,
   Cpu,
   Database,
   Gauge,
   Globe,
-  MemoryStick,
-  PackageCheck,
-  Rocket,
-  Waves,
-} from "lucide-react"
+  GridSquare,
+  Puzzle,
+} from "@/components/icons"
 import { ApiError, get } from "@/lib/api"
 import { bytes, clock, duration, percent, rate, relativeTime } from "@/lib/format"
 import type { Certificate, Container, DbConnection, MetricEvent } from "@/lib/types"
@@ -141,7 +140,7 @@ export default function OverviewPage() {
         />
         <StatTile
           label="Memory"
-          icon={MemoryStick}
+          icon={GridSquare}
           value={bytes(snapshot.memory.available)}
           meter={100 - availPercent}
           tone={availPercent <= 5 ? "danger" : availPercent <= 10 ? "warning" : "default"}
@@ -163,7 +162,7 @@ export default function OverviewPage() {
         />
         <StatTile
           label="Network"
-          icon={Waves}
+          icon={ChartActivity}
           value={rate(throughput.rx)}
           hint={`${rate(throughput.tx)} out · ${snapshot.sockets?.tcpInUse ?? 0} TCP sockets`}
           trailing={<span className="text-[11px] text-muted-foreground">in</span>}
@@ -250,7 +249,7 @@ function TrendsPanel({
   return (
     <Panel className={className}>
       <PanelHeader
-        icon={Activity}
+        icon={ChartActivity}
         title="Last hour"
         actions={
           <Link
@@ -299,7 +298,7 @@ function ActivityPanel({ events }: { events: MetricEvent[] }) {
 
   return (
     <Panel>
-      <PanelHeader icon={Rocket} title="Recent activity" />
+      <PanelHeader icon={CloudUpload} title="Recent activity" />
       <PanelBody className={newestFirst.length === 0 ? undefined : "max-h-[15rem] overflow-y-auto"}>
         {newestFirst.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">Nothing in the last hour.</p>
@@ -472,7 +471,7 @@ function UpdatesCard() {
   const behind = report?.releases.length ?? 0
   return (
     <ServiceCard
-      icon={PackageCheck}
+      icon={Puzzle}
       title="Dashboard"
       href="/dashboard"
       loading={loading && !report}

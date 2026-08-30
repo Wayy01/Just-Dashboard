@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowUpCircle, FileWarning, RefreshCw, Sparkles } from "lucide-react"
+import { ArrowCircleUp, RefreshClockwise, Sparkles, Warning } from "@/components/icons"
 import { errorMessage } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { notify } from "@/lib/toast"
@@ -91,7 +91,7 @@ export function DashboardUpdatePanel() {
                 {checking ? (
                   <Spinner className="size-4" />
                 ) : (
-                  <RefreshCw className="size-4" />
+                  <RefreshClockwise className="size-4" />
                 )}
                 Check now
               </Button>
@@ -100,7 +100,7 @@ export function DashboardUpdatePanel() {
               </Button>
               {report.available && canInstall && (
                 <Button size="sm" onClick={startInstall}>
-                  <ArrowUpCircle className="size-4" />
+                  <ArrowCircleUp className="size-4" />
                   Update to {target}
                 </Button>
               )}
@@ -155,7 +155,7 @@ export function DashboardUpdatePanel() {
               nothing is lost. Saying it up front is the difference between an
               upgrade that stops with an explanation and one that surprises. */}
           {report.available && !running && (report.install.dirty?.length ?? 0) > 0 && (
-            <Notice title="The install directory has uncommitted changes" icon={FileWarning}>
+            <Notice title="The install directory has uncommitted changes" icon={Warning}>
               <p>
                 {report.install.dir} carries edits that are not in git. The update fast-forwards
                 rather than resetting, so they survive unless the new version changes the same lines

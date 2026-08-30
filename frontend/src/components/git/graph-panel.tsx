@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { GitFork, X } from "lucide-react"
+import { BranchPlus, Cross } from "@/components/icons"
 import { get } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { GitGraph, GitGraphCommit } from "@/lib/types"
@@ -102,7 +102,7 @@ export function GraphPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-surface-header px-3 py-2">
-        <GitFork className="size-3.5 shrink-0 text-primary" />
+        <BranchPlus className="size-3.5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium">Branch graph</p>
           <p className="truncate text-[11px] text-muted-foreground">
@@ -118,7 +118,7 @@ export function GraphPanel({
               aria-label="Close"
               onClick={onClose}
             >
-              <X className="size-4" />
+              <Cross className="size-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Close the graph</TooltipContent>
@@ -126,7 +126,7 @@ export function GraphPanel({
       </div>
 
       {rows.length === 0 ? (
-        <EmptyState className="m-3" icon={GitFork} title="No commits yet" />
+        <EmptyState className="m-3" icon={BranchPlus} title="No commits yet" />
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="relative" style={{ minHeight: rows.length * ROW }}>

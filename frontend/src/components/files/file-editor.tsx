@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react"
 import {
-  FileCode,
-  Map as MapIcon,
-  RotateCcw,
-  Save,
-  Search,
-  ShieldAlert,
-  Wand2,
-  WrapText,
-} from "lucide-react"
+  Code,
+  CodeWrap,
+  FloppyDisk,
+  Location,
+  MagnifyingGlass,
+  RotateCounterClockwise,
+  ShieldOff,
+  Sparkles,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { downloadUrl, get, post, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -183,7 +183,7 @@ function FileEditorPanel({
       open={path !== null}
       onOpenChange={requestClose}
       width="xl"
-      icon={FileCode}
+      icon={Code}
       title={
         <>
           {path?.split("/").pop() ?? "File"}
@@ -213,10 +213,10 @@ function FileEditorPanel({
               </SelectContent>
             </Select>
             <Toggle label="Wrap long lines" active={wrap} onClick={() => setWrap((v) => !v)}>
-              <WrapText className="size-3.5" />
+              <CodeWrap className="size-3.5" />
             </Toggle>
             <Toggle label="Minimap" active={minimap} onClick={() => setMinimap((v) => !v)}>
-              <MapIcon className="size-3.5" />
+              <Location className="size-3.5" />
             </Toggle>
             {/* Two glyphs that differ only in size read as one button drawn
                 twice, so each says which way it goes. */}
@@ -228,16 +228,16 @@ function FileEditorPanel({
             </Toggle>
             {canEdit && (
               <Toggle label="Format this document" onClick={() => format?.()}>
-                <Wand2 className="size-3.5" />
+                <Sparkles className="size-3.5" />
               </Toggle>
             )}
             {canEdit && dirty && (
               <Toggle label="Discard changes and reload from disk" onClick={revert}>
-                <RotateCcw className="size-3.5" />
+                <RotateCounterClockwise className="size-3.5" />
               </Toggle>
             )}
             <span className="flex items-center gap-1 pl-1 text-[11px] text-muted-foreground">
-              <Search className="size-3" />
+              <MagnifyingGlass className="size-3" />
               Ctrl+F find · Ctrl+H replace · Ctrl+G go to line
             </span>
           </div>
@@ -284,7 +284,7 @@ function FileEditorPanel({
                   onSave={(target) => void save(target)}
                 />
                 <Button size="sm" onClick={() => void save()} disabled={!dirty || saving}>
-                  {saving ? <Spinner className="size-4" /> : <Save className="size-4" />}
+                  {saving ? <Spinner className="size-4" /> : <FloppyDisk className="size-4" />}
                   Save
                 </Button>
               </>
@@ -310,7 +310,7 @@ function FileEditorPanel({
       )}
 
       {file?.binary && !isImage(path) && (
-        <Notice className="m-4" tone="warning" title="Binary file" icon={ShieldAlert}>
+        <Notice className="m-4" tone="warning" title="Binary file" icon={ShieldOff}>
           This looks like a binary file ({bytes(file.size)}); it is not shown in the editor. Use
           Download to open it locally.
         </Notice>

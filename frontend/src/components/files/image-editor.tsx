@@ -2,17 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
+  ArrowLeftRight,
+  ArrowUpDown,
+  CornerUpLeft,
   Crop,
-  FlipHorizontal,
-  FlipVertical,
-  ImageIcon,
-  RotateCcw,
-  RotateCw,
-  Save,
-  SlidersHorizontal,
-  Undo2,
-  Wand2,
-} from "lucide-react"
+  FloppyDisk,
+  Image as ImageIcon,
+  RotateClockwise,
+  RotateCounterClockwise,
+  SettingsSliders,
+  Sparkles,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { API_BASE } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -327,19 +327,19 @@ function ImageEditor({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface-header px-3 py-2">
         <Button size="xs" variant="outline" onClick={() => rotate(-90)}>
-          <RotateCcw className="size-3" />
+          <RotateCounterClockwise className="size-3" />
           Left
         </Button>
         <Button size="xs" variant="outline" onClick={() => rotate(90)}>
-          <RotateCw className="size-3" />
+          <RotateClockwise className="size-3" />
           Right
         </Button>
         <Button size="xs" variant="outline" onClick={() => flip("h")}>
-          <FlipHorizontal className="size-3" />
+          <ArrowLeftRight className="size-3" />
           Flip
         </Button>
         <Button size="xs" variant="outline" onClick={() => flip("v")}>
-          <FlipVertical className="size-3" />
+          <ArrowUpDown className="size-3" />
           Flip
         </Button>
         <Button
@@ -365,7 +365,7 @@ function ImageEditor({
           disabled={history.length < 2}
           onClick={() => setHistory((prev) => prev.slice(0, -1))}
         >
-          <Undo2 className="size-3" />
+          <CornerUpLeft className="size-3" />
           Undo
         </Button>
       </div>
@@ -446,7 +446,7 @@ function ImageEditor({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">
-              <SlidersHorizontal className="mr-1 inline size-3" />
+              <SettingsSliders className="mr-1 inline size-3" />
               Adjust
             </Label>
             <Button
@@ -455,7 +455,7 @@ function ImageEditor({
               disabled={filterFor(adjust) === "none"}
               onClick={applyAdjust}
             >
-              <Wand2 className="size-3" />
+              <Sparkles className="size-3" />
               Apply
             </Button>
           </div>
@@ -514,7 +514,7 @@ function ImageEditor({
           Save as
         </Button>
         <Button size="sm" disabled={saving} onClick={() => save()}>
-          {saving ? <Spinner className="size-4" /> : <Save className="size-4" />}
+          {saving ? <Spinner className="size-4" /> : <FloppyDisk className="size-4" />}
           Save over original
         </Button>
       </div>

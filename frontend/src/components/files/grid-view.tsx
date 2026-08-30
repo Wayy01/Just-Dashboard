@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { MoreHorizontal } from "lucide-react"
+import { MoreHorizontal } from "@/components/icons"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { FileEntry } from "@/lib/types"

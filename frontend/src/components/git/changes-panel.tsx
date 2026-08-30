@@ -1,7 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { Check, GitCommitHorizontal, Minus, Plus, RotateCcw, Upload } from "lucide-react"
+import {
+  Check,
+  CloudUpload,
+  GitCommit,
+  Minus,
+  Plus,
+  RotateCounterClockwise,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -235,7 +242,7 @@ export function ChangesPanel({
                             disabled={!!busy}
                             onClick={() => discard(f)}
                           >
-                            <RotateCcw className="size-3.5" />
+                            <RotateCounterClockwise className="size-3.5" />
                           </RowAction>
                         )}
                         {canControl && (
@@ -287,7 +294,7 @@ export function ChangesPanel({
                   disabled={!!busy || !canCommit}
                   onClick={() => void commit(true)}
                 >
-                  <Upload className="size-3.5" />
+                  <CloudUpload className="size-3.5" />
                   Commit &amp; push
                 </Button>
               </TooltipTrigger>
@@ -302,7 +309,7 @@ export function ChangesPanel({
                   disabled={!!busy || !canCommit}
                   onClick={() => void commit(false)}
                 >
-                  <GitCommitHorizontal className="size-3.5" />
+                  <GitCommit className="size-3.5" />
                   Commit
                 </Button>
               </TooltipTrigger>

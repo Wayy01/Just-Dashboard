@@ -3,16 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUpRight,
+  Calculator,
   Clipboard,
+  Cross,
   Download,
   Fingerprint,
   FolderOpen,
-  Image as ImageIcon,
+  Image,
   Pencil,
-  Ruler,
-  Sigma,
-  X,
-} from "lucide-react"
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { downloadUrl, get } from "@/lib/api"
 import { bytes, relativeTime, timestamp } from "@/lib/format"
@@ -67,7 +66,7 @@ export function PreviewPanel({
     return (
       <div className={cn("flex min-h-0 flex-col", className)}>
         <EmptyState
-          icon={ImageIcon}
+          icon={Image}
           title="Nothing selected"
           description="Click a row to see what it is — the first lines of a file, a picture, what is inside an archive."
         />
@@ -137,7 +136,7 @@ function Preview({
           </div>
         </div>
         <IconAction label="Close the preview" onClick={onClose}>
-          <X />
+          <Cross />
         </IconAction>
       </PanelHeader>
 
@@ -359,7 +358,7 @@ function DirectoryPreview({
           Open
         </Button>
         <Button size="sm" variant="outline" className="flex-1" onClick={measure} disabled={busy}>
-          {busy ? <Spinner className="size-3.5" /> : <Ruler className="size-3.5" />}
+          {busy ? <Spinner className="size-3.5" /> : <Calculator className="size-3.5" />}
           Measure
         </Button>
       </div>
@@ -532,7 +531,7 @@ function Actions({
       )}
       {preview.kind === "binary" && (
         <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Sigma className="size-3" />
+          <Fingerprint className="size-3" />
           Compare the checksum against the one you were given, rather than trusting the size.
         </p>
       )}

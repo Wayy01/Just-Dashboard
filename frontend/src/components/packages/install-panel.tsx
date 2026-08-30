@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Check, Download, Info, Search } from "lucide-react"
+import { Check, Download, Information, MagnifyingGlass } from "@/components/icons"
 import { errorMessage, get, post } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -113,7 +113,7 @@ export function InstallPanel({
   return (
     <Panel>
       <PanelHeader
-        icon={Search}
+        icon={MagnifyingGlass}
         title="Add software"
         description={
           manager
@@ -153,7 +153,7 @@ export function InstallPanel({
 
         {!shownError && shown.length === 0 && (
           <EmptyState
-            icon={Search}
+            icon={MagnifyingGlass}
             title={typing ? "Keep typing" : needle ? "Nothing matches that" : "Search for something to install"}
             description={
               typing
@@ -215,7 +215,7 @@ export function InstallPanel({
                       title="What is this, and what will it give me?"
                       onClick={() => onInspect(result.name)}
                     >
-                      <Info className="size-4" />
+                      <Information className="size-4" />
                     </Button>
                     {canInstall && !result.installed && (
                       <Button

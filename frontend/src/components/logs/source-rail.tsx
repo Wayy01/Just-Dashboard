@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Archive, Boxes, Cpu, FileText, Globe, ListTree, ScrollText } from "lucide-react"
+import { Archive, Box, Cpu, FileText, Globe, Logs, Monorepo } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { bytes, relativeTime } from "@/lib/format"
 import type { LogSource, LogSourceIndex } from "@/lib/types"
@@ -18,8 +18,8 @@ import { StatusDot } from "@/components/status-dot"
  */
 const GROUPS: { kind: LogSource["kind"]; label: string; icon: typeof FileText }[] = [
   { kind: "system", label: "System", icon: Cpu },
-  { kind: "journal", label: "Systemd journal", icon: ListTree },
-  { kind: "docker", label: "Containers", icon: Boxes },
+  { kind: "journal", label: "Systemd journal", icon: Monorepo },
+  { kind: "docker", label: "Containers", icon: Box },
   { kind: "nginx", label: "Web server", icon: Globe },
   { kind: "pm2", label: "PM2", icon: FileText },
   { kind: "app", label: "Applications", icon: FileText },
@@ -67,7 +67,7 @@ export function SourceRail({
     // window from the lines you came to read.
     <Panel className="max-h-64 min-h-0 lg:max-h-full">
       <PanelHeader
-        icon={ScrollText}
+        icon={Logs}
         title="Sources"
         description={total ? `${total} on this host` : "Scanning…"}
       />

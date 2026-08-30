@@ -2,15 +2,15 @@
 
 import { useState } from "react"
 import {
-  AlertTriangle,
-  CheckCircle2,
+  CheckCircle,
+  CrossCircle,
   Fingerprint,
-  Info,
-  Lock,
-  ScanLine,
-  ShieldAlert,
-  XCircle,
-} from "lucide-react"
+  Information,
+  Inspect,
+  LockClosed,
+  ShieldOff,
+  Warning,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
@@ -57,7 +57,7 @@ export function TLSReport() {
     <div className="flex min-w-0 flex-col gap-4">
       <Panel>
         <PanelHeader
-          icon={ScanLine}
+          icon={Inspect}
           title="Live TLS report"
           description="A handshake, a version probe, the chain as presented and the headers the site actually sends"
         />
@@ -77,7 +77,7 @@ export function TLSReport() {
         <PanelBody>
           {!scan && !busy && (
             <EmptyState
-              icon={ScanLine}
+              icon={Inspect}
               title="Nothing scanned yet"
               description="Enter a domain this server should be serving. The scan reaches it the way a browser would, from the outside."
             />
@@ -95,7 +95,7 @@ export function TLSReport() {
         <>
           <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
             <Panel>
-              <PanelHeader icon={Lock} title="Protocol versions" />
+              <PanelHeader icon={LockClosed} title="Protocol versions" />
               <PanelBody className="space-y-1.5">
                 {scan.protocols.map((protocol) => (
                   <div
@@ -169,7 +169,7 @@ export function TLSReport() {
 
           <Panel>
             <PanelHeader
-              icon={Lock}
+              icon={LockClosed}
               title="Chain as presented"
               description={
                 scan.chainComplete
@@ -204,7 +204,7 @@ export function TLSReport() {
           {scan.http && (
             <Panel>
               <PanelHeader
-                icon={ShieldAlert}
+                icon={ShieldOff}
                 title="HTTP behaviour"
                 description={`Answered ${scan.http.statusCode}${scan.http.server ? ` · ${scan.http.server}` : ""}`}
               />
@@ -253,9 +253,9 @@ export function TLSReport() {
                   {scan.http.headers.map((header) => (
                     <div key={header.name} className="flex items-start gap-2">
                       {header.present ? (
-                        <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                        <CheckCircle className="mt-0.5 size-3.5 shrink-0 text-success" />
                       ) : (
-                        <XCircle
+                        <CrossCircle
                           className={cn(
                             "mt-0.5 size-3.5 shrink-0",
                             header.level === "important"
@@ -304,7 +304,7 @@ function ScanSummary({ scan }: { scan: TLSScan }) {
       </div>
 
       {!scan.reachable && (
-        <Notice tone="danger" icon={XCircle} title="Nothing answered">
+        <Notice tone="danger" icon={CrossCircle} title="Nothing answered">
           {scan.error}
         </Notice>
       )}
@@ -317,7 +317,7 @@ function ScanSummary({ scan }: { scan: TLSScan }) {
         </div>
       )}
       {scan.reachable && scan.findings.length === 0 && (
-        <Notice tone="success" icon={CheckCircle2} title="Nothing to fix">
+        <Notice tone="success" icon={CheckCircle} title="Nothing to fix">
           Trusted chain, current protocols, and the headers that matter are in place.
         </Notice>
       )}
@@ -360,9 +360,9 @@ function FindingRow({ finding }: { finding: ScanFinding }) {
 }
 
 function LevelIcon({ level, className }: { level: string; className?: string }) {
-  if (level === "critical") return <ShieldAlert className={className} />
-  if (level === "warning") return <AlertTriangle className={className} />
-  return <Info className={className} />
+  if (level === "critical") return <ShieldOff className={className} />
+  if (level === "warning") return <Warning className={className} />
+  return <Information className={className} />
 }
 
 export function GradeBadge({ grade, className }: { grade: string; className?: string }) {

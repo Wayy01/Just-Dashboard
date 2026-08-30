@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { CornerDownLeft, FolderOpen, Search, Text } from "lucide-react"
+import { CornerDownLeft, FolderOpen, MagnifyingGlass, TextFormat } from "@/components/icons"
 import { get } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -146,7 +146,7 @@ function QuickOpenBody({
     // otherwise push the whole panel wider than the dialog it sits in.
     <div className="min-w-0" onKeyDown={onKeyDown}>
       <div className="flex items-center gap-2 border-b border-hairline px-3">
-        <Search className="size-4 shrink-0 text-muted-foreground" />
+        <MagnifyingGlass className="size-4 shrink-0 text-muted-foreground" />
         <input
           autoFocus
           value={query}
@@ -194,7 +194,7 @@ function QuickOpenBody({
         )}
         {!ready && (
           <p className="flex items-center justify-center gap-2 py-8 text-center text-[13px] text-muted-foreground">
-            <Text className="size-4" />
+            <TextFormat className="size-4" />
             Type at least two characters. They need only appear in order.
           </p>
         )}

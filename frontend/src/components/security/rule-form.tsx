@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { AlertTriangle, Check, ChevronsUpDown, Plus } from "lucide-react"
+import { ArrowUpDown, Check, Plus, Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post, put } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -457,7 +457,7 @@ function RuleForm({
         </div>
 
         {dangerous && (
-          <Notice tone="danger" icon={AlertTriangle} title={`${matched?.name} open to the internet`}>
+          <Notice tone="danger" icon={Warning} title={`${matched?.name} open to the internet`}>
             {matched?.danger} Choose a source above, or bind the service to 127.0.0.1 instead of
             opening the port at all.
           </Notice>
@@ -515,7 +515,7 @@ function ProfilePicker({
           className="w-full justify-between font-normal"
         >
           {value || <span className="text-muted-foreground">Defined by the host&rsquo;s packages</span>}
-          <ChevronsUpDown className="size-3.5 opacity-50" />
+          <ArrowUpDown className="size-3.5 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">

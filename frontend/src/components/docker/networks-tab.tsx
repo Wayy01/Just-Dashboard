@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Link2, Network as NetworkIcon, Plus, Trash2, Unlink } from "lucide-react"
+import { Linked, NetworkDevice, Plus, Slash, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { Container, DockerNetwork, NetworkDetail } from "@/lib/types"
@@ -76,7 +76,7 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
     <div className="space-y-4">
       <Panel>
         <PanelHeader
-          icon={NetworkIcon}
+          icon={NetworkDevice}
           title="Networks"
           description={`${data?.length ?? 0} defined on this daemon`}
           actions={
@@ -120,7 +120,7 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                     })
                   }
                 >
-                  <Trash2 className="size-4" />
+                  <Trash className="size-4" />
                   Prune
                 </Button>
               )}
@@ -195,7 +195,7 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
                           })
                         }
                       >
-                        <Trash2 />
+                        <Trash />
                       </IconAction>
                     )}
                   </TableCell>
@@ -204,7 +204,7 @@ export function NetworksTab({ confirm }: { confirm: ConfirmFn }) {
               {!data?.length && (
                 <TableRow>
                   <TableCell colSpan={5} className="p-0">
-                    <EmptyState icon={NetworkIcon} title="No networks" />
+                    <EmptyState icon={NetworkDevice} title="No networks" />
                   </TableCell>
                 </TableRow>
               )}
@@ -261,7 +261,7 @@ function NetworkDetailPanel({
     <SidePanel
       open={id !== null}
       onOpenChange={onOpenChange}
-      icon={NetworkIcon}
+      icon={NetworkDevice}
       title={data?.name ?? "Network"}
       description={data?.subnets.join(", ")}
       actions={
@@ -269,7 +269,7 @@ function NetworkDetailPanel({
         data &&
         !data.system && (
           <Button size="sm" variant="outline" onClick={() => setAttaching(true)}>
-            <Link2 className="size-3.5" />
+            <Linked className="size-3.5" />
             Attach a container
           </Button>
         )
@@ -328,7 +328,7 @@ function NetworkDetailPanel({
                           className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                           onClick={() => disconnect(m.id, m.name)}
                         >
-                          <Unlink />
+                          <Slash />
                         </IconAction>
                       )}
                     </span>
@@ -410,7 +410,7 @@ function AttachDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Link2 className="size-4" />
+            <Linked className="size-4" />
             Attach a container
           </DialogTitle>
           <DialogDescription>

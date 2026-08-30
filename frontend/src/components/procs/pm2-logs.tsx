@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react"
 import type { LogLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
-import { Activity } from "lucide-react"
+import { ChartActivity } from "@/components/icons"
 import { LogViewer } from "@/components/log-viewer"
 import { SidePanel } from "@/components/side-panel"
 
@@ -20,7 +20,7 @@ export function PM2LogSheet({
     <SidePanel
       open={name !== null}
       onOpenChange={onOpenChange}
-      icon={Activity}
+      icon={ChartActivity}
       title={name ?? "PM2"}
       description="stdout and stderr, merged live"
       bodyClassName="flex min-h-0 flex-1 flex-col p-4"

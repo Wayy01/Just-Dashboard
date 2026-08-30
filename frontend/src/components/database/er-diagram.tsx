@@ -16,19 +16,19 @@ import {
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import {
-  Columns3,
+  ArrowLeftRight,
+  ArrowUpDown,
   Crosshair,
   Fingerprint,
-  KeyRound,
-  Link2,
-  Maximize2,
+  Fullscreen,
+  Key,
+  Layout,
+  Linked,
   Minus,
-  MoveHorizontal,
-  MoveVertical,
-  Network,
+  NetworkDevice,
   Plus,
-  RotateCcw,
-} from "lucide-react"
+  RotateCounterClockwise,
+} from "@/components/icons"
 import { get } from "@/lib/api"
 import type { DbConnection, DbGraphEdge, DbSchemaGraph } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -84,8 +84,8 @@ export function ErDiagram({
   if (graph.data.tables.length === 0) {
     return (
       <Panel className="min-h-0 flex-1">
-        <PanelHeader icon={Network} title="Schema" description="Nothing to draw" />
-        <EmptyState icon={Network} title="No tables in this schema" />
+        <PanelHeader icon={NetworkDevice} title="Schema" description="Nothing to draw" />
+        <EmptyState icon={NetworkDevice} title="No tables in this schema" />
       </Panel>
     )
   }
@@ -197,7 +197,7 @@ function Canvas({
   return (
     <Panel className="min-h-0 flex-1">
       <PanelHeader
-        icon={Network}
+        icon={NetworkDevice}
         title="Schema"
         description={`${graph.tables.length} ${graph.tables.length === 1 ? "table" : "tables"} · ${graph.edges.length} ${graph.edges.length === 1 ? "relationship" : "relationships"}`}
         actions={
@@ -214,7 +214,7 @@ function Canvas({
               onClick={() => setKeysOnly((v) => !v)}
               title="Show only primary, foreign and unique key columns"
             >
-              <Columns3 className="size-3.5" />
+              <Layout className="size-3.5" />
               Keys only
             </Button>
             <Button
@@ -224,13 +224,13 @@ function Canvas({
               title={direction === "LR" ? "Lay out top to bottom" : "Lay out left to right"}
             >
               {direction === "LR" ? (
-                <MoveHorizontal className="size-3.5" />
+                <ArrowLeftRight className="size-3.5" />
               ) : (
-                <MoveVertical className="size-3.5" />
+                <ArrowUpDown className="size-3.5" />
               )}
             </Button>
             <Button size="sm" variant="outline" onClick={relayout} title="Lay out again">
-              <RotateCcw className="size-3.5" />
+              <RotateCounterClockwise className="size-3.5" />
             </Button>
           </>
         }
@@ -319,7 +319,7 @@ function Toolbar({ focus, onClear }: { focus: string | null; onClear: () => void
           onClick={() => flow.fitView({ padding: 0.15, duration: 300 })}
           title="Fit to view"
         >
-          <Maximize2 className="size-3.5" />
+          <Fullscreen className="size-3.5" />
         </Button>
       </div>
       {focus && (
@@ -342,10 +342,10 @@ function Legend() {
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 flex items-center gap-3 rounded-md border bg-card/90 px-2.5 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
       <span className="flex items-center gap-1">
-        <KeyRound className="size-3 text-chart-2" /> primary key
+        <Key className="size-3 text-chart-2" /> primary key
       </span>
       <span className="flex items-center gap-1">
-        <Link2 className="size-3 text-chart-1" /> foreign key
+        <Linked className="size-3 text-chart-1" /> foreign key
       </span>
       <span className="flex items-center gap-1">
         <Fingerprint className="size-3 text-muted-foreground/60" /> unique

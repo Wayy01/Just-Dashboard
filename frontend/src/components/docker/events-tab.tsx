@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { Activity, AlertCircle, Circle, Radio } from "lucide-react"
+import { ChartActivity, Rss, Status, Stop } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { DockerEvent, DockerEventFeed } from "@/lib/types"
@@ -80,7 +80,7 @@ export function EventsTab() {
   return (
     <Panel>
       <PanelHeader
-        icon={Activity}
+        icon={ChartActivity}
         title="Events"
         description={
           data?.listening
@@ -89,7 +89,7 @@ export function EventsTab() {
         }
         actions={
           <Badge variant={data?.listening ? "success" : "secondary"} className="gap-1.5 font-normal">
-            <Radio className="size-3" />
+            <Rss className="size-3" />
             {data?.listening ? "live" : "offline"}
           </Badge>
         }
@@ -120,7 +120,7 @@ export function EventsTab() {
       <PanelBody flush>
         {merged.length === 0 ? (
           <EmptyState
-            icon={Activity}
+            icon={ChartActivity}
             title="Nothing yet"
             description={
               data?.listening
@@ -166,9 +166,9 @@ function dedupe(events: DockerEvent[]): DockerEvent[] {
 }
 
 const LEVEL_ICON = {
-  error: { icon: AlertCircle, tone: "text-destructive" },
-  notice: { icon: Circle, tone: "text-primary" },
-  info: { icon: Circle, tone: "text-muted-foreground/50" },
+  error: { icon: Stop, tone: "text-destructive" },
+  notice: { icon: Status, tone: "text-primary" },
+  info: { icon: Status, tone: "text-muted-foreground/50" },
 } as const
 
 function EventRow({ event }: { event: DockerEvent }) {

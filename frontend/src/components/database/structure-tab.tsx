@@ -1,6 +1,6 @@
 "use client"
 
-import { Copy, KeyRound, Link2, ListTree, Pencil, Table2, Trash2 } from "lucide-react"
+import { Copy, Key, Layout, Linked, Monorepo, Pencil, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { del, get } from "@/lib/api"
@@ -50,7 +50,7 @@ export function StructureTab({
     [conn.id, schema, table],
   )
 
-  if (!table) return <EmptyState icon={Table2} title="Select a table to inspect its structure" />
+  if (!table) return <EmptyState icon={Layout} title="Select a table to inspect its structure" />
   if (detail.loading) return <LoadingPanel />
   if (detail.error) return <ErrorState error={detail.error} />
   if (!detail.data) return null
@@ -104,7 +104,7 @@ export function StructureTab({
     <div className="grid gap-4">
       <Panel>
         <PanelHeader
-          icon={ListTree}
+          icon={Monorepo}
           title="Columns"
           description={plural(d.columns.length, "column")}
         />
@@ -140,7 +140,7 @@ export function StructureTab({
                   <TableCell>
                     {pk.has(c.name) && (
                       <Badge variant="secondary" className="gap-1 font-normal">
-                        <KeyRound className="size-3" />
+                        <Key className="size-3" />
                         pk
                       </Badge>
                     )}
@@ -164,7 +164,7 @@ export function StructureTab({
                           title="Drop column"
                           onClick={() => dropColumn(c.name)}
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash className="size-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -178,7 +178,7 @@ export function StructureTab({
 
       <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Panel>
-          <PanelHeader icon={KeyRound} title="Indexes" description={`${d.indexes.length}`} />
+          <PanelHeader icon={Key} title="Indexes" description={`${d.indexes.length}`} />
           <PanelBody flush>
             {d.indexes.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">No indexes.</p>
@@ -217,7 +217,7 @@ export function StructureTab({
                               title="Drop index"
                               onClick={() => dropIndex(ix.name)}
                             >
-                              <Trash2 className="size-3.5" />
+                              <Trash className="size-3.5" />
                             </Button>
                           )}
                         </TableCell>
@@ -231,7 +231,7 @@ export function StructureTab({
         </Panel>
 
         <Panel>
-          <PanelHeader icon={Link2} title="Foreign keys" description={`${d.foreignKeys.length}`} />
+          <PanelHeader icon={Linked} title="Foreign keys" description={`${d.foreignKeys.length}`} />
           <PanelBody flush>
             {d.foreignKeys.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">No foreign keys.</p>
@@ -279,7 +279,7 @@ export function StructureTab({
       {d.createSql && (
         <Panel>
           <PanelHeader
-            icon={Table2}
+            icon={Layout}
             title="Definition"
             description={
               conn.driver === "postgres" ? "generated from structure" : "as reported by the engine"

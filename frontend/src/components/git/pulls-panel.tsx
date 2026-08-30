@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ExternalLink, GitPullRequest, Plus } from "lucide-react"
+import { External, GitPullRequest, Plus } from "@/components/icons"
 import { errorMessage, get, post } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import { relativeTime } from "@/lib/format"
@@ -112,7 +112,7 @@ export function PullsPanel({
           {mine ? (
             <Button size="sm" variant="outline" asChild>
               <a href={mine.url} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-3.5" />
+                <External className="size-3.5" />
                 Open #{mine.number}
               </a>
             </Button>
@@ -165,7 +165,7 @@ export function PullsPanel({
                   {p.createdAt ? ` · ${relativeTime(p.createdAt)}` : ""}
                 </span>
               </span>
-              <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
+              <External className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
             </a>
           ))
         )}

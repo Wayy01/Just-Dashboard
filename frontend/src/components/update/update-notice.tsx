@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowUpCircle, CheckCircle2, Sparkles, X, XCircle } from "lucide-react"
+import { ArrowCircleUp, CheckCircle, Cross, CrossCircle, Sparkles } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { phaseLabel, useSelfUpdate } from "@/hooks/use-self-update"
@@ -93,11 +93,11 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
               {running ? (
                 <Spinner className="size-4" />
               ) : outcome?.status === "failed" ? (
-                <XCircle className="size-4" />
+                <CrossCircle className="size-4" />
               ) : outcome?.status === "success" ? (
                 <Sparkles className="size-4" />
               ) : (
-                <ArrowUpCircle className="size-4" />
+                <ArrowCircleUp className="size-4" />
               )}
             </button>
           </TooltipTrigger>
@@ -139,11 +139,11 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
             {running ? (
               <Spinner className="size-3.5" />
             ) : outcome?.status === "failed" ? (
-              <XCircle className="size-3.5" />
+              <CrossCircle className="size-3.5" />
             ) : outcome?.status === "success" ? (
-              <CheckCircle2 className="size-3.5" />
+              <CheckCircle className="size-3.5" />
             ) : (
-              <ArrowUpCircle className="size-3.5" />
+              <ArrowCircleUp className="size-3.5" />
             )}
           </span>
           <div className="min-w-0 flex-1">
@@ -189,7 +189,7 @@ export function UpdateNotice({ collapsed }: { collapsed: boolean }) {
               onClick={() => dismiss().catch(() => {})}
               className="-mt-0.5 -mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50"
             >
-              <X className="size-3" />
+              <Cross className="size-3" />
             </button>
           )}
         </div>

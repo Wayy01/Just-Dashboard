@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, Database, Download, Sparkles } from "lucide-react"
+import { Copy, Database, Download, Sparkles } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { DbConnection, OrmTarget, OrmTargetInfo } from "@/lib/types"

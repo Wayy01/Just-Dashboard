@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Radar } from "lucide-react"
+import { Crosshair } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -60,7 +60,7 @@ export function ToolsPanel() {
   if (!can("system.admin")) {
     return (
       <EmptyState
-        icon={Radar}
+        icon={Crosshair}
         title="Diagnostics need the admin capability"
         description="A probe makes the server send traffic to an address the caller chose, which is a scanner if it is handed to everybody."
       />
@@ -91,7 +91,7 @@ export function ToolsPanel() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <Panel>
-        <PanelHeader icon={Radar} title="Network tools" description={active?.hint} />
+        <PanelHeader icon={Crosshair} title="Network tools" description={active?.hint} />
         <PanelToolbar>
           <ToggleGroup
             type="single"

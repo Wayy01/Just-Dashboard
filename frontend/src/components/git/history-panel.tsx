@@ -1,6 +1,6 @@
 "use client"
 
-import { GitCommitHorizontal, History, Undo2 } from "lucide-react"
+import { ClockRewind, CornerUpLeft, GitCommit as GitCommitIcon } from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
 import type { GitCommit } from "@/lib/types"
@@ -80,7 +80,7 @@ export function HistoryPanel({
     return (
       <EmptyState
         className="m-3"
-        icon={History}
+        icon={ClockRewind}
         title="No commits yet"
         description="Once you commit, every version shows up here."
       />
@@ -94,7 +94,7 @@ export function HistoryPanel({
           key={c.sha}
           className="group flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--row-hover)]"
         >
-          <GitCommitHorizontal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <GitCommitIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <button onClick={() => show(c)} className="min-w-0 flex-1 text-left">
             <p className="truncate text-[13px]">{c.subject}</p>
             <p className="truncate text-[11px] text-muted-foreground">
@@ -119,7 +119,7 @@ export function HistoryPanel({
                   className="size-6 shrink-0 p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
                   onClick={() => resetTo(c)}
                 >
-                  <Undo2 className="size-3.5" />
+                  <CornerUpLeft className="size-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Undo commits back to here, keeping your changes</TooltipContent>

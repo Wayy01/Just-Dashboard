@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Globe, RefreshCw, ShieldCheck, ShieldX } from "lucide-react"
+import { Globe, RefreshClockwise, ShieldCheck, ShieldOff } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { timestamp } from "@/lib/format"
@@ -77,7 +77,7 @@ export function CertsPanel() {
           description="Checked with a live TLS handshake, which catches a certificate renewed on disk but never reloaded"
           actions={
             <Button variant="outline" size="sm" onClick={() => watched.refresh()}>
-              <RefreshCw className="size-3.5" />
+              <RefreshClockwise className="size-3.5" />
               Re-check now
             </Button>
           }
@@ -99,7 +99,7 @@ export function CertsPanel() {
         <PanelBody flush>
           {watched.loading && <LoadingPanel rows={3} />}
           {watched.data?.length === 0 && (
-            <EmptyState icon={ShieldX} title="No domains watched yet" />
+            <EmptyState icon={ShieldOff} title="No domains watched yet" />
           )}
           {watched.data && watched.data.length > 0 && (
             <Table>
@@ -152,7 +152,7 @@ export function CertsPanel() {
 }
 
 function CertTable({ certs }: { certs: Certificate[] }) {
-  if (certs.length === 0) return <EmptyState icon={ShieldX} title="No certificates found" />
+  if (certs.length === 0) return <EmptyState icon={ShieldOff} title="No certificates found" />
   return (
     <Table containerClassName="max-h-[26rem]">
       <TableHeader className={stickyTableHeader}>

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronRight, Cpu, MemoryStick, Moon, Search, Sun } from "lucide-react"
+import { ChevronRight, Cpu, GridSquare, MagnifyingGlass, Moon, Sun } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { percent } from "@/lib/format"
 import { useMetrics } from "@/hooks/use-metrics"
@@ -61,7 +61,7 @@ export function TopBar() {
         className="text-muted-foreground md:hidden"
         onClick={palette.open}
       >
-        <Search className="size-4" />
+        <MagnifyingGlass className="size-4" />
       </Button>
 
       <ThemeToggle />
@@ -110,7 +110,7 @@ function Vitals() {
             alarm={steal >= 5}
           />
           <Reading
-            icon={MemoryStick}
+            icon={GridSquare}
             label="Memory"
             value={snapshot.memory.usedPercent}
             detail={

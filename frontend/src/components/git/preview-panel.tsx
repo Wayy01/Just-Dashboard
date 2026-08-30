@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { FileCode, GitCompare, Save, X } from "lucide-react"
+import { Code, Cross, FloppyDisk, GitMerge } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -48,7 +48,7 @@ export function PreviewPanel({
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-6">
         <EmptyState
-          icon={GitCompare}
+          icon={GitMerge}
           title="Nothing selected"
           description="Click a changed file to see what changed, a commit to see what it did, or a file in the tree to open it here."
         />
@@ -60,7 +60,7 @@ export function PreviewPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PreviewHeader
-          icon={GitCompare}
+          icon={GitMerge}
           title={preview.title}
           subtitle={preview.subtitle}
           onClose={onClose}
@@ -130,7 +130,7 @@ function FilePreview({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PreviewHeader
-        icon={FileCode}
+        icon={Code}
         title={path.split("/").pop() ?? path}
         subtitle={path}
         onClose={onClose}
@@ -146,7 +146,7 @@ function FilePreview({
                 {saving ? (
                   <Spinner className="size-3.5" />
                 ) : (
-                  <Save className="size-3.5" />
+                  <FloppyDisk className="size-3.5" />
                 )}
                 Save
               </Button>
@@ -212,7 +212,7 @@ function PreviewHeader({
             aria-label="Close"
             onClick={onClose}
           >
-            <X className="size-4" />
+            <Cross className="size-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Close the preview</TooltipContent>

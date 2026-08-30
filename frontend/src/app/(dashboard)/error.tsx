@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
-import { AlertTriangle, RotateCw } from "lucide-react"
+import { RotateClockwise, Warning } from "@/components/icons"
 import { Page, PageHeader } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, Well } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -43,12 +43,12 @@ export default function DashboardError({
       <PageHeader eyebrow="Error" title="This page stopped rendering" />
       <Panel>
         <PanelHeader
-          icon={AlertTriangle}
+          icon={Warning}
           title="Something in this page threw"
           description="The rest of the dashboard is unaffected — the sidebar still works."
           actions={
             <Button size="sm" onClick={reset}>
-              <RotateCw className="size-3.5" />
+              <RotateClockwise className="size-3.5" />
               Try again
             </Button>
           }

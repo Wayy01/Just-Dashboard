@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { CircleCheck, Clock, GitBranch, History, Sparkles } from "lucide-react"
+import { CheckCircle, Clock, ClockRewind, GitBranch, Sparkles } from "@/components/icons"
 import { relativeTime } from "@/lib/format"
 import type { Release } from "@/lib/types"
 import { useSelfUpdate } from "@/hooks/use-self-update"
@@ -71,7 +71,7 @@ export default function DashboardVersionPage() {
         />
         <StatTile
           label="Status"
-          icon={CircleCheck}
+          icon={CheckCircle}
           value={report ? (behind === 0 ? "Current" : `${behind} behind`) : "—"}
           tone={behind > 0 ? "warning" : report ? "success" : "default"}
           hint={
@@ -120,7 +120,7 @@ export default function DashboardVersionPage() {
         >
           <Panel>
             <PanelHeader
-              icon={History}
+              icon={ClockRewind}
               title="Release notes"
               description={`${visible.length} of ${all.length} release${all.length === 1 ? "" : "s"}`}
             />
@@ -134,7 +134,7 @@ export default function DashboardVersionPage() {
             <PanelBody>
               {visible.length === 0 ? (
                 <EmptyState
-                  icon={History}
+                  icon={ClockRewind}
                   title={filter ? "Nothing matches that" : "No release notes"}
                   description={
                     filter

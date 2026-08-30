@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, BadgeCheck, Clock, RefreshCw, ShieldX } from "lucide-react"
+import { Clock, RefreshClockwise, ShieldCheck, ShieldOff, Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import type { CertbotState, DNSProvider, Job } from "@/lib/types"
@@ -88,7 +88,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
   if (unavailable) {
     return (
       <EmptyState
-        icon={ShieldX}
+        icon={ShieldOff}
         title="certbot is not installed"
         description="Install it to issue and renew Let's Encrypt certificates from here. A certificate placed on disk by any other means still shows up in the list above."
       />
@@ -136,7 +136,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
 
         <Panel>
           <PanelHeader
-            icon={BadgeCheck}
+            icon={ShieldCheck}
             title="certbot"
             description={
               [
@@ -161,7 +161,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
                     {busy === ALL_CERTS ? (
                       <Spinner className="size-4" />
                     ) : (
-                      <RefreshCw className="size-3.5" />
+                      <RefreshClockwise className="size-3.5" />
                     )}
                     Renew all due
                   </Button>
@@ -171,7 +171,7 @@ export function CertbotPanel({ onChanged }: { onChanged?: () => void }) {
           />
           <PanelBody flush>
             {data.certs.length === 0 ? (
-              <EmptyState icon={BadgeCheck} title="certbot manages no certificates yet" />
+              <EmptyState icon={ShieldCheck} title="certbot manages no certificates yet" />
             ) : (
               <Table>
                 <TableHeader>
@@ -417,7 +417,7 @@ function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
             </p>
           </div>
           {wantsWildcard && method !== "dns" && (
-            <Notice tone="warning" icon={AlertTriangle} title="A wildcard needs the DNS challenge">
+            <Notice tone="warning" icon={Warning} title="A wildcard needs the DNS challenge">
               Let&rsquo;s Encrypt will not sign <code className="font-mono">*.example.com</code>{" "}
               against an HTTP challenge, whatever the web server is doing. Switch the method to
               DNS.
@@ -443,7 +443,7 @@ function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
                 </Select>
               </div>
               {provider && !provider.installed && (
-                <Notice tone="warning" icon={AlertTriangle} title="The plugin is missing">
+                <Notice tone="warning" icon={Warning} title="The plugin is missing">
                   Install <code className="font-mono">python3-certbot-{provider.plugin}</code> (or{" "}
                   <code className="font-mono">certbot plugin install certbot-{provider.plugin}</code>{" "}
                   on a snap install) before issuing.
@@ -499,7 +499,7 @@ function IssueDialog({ onStarted }: { onStarted: (job: Job) => void }) {
             <Switch checked={staging} onCheckedChange={setStaging} className="mt-0.5 shrink-0" />
           </div>
           {!staging && (
-            <Notice tone="warning" icon={AlertTriangle} title="This counts against the rate limit">
+            <Notice tone="warning" icon={Warning} title="This counts against the rate limit">
               Five failed attempts an hour for the same set of names, and five duplicate
               certificates a week. Get a staging run to pass first.
             </Notice>

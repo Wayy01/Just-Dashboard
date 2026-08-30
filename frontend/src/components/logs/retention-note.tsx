@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, HelpCircle, RotateCw } from "lucide-react"
+import { Question, RotateClockwise, Warning } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { relativeTime } from "@/lib/format"
 import type { LogRetention } from "@/lib/types"
@@ -16,10 +16,10 @@ import type { LogRetention } from "@/lib/types"
 export function RetentionNote({ retention }: { retention: LogRetention }) {
   const Icon =
     retention.level === "warn"
-      ? AlertTriangle
+      ? Warning
       : retention.level === "unknown"
-        ? HelpCircle
-        : RotateCw
+        ? Question
+        : RotateClockwise
   return (
     <div
       className={cn(

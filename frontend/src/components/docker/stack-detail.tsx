@@ -3,21 +3,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import {
-  AlertTriangle,
-  ArrowUpCircle,
+  ArrowCircleUp,
   Box,
-  FileCode2,
-  FolderTree,
+  Code,
+  FloppyDisk,
+  FolderOpen,
   GitBranch,
-  Hammer,
   Layers,
   Play,
-  RefreshCw,
-  RotateCw,
-  Save,
-  Square,
-  Terminal as TerminalIcon,
-} from "lucide-react"
+  RefreshClockwise,
+  RotateClockwise,
+  StopCircle,
+  Terminal,
+  Warning,
+  Wrench,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post, put, ApiError } from "@/lib/api"
 import type { ComposeService, ComposeValidation, LogLine, StackDetail } from "@/lib/types"
@@ -169,7 +169,7 @@ function StackBody({
       {data && (
         <>
           {!data.managed && (
-            <Notice title="Read-only here" icon={AlertTriangle}>
+            <Notice title="Read-only here" icon={Warning}>
               No compose file for this stack is reachable from the dashboard, so it can be watched
               but not acted on. Compose records the project directory on the containers it creates —
               if the stack was started elsewhere, or its directory has moved, that record no longer
@@ -179,7 +179,7 @@ function StackBody({
           {data.declaredError && (
             <Notice
               title="This stack's compose file does not parse"
-              icon={AlertTriangle}
+              icon={Warning}
               tone="danger"
             >
               {data.declaredError}
@@ -282,12 +282,12 @@ function StackActions({
                 )
               }
             >
-              <ArrowUpCircle className="size-3.5" />
+              <ArrowCircleUp className="size-3.5" />
               Update
             </Button>
           )}
           <Button size="sm" variant="outline" disabled={busy} onClick={quiet(() => run("build"))}>
-            <Hammer className="size-3.5" />
+            <Wrench className="size-3.5" />
             Build
           </Button>
         </>
@@ -308,7 +308,7 @@ function StackActions({
               )
             }
           >
-            <RotateCw className="size-3.5" />
+            <RotateClockwise className="size-3.5" />
             Restart
           </Button>
           <Button
@@ -330,7 +330,7 @@ function StackActions({
               )
             }
           >
-            <Square className="size-3.5" />
+            <StopCircle className="size-3.5" />
             Down
           </Button>
         </>
@@ -354,14 +354,14 @@ function StackLinks({ data }: { data: StackDetail }) {
     <div className="flex flex-wrap items-center gap-1.5">
       <Button size="xs" variant="outline" asChild>
         <Link href={`/files?path=${encodeURIComponent(data.workingDir)}`}>
-          <FolderTree className="size-3" />
+          <FolderOpen className="size-3" />
           Files
         </Link>
       </Button>
       {can("terminal") && (
         <Button size="xs" variant="outline" asChild>
           <Link href={`/terminal?cwd=${encodeURIComponent(data.workingDir)}`}>
-            <TerminalIcon className="size-3" />
+            <Terminal className="size-3" />
             Shell here
           </Link>
         </Button>
@@ -446,7 +446,7 @@ function ServiceRow({
             onRun("up", { service: service.name }).catch((err) => notify.error(String(err)))
           }
         >
-          <RefreshCw className="size-3" />
+          <RefreshClockwise className="size-3" />
           Re-apply
         </Button>
       )}
@@ -557,7 +557,7 @@ function ComposeEditor({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <FileCode2 className="size-3.5 text-muted-foreground" />
+        <Code className="size-3.5 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
           {stack.configPath}
         </span>
@@ -571,7 +571,7 @@ function ComposeEditor({
         </Button>
         {canWrite && (
           <Button size="xs" onClick={() => save()} disabled={busy || !dirty}>
-            {busy ? <Spinner className="size-3" /> : <Save className="size-3" />}
+            {busy ? <Spinner className="size-3" /> : <FloppyDisk className="size-3" />}
             Save
           </Button>
         )}
@@ -586,7 +586,7 @@ function ComposeEditor({
       />
 
       {validation && !validation.valid && (
-        <Notice title="Compose will not accept this" icon={AlertTriangle} tone="danger">
+        <Notice title="Compose will not accept this" icon={Warning} tone="danger">
           <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px]">{validation.error}</pre>
           {canWrite && (
             <Button size="xs" variant="outline" className="mt-2" onClick={() => save(true)}>

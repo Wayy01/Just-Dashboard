@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle2, Wrench } from "lucide-react"
+import { CheckCircle, Wrench } from "@/components/icons"
 import {
   Accordion,
   AccordionContent,
@@ -53,7 +53,7 @@ export function FindingList({
   if (findings.length === 0) {
     return (
       <div className="flex items-center gap-2.5 text-[13px] text-muted-foreground">
-        <CheckCircle2 className="size-4 shrink-0 text-success" />
+        <CheckCircle className="size-4 shrink-0 text-success" />
         <span className="min-w-0">{emptyLabel}</span>
       </div>
     )
