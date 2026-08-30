@@ -1,6 +1,6 @@
 "use client"
 
-import { Globe, ShieldAlert, ShieldCheck } from "lucide-react"
+import { Globe, ShieldCheck, ShieldOff } from "@/components/icons"
 import { get } from "@/lib/api"
 import type { Exposure } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -43,7 +43,7 @@ export function ExposurePanel({ className }: { className?: string }) {
   return (
     <Panel className={className}>
       <PanelHeader
-        icon={ok ? ShieldCheck : ShieldAlert}
+        icon={ok ? ShieldCheck : ShieldOff}
         title="Reachable from"
         description={grade.label}
         actions={<Status verdict={grade.verdict} label={grade.label} />}

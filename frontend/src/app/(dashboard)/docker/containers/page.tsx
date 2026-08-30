@@ -3,18 +3,17 @@
 import { useCallback, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  ArrowUpCircle,
+  ArrowCircleUp,
   Box,
-  Boxes,
   Layers,
   Pause,
   Play,
   Plus,
-  RotateCw,
-  Square,
-  Terminal as TerminalIcon,
-  Trash2,
-} from "lucide-react"
+  RotateClockwise,
+  StopCircle,
+  Terminal,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { prune, pruneSummary, RECLAIM_SAFE } from "@/lib/docker-prune"
@@ -429,7 +428,7 @@ export default function ContainersPage() {
                                     })
                                   }
                                 >
-                                  <RotateCw />
+                                  <RotateClockwise />
                                 </IconAction>
                                 <IconAction
                                   label="Stop"
@@ -446,7 +445,7 @@ export default function ContainersPage() {
                                     })
                                   }
                                 >
-                                  <Square />
+                                  <StopCircle />
                                 </IconAction>
                               </>
                             )}
@@ -492,12 +491,12 @@ export default function ContainersPage() {
                               })
                             }
                           >
-                            <ArrowUpCircle />
+                            <ArrowCircleUp />
                           </IconAction>
                         )}
                         {can("terminal") && container.state === "running" && (
                           <IconAction label="Shell" onClick={() => setSelected(container.id)}>
-                            <TerminalIcon />
+                            <Terminal />
                           </IconAction>
                         )}
                         {can("destructive") && (
@@ -523,7 +522,7 @@ export default function ContainersPage() {
                               })
                             }
                           >
-                            <Trash2 />
+                            <Trash />
                           </IconAction>
                         )}
                       </div>
@@ -535,7 +534,7 @@ export default function ContainersPage() {
                 <TableRow>
                   <TableCell colSpan={8} className="p-0">
                     <EmptyState
-                      icon={Boxes}
+                      icon={Box}
                       title={filter ? "No containers match that filter" : "Nothing running yet"}
                       description={
                         filter

@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  FileCode,
-  FolderTree,
-  GitBranch as GitBranchIcon,
-  GitCompare,
-  PanelRightClose,
-  Save,
-  X,
-} from "lucide-react"
+  Code,
+  Cross,
+  FloppyDisk,
+  FolderOpen,
+  GitBranch,
+  GitMerge,
+  SidebarRight,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, put } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -116,7 +116,7 @@ export function WorkspaceTools({
         <TabButton
           active={tab === "files"}
           onClick={() => showTab("files")}
-          icon={FolderTree}
+          icon={FolderOpen}
           hint="The files under the shell's working directory"
         >
           Files
@@ -124,7 +124,7 @@ export function WorkspaceTools({
         <TabButton
           active={tab === "git"}
           onClick={() => showTab("git")}
-          icon={GitBranchIcon}
+          icon={GitBranch}
           hint="Stage, commit and push the repository the shell is in"
         >
           Git
@@ -154,7 +154,7 @@ export function WorkspaceTools({
                 className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
                 onClick={onClose}
               >
-                <PanelRightClose className="size-3.5" />
+                <SidebarRight className="size-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Hide files &amp; git</TooltipContent>
@@ -166,7 +166,7 @@ export function WorkspaceTools({
         {!treeRoot ? (
           <EmptyState
             className="m-3"
-            icon={FolderTree}
+            icon={FolderOpen}
             title="No session"
             description="Open or pick a session and its files and git status show up here."
           />
@@ -371,7 +371,7 @@ function InlineFile({
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-card">
       <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-surface-header px-2 py-1.5">
-        <FileCode className="size-3.5 shrink-0 text-primary" />
+        <Code className="size-3.5 shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={path}>
           {path.split("/").pop()}
         </span>
@@ -391,7 +391,7 @@ function InlineFile({
                 className="shrink-0 gap-1 px-1.5 text-[11px]"
                 onClick={() => setShowDiff((v) => !v)}
               >
-                <GitCompare className="size-3.5" />
+                <GitMerge className="size-3.5" />
                 Diff
               </Button>
             </TooltipTrigger>
@@ -413,7 +413,7 @@ function InlineFile({
                 {saving ? (
                   <Spinner className="size-3.5" />
                 ) : (
-                  <Save className="size-3.5" />
+                  <FloppyDisk className="size-3.5" />
                 )}
                 Save
               </Button>
@@ -430,7 +430,7 @@ function InlineFile({
               aria-label="Close"
               onClick={onClose}
             >
-              <X className="size-3.5" />
+              <Cross className="size-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Close this file (Esc)</TooltipContent>
@@ -521,7 +521,7 @@ function InlineDiff({
               aria-label="Close"
               onClick={onClose}
             >
-              <X className="size-3.5" />
+              <Cross className="size-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Close the diff (Esc)</TooltipContent>

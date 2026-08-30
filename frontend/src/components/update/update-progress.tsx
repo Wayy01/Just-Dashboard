@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { CheckCircle2, XCircle } from "lucide-react"
+import { CheckCircle, CrossCircle } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { relativeTime } from "@/lib/format"
 import type { UpdateRun } from "@/lib/types"
@@ -41,8 +41,8 @@ export function UpdateProgress({
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="pt-0.5">
           {running && <Spinner className="size-4 text-primary" />}
-          {run.status === "success" && <CheckCircle2 className="size-4 text-success" />}
-          {run.status === "failed" && <XCircle className="size-4 text-destructive" />}
+          {run.status === "success" && <CheckCircle className="size-4 text-success" />}
+          {run.status === "failed" && <CrossCircle className="size-4 text-destructive" />}
         </span>
         <div className="min-w-0 flex-1 space-y-0.5">
           <p className="text-[13px] leading-tight font-medium">

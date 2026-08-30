@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CheckCircle2, FileCode, Globe, Plus, ShieldCheck, Trash2, XCircle } from "lucide-react"
+import { CheckCircle, Code, CrossCircle, Globe, Plus, ShieldCheck, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -200,7 +200,7 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                       <TableCell>
                         <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                           <IconAction label="Edit the raw config" onClick={() => setEditing(vhost)}>
-                            <FileCode />
+                            <Code />
                           </IconAction>
                           {admin && vhost.kind === "nginx" && (
                             <IconAction
@@ -225,7 +225,7 @@ export function VHostsPanel({ hasNginx }: { hasNginx: boolean }) {
                                 })
                               }
                             >
-                              <Trash2 />
+                              <Trash />
                             </IconAction>
                           )}
                         </span>
@@ -328,7 +328,7 @@ function ConfigEditorBody({
       open={vhost !== null}
       onOpenChange={(o) => !busy && onOpenChange(o)}
       width="xl"
-      icon={FileCode}
+      icon={Code}
       title={vhost?.name ?? "Configuration"}
       description={vhost?.path}
       bodyClassName="flex min-h-0 flex-1 flex-col gap-3 p-4"
@@ -383,9 +383,9 @@ function ConfigEditorBody({
           )}
         >
           {validation.valid ? (
-            <CheckCircle2 className="size-4 shrink-0 text-success" />
+            <CheckCircle className="size-4 shrink-0 text-success" />
           ) : (
-            <XCircle className="size-4 shrink-0 text-destructive" />
+            <CrossCircle className="size-4 shrink-0 text-destructive" />
           )}
           <pre className="font-mono whitespace-pre-wrap">
             {validation.output || "Config is valid."}

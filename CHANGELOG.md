@@ -4,6 +4,38 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.6.5 — 30 August 2026
+
+**A file manager, rather than a directory listing with an editor attached**
+
+The Files page opened at "/", drew the same grey glyph on every row, and answered every click by loading the file into a code editor — which is the right answer for a config file and the wrong one for a picture, a tarball, a video and a two-gigabyte log. It now opens where your work is, shows what each thing is before you open it, finds a file from three letters of its name, and edits pictures without sending them to a laptop and back.
+
+### Added
+
+- One click shows you what a file is — the first lines of a config, the picture itself, what is inside an archive, how big a folder really is
+  - Selecting a row asks the server what the thing is rather than loading it: a text file comes back as a trimmed head with line numbers, an image as its dimensions and the picture, a video or an audio file with a player, a PDF rendered, a zip or a tarball as the list of what is inside it without unpacking anything. A folder gets a Measure button — the recursive size the listing has always shown as "—", with the heaviest few children ranked underneath, which is the answer to "what is eating this disk". Opening the file is the deliberate second click. Media is served under a closed allowlist of types, so a page uploaded into a web root is still a download rather than something the browser will run.
+- Three views — details, tiles and tree — chosen from one control and remembered
+  - Tiles are for directories of images and for folders you would rather hit than aim at: thumbnails are the real files drawn small, in three sizes. The tree is now a view in its own right as well as the rail beside the listing. Sorting, hidden files and tile size moved into one Arrange menu, so the tile view can be sorted too rather than silently losing the ability.
+- Files are drawn by what they are: source, data, keys and certificates, archives, media and configuration each get their own icon and colour
+  - Roughly two hundred extensions plus the files that have none — Dockerfile, Makefile, authorized_keys, .env, a lockfile — and folders whose name says more than "folder", like .git, node_modules and a web root. It is by category rather than by language on purpose: eight colours is something the eye learns in a directory or two, twenty icons is a legend to memorise. An nginx.conf.bak is still a configuration file, and a symlink keeps its target's icon with a link badge in the corner.
+- Find a file by typing three letters of its name — ngxcnf finds nginx.conf
+  - Ctrl+P opens a fuzzy finder that ranks a match in the name above one in the folder above it, a run of characters above scattered ones, and a shallow path above a deep one, with the matched letters underlined so the ranking is legible rather than magic. Terms are ANDed, so "app tsx" narrows. It searches the folder you are in and widens to home in one click, skips node_modules and .git, and stops itself on a budget rather than walking a disk for a minute — saying so when it did.
+- Type a path instead of clicking to it, with Tab completion
+  - Ctrl+L — the browser's own chord for an address bar — turns the breadcrumb into a text field that completes on Tab to the longest common prefix, exactly as a shell does. The separators between crumbs became menus of the folders beside them, so moving from one site's public directory to another's is one click rather than three levels of walking back up.
+- The page opens where your work is, with a rail of places to get back to
+  - Home rather than "/", which is the one directory on a Linux server where nothing you own lives. The rail lists what the machine says about itself — home, the permitted roots, the account directories, and the handful of paths a server keeps its work in, each checked before it is offered — plus folders you star, which are kept on the server because which directory matters is a fact about the box and should be there from another browser, and the folders you were in recently, which are kept in this browser because they are not.
+- Crop, rotate, flip, resize and re-encode a picture in place
+  - The alternative was copying it to a laptop, opening something and copying it back — for a favicon forty pixels too wide, on the server whose job is to serve that file. Brightness, contrast and saturation, a format and quality choice for JPEG and WebP, ten steps of undo, and Save over the original or Save as a new name. Nothing needs to be installed on the host, and the saved file keeps the owner and mode it already had.
+- The editor grew the things an editor is expected to have
+  - Ctrl+S saves, find and replace and go-to-line are the editor's own, and there is now word wrap, a minimap, font size, a formatter, a language override for the files whose extension says nothing, a line and column readout, Save as — which is the cheapest possible backup before editing something that keeps a server up — and a prompt before closing with unsaved changes instead of losing them silently.
+- A checksum, on the row, for the file you are looking at
+  - sha256, sha1 or md5, computed on the server and copied with a click — the other command people keep a terminal open for.
+
+### Changed
+
+- One click selects and previews; two clicks open
+  - The click model every desktop file manager uses. A single click used to open the code editor for anything, which is how a JPEG and a tarball both ended up in front of a text editor that would only refuse them.
+
 ## 0.6.4 — 29 August 2026
 
 **Controls that do what the page says they do**

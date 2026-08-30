@@ -57,6 +57,12 @@ export function CodeEditor({
   className,
   minHeight,
   completions,
+  wordWrap,
+  minimap,
+  fontSize = 13,
+  onSave,
+  onCursorChange,
+  onFormat,
 }: {
   value: string
   onChange?: (value: string) => void
@@ -70,8 +76,32 @@ export function CodeEditor({
    * this component does not drag the editor's types into every caller.
    */
   completions?: Record<string, string[]>
+  wordWrap?: boolean
+  minimap?: boolean
+  fontSize?: number
+  /**
+   * Ctrl+S / Cmd+S. Bound inside Monaco rather than on the window, because the
+   * editor swallows the keystroke first — a document with focus in the editor
+   * would otherwise trigger the browser's own "save page" dialog.
+   */
+  onSave?: () => void
+  onCursorChange?: (position: { line: number; column: number; selected: number }) => void
+  /** Called with a function that formats the document, once the editor exists. */
+  onFormat?: (format: (() => void) | null) => void
 }) {
   const { mode } = useTheme()
+  // The save handler is read through a ref for the same reason the completion
+  // schema is: the command is registered once on mount and would otherwise
+  // keep calling the first render's closure, saving the file as it was when
+  // the editor opened.
+  const saveRef = useRef(onSave)
+  useEffect(() => {
+    saveRef.current = onSave
+  }, [onSave])
+  const cursorRef = useRef(onCursorChange)
+  useEffect(() => {
+    cursorRef.current = onCursorChange
+  }, [onCursorChange])
   // Held in a ref so the provider registered on mount always reads the current
   // schema. Re-registering on every change would stack providers and offer each
   // table name once per registration.
@@ -88,15 +118,37 @@ export function CodeEditor({
         language={language}
         value={value}
         onChange={(v) => onChange?.(v ?? "")}
-        onMount={(_editor, monaco) => {
+        onMount={(editor, monaco) => {
+          editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current?.())
+          editor.onDidChangeCursorSelection(() => {
+            const position = editor.getPosition()
+            const selection = editor.getSelection()
+            const model = editor.getModel()
+            if (!position || !cursorRef.current) return
+            cursorRef.current({
+              line: position.lineNumber,
+              column: position.column,
+              selected:
+                selection && model && !selection.isEmpty()
+                  ? model.getValueInRange(selection).length
+                  : 0,
+            })
+          })
+          onFormat?.(() => {
+            void editor.getAction("editor.action.formatDocument")?.run()
+          })
           if (!completions || !language) return
           registerSchemaCompletions(monaco, language, completionsRef)
         }}
         options={{
           readOnly,
-          minimap: { enabled: false },
-          fontSize: 13,
-          lineHeight: 20,
+          minimap: { enabled: minimap ?? false },
+          wordWrap: wordWrap ? "on" : "off",
+          fontSize,
+          lineHeight: Math.round(fontSize * 1.55),
+          bracketPairColorization: { enabled: true },
+          stickyScroll: { enabled: true },
+          rulers: [],
           scrollBeyondLastLine: false,
           automaticLayout: true,
           tabSize: 2,

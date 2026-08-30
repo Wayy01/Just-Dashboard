@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, Cable, Plus, Trash2 } from "lucide-react"
+import { Connection, Plus, Trash, Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import type { SiteResult, StreamSpec, StreamStatus } from "@/lib/types"
@@ -66,7 +66,7 @@ export function StreamsPanel() {
     <>
       <div className="flex min-w-0 flex-col gap-4">
         {!data.included && (
-          <Notice tone="warning" icon={AlertTriangle} title="nginx is not reading these yet">
+          <Notice tone="warning" icon={Warning} title="nginx is not reading these yet">
             <div className="space-y-2">
               <p>
                 A stream lives in nginx&rsquo;s top-level <code className="font-mono">stream</code>{" "}
@@ -89,7 +89,7 @@ export function StreamsPanel() {
 
         <Panel>
           <PanelHeader
-            icon={Cable}
+            icon={Connection}
             title="Port forwarding"
             description={`${data.streams.length} stream${data.streams.length === 1 ? "" : "s"} · for services that do not speak HTTP`}
             actions={
@@ -104,7 +104,7 @@ export function StreamsPanel() {
           <PanelBody flush>
             {data.streams.length === 0 ? (
               <EmptyState
-                icon={Cable}
+                icon={Connection}
                 title="Nothing forwarded"
                 description="Point a port on this host at a service somewhere else — a database replica, a bastion, a game server. Anything TCP or UDP."
               />
@@ -166,7 +166,7 @@ export function StreamsPanel() {
                               })
                             }
                           >
-                            <Trash2 />
+                            <Trash />
                           </IconAction>
                         )}
                       </TableCell>
@@ -284,7 +284,7 @@ function StreamForm({
       open={open}
       onOpenChange={(o) => !busy && onOpenChange(o)}
       width="lg"
-      icon={Cable}
+      icon={Connection}
       title={initial ? `Edit ${initial.name}` : "New stream"}
       description="A port on this host, forwarded somewhere else"
       bodyClassName="flex min-h-0 flex-1 flex-col gap-4 p-4"

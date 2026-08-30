@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRight, DownloadCloud, Flame, Pencil, Table2, Trash2 } from "lucide-react"
+import { ArrowRight, CloudDownload, Layout, Pencil, Trash, WarningFill } from "@/components/icons"
 import Link from "next/link"
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
@@ -92,7 +92,7 @@ export default function ConnectionPage() {
                     })
                   }
                 >
-                  <Trash2 className="size-4" />
+                  <Trash className="size-4" />
                   Remove
                 </Button>
                 <Button
@@ -128,7 +128,7 @@ export default function ConnectionPage() {
                     })
                   }
                 >
-                  <Flame className="size-4" />
+                  <WarningFill className="size-4" />
                   Delete database
                 </Button>
               </>
@@ -156,7 +156,7 @@ export default function ConnectionPage() {
 
         <Panel>
           <PanelHeader
-            icon={Table2}
+            icon={Layout}
             title={
               objectWord === "collection" ? "Collections" : objectWord === "keyspace" ? "Keys" : "Tables"
             }
@@ -237,7 +237,7 @@ function BackupButton({ conn }: { conn: DbConnection }) {
   }
   return (
     <Button size="sm" variant="outline" onClick={run} disabled={busy}>
-      {busy ? <Spinner /> : <DownloadCloud className="size-4" />}
+      {busy ? <Spinner /> : <CloudDownload className="size-4" />}
       Dump &amp; download
     </Button>
   )

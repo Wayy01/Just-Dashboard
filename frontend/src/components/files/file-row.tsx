@@ -1,21 +1,6 @@
 "use client"
 
-import {
-  Clipboard,
-  Copy,
-  CornerUpRight,
-  Download,
-  File as FileIcon,
-  FileArchive,
-  Folder,
-  Link as LinkIcon,
-  MoreHorizontal,
-  Pencil,
-  Scissors,
-  Shield,
-  Trash2,
-} from "lucide-react"
-import { notify } from "@/lib/toast"
+import { Download, MoreHorizontal, Pencil } from "@/components/icons"
 import { downloadUrl } from "@/lib/api"
 import { bytes, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -26,80 +11,73 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Checkbox } from "@/components/ui/checkbox"
 import { IconAction } from "@/components/icon-action"
 import { TableCell, TableRow } from "@/components/ui/table"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { FileIcon } from "@/components/files/file-icon"
+import { FileActionsMenu, type FileActions, type RowCaps } from "@/components/files/file-actions"
 
-/** Archives the backend can extract in place. */
-const ARCHIVE_RE = /\.(zip|tar|tar\.gz|tgz)$/i
-export const isArchive = (name: string) => ARCHIVE_RE.test(name)
-
-export type RowCaps = { write: boolean; destruct: boolean; admin: boolean }
+export { isArchive, type RowCaps } from "@/components/files/file-actions"
 
 /**
- * One row of the file listing, with every operation the backend supports
- * reachable from it: open, download, rename, duplicate, copy, cut, extract,
- * permissions and delete. The common two (edit, download) stay as quick icons;
- * the rest live in a menu so the row is not a wall of buttons, and so an action
- * that only makes sense sometimes — extract on an archive, permissions for an
- * admin — appears only when it does.
+ * One row of the file listing.
+ *
+ * The click model is the one every desktop file manager uses and this page did
+ * not: **one click looks, two clicks open.** Selecting a row asks the server
+ * what the thing is and shows it in the preview beside the list, which is the
+ * question a click is usually asking — the old page answered every click by
+ * loading the file into a code editor, which is wrong for an image, a tarball
+ * and a two-gigabyte log alike.
+ *
+ * The common actions stay as quick icons; the rest live in the shared menu, so
+ * the row is not a wall of buttons and the grid offers exactly the same list.
  */
 export function FileRow({
   entry,
   selected,
+  active,
   dimmed,
   caps,
   onToggle,
+  onSelect,
   onOpen,
-  onRename,
-  onDuplicate,
-  onCopy,
-  onCut,
-  onExtract,
-  onPermissions,
-  onDelete,
+  actions,
 }: {
   entry: FileEntry
   selected: boolean
+  /** The row the preview pane is currently showing. */
+  active?: boolean
   /** Faded because it is on the clipboard waiting to be moved. */
   dimmed?: boolean
   caps: RowCaps
   onToggle: (checked: boolean) => void
+  onSelect: () => void
   onOpen: () => void
-  onRename: () => void
-  onDuplicate: () => void
-  onCopy: () => void
-  onCut: () => void
-  onExtract: () => void
-  onPermissions: () => void
-  onDelete: () => void
+  actions: FileActions
 }) {
-  const openOnEnter = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
-    if (e.key !== "Enter" || e.target !== e.currentTarget) return
-    e.preventDefault()
-    onOpen()
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (e.key === "Enter") {
+      e.preventDefault()
+      onOpen()
+    } else if (e.key === " ") {
+      e.preventDefault()
+      onSelect()
+    }
   }
-  const copyPath = () =>
-    navigator.clipboard
-      ?.writeText(entry.path)
-      .then(() => notify.success("Path copied"))
-      .catch(() => notify.error("The browser refused clipboard access"))
-
-  const archive = !entry.isDir && isArchive(entry.name)
 
   return (
     <TableRow
-      className={cn("group cursor-pointer select-none", dimmed && "opacity-50")}
+      className={cn(
+        "group cursor-pointer select-none",
+        dimmed && "opacity-50",
+        active && !selected && "bg-primary/[0.06]",
+      )}
       data-state={selected ? "selected" : undefined}
       tabIndex={0}
+      onClick={onSelect}
       onDoubleClick={onOpen}
-      onKeyDown={openOnEnter}
+      onKeyDown={onKeyDown}
     >
-      <TableCell onDoubleClick={(e) => e.stopPropagation()}>
+      <TableCell onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <Checkbox
           checked={selected}
           onCheckedChange={(v) => onToggle(v === true)}
@@ -110,18 +88,13 @@ export function FileRow({
         <div className="max-w-[26rem] min-w-0">
           <button
             className="flex max-w-full items-center gap-2 text-left text-[13px] hover:underline"
-            onClick={onOpen}
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpen()
+            }}
             title={entry.name}
           >
-            {entry.isDir ? (
-              <Folder className="size-4 shrink-0 fill-primary/20 text-primary" />
-            ) : entry.isSymlink ? (
-              <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
-            ) : archive ? (
-              <FileArchive className="size-4 shrink-0 text-muted-foreground" />
-            ) : (
-              <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-            )}
+            <FileIcon entry={entry} className="size-4" />
             <span className="truncate">{entry.name}</span>
           </button>
           {entry.isSymlink && (
@@ -146,7 +119,7 @@ export function FileRow({
         {entry.owner}:{entry.group}
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">{entry.modeOctal}</TableCell>
-      <TableCell onDoubleClick={(e) => e.stopPropagation()}>
+      <TableCell onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {!entry.isDir && (
             <>
@@ -160,7 +133,7 @@ export function FileRow({
               </IconAction>
             </>
           )}
-          <DropdownMenu>
+          <FileActionsMenu entry={entry} caps={caps} actions={actions}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
@@ -176,85 +149,7 @@ export function FileRow({
               </TooltipTrigger>
               <TooltipContent>Rename, move, copy, permissions, delete</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onSelect={onOpen}>
-                {entry.isDir ? (
-                  <>
-                    <Folder className="size-3.5" />
-                    Open
-                  </>
-                ) : (
-                  <>
-                    <Pencil className="size-3.5" />
-                    Open / edit
-                  </>
-                )}
-              </DropdownMenuItem>
-              {!entry.isDir && (
-                <DropdownMenuItem asChild>
-                  <a href={downloadUrl("/files/download", { path: entry.path })} download>
-                    <Download className="size-3.5" />
-                    Download
-                  </a>
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={copyPath}>
-                <Clipboard className="size-3.5" />
-                Copy path
-              </DropdownMenuItem>
-
-              {caps.write && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={onRename}>
-                    <Pencil className="size-3.5" />
-                    Rename
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onDuplicate}>
-                    <Copy className="size-3.5" />
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onCopy}>
-                    <Copy className="size-3.5" />
-                    Copy
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onCut}>
-                    <Scissors className="size-3.5" />
-                    Cut
-                  </DropdownMenuItem>
-                  {archive && (
-                    <DropdownMenuItem onSelect={onExtract}>
-                      <CornerUpRight className="size-3.5" />
-                      Extract here
-                    </DropdownMenuItem>
-                  )}
-                </>
-              )}
-
-              {caps.admin && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={onPermissions}>
-                    <Shield className="size-3.5" />
-                    Permissions…
-                  </DropdownMenuItem>
-                </>
-              )}
-
-              {caps.destruct && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={onDelete}
-                  >
-                    <Trash2 className="size-3.5" />
-                    Delete
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          </FileActionsMenu>
         </div>
       </TableCell>
     </TableRow>

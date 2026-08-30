@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { GitBranch as GitBranchIcon, MoreHorizontal, Plus } from "lucide-react"
+import { GitBranch as GitBranchIcon, MoreHorizontal, Plus } from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { GitBranch, GitResult } from "@/lib/types"

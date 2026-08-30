@@ -1,6 +1,6 @@
 "use client"
 
-import { Plug } from "lucide-react"
+import { Router } from "@/components/icons"
 import { get } from "@/lib/api"
 import type { Listener } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -31,7 +31,7 @@ export function PortsPanel() {
   return (
     <Panel>
       <PanelHeader
-        icon={Plug}
+        icon={Router}
         title="Listening ports"
         description={`${exposed} of ${data?.length ?? 0} bound to a wildcard address and therefore reachable from off the machine`}
       />
@@ -66,7 +66,7 @@ export function PortsPanel() {
                 <TableCell className="text-xs">{listener.user ?? "—"}</TableCell>
                 <TableCell>
                   {listener.exposed ? (
-                    <Status verdict="warning" label="exposed" icon={Plug} />
+                    <Status verdict="warning" label="exposed" icon={Router} />
                   ) : (
                     <span className="text-xs text-muted-foreground">loopback</span>
                   )}

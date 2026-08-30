@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Check, GitBranch as GitBranchIcon, RefreshCw } from "lucide-react"
+import { Check, GitBranch, RefreshClockwise } from "@/components/icons"
 import { get } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import type { GitRepo } from "@/lib/types"
@@ -91,7 +91,7 @@ export default function GitPage() {
             <GitHubAccountControl />
             <GitHelp />
             <Button variant="outline" size="sm" onClick={() => repos.refresh()}>
-              <RefreshCw className="size-4" />
+              <RefreshClockwise className="size-4" />
               Rescan
             </Button>
           </>
@@ -103,7 +103,7 @@ export default function GitPage() {
 
       {repos.data && !repos.data.available && (
         <EmptyState
-          icon={GitBranchIcon}
+          icon={GitBranch}
           title="git is not installed on this host"
           description="Install git to manage repositories from here."
         />
@@ -112,14 +112,14 @@ export default function GitPage() {
       {repos.data?.available &&
         (repos.data.repos.length === 0 ? (
           <EmptyState
-            icon={GitBranchIcon}
+            icon={GitBranch}
             title="No repositories found"
             description="Nothing under the configured git roots. Set JD_GIT_ROOTS to point at where your projects live."
           />
         ) : (
           <Panel>
             <PanelHeader
-              icon={GitBranchIcon}
+              icon={GitBranch}
               title="Repositories"
               description={`${repos.data.repos.length} found${dirty ? ` · ${dirty} with uncommitted changes` : ""}`}
             />
@@ -160,7 +160,7 @@ export default function GitPage() {
                           variant={repo.detached ? "destructive" : "secondary"}
                           className="font-normal"
                         >
-                          <GitBranchIcon className="size-3" />
+                          <GitBranch className="size-3" />
                           {repo.branch || "—"}
                         </Badge>
                       </TableCell>
@@ -194,7 +194,7 @@ export default function GitPage() {
                   {visible.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="p-0">
-                        <EmptyState icon={GitBranchIcon} title="No repository matches that filter" />
+                        <EmptyState icon={GitBranch} title="No repository matches that filter" />
                       </TableCell>
                     </TableRow>
                   )}

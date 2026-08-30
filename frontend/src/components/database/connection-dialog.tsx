@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { CheckCircle2, Plug, XCircle } from "lucide-react"
+import { CheckCircle, CrossCircle, Router } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { errorMessage, get, post, put } from "@/lib/api"
 import { usePoll } from "@/hooks/use-poll"
@@ -171,9 +171,9 @@ export function ConnectionDialog({
               }
             >
               {testResult.ok ? (
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                <CheckCircle className="mt-0.5 size-4 shrink-0" />
               ) : (
-                <XCircle className="mt-0.5 size-4 shrink-0" />
+                <CrossCircle className="mt-0.5 size-4 shrink-0" />
               )}
               <span className="min-w-0 break-words">
                 {testResult.ok
@@ -187,7 +187,7 @@ export function ConnectionDialog({
         </div>
         <DialogFooter className="sm:justify-between">
           <Button variant="outline" onClick={test} disabled={testing || dsn === ""}>
-            {testing ? <Spinner /> : <Plug className="size-4" />}
+            {testing ? <Spinner /> : <Router className="size-4" />}
             Test connection
           </Button>
           <Button onClick={save} disabled={!canSave || saving}>

@@ -1,6 +1,6 @@
 "use client"
 
-import { Cable, Route as RouteIcon, Server } from "lucide-react"
+import { Connection, Route, Servers } from "@/components/icons"
 import { get } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -47,7 +47,7 @@ export function NetworkPanel() {
     <div className="flex min-w-0 flex-col gap-4">
       <Panel>
         <PanelHeader
-          icon={Cable}
+          icon={Connection}
           title="Interfaces"
           description="A host running Docker has a dozen virtual devices; they are grouped so the real ones read first"
           actions={
@@ -118,7 +118,7 @@ export function NetworkPanel() {
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr] [&>*]:min-w-0">
         <Panel>
           <PanelHeader
-            icon={RouteIcon}
+            icon={Route}
             title="Routes"
             description="Which interface carries the default route is what decides where the internet reaches this host"
           />
@@ -159,7 +159,7 @@ export function NetworkPanel() {
 
         <Panel>
           <PanelHeader
-            icon={Server}
+            icon={Servers}
             title="Resolvers"
             description="A resolver you did not choose redirects every name this host looks up"
           />

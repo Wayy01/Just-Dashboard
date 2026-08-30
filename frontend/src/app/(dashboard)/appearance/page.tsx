@@ -1,6 +1,6 @@
 "use client"
 
-import { Check, Monitor, Moon, Sun } from "lucide-react"
+import { Check, DesktopDevice, Moon, Sun } from "@/components/icons"
 import { useTheme } from "@/hooks/use-theme"
 import type { ThemeMode } from "@/lib/themes"
 import { cn } from "@/lib/utils"
@@ -36,7 +36,7 @@ export default function AppearancePage() {
       </Section>
 
       <Panel>
-        <PanelHeader icon={Monitor} title="Where this is stored" />
+        <PanelHeader icon={DesktopDevice} title="Where this is stored" />
         <PanelBody>
           <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">
             The choice lives in this browser&apos;s local storage, not on your account — the same

@@ -1,4 +1,4 @@
-import { Globe } from "lucide-react"
+import { Globe } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 
 /**

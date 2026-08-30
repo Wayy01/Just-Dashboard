@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { CheckCircle2, XCircle } from "lucide-react"
+import { CheckCircle, CrossCircle } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { Button } from "@/components/ui/button"
@@ -153,8 +153,8 @@ export function RunConsole({
     >
       <div className="flex items-center gap-2 border-b border-hairline bg-surface-header px-3 py-1.5">
         {state === "running" && <Spinner className="size-3.5 text-muted-foreground" />}
-        {state === "ok" && <CheckCircle2 className="size-3.5 text-success" />}
-        {state === "failed" && <XCircle className="size-3.5 text-destructive" />}
+        {state === "ok" && <CheckCircle className="size-3.5 text-success" />}
+        {state === "failed" && <CrossCircle className="size-3.5 text-destructive" />}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {title ?? "Output"}
           {state === "failed" && exitCode !== undefined && (

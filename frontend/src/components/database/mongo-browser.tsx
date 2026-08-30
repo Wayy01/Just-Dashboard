@@ -2,16 +2,16 @@
 
 import { useMemo, useState } from "react"
 import {
-  Braces,
+  AcronymJson,
+  CloudUpload,
+  CodeBracket,
   Database,
   Download,
-  FileJson,
+  Layout,
   Play,
   Plus,
-  Table2,
-  Trash2,
-  Upload,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, patch, post } from "@/lib/api"
 import { bytes, plural } from "@/lib/format"
@@ -292,7 +292,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           <TabsContent value="documents" className="min-w-0">
             <Panel>
               <PanelHeader
-                icon={Table2}
+                icon={Layout}
                 title={collection ?? "Pick a collection"}
                 description={
                   docs.data
@@ -323,12 +323,12 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
                         title="Export the current filter as JSON"
                         onClick={() => exportDocs("json")}
                       >
-                        <FileJson className="size-3.5" />
+                        <AcronymJson className="size-3.5" />
                         JSON
                       </Button>
                       {canWrite && (
                         <Button size="sm" variant="ghost" onClick={() => setImporting(true)}>
-                          <Upload className="size-3.5" />
+                          <CloudUpload className="size-3.5" />
                           Import
                         </Button>
                       )}
@@ -355,7 +355,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
                           className="text-destructive"
                           onClick={dropCollection}
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash className="size-3.5" />
                         </Button>
                       )}
                     </>
@@ -379,7 +379,7 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
               )}
               <PanelBody flush>
                 {docs.error && <ErrorState error={docs.error} className="m-4" />}
-                {!collection && <EmptyState icon={Table2} title="Select a collection" />}
+                {!collection && <EmptyState icon={Layout} title="Select a collection" />}
                 {docs.data && (
                   <ResultGrid
                     result={docs.data}
@@ -393,9 +393,9 @@ export function MongoBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
 
           <TabsContent value="indexes" className="min-w-0">
             <Panel>
-              <PanelHeader icon={Braces} title="Indexes" description={collection} />
+              <PanelHeader icon={CodeBracket} title="Indexes" description={collection} />
               <PanelBody flush>
-                {!collection && <EmptyState icon={Braces} title="Select a collection" />}
+                {!collection && <EmptyState icon={CodeBracket} title="Select a collection" />}
                 {info.data && (
                   <>
                     <Table>
@@ -620,12 +620,12 @@ function AggregateTab({
     execute().catch(() => undefined)
   }
 
-  if (!collection) return <EmptyState icon={FileJson} title="Select a collection" />
+  if (!collection) return <EmptyState icon={AcronymJson} title="Select a collection" />
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <Panel>
-        <PanelHeader icon={FileJson} title="Aggregation pipeline" description={collection} />
+        <PanelHeader icon={AcronymJson} title="Aggregation pipeline" description={collection} />
         <PanelBody flush>
           <CodeEditor className="h-56" language="json" value={pipeline} onChange={setPipeline} />
         </PanelBody>
@@ -643,7 +643,7 @@ function AggregateTab({
       </Panel>
       {result && (
         <Panel>
-          <PanelHeader icon={Table2} title="Result" />
+          <PanelHeader icon={Layout} title="Result" />
           <PanelBody flush>
             <ResultGrid result={result} />
           </PanelBody>

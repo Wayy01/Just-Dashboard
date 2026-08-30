@@ -4,19 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ChevronRight,
   Download,
-  File as FileIcon,
-  FilePlus,
-  Folder,
   FolderOpen,
   FolderPlus,
-  Link as LinkIcon,
-  RefreshCw,
-  Trash2,
-} from "lucide-react"
+  PlusSquareSmall,
+  RefreshClockwise,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, downloadUrl, get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { describeChange, gitLetter, gitStyle, gitTone } from "@/lib/git-status"
+import { FileIcon } from "@/components/files/file-icon"
 import type { FileEntry, FileListing, GitFileChange } from "@/lib/types"
 import { useViewState } from "@/lib/view-state"
 import { Button } from "@/components/ui/button"
@@ -220,7 +218,7 @@ export function FileTree({
                 setCreating({ parent: root, kind: "file" })
               }}
             >
-              <FilePlus className="size-3.5" />
+              <PlusSquareSmall className="size-3.5" />
             </TreeButton>
             <TreeButton
               label="New folder here"
@@ -247,7 +245,7 @@ export function FileTree({
           </TreeButton>
         )}
         <TreeButton label="Refresh" onClick={() => reload(root)}>
-          <RefreshCw className="size-3.5" />
+          <RefreshClockwise className="size-3.5" />
         </TreeButton>
       </div>
 
@@ -418,17 +416,10 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
               />
             ) : null}
           </span>
-          {entry.isDir ? (
-            isOpen ? (
-              <FolderOpen className="size-4 shrink-0 text-primary" />
-            ) : (
-              <Folder className="size-4 shrink-0 fill-primary/20 text-primary" />
-            )
-          ) : entry.isSymlink ? (
-            <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-          )}
+          {/* The same kind icons the listing and the tiles draw, so a file is
+              recognisable wherever this page shows it rather than reverting to
+              a grey sheet of paper in the rail. */}
+          <FileIcon entry={entry} open={isOpen} className="size-4" />
           <span
             className={cn(
               "truncate",
@@ -457,7 +448,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
                 label="New file here"
                 onClick={() => props.onStartCreate(entry.path, "file")}
               >
-                <FilePlus className="size-3" />
+                <PlusSquareSmall className="size-3" />
               </TreeButton>
               <TreeButton
                 label="New folder here"
@@ -480,7 +471,7 @@ function TreeNode({ entry, depth, ...props }: LevelProps & { entry: FileEntry })
               className="text-destructive"
               onClick={() => props.onDelete(entry, props.parent)}
             >
-              <Trash2 className="size-3" />
+              <Trash className="size-3" />
             </TreeButton>
           )}
         </div>
@@ -519,7 +510,7 @@ function CreateRow({
       {kind === "folder" ? (
         <FolderPlus className="size-4 shrink-0 text-primary" />
       ) : (
-        <FilePlus className="size-4 shrink-0 text-muted-foreground" />
+        <PlusSquareSmall className="size-4 shrink-0 text-muted-foreground" />
       )}
       <Input
         ref={ref}

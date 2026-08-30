@@ -24,7 +24,7 @@ import { ErrorState } from "@/components/state"
 import { ChartPanel, ChartPlaceholder } from "@/components/metrics/chart-panel"
 import { RangePicker } from "@/components/metrics/range-picker"
 import type { Series } from "@/components/metrics/metric-chart"
-import { Activity, Cpu, HardDrive, MemoryStick } from "lucide-react"
+import { ChartActivity, Cpu, GridSquare, Servers } from "@/components/icons"
 
 const cpuSeries: Series[] = [
   { key: "cpu", label: "CPU", color: "var(--chart-1)", kind: "area", peakKey: "cpuPeak" },
@@ -141,7 +141,7 @@ export function ContainerUsage({ containerId, name }: { containerId: string; nam
       />
 
       <ChartPanel
-        icon={MemoryStick}
+        icon={GridSquare}
         title="Memory"
         description={
           limit > 0 ? `Against a ${bytes(limit)} limit` : "No limit set — bounded only by the host"
@@ -173,7 +173,7 @@ export function ContainerUsage({ containerId, name }: { containerId: string; nam
       */}
       <div className="grid gap-3 lg:grid-cols-2 [&>*]:min-w-0">
         <ChartPanel
-          icon={Activity}
+          icon={ChartActivity}
           title="Network"
           description={
             hasNetwork
@@ -198,7 +198,7 @@ export function ContainerUsage({ containerId, name }: { containerId: string; nam
           height={150}
         />
         <ChartPanel
-          icon={HardDrive}
+          icon={Servers}
           title="Block I/O"
           description="Reads and writes against the host's devices"
           rows={rows}

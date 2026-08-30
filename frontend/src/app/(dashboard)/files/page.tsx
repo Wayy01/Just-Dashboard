@@ -1,32 +1,36 @@
 "use client"
 
-import { Fragment, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import {
+  ArrowMove,
   ArrowUp,
   ChevronDown,
   ChevronUp,
-  ClipboardPaste,
-  FileArchive,
-  FilePlus,
-  FolderInput,
+  Clipboard,
+  CloudUpload,
+  Cross,
+  FileZip,
+  FolderOpen,
   FolderPlus,
-  FolderTree,
-  Home,
-  Link2,
-  ListTree,
+  GridSquare,
+  Linked,
+  ListUnordered,
+  MagnifyingGlass,
+  Monorepo,
   Plus,
-  Scissors,
-  Search,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react"
+  PlusSquareSmall,
+  PreviewDocument,
+  SettingsSliders,
+  SidebarLeft,
+  SidebarRight,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
-import { API_BASE, del, downloadUrl, get, post } from "@/lib/api"
+import { API_BASE, del, downloadUrl, get, post, put } from "@/lib/api"
 import { truncateMiddle } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { FileEntry, FileListing } from "@/lib/types"
+import type { FileBookmark, FileEntry, FileListing, FilePlaces } from "@/lib/types"
 import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
@@ -37,21 +41,20 @@ import { GitHubAccountControl } from "@/components/git/github-account"
 import { FileEditorSheet } from "@/components/files/file-editor"
 import { FileRow } from "@/components/files/file-row"
 import { FileTree } from "@/components/files/file-tree"
+import { GridView } from "@/components/files/grid-view"
+import { ImageEditorSheet } from "@/components/files/image-editor"
+import { PathBar } from "@/components/files/path-bar"
 import { PermissionsDialog } from "@/components/files/permissions-dialog"
+import { PlacesRail } from "@/components/files/places-rail"
+import { PreviewPanel } from "@/components/files/preview-panel"
+import { QuickOpen } from "@/components/files/quick-open"
+import { isImage, type FileActions } from "@/components/files/file-actions"
 import { usePrompt } from "@/components/files/prompt-dialog"
 import { EmptyState, ErrorState, LoadingRows } from "@/components/state"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
 import {
   stickyTableHeader,
   Table,
@@ -67,16 +70,19 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
 type SortKey = "name" | "size" | "modified" | "owner" | "mode"
+type ViewMode = "list" | "grid" | "tree"
 type Clip = { mode: "cut" | "copy"; paths: string[] }
 
 const clean = (p: string) => p.replace(/\/+$/, "") || "/"
@@ -106,49 +112,72 @@ export default function FilesPage() {
   const canWrite = can("file.write")
   const canDestruct = can("destructive")
   const canAdmin = can("system.admin")
+  const caps = useMemo(
+    () => ({ write: canWrite, destruct: canDestruct, admin: canAdmin }),
+    [canWrite, canDestruct, canAdmin],
+  )
 
+  // Where the machine says to start. The page opens at home rather than at
+  // "/", which is the one directory on a Linux server where nothing an
+  // operator owns lives — every visit used to begin with the same two clicks
+  // past bin, boot, dev and proc. A ?path= from a deep link still wins.
   const initialPath = useSearchParams().get("path")
-  const [path, setPath] = useState(initialPath || "/")
-  // How the listing is arranged, remembered across a navigation: somebody who
-  // works with dotfiles works with them every visit, and a tree turned on is a
-  // layout choice rather than a question being asked.
+  const places = usePoll<FilePlaces>((signal) => get("/files/places", undefined, signal), 0, [])
+  // Derived rather than copied into state by an effect: until either the URL
+  // or a navigation has said otherwise, the answer *is* whatever the server
+  // reports as home, and syncing that into state would render one frame of a
+  // directory nobody asked for.
+  const [chosenPath, setChosenPath] = useState<string | null>(
+    initialPath ? clean(initialPath) : null,
+  )
+  const path = chosenPath ?? places.data?.home ?? null
+
+  const [view, setView] = useViewState<ViewMode>("files.view", "list")
+  const [tile, setTile] = useViewState<"sm" | "md" | "lg">("files.tile", "md")
   const [showHidden, setShowHidden] = useViewState("files.hidden", false)
-  const [showTree, setShowTree] = useViewState("files.tree", false)
-  const [editing, setEditing] = useState<string | null>(null)
-  const [permsEntry, setPermsEntry] = useState<FileEntry | null>(null)
-  const [symlinkOpen, setSymlinkOpen] = useState(false)
-  const [clip, setClip] = useState<Clip | null>(null)
+  const [showRail, setShowRail] = useViewState("files.rail", true)
+  const [showPreview, setShowPreview] = useViewState("files.preview", true)
   const [sort, setSort] = useViewState<{ key: SortKey; dir: "asc" | "desc" }>("files.sort", {
     key: "name",
     dir: "asc",
   })
+  // Where you have just been. Kept in the browser rather than on the server:
+  // unlike a starred folder, which is a fact about the machine, this is a
+  // property of the last ten minutes at this screen.
+  const [recent, setRecent] = useViewState<string[]>("files.recent", [])
+
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editingImage, setEditingImage] = useState<string | null>(null)
+  const [permsEntry, setPermsEntry] = useState<FileEntry | null>(null)
+  const [symlinkOpen, setSymlinkOpen] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
+  const [clip, setClip] = useState<Clip | null>(null)
   const [dragOver, setDragOver] = useState(false)
-  // The selection is scoped to the directory it was made in, so navigating away
-  // discards it without a reset effect.
+  // The selection and the previewed row are scoped to the directory they were
+  // made in, so navigating away discards both without a reset effect.
   const [selection, setSelection] = useState<{ dir: string; paths: Set<string> }>({
-    dir: path,
+    dir: path ?? "/",
     paths: new Set(),
   })
+  const [active, setActive] = useState<{ dir: string; entry: FileEntry } | null>(null)
   const selected = selection.dir === path ? [...selection.paths] : []
+  const activeEntry = active && active.dir === path ? active.entry : null
   const uploadRef = useRef<HTMLInputElement>(null)
 
   const listing = usePoll(
-    (signal) => get<FileListing>("/files/list", { path, hidden: showHidden }, signal),
+    (signal) =>
+      path === null
+        ? Promise.resolve(null as unknown as FileListing)
+        : get<FileListing>("/files/list", { path, hidden: showHidden }, signal),
     0,
     [path, showHidden],
   )
   const refresh = listing.refresh
 
-  const crumbs = useMemo(() => {
-    const parts = path.split("/").filter(Boolean)
-    const out = [{ label: "/", href: "/" }]
-    let acc = ""
-    for (const part of parts) {
-      acc += `/${part}`
-      out.push({ label: part, href: acc })
-    }
-    return out
-  }, [path])
+  useEffect(() => {
+    if (!path) return
+    setRecent((prev) => [path, ...prev.filter((p) => p !== path)].slice(0, 8))
+  }, [path, setRecent])
 
   // Directories first, then the chosen column. Keeping folders grouped is what
   // every file manager does and what makes a long listing navigable.
@@ -179,11 +208,16 @@ export default function FilesPage() {
     return list
   }, [listing.data, sort])
 
-  const clearSelection = () => setSelection({ dir: path, paths: new Set() })
+  const clearSelection = () => setSelection({ dir: path ?? "/", paths: new Set() })
+
+  const navigate = useCallback((next: string) => {
+    setChosenPath(clean(next))
+    setActive(null)
+  }, [])
 
   const upload = async (files: FileList | File[] | null) => {
     const arr = files ? Array.from(files) : []
-    if (arr.length === 0) return
+    if (arr.length === 0 || !path) return
     const form = new FormData()
     for (const file of arr) form.append("file", file)
     try {
@@ -203,6 +237,21 @@ export default function FilesPage() {
 
   // --- operations ---
 
+  const openEntry = useCallback(
+    (entry: FileEntry) => {
+      if (entry.isDir) {
+        navigate(entry.path)
+      } else if (canWrite && isImage(entry.name)) {
+        // A picture opens in the picture editor rather than in a code editor
+        // that would only refuse it.
+        setEditingImage(entry.path)
+      } else {
+        setEditing(entry.path)
+      }
+    },
+    [canWrite, navigate],
+  )
+
   const rename = (entry: FileEntry) =>
     prompt({
       title: `Rename ${entry.name}`,
@@ -211,9 +260,9 @@ export default function FilesPage() {
       confirmLabel: "Rename",
       selectBasename: true,
       validate: (v) => (v.includes("/") ? "A name cannot contain a slash." : undefined),
-      hint: (v) => join(path, v || "…"),
+      hint: (v) => join(path ?? "/", v || "…"),
       submit: async (name) => {
-        await post("/files/move", { from: entry.path, to: join(path, name) })
+        await post("/files/move", { from: entry.path, to: join(path ?? "/", name) })
         notify.success(`Renamed to ${name}`)
         refresh()
       },
@@ -223,7 +272,7 @@ export default function FilesPage() {
     const taken = new Set((listing.data?.entries ?? []).map((e) => e.name))
     const name = uniqueName(entry.name, taken)
     try {
-      await post("/files/copy", { from: entry.path, to: join(path, name) })
+      await post("/files/copy", { from: entry.path, to: join(path ?? "/", name) })
       notify.success(`Duplicated as ${name}`)
       refresh()
     } catch (err) {
@@ -264,6 +313,7 @@ export default function FilesPage() {
           confirm: c,
           query: { path: entry.path, recursive: entry.isDir },
         })
+        setActive(null)
         refresh()
       },
     })
@@ -288,13 +338,14 @@ export default function FilesPage() {
           }
         }
         clearSelection()
+        setActive(null)
         refresh()
         if (failed) notify.error(`${failed} item(s) could not be deleted`)
       },
     })
 
   const paste = async () => {
-    if (!clip) return
+    if (!clip || !path) return
     const taken = new Set((listing.data?.entries ?? []).map((e) => e.name))
     let ok = 0
     let failed = 0
@@ -329,9 +380,9 @@ export default function FilesPage() {
       title: "New folder",
       placeholder: "Folder name",
       confirmLabel: "Create",
-      hint: (v) => join(path, v || "…"),
+      hint: (v) => join(path ?? "/", v || "…"),
       submit: async (name) => {
-        await post("/files/mkdir", { path: join(path, name) })
+        await post("/files/mkdir", { path: join(path ?? "/", name) })
         notify.success(`Created ${name}`)
         refresh()
       },
@@ -342,12 +393,12 @@ export default function FilesPage() {
       title: "New file",
       placeholder: "File name",
       confirmLabel: "Create",
-      hint: (v) => join(path, v || "…"),
+      hint: (v) => join(path ?? "/", v || "…"),
       submit: async (name) => {
-        await post("/files/touch", { path: join(path, name) })
+        await post("/files/touch", { path: join(path ?? "/", name) })
         notify.success(`Created ${name}`)
         refresh()
-        setEditing(join(path, name))
+        setEditing(join(path ?? "/", name))
       },
     })
 
@@ -359,66 +410,151 @@ export default function FilesPage() {
     )
   }
 
+  const saveBookmarks = async (next: FileBookmark[]) => {
+    try {
+      await put("/files/bookmarks", { bookmarks: next })
+      places.refresh()
+    } catch (err) {
+      notify.error("Could not save your places", err)
+    }
+  }
+
+  const actionsFor = useCallback(
+    (entry: FileEntry): FileActions => ({
+      onOpen: () => openEntry(entry),
+      onRename: () => rename(entry),
+      onDuplicate: () => void duplicate(entry),
+      onCopy: () => cutCopy("copy", [entry.path]),
+      onCut: () => cutCopy("cut", [entry.path]),
+      onExtract: () => void extract(entry),
+      onPermissions: () => setPermsEntry(entry),
+      onDelete: () => deleteEntry(entry),
+      onEditImage: () => setEditingImage(entry.path),
+      onBookmark: () =>
+        void saveBookmarks([
+          ...(places.data?.bookmarks ?? []),
+          { path: entry.path, name: entry.name },
+        ]),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openEntry, listing.data, places.data, path],
+  )
+
+  // The page's own shortcuts. They are deliberately few and they all match
+  // something people already have in their hands: Ctrl+P is every editor's
+  // "go to file", F2 renames as it does in every file manager since Norton
+  // Commander, and Escape gets you out of a selection.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable === true
+      // A dialog open anywhere owns the keyboard; a shortcut firing behind one
+      // acts on a page the operator cannot see.
+      if (document.querySelector("[role='dialog']")) return
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+        event.preventDefault()
+        setQuickOpen(true)
+        return
+      }
+      if (typing) return
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault()
+        setSelection({ dir: path ?? "/", paths: new Set(entries.map((e) => e.path)) })
+        return
+      }
+      if (event.key === "Escape") {
+        setSelection({ dir: path ?? "/", paths: new Set() })
+        setActive(null)
+      } else if (event.key === "F2" && activeEntry && canWrite) {
+        event.preventDefault()
+        rename(activeEntry)
+      } else if (event.key === "Delete" && activeEntry && canDestruct) {
+        event.preventDefault()
+        deleteEntry(activeEntry)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeEntry, canWrite, canDestruct, entries, path])
+
   const clipPaths = useMemo(() => new Set(clip?.paths ?? []), [clip])
+  // The tree starts at a permitted root rather than at "/": an install that
+  // narrowed JD_FILE_ROOTS would otherwise open the rail on a directory the
+  // server refuses to list — and the tree caches what it fetched, so that
+  // first refusal is what it keeps showing. It waits for the answer instead.
+  const treeRoot = places.data?.roots[0]
+  // The rail shows the tree only when the tree is not the main view, and the
+  // places list is sized against that.
+  const railTree = view === "tree" ? undefined : treeRoot
 
   return (
-    <Page>
+    <Page fill>
       <PageHeader
         eyebrow="Access"
         title="Files"
-        description="Browse, edit, organise and transfer files on the host"
+        description="Browse, preview, edit, organise and transfer files on the host"
         actions={
           <>
             {/* Edits made here are committed somewhere else, so the account
                 those commits will carry belongs on this page too. */}
             <GitHubAccountControl />
-            <SearchDialog path={path} onOpen={(p, isDir) => (isDir ? setPath(p) : setEditing(p))} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setQuickOpen(true)}>
+                  <MagnifyingGlass className="size-4" />
+                  Find
+                  <kbd className="ml-1 hidden rounded border border-hairline px-1 text-[10px] text-muted-foreground sm:inline">
+                    ⌃P
+                  </kbd>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Fuzzy-find a file or folder under here</TooltipContent>
+            </Tooltip>
+            <SearchDialog
+              path={path ?? "/"}
+              onOpen={(p, isDir) => (isDir ? navigate(p) : setEditing(p))}
+            />
+            <ViewSwitcher view={view} onChange={setView} />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    prompt({
-                      title: "Go to path",
-                      label: "Absolute path",
-                      initial: path,
-                      confirmLabel: "Go",
-                      placeholder: "/var/www",
-                      submit: (p) => setPath(clean(p)),
-                    })
-                  }
+                  variant={showRail ? "secondary" : "outline"}
+                  size="icon-sm"
+                  aria-label="Toggle the places and folder rail"
+                  onClick={() => setShowRail((v) => !v)}
                 >
-                  <FolderInput className="size-4" />
-                  Go to…
+                  <SidebarLeft className="size-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Jump straight to an absolute path</TooltipContent>
+              <TooltipContent>{showRail ? "Hide the rail" : "Show places and folders"}</TooltipContent>
             </Tooltip>
-            {selected.length === 0 && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={showTree ? "secondary" : "outline"}
-                    size="sm"
-                    onClick={() => setShowTree((v) => !v)}
-                  >
-                    <ListTree className="size-4" />
-                    Tree
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {showTree ? "Hide the folder tree" : "Show the folder tree"}
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={showPreview ? "secondary" : "outline"}
+                  size="icon-sm"
+                  aria-label="Toggle the preview pane"
+                  onClick={() => setShowPreview((v) => !v)}
+                >
+                  <SidebarRight className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {showPreview ? "Hide the preview" : "Show the preview pane"}
+              </TooltipContent>
+            </Tooltip>
             {selected.length > 0 ? (
               <SelectionActions
                 count={selected.length}
                 canWrite={canWrite}
                 canDestruct={canDestruct}
                 archiveHref={
-                  downloadUrl("/files/archive", { base: path, format: "tar.gz" }) +
+                  downloadUrl("/files/archive", { base: path ?? "/", format: "tar.gz" }) +
                   selected.map((p) => `&path=${encodeURIComponent(p)}`).join("")
                 }
                 onCopy={() => cutCopy("copy", selected)}
@@ -435,7 +571,7 @@ export default function FilesPage() {
                     onSymlink={() => setSymlinkOpen(true)}
                   />
                   <Button size="sm" onClick={() => uploadRef.current?.click()}>
-                    <Upload className="size-4" />
+                    <CloudUpload className="size-4" />
                     Upload
                   </Button>
                   <input
@@ -452,29 +588,52 @@ export default function FilesPage() {
         }
       />
 
-      <div className="flex min-h-0 gap-3">
-        {showTree && (
-          <Panel className="hidden w-60 shrink-0 md:flex">
-            <FileTree
-              root="/"
-              statusMap={{}}
+      <div className="flex min-h-0 flex-1 gap-3">
+        {showRail && (
+          <Panel className="hidden w-64 shrink-0 lg:flex">
+            {/* Both halves of the rail need a *bounded* height or neither can
+                scroll: an overflow-y-auto box that is free to grow simply
+                grows, and the panel's own overflow-hidden then clips whatever
+                did not fit with no way to reach it. So places takes at most
+                half the rail when the tree is under it, and all of it when it
+                is not. */}
+            <PlacesRail
+              places={places.data}
+              path={path ?? "/"}
+              recent={recent}
               canWrite={canWrite}
-              canDelete={canDestruct}
-              activeDir={path}
-              onNavigate={(p) => setPath(p)}
-              onOpenFile={(p) => setEditing(p)}
-              onConfirm={(req) =>
-                confirm({
-                  title: req.title,
-                  description: req.body,
-                  confirmLabel: req.confirmLabel,
-                  action: async () => {
-                    await req.run()
-                  },
-                })
-              }
-              onChanged={refresh}
+              onNavigate={navigate}
+              onBookmarksChange={(next) => void saveBookmarks(next)}
+              className={cn(
+                railTree ? "max-h-[50%] shrink-0 border-b border-hairline" : "min-h-0 flex-1",
+              )}
             />
+            {/* No tree in the rail when the tree *is* the view: the same
+                control twice on one screen reads as a rendering bug. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              {railTree && (
+              <FileTree
+                root={railTree}
+                statusMap={{}}
+                canWrite={canWrite}
+                canDelete={canDestruct}
+                activeDir={path ?? undefined}
+                onNavigate={navigate}
+                onOpenFile={(p) => setEditing(p)}
+                onConfirm={(req) =>
+                  confirm({
+                    title: req.title,
+                    description: req.body,
+                    confirmLabel: req.confirmLabel,
+                    action: async () => {
+                      await req.run()
+                    },
+                  })
+                }
+                onChanged={refresh}
+              />
+              )}
+            </div>
           </Panel>
         )}
 
@@ -496,49 +655,16 @@ export default function FilesPage() {
             if (e.dataTransfer.files.length) void upload(e.dataTransfer.files)
           }}
         >
-          <PanelToolbar className="justify-between">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
-                <FolderTree className="size-3.5" />
-              </span>
-              <Breadcrumb className="min-w-0">
-                <BreadcrumbList className="gap-1 text-[13px] sm:gap-1">
-                  <BreadcrumbItem>
-                    <BreadcrumbLink asChild>
-                      <button
-                        type="button"
-                        className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
-                        onClick={() => setPath("/")}
-                      >
-                        <Home className="size-3.5" />
-                        <span className="sr-only">Root</span>
-                      </button>
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                  {crumbs.slice(1).map((crumb, i, all) => (
-                    <Fragment key={crumb.href}>
-                      <BreadcrumbSeparator />
-                      <BreadcrumbItem>
-                        {i === all.length - 1 ? (
-                          <BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
-                        ) : (
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              className="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
-                              onClick={() => setPath(crumb.href)}
-                            >
-                              {crumb.label}
-                            </button>
-                          </BreadcrumbLink>
-                        )}
-                      </BreadcrumbItem>
-                    </Fragment>
-                  ))}
-                </BreadcrumbList>
-              </Breadcrumb>
+          <PanelToolbar className="justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <PathBar
+                path={path ?? "/"}
+                home={places.data?.home}
+                onNavigate={navigate}
+                className="flex-1"
+              />
             </div>
-            <div className="flex shrink-0 items-center gap-4">
+            <div className="flex shrink-0 items-center gap-3">
               {listing.data && (
                 <span className="numeric text-[11px] text-muted-foreground">
                   {selected.length > 0
@@ -546,19 +672,24 @@ export default function FilesPage() {
                     : `${entries.length} item${entries.length === 1 ? "" : "s"}`}
                 </span>
               )}
-              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <Checkbox checked={showHidden} onCheckedChange={(v) => setShowHidden(v === true)} />
-                Show hidden
-              </label>
+              <ArrangeMenu
+                sort={sort}
+                setSort={setSort}
+                showHidden={showHidden}
+                setShowHidden={setShowHidden}
+                tile={tile}
+                setTile={setTile}
+                grid={view === "grid"}
+              />
             </div>
           </PanelToolbar>
 
           {clip && (
             <div className="flex items-center gap-2 border-b border-hairline bg-primary/[0.06] px-3 py-1.5 text-xs">
               {clip.mode === "cut" ? (
-                <Scissors className="size-3.5 text-primary" />
+                <ArrowMove className="size-3.5 text-primary" />
               ) : (
-                <ClipboardPaste className="size-3.5 text-primary" />
+                <Clipboard className="size-3.5 text-primary" />
               )}
               <span className="text-muted-foreground">
                 {clip.paths.length} item{clip.paths.length === 1 ? "" : "s"} ready to{" "}
@@ -567,28 +698,90 @@ export default function FilesPage() {
               <span className="flex-1" />
               {canWrite && (
                 <Button size="xs" onClick={paste}>
-                  <ClipboardPaste className="size-3.5" />
+                  <Clipboard className="size-3.5" />
                   Paste here
                 </Button>
               )}
               <Button size="xs" variant="ghost" onClick={() => setClip(null)}>
-                <X className="size-3.5" />
+                <Cross className="size-3.5" />
               </Button>
             </div>
           )}
 
-          <PanelBody flush className="relative">
+          {/* The body does not scroll; whatever is inside it does. That is
+              what keeps the table's header stuck to the top of the list: a
+              sticky header sticks to its nearest scrolling ancestor, and with
+              the body scrolling instead the header rode away with the rows. */}
+          <PanelBody flush className="relative min-h-0 flex-1 overflow-hidden">
             {dragOver && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/[0.08]">
                 <span className="rounded-lg border border-dashed border-primary bg-card px-4 py-2 text-[13px] font-medium text-primary">
-                  Drop to upload to {truncateMiddle(path, 40)}
+                  Drop to upload to {truncateMiddle(path ?? "/", 40)}
                 </span>
               </div>
             )}
-            {listing.loading && <LoadingRows className="p-4" />}
+            {(listing.loading || path === null) && <LoadingRows className="p-4" />}
             {listing.error && <ErrorState error={listing.error} className="m-4" />}
-            {listing.data && (
-              <Table containerClassName="max-h-[calc(100svh-17rem)]">
+
+            {view === "tree" && path !== null && treeRoot && (
+              <div className="h-full overflow-auto">
+              <FileTree
+                root={treeRoot}
+                statusMap={{}}
+                canWrite={canWrite}
+                canDelete={canDestruct}
+                activeDir={path}
+                onNavigate={navigate}
+                onOpenFile={(p) => setEditing(p)}
+                onConfirm={(req) =>
+                  confirm({
+                    title: req.title,
+                    description: req.body,
+                    confirmLabel: req.confirmLabel,
+                    action: async () => {
+                      await req.run()
+                    },
+                  })
+                }
+                onChanged={refresh}
+              />
+              </div>
+            )}
+
+            {view === "grid" && listing.data && (
+              <div className="h-full overflow-auto">
+                {entries.length === 0 ? (
+                  <EmptyState
+                    className="m-4"
+                    icon={FolderOpen}
+                    title="This directory is empty"
+                    description={canWrite ? "Drop files here to upload, or use New." : undefined}
+                  />
+                ) : (
+                  <GridView
+                    entries={entries}
+                    selected={selected}
+                    activePath={activeEntry?.path ?? null}
+                    caps={caps}
+                    size={tile}
+                    onToggle={(entry, checked) =>
+                      setSelection((prev) => {
+                        const paths = new Set(prev.dir === path ? prev.paths : [])
+                        if (checked) paths.add(entry.path)
+                        else paths.delete(entry.path)
+                        return { dir: path ?? "/", paths }
+                      })
+                    }
+                    onSelect={(entry) => setActive({ dir: path ?? "/", entry })}
+                    onOpen={openEntry}
+                    actions={actionsFor}
+                  />
+                )}
+              </div>
+            )}
+
+            {view === "list" && listing.data && (
+              <Table containerClassName="h-full">
                 <TableHeader className={stickyTableHeader}>
                   <TableRow>
                     <TableHead className="w-8">
@@ -603,7 +796,7 @@ export default function FilesPage() {
                         }
                         onCheckedChange={(v) =>
                           setSelection({
-                            dir: path,
+                            dir: path ?? "/",
                             paths: v === true ? new Set(entries.map((e) => e.path)) : new Set(),
                           })
                         }
@@ -639,7 +832,7 @@ export default function FilesPage() {
                   {path !== "/" && (
                     <TableRow
                       className="select-none"
-                      onActivate={() => setPath(listing.data!.parent)}
+                      onActivate={() => navigate(listing.data!.parent)}
                     >
                       <TableCell />
                       <TableCell colSpan={6}>
@@ -655,31 +848,27 @@ export default function FilesPage() {
                       key={entry.path}
                       entry={entry}
                       selected={selected.includes(entry.path)}
+                      active={activeEntry?.path === entry.path}
                       dimmed={clip?.mode === "cut" && clipPaths.has(entry.path)}
-                      caps={{ write: canWrite, destruct: canDestruct, admin: canAdmin }}
+                      caps={caps}
                       onToggle={(checked) =>
                         setSelection((prev) => {
                           const paths = new Set(prev.dir === path ? prev.paths : [])
                           if (checked) paths.add(entry.path)
                           else paths.delete(entry.path)
-                          return { dir: path, paths }
+                          return { dir: path ?? "/", paths }
                         })
                       }
-                      onOpen={() => (entry.isDir ? setPath(entry.path) : setEditing(entry.path))}
-                      onRename={() => rename(entry)}
-                      onDuplicate={() => duplicate(entry)}
-                      onCopy={() => cutCopy("copy", [entry.path])}
-                      onCut={() => cutCopy("cut", [entry.path])}
-                      onExtract={() => extract(entry)}
-                      onPermissions={() => setPermsEntry(entry)}
-                      onDelete={() => deleteEntry(entry)}
+                      onSelect={() => setActive({ dir: path ?? "/", entry })}
+                      onOpen={() => openEntry(entry)}
+                      actions={actionsFor(entry)}
                     />
                   ))}
                   {entries.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="p-0">
                         <EmptyState
-                          icon={FolderTree}
+                          icon={FolderOpen}
                           title="This directory is empty"
                           description={
                             canWrite ? "Drop files here to upload, or use New." : undefined
@@ -693,22 +882,182 @@ export default function FilesPage() {
             )}
           </PanelBody>
         </Panel>
+
+        {showPreview && (
+          <Panel className="hidden w-80 shrink-0 xl:flex">
+            <PreviewPanel
+              entry={activeEntry}
+              canWrite={canWrite}
+              onOpen={(p) => setEditing(p)}
+              onEditImage={(p) => setEditingImage(p)}
+              onNavigate={navigate}
+              onClose={() => setShowPreview(false)}
+              className="flex-1"
+            />
+          </Panel>
+        )}
       </div>
 
+      <QuickOpen
+        open={quickOpen}
+        onOpenChange={setQuickOpen}
+        root={path ?? "/"}
+        home={places.data?.home}
+        onOpenPath={(p, isDir) => (isDir ? navigate(p) : setEditing(p))}
+      />
       <FileEditorSheet
         path={editing}
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={refresh}
+      />
+      <ImageEditorSheet
+        path={editingImage}
+        modified={activeEntry?.path === editingImage ? activeEntry?.modified : undefined}
+        onOpenChange={(open) => !open && setEditingImage(null)}
+        onSaved={() => {
+          setActive(null)
+          refresh()
+        }}
       />
       <PermissionsDialog
         entry={permsEntry}
         onOpenChange={(open) => !open && setPermsEntry(null)}
         onDone={refresh}
       />
-      <SymlinkDialog open={symlinkOpen} dir={path} onOpenChange={setSymlinkOpen} onDone={refresh} />
+      <SymlinkDialog
+        open={symlinkOpen}
+        dir={path ?? "/"}
+        onOpenChange={setSymlinkOpen}
+        onDone={refresh}
+      />
       {dialog}
       {promptDialog}
     </Page>
+  )
+}
+
+/** List, grid or tree — one control, because they are one decision. */
+function ViewSwitcher({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
+  const options: { id: ViewMode; label: string; icon: React.ComponentType<{ className?: string }> }[] =
+    [
+      { id: "list", label: "Details", icon: ListUnordered },
+      { id: "grid", label: "Tiles", icon: GridSquare },
+      { id: "tree", label: "Tree", icon: Monorepo },
+    ]
+  return (
+    <div className="raised flex items-center gap-0.5 rounded-md border bg-control p-0.5">
+      {options.map((option) => (
+        <Tooltip key={option.id}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={option.label}
+              aria-pressed={view === option.id}
+              onClick={() => onChange(option.id)}
+              className={cn(
+                "flex size-7 items-center justify-center rounded transition-colors",
+                view === option.id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              )}
+            >
+              <option.icon className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{option.label}</TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Sorting, hidden files and tile size in one menu.
+ *
+ * The table can sort by clicking a column header; the grid has no headers to
+ * click, and a view that silently loses the ability to sort is a view people
+ * conclude is broken.
+ */
+function ArrangeMenu({
+  sort,
+  setSort,
+  showHidden,
+  setShowHidden,
+  tile,
+  setTile,
+  grid,
+}: {
+  sort: { key: SortKey; dir: "asc" | "desc" }
+  setSort: (s: { key: SortKey; dir: "asc" | "desc" }) => void
+  showHidden: boolean
+  setShowHidden: (v: boolean) => void
+  tile: "sm" | "md" | "lg"
+  setTile: (v: "sm" | "md" | "lg") => void
+  grid: boolean
+}) {
+  const keys: { id: SortKey; label: string }[] = [
+    { id: "name", label: "Name" },
+    { id: "size", label: "Size" },
+    { id: "modified", label: "Modified" },
+    { id: "owner", label: "Owner" },
+    { id: "mode", label: "Mode" },
+  ]
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="xs" className="text-muted-foreground">
+          <SettingsSliders className="size-3.5" />
+          Arrange
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+        {keys.map((key) => (
+          <DropdownMenuCheckboxItem
+            key={key.id}
+            checked={sort.key === key.id}
+            onSelect={(e) => {
+              e.preventDefault()
+              setSort({
+                key: key.id,
+                dir: sort.key === key.id && sort.dir === "asc" ? "desc" : "asc",
+              })
+            }}
+          >
+            {key.label}
+            {sort.key === key.id && (sort.dir === "asc" ? " ↑" : " ↓")}
+          </DropdownMenuCheckboxItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={showHidden}
+          onSelect={(e) => {
+            e.preventDefault()
+            setShowHidden(!showHidden)
+          }}
+        >
+          Show hidden files
+        </DropdownMenuCheckboxItem>
+        {grid && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Tile size</DropdownMenuLabel>
+            {(["sm", "md", "lg"] as const).map((size) => (
+              <DropdownMenuCheckboxItem
+                key={size}
+                checked={tile === size}
+                onSelect={(e) => {
+                  e.preventDefault()
+                  setTile(size)
+                }}
+              >
+                {size === "sm" ? "Small" : size === "lg" ? "Large" : "Medium"}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -775,7 +1124,7 @@ function SelectionActions({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="outline" size="sm" onClick={onCopy}>
-                <ClipboardPaste className="size-4" />
+                <Clipboard className="size-4" />
                 Copy
               </Button>
             </TooltipTrigger>
@@ -784,7 +1133,7 @@ function SelectionActions({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="outline" size="sm" onClick={onCut}>
-                <Scissors className="size-4" />
+                <ArrowMove className="size-4" />
                 Cut
               </Button>
             </TooltipTrigger>
@@ -796,7 +1145,7 @@ function SelectionActions({
         <TooltipTrigger asChild>
           <Button variant="outline" size="sm" asChild>
             <a href={archiveHref} download>
-              <FileArchive className="size-4" />
+              <FileZip className="size-4" />
               Archive
             </a>
           </Button>
@@ -807,7 +1156,7 @@ function SelectionActions({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="outline" size="sm" className="text-destructive" onClick={onDelete}>
-              <Trash2 className="size-4" />
+              <Trash className="size-4" />
               Delete
             </Button>
           </TooltipTrigger>
@@ -817,7 +1166,7 @@ function SelectionActions({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button variant="ghost" size="sm" aria-label="Clear selection" onClick={onClear}>
-            <X className="size-4" />
+            <Cross className="size-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Clear the selection</TooltipContent>
@@ -849,11 +1198,11 @@ function NewMenu({
           Folder
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onFile}>
-          <FilePlus className="size-3.5" />
+          <PlusSquareSmall className="size-3.5" />
           File
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onSymlink}>
-          <Link2 className="size-3.5" />
+          <Linked className="size-3.5" />
           Symlink
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -953,6 +1302,14 @@ function SymlinkBody({
   )
 }
 
+/**
+ * The other search: a literal substring or a regular expression, optionally
+ * inside file contents.
+ *
+ * It stays next to the fuzzy finder rather than being replaced by it because
+ * the two answer different questions — this one is "which files mention this
+ * connection string", and no amount of name matching answers that.
+ */
 function SearchDialog({
   path,
   onOpen,
@@ -962,7 +1319,7 @@ function SearchDialog({
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
-  const [content, setContent] = useState(false)
+  const [content, setContent] = useState(true)
   const [regex, setRegex] = useState(false)
   const [hits, setHits] = useState<
     { path: string; name: string; isDir: boolean; line?: number; snippet?: string }[]
@@ -982,64 +1339,68 @@ function SearchDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Search className="size-4" />
-          Search
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Search under {truncateMiddle(path, 40)}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex gap-2">
-            <Input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && run()}
-              placeholder={content ? "Text to find inside files" : "File or directory name"}
-            />
-            <Button onClick={run} disabled={busy || !query}>
-              Search
-            </Button>
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="icon-sm" aria-label="Search inside files" onClick={() => setOpen(true)}>
+            <PreviewDocument className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Search inside file contents</TooltipContent>
+      </Tooltip>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Search under {truncateMiddle(path, 40)}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && run()}
+                placeholder={content ? "Text to find inside files" : "File or directory name"}
+              />
+              <Button onClick={run} disabled={busy || !query}>
+                Search
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-[13px]">
+                <Checkbox checked={content} onCheckedChange={(v) => setContent(v === true)} />
+                Search inside file contents
+              </label>
+              <label className="flex items-center gap-2 text-[13px]">
+                <Checkbox checked={regex} onCheckedChange={(v) => setRegex(v === true)} />
+                Regular expression
+              </label>
+            </div>
+            <div className="max-h-80 space-y-0.5 overflow-auto">
+              {hits.map((hit) => (
+                <button
+                  key={`${hit.path}:${hit.line ?? 0}`}
+                  className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-accent"
+                  onClick={() => {
+                    onOpen(hit.path, hit.isDir)
+                    setOpen(false)
+                  }}
+                >
+                  <span className="block truncate font-mono text-xs">{hit.path}</span>
+                  {hit.snippet && (
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      line {hit.line}: {hit.snippet}
+                    </span>
+                  )}
+                </button>
+              ))}
+              {!busy && hits.length === 0 && query && (
+                <p className="py-4 text-center text-[13px] text-muted-foreground">No matches.</p>
+              )}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-[13px]">
-              <Checkbox checked={content} onCheckedChange={(v) => setContent(v === true)} />
-              Search inside file contents
-            </label>
-            <label className="flex items-center gap-2 text-[13px]">
-              <Checkbox checked={regex} onCheckedChange={(v) => setRegex(v === true)} />
-              Regular expression
-            </label>
-          </div>
-          <div className="max-h-80 space-y-0.5 overflow-auto">
-            {hits.map((hit) => (
-              <button
-                key={`${hit.path}:${hit.line ?? 0}`}
-                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-accent"
-                onClick={() => {
-                  onOpen(hit.path, hit.isDir)
-                  setOpen(false)
-                }}
-              >
-                <span className="block truncate font-mono text-xs">{hit.path}</span>
-                {hit.snippet && (
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    line {hit.line}: {hit.snippet}
-                  </span>
-                )}
-              </button>
-            ))}
-            {!busy && hits.length === 0 && query && (
-              <p className="py-4 text-center text-[13px] text-muted-foreground">No matches.</p>
-            )}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

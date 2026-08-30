@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { History, LogOut, Users } from "lucide-react"
+import { ClockRewind, Logout, Users } from "@/components/icons"
 import { get, post, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type { LoginRecord, LoginSession } from "@/lib/types"
@@ -112,7 +112,7 @@ function CurrentSessions() {
                           })
                         }
                       >
-                        <LogOut className="size-3.5" />
+                        <Logout className="size-3.5" />
                         Disconnect
                       </Button>
                     ) : null}
@@ -153,7 +153,7 @@ function LoginHistoryPanel() {
   return (
     <Panel>
       <PanelHeader
-        icon={History}
+        icon={ClockRewind}
         title={showFailed ? "Failed login attempts" : "Recent logins"}
         description={
           showFailed
@@ -203,7 +203,7 @@ function LoginHistoryPanel() {
           <LoadingPanel />
         ) : !data?.length ? (
           <EmptyState
-            icon={History}
+            icon={ClockRewind}
             title={showFailed ? "No failed attempts recorded" : "No logins recorded"}
           />
         ) : (

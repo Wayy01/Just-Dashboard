@@ -2,22 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
-  AlertTriangle,
-  Boxes,
-  ClipboardPaste,
+  Box,
+  Clipboard,
+  CloudUpload,
+  Code,
   Copy,
-  FileCode2,
   Globe,
-  HardDrive,
   Layers,
   Plus,
-  Rocket,
-  Settings2,
-  ShieldAlert,
+  Servers,
+  SettingsSliders,
+  ShieldOff,
   Sparkles,
-  Trash2,
-  Wand2,
-} from "lucide-react"
+  Trash,
+  Warning,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { parseDockerRun, suggestName } from "@/lib/docker-run"
@@ -180,7 +179,7 @@ function CreateContainerBody({
       open={open}
       onOpenChange={onOpenChange}
       width="xl"
-      icon={Rocket}
+      icon={CloudUpload}
       title={mode === "choose" ? "Run something new" : spec.name || "New container"}
       description={
         mode === "choose"
@@ -204,7 +203,7 @@ function CreateContainerBody({
                 Start it now
               </label>
               <Button size="sm" onClick={create} disabled={busy || !spec.image.trim()}>
-                {busy ? <Spinner className="size-4" /> : <Rocket className="size-4" />}
+                {busy ? <Spinner className="size-4" /> : <CloudUpload className="size-4" />}
                 {spec.start ? "Create and start" : "Create"}
               </Button>
             </div>
@@ -217,7 +216,7 @@ function CreateContainerBody({
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           {parseWarnings.length > 0 && (
-            <Notice title="Read before creating" icon={AlertTriangle} tone="warning">
+            <Notice title="Read before creating" icon={Warning} tone="warning">
               <ul className="ml-4 list-disc space-y-1">
                 {parseWarnings.map((w, i) => (
                   <li key={i}>{w}</li>
@@ -272,7 +271,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
     <div className="space-y-5">
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <ClipboardPaste className="size-3.5 text-muted-foreground" />
+          <Clipboard className="size-3.5 text-muted-foreground" />
           <h3 className="text-[13px] font-medium">Paste a command you found</h3>
         </div>
         <Hint>
@@ -291,7 +290,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
           }
         />
         <Button size="sm" onClick={convert} disabled={!pasted.trim()}>
-          <Wand2 className="size-4" />
+          <Sparkles className="size-4" />
           Read this command
         </Button>
       </section>
@@ -336,7 +335,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
               </p>
               {template.requires && (
                 <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-warning">
-                  <AlertTriangle className="mt-px size-3 shrink-0" />
+                  <Warning className="mt-px size-3 shrink-0" />
                   {template.requires}
                 </p>
               )}
@@ -347,7 +346,7 @@ function ChooseStart({ onPick }: { onPick: (spec: ContainerSpec, warnings?: stri
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <Boxes className="size-3.5 text-muted-foreground" />
+          <Box className="size-3.5 text-muted-foreground" />
           <h3 className="text-[13px] font-medium">Start from scratch</h3>
         </div>
         <Button size="sm" variant="outline" onClick={() => onPick(blankSpec())}>
@@ -571,12 +570,12 @@ function PortEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
             className="text-destructive"
             onClick={() => patch({ ports: ports.filter((_, idx) => idx !== i) })}
           >
-            <Trash2 className="size-3.5" />
+            <Trash className="size-3.5" />
           </Button>
         </div>
       ))}
       {ports.some((p) => p.hostPort > 0 && !p.hostIp) && (
-        <Notice title="Published on every interface" icon={ShieldAlert} tone="warning">
+        <Notice title="Published on every interface" icon={ShieldOff} tone="warning">
           Docker publishes ports with NAT rules that are consulted before the firewall&apos;s own,
           so this will be reachable from anywhere that can route to this server — even if the
           firewall appears to deny it.
@@ -604,7 +603,7 @@ function MountEditor({
   return (
     <section className="space-y-2.5">
       <SectionHeading
-        icon={HardDrive}
+        icon={Servers}
         title="Storage"
         term="volume"
         action={
@@ -690,7 +689,7 @@ function MountEditor({
               className="text-destructive"
               onClick={() => patch({ mounts: mounts.filter((_, idx) => idx !== i) })}
             >
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
             </Button>
           </div>
           <Hint>{MOUNT_HELP[mount.type]}</Hint>
@@ -745,7 +744,7 @@ function EnvEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
   return (
     <section className="space-y-2.5">
       <SectionHeading
-        icon={Settings2}
+        icon={SettingsSliders}
         title="Settings"
         term="env"
         action={
@@ -813,7 +812,7 @@ function EnvEditor({ spec, patch }: { spec: ContainerSpec; patch: PatchFn }) {
                 className="text-destructive"
                 onClick={() => patch({ env: env.filter((_, idx) => idx !== i) })}
               >
-                <Trash2 className="size-3.5" />
+                <Trash className="size-3.5" />
               </Button>
             </div>
           ))}
@@ -955,7 +954,7 @@ function AdvancedFields({
       </Field>
 
       <section className="space-y-2">
-        <SectionHeading icon={ShieldAlert} title="Behaviour" />
+        <SectionHeading icon={ShieldOff} title="Behaviour" />
         <ToggleRow
           label="Run an init process"
           hint="Reaps the leftover processes a program that was never designed to be PID 1 will otherwise accumulate. Cheap, and almost always right."
@@ -1061,7 +1060,7 @@ function CommandPreview({ spec }: { spec: ContainerSpec }) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <SectionHeading icon={FileCode2} title="The equivalent command">
+        <SectionHeading icon={Code} title="The equivalent command">
           This is exactly what creating it will do. Copy it if you would rather run it yourself, or
           keep it for a ticket.
         </SectionHeading>

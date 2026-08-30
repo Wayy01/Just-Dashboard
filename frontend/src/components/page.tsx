@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
-import { Search } from "lucide-react"
+import { MagnifyingGlass } from "@/components/icons"
 
 /**
  * The frame every page renders into.
@@ -130,7 +130,7 @@ export function SearchInput({
 }: React.ComponentProps<typeof Input> & { containerClassName?: string }) {
   return (
     <div className={cn("relative w-full sm:w-72", containerClassName)}>
-      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <MagnifyingGlass className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input className={cn("h-8 pl-8 text-[13px]", className)} {...props} />
     </div>
   )

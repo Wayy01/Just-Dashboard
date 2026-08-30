@@ -2,15 +2,15 @@
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
-  ArrowDownToLine,
+  Backspace,
   Check,
-  ClipboardCopy,
-  Eraser,
+  ChevronDoubleDown,
+  CodeWrap,
+  Copy,
   Pause,
   Play,
-  Text,
-  WrapText,
-} from "lucide-react"
+  TextFormat,
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { clock, timestamp } from "@/lib/format"
 import { notify } from "@/lib/toast"
@@ -148,25 +148,25 @@ export function LogConsole({
         <ToolbarToggle
           active={wrap}
           onClick={() => setLogView({ wrap: !wrap })}
-          icon={WrapText}
+          icon={CodeWrap}
           label="Wrap"
           hint="Wrap long lines instead of scrolling sideways"
         />
         <ToolbarToggle
           active={showTime}
           onClick={() => setLogView({ timestamps: !showTime })}
-          icon={Text}
+          icon={TextFormat}
           label="Time"
           hint="Show the timestamp this line was parsed out of"
         />
         <ToolbarToggle
           onClick={copyAll}
-          icon={ClipboardCopy}
+          icon={Copy}
           label="Copy"
           hint="Copy every line in this pane. Click one line to mark it, double-click to copy it."
         />
         {onClear && (
-          <ToolbarToggle onClick={onClear} icon={Eraser} label="Clear" hint="Empty the pane" />
+          <ToolbarToggle onClick={onClear} icon={Backspace} label="Clear" hint="Empty the pane" />
         )}
       </div>
 
@@ -272,7 +272,7 @@ export function LogConsole({
             toBottom()
           }}
         >
-          <ArrowDownToLine className="size-3" />
+          <ChevronDoubleDown className="size-3" />
           Jump to the end
           {held > 0 && <span className="numeric">· {held.toLocaleString()} held</span>}
         </button>

@@ -2,17 +2,15 @@
 
 import { useMemo, useRef, useState } from "react"
 import {
-  Activity,
-  AlertTriangle,
+  ChartActivity,
   Cpu,
   Gauge,
-  HardDrive,
-  MemoryStick,
-  Network,
-  Plug,
-  Server,
-  Waves,
-} from "lucide-react"
+  GridSquare,
+  NetworkDevice,
+  Router,
+  Servers,
+  Warning,
+} from "@/components/icons"
 import { get } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { bytes, percent, rate } from "@/lib/format"
@@ -273,7 +271,7 @@ export default function MetricsPage() {
           />
 
           <ChartPanel
-            icon={MemoryStick}
+            icon={GridSquare}
             title="Memory and swap"
             description="Share of total"
             rows={rows}
@@ -297,7 +295,7 @@ export default function MetricsPage() {
         </div>
 
         <ChartPanel
-          icon={Activity}
+          icon={ChartActivity}
           title="Network throughput"
           description="All interfaces"
           rows={rows}
@@ -317,7 +315,7 @@ export default function MetricsPage() {
               invites the reader to infer a relationship between two lines that
               have nothing to do with each other. */}
           <ChartPanel
-            icon={HardDrive}
+            icon={Servers}
             title="Capacity"
             description="Used space per filesystem"
             rows={storage.rows as { ts: number }[]}
@@ -333,7 +331,7 @@ export default function MetricsPage() {
             thresholds={DISK_THRESHOLD}
           />
           <ChartPanel
-            icon={HardDrive}
+            icon={Servers}
             title="Disk throughput"
             description="Bytes moved per second"
             rows={rows}
@@ -361,7 +359,7 @@ export default function MetricsPage() {
       >
         <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
           <ChartPanel
-            icon={AlertTriangle}
+            icon={Warning}
             title="Pressure"
             description={
               snapshot.pressure?.supported
@@ -398,7 +396,7 @@ export default function MetricsPage() {
             note={live ? "Load averages are read from the recorded series — pick a range above." : note}
           />
           <ChartPanel
-            icon={HardDrive}
+            icon={Servers}
             title="Disk operations"
             description="Requests per second, which is what a device actually runs out of"
             rows={rows}
@@ -411,7 +409,7 @@ export default function MetricsPage() {
             note={note}
           />
           <ChartPanel
-            icon={Waves}
+            icon={ChartActivity}
             title="Disk latency and busy time"
             description="Milliseconds per request on the slowest device, and its iostat %util"
             rows={rows}
@@ -427,7 +425,7 @@ export default function MetricsPage() {
 
         <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
           <ChartPanel
-            icon={Plug}
+            icon={Router}
             title="Sockets"
             description="Open TCP connections, and how many are waiting out their close"
             rows={rows}
@@ -566,7 +564,7 @@ function InodePanel({
 }) {
   return (
     <ChartPanel
-      icon={HardDrive}
+      icon={Servers}
       title="Inodes"
       description="A filesystem can run out of these while reporting free space"
       rows={rows}
@@ -712,7 +710,7 @@ function MountsPanel({ snapshot }: { snapshot: Snapshot }) {
   return (
     <Panel>
       <PanelHeader
-        icon={HardDrive}
+        icon={Servers}
         title="Filesystems"
         description="Expand a mount to see what is using it"
       />
@@ -793,7 +791,7 @@ function MountsPanel({ snapshot }: { snapshot: Snapshot }) {
           )
         })}
         {snapshot.mounts.length === 0 && (
-          <EmptyState title="No filesystems reported" icon={HardDrive} />
+          <EmptyState title="No filesystems reported" icon={Servers} />
         )}
       </PanelBody>
     </Panel>
@@ -812,7 +810,7 @@ function InterfacesPanel({ snapshot }: { snapshot: Snapshot }) {
   return (
     <Panel>
       <PanelHeader
-        icon={Network}
+        icon={NetworkDevice}
         title="Interfaces"
         description={`${bytes(total.rx)} in · ${bytes(total.tx)} out since boot`}
       />
@@ -876,7 +874,7 @@ function InterfacesPanel({ snapshot }: { snapshot: Snapshot }) {
             {snapshot.net.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="p-0">
-                  <EmptyState title="No interfaces reported" icon={Server} />
+                  <EmptyState title="No interfaces reported" icon={Servers} />
                 </TableCell>
               </TableRow>
             )}

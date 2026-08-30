@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from "react"
 import {
+  AcronymJson,
   Clock,
+  Database,
   Download,
-  FileJson,
+  FloppyDisk,
+  Layout,
+  Monorepo,
   Play,
-  ListTree,
-  Save,
-  ShieldAlert,
+  ShieldOff,
   Star,
-  Trash2,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { del, get, post } from "@/lib/api"
@@ -43,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Database, Table2 } from "lucide-react"
+
 import { ResultGrid } from "@/components/database/result-grid"
 
 type ConfirmFn = ReturnType<typeof useConfirm>["confirm"]
@@ -189,7 +191,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {risk?.destructive && (
-        <Notice tone="danger" icon={ShieldAlert} title={`Destructive statement (${risk.level})`}>
+        <Notice tone="danger" icon={ShieldOff} title={`Destructive statement (${risk.level})`}>
           {risk.reasons.join(" · ")}
         </Notice>
       )}
@@ -216,7 +218,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
               Run
             </Button>
             <Button size="sm" variant="outline" onClick={explain} disabled={busy || !sql.trim()}>
-              <ListTree className="size-3.5" />
+              <Monorepo className="size-3.5" />
               Explain
             </Button>
             <Button
@@ -225,7 +227,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
               onClick={() => setSaveOpen(true)}
               disabled={!can("service.control") || !sql.trim()}
             >
-              <Save className="size-3.5" />
+              <FloppyDisk className="size-3.5" />
               Save
             </Button>
             {risk && !risk.destructive && (
@@ -322,7 +324,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
                           className="size-6 shrink-0 text-destructive opacity-0 group-hover:opacity-100"
                           onClick={() => deleteSnippet(q)}
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash className="size-3.5" />
                         </Button>
                       )}
                     </div>
@@ -337,7 +339,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       {plan && (
         <Panel>
           <PanelHeader
-            icon={ListTree}
+            icon={Monorepo}
             title="Query plan"
             description="How the engine intends to run this — nothing was executed"
           />
@@ -350,7 +352,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
       {result && (
         <Panel>
           <PanelHeader
-            icon={Table2}
+            icon={Layout}
             title="Result"
             description={result.statement}
             actions={
@@ -361,7 +363,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
                     CSV
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => exportResult("json")}>
-                    <FileJson className="size-3.5" />
+                    <AcronymJson className="size-3.5" />
                     JSON
                   </Button>
                 </>
@@ -373,7 +375,7 @@ export function QueryTab({ conn, confirm }: { conn: DbConnection; confirm: Confi
           </PanelBody>
         </Panel>
       )}
-      {!result && !plan && <EmptyState icon={Table2} title="Run a statement to see results" />}
+      {!result && !plan && <EmptyState icon={Layout} title="Run a statement to see results" />}
 
       <SaveDialog open={saveOpen} onOpenChange={setSaveOpen} onSave={saveSnippet} />
     </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { Check, Palette } from "lucide-react"
+import { BlendMode, Check } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
@@ -139,7 +139,7 @@ export function ColourMenu({
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-44">
         <DropdownMenuLabel className="flex items-center gap-1.5 text-xs">
-          <Palette className="size-3.5" />
+          <BlendMode className="size-3.5" />
           Colour
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Archive, CloudUpload, HardDriveDownload, Play, Plus, Trash2 } from "lucide-react"
+import { Archive, CloudDownload, CloudUpload, Play, Plus, Trash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
 import { bytes, relativeTime, timestamp } from "@/lib/format"
@@ -163,7 +163,7 @@ export default function BackupsPage() {
                       })
                     }
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash className="size-3.5" />
                   </Button>
                 </>
               )}
@@ -322,7 +322,7 @@ function RestoreButton({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="xs" variant="ghost">
-          <HardDriveDownload className="size-3" />
+          <CloudDownload className="size-3" />
           Restore
         </Button>
       </DialogTrigger>

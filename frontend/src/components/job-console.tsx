@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Ban, CheckCircle2, XCircle } from "lucide-react"
+import { CheckCircle, CrossCircle, Slash } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -167,7 +167,7 @@ export function JobConsole({
         </span>
         {running && onCancel && (
           <Button size="xs" variant="ghost" className="text-destructive" onClick={onCancel}>
-            <Ban className="size-3" />
+            <Slash className="size-3" />
             Stop
           </Button>
         )}
@@ -229,9 +229,9 @@ export function JobConsole({
 function JobIcon({ status }: { status: Job["status"] }) {
   if (status === "running")
     return <Spinner className="size-3.5 text-muted-foreground" />
-  if (status === "succeeded") return <CheckCircle2 className="size-3.5 text-success" />
-  if (status === "cancelled") return <Ban className="size-3.5 text-muted-foreground" />
-  return <XCircle className="size-3.5 text-destructive" />
+  if (status === "succeeded") return <CheckCircle className="size-3.5 text-success" />
+  if (status === "cancelled") return <Slash className="size-3.5 text-muted-foreground" />
+  return <CrossCircle className="size-3.5 text-destructive" />
 }
 
 /**

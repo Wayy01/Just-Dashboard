@@ -1,6 +1,6 @@
 "use client"
 
-import { Crosshair, ShieldPlus } from "lucide-react"
+import { Crosshair, ShieldCheck } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -135,7 +135,7 @@ export function OffendersPanel({ onBlocked }: { onBlocked?: () => void }) {
                         onClick={() => block(offender.ip)}
                         title="Add a permanent firewall deny for this address"
                       >
-                        <ShieldPlus className="size-3.5" />
+                        <ShieldCheck className="size-3.5" />
                         Block
                       </Button>
                     )}

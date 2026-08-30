@@ -1,6 +1,6 @@
 "use client"
 
-import { Network, ShieldPlus } from "lucide-react"
+import { NetworkDevice, ShieldCheck } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { Connections } from "@/lib/types"
@@ -65,7 +65,7 @@ export function ConnectionsPanel() {
   return (
     <Panel>
       <PanelHeader
-        icon={Network}
+        icon={NetworkDevice}
         title="Live connections"
         description="Who is talking to this machine right now"
         actions={
@@ -111,7 +111,7 @@ export function ConnectionsPanel() {
       <PanelBody flush>
         {peers.length === 0 ? (
           <EmptyState
-            icon={Network}
+            icon={NetworkDevice}
             title={scope === "public" ? "Nothing connected from the internet" : "No connections"}
           />
         ) : (
@@ -156,7 +156,7 @@ export function ConnectionsPanel() {
                         className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                         onClick={() => block(peer.address)}
                       >
-                        <ShieldPlus className="size-3.5" />
+                        <ShieldCheck className="size-3.5" />
                         Block
                       </Button>
                     )}

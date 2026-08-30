@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { AlertTriangle, CheckCircle2, FileCode, Globe, Plus, Trash2 } from "lucide-react"
+import { CheckCircle, Code, Globe, Plus, Trash, Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -252,7 +252,7 @@ function SiteFormBody({
     >
       <div className="min-h-0 flex-1 overflow-y-auto p-4 lg:w-[26rem] lg:shrink-0 lg:border-r lg:border-hairline">
         {editing && !managed && (
-          <Notice tone="warning" icon={AlertTriangle} title="This file was written by hand">
+          <Notice tone="warning" icon={Warning} title="This file was written by hand">
             The form has read what it recognises. Saving replaces the file with what the form
             produces, so anything it could not represent will be lost — the previous version is
             kept as <code className="font-mono">.bak</code>.
@@ -488,7 +488,7 @@ function SiteFormBody({
         <Tabs defaultValue="preview" className="flex min-h-0 flex-1 flex-col gap-3">
           <TabsList>
             <TabsTrigger value="preview">
-              <FileCode className="size-3.5" />
+              <Code className="size-3.5" />
               nginx config
             </TabsTrigger>
             <TabsTrigger value="notes">
@@ -518,12 +518,12 @@ function SiteFormBody({
           </TabsContent>
           <TabsContent value="notes" className="min-h-0 flex-1 space-y-2 overflow-y-auto">
             {warnings.length === 0 ? (
-              <Notice tone="success" icon={CheckCircle2} title="Nothing worth flagging">
+              <Notice tone="success" icon={CheckCircle} title="Nothing worth flagging">
                 Every setting here is one this dashboard would have chosen.
               </Notice>
             ) : (
               warnings.map((warning) => (
-                <Notice key={warning} tone="warning" icon={AlertTriangle} title="Worth knowing">
+                <Notice key={warning} tone="warning" icon={Warning} title="Worth knowing">
                   {warning}
                 </Notice>
               ))
@@ -672,7 +672,7 @@ function ListField({
               onClick={() => onChange(values.filter((_, j) => j !== i))}
               aria-label={`Remove ${value}`}
             >
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
             </Button>
           </div>
         ))}
@@ -737,7 +737,7 @@ function LocationsField({
               aria-label={`Remove ${loc.path || "location"}`}
               onClick={() => onChange(locations.filter((_, j) => j !== i))}
             >
-              <Trash2 className="size-3.5" />
+              <Trash className="size-3.5" />
             </Button>
           </div>
           <Input

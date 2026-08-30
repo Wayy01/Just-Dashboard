@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronLeft, ChevronRight, ZoomOut } from "lucide-react"
+import { ChevronLeft, ChevronRight, MagnifyingGlassMinus } from "@/components/icons"
 import { timestamp } from "@/lib/format"
 import { RANGES, windowLabel, type MetricsWindow, type RangeKey, type RangeSpec } from "@/lib/metrics-range"
 import type { WindowControls } from "@/hooks/use-metrics-window"
@@ -64,7 +64,7 @@ export function RangePicker({
                 className="text-muted-foreground"
                 onClick={zoomOut}
               >
-                <ZoomOut className="size-4" />
+                <MagnifyingGlassMinus className="size-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Back to the previous window</TooltipContent>

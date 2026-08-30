@@ -3,18 +3,18 @@
 import { useCallback, useState } from "react"
 import Link from "next/link"
 import {
-  ArrowUpCircle,
+  ArrowCircleUp,
   BookOpen,
   Copy,
   Download,
-  ExternalLink,
-  FileCog,
+  External,
   FileText,
-  Package,
   Play,
+  Puzzle,
+  SettingsGear,
   Terminal,
-  Trash2,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { notify } from "@/lib/toast"
@@ -226,7 +226,7 @@ export function PackageSheet({
                           className="inline-flex min-w-0 items-center gap-1 truncate text-primary hover:underline"
                         >
                           <span className="truncate">{detail.homepage}</span>
-                          <ExternalLink className="size-3 shrink-0" />
+                          <External className="size-3 shrink-0" />
                         </a>
                       </Detail>
                     )}
@@ -272,7 +272,7 @@ export function PackageSheet({
               )}
               {upgradable && (
                 <Button size="sm" disabled={busy} onClick={install}>
-                  <ArrowUpCircle className="size-4" />
+                  <ArrowCircleUp className="size-4" />
                   Update to {upgradable}
                 </Button>
               )}
@@ -285,7 +285,7 @@ export function PackageSheet({
                       disabled={busy}
                       onClick={() => remove(true)}
                     >
-                      <Trash2 className="size-4" />
+                      <Trash className="size-4" />
                       Remove and purge
                     </Button>
                   )}
@@ -295,7 +295,7 @@ export function PackageSheet({
                     disabled={busy}
                     onClick={() => remove(false)}
                   >
-                    <Trash2 className="size-4" />
+                    <Trash className="size-4" />
                     Remove
                   </Button>
                 </>
@@ -356,7 +356,7 @@ function UsageView({ usage, installed }: { usage: PackageUsage | null; installed
   if (!installed) {
     return (
       <EmptyState
-        icon={Package}
+        icon={Puzzle}
         title="Not installed yet"
         description="Install it and this tab will say which commands it gave you, which service it registered and what its manual says."
       />
@@ -366,7 +366,7 @@ function UsageView({ usage, installed }: { usage: PackageUsage | null; installed
   if (usage.empty) {
     return (
       <EmptyState
-        icon={Package}
+        icon={Puzzle}
         title="Nothing to run"
         description="This package ships no commands, manual pages or services — it is a library that other packages are built on, and there is nothing here to use directly."
       />
@@ -408,7 +408,7 @@ function UsageView({ usage, installed }: { usage: PackageUsage | null; installed
 
       {usage.configFiles && usage.configFiles.length > 0 && (
         <UsageSection
-          icon={FileCog}
+          icon={SettingsGear}
           title="Configuration"
           hint="What it put in /etc. Each opens in the file manager."
         >

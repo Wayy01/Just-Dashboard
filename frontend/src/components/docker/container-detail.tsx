@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
-  ArrowUpCircle,
+  ArrowCircleUp,
   Box,
   Copy,
   Download,
   Eye,
   EyeOff,
-  FileWarning,
   Pencil,
-  ShieldAlert,
-} from "lucide-react"
+  ShieldOff,
+  Warning,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post, ApiError } from "@/lib/api"
 import { duration, timestamp } from "@/lib/format"
@@ -349,7 +349,7 @@ function EnvironmentList({ env }: { env: string[] }) {
     <div className="flex h-full min-h-0 flex-col gap-3">
       {secretCount > 0 && (
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
-          <ShieldAlert className="mt-px size-3.5 shrink-0" />
+          <ShieldOff className="mt-px size-3.5 shrink-0" />
           <span>
             {secretCount} {secretCount === 1 ? "value looks" : "values look"} like a credential and
             {secretCount === 1 ? " is" : " are"} hidden. Reveal only when nobody is watching your
@@ -615,7 +615,7 @@ function ContainerActions({
     <>
       {can("destructive") && confirm && !composeManaged && (
         <Button size="sm" variant="outline" onClick={update} disabled={busy}>
-          <ArrowUpCircle className="size-3.5" />
+          <ArrowCircleUp className="size-3.5" />
           Update
         </Button>
       )}
@@ -723,7 +723,7 @@ function WritableLayer({ containerId }: { containerId: string }) {
   if (loading || roots.length === 0) return null
 
   return (
-    <Notice title="Written inside the container" icon={FileWarning} tone="warning">
+    <Notice title="Written inside the container" icon={Warning} tone="warning">
       <p>
         These paths are in <Term name="writableLayer">the container&apos;s own filesystem</Term>{" "}
         rather than a volume. They are not backed up, and they are destroyed the next time this

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Download, FileDown } from "lucide-react"
+import { Download } from "@/components/icons"
 import { downloadUrl } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import { bytes } from "@/lib/format"
@@ -154,7 +154,7 @@ export function ExportDialog({
         <DialogFooter>
           <Button asChild onClick={() => notify.success("Export started")}>
             <a href={href} download>
-              <FileDown className="size-4" />
+              <Download className="size-4" />
               Download
             </a>
           </Button>

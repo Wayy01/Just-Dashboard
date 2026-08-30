@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ArrowDownToLine, Pause, Play, Search } from "lucide-react"
+import { ChevronDoubleDown, MagnifyingGlass, Pause, Play } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { clock } from "@/lib/format"
 import type { LogLine } from "@/lib/types"
@@ -69,7 +69,7 @@ export function LogViewer({
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface-header px-2.5 py-2">
         <div className="relative min-w-40 flex-1">
-          <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <MagnifyingGlass className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -133,7 +133,7 @@ export function LogViewer({
             if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
           }}
         >
-          <ArrowDownToLine className="size-3" />
+          <ChevronDoubleDown className="size-3" />
           Jump to latest
         </button>
       )}

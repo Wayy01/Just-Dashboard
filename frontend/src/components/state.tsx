@@ -1,12 +1,12 @@
 "use client"
 
-import { AlertTriangle, Inbox, Loader2, PlugZap } from "lucide-react"
+import { Inbox, LoaderCircle, Slash, Warning } from "@/components/icons"
 import { ApiError } from "@/lib/api"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
 export function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cn("size-4 animate-spin", className)} />
+  return <LoaderCircle className={cn("size-4 animate-spin", className)} />
 }
 
 export function LoadingRows({ rows = 5, className }: { rows?: number; className?: string }) {
@@ -114,7 +114,7 @@ export function ErrorState({ error, className }: { error: Error; className?: str
           unavailable ? "bg-muted text-muted-foreground" : "bg-destructive/12 text-destructive",
         )}
       >
-        {unavailable ? <PlugZap className="size-4" /> : <AlertTriangle className="size-4" />}
+        {unavailable ? <Slash className="size-4" /> : <Warning className="size-4" />}
       </span>
       <div className="min-w-0 space-y-0.5">
         <p className="text-[13px] font-medium">

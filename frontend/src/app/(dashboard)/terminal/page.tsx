@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
+  Fullscreen,
+  FullscreenClose,
   Layers,
-  Maximize2,
-  Minimize2,
-  PanelLeft,
-  PanelRight,
   Plus,
-  ShieldAlert,
-  TerminalSquare,
-} from "lucide-react"
+  ShieldOff,
+  SidebarLeft,
+  SidebarRight,
+  TerminalWindow as TerminalWindowIcon,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, patch, post } from "@/lib/api"
 import type { TerminalFolder, TerminalPane, TerminalWindow, TerminalWorkspace } from "@/lib/types"
@@ -641,7 +641,7 @@ export default function TerminalPage() {
     return (
       <Page className="px-2 py-2 md:px-3 md:py-3">
         <EmptyState
-          icon={TerminalSquare}
+          icon={TerminalWindowIcon}
           title="The web terminal is disabled"
           description="Set JD_TERMINAL_ENABLED=true on the backend to turn it on. It grants a shell with this process's privileges, so leaving it off is a reasonable default."
         />
@@ -666,7 +666,7 @@ export default function TerminalPage() {
         cannot be a line in a tooltip.
       */}
       {data.login.error && (
-        <Notice icon={ShieldAlert} tone="danger" title="No account to log in as">
+        <Notice icon={ShieldOff} tone="danger" title="No account to log in as">
           {data.login.error} Set <code className="font-mono">JD_TERMINAL_USER</code> to an account
           that exists on this server.
         </Notice>
@@ -773,7 +773,7 @@ export default function TerminalPage() {
               onClick={() => setShowRail((v) => !v)}
               label={showRail ? "Hide the sessions rail" : "Show the sessions rail"}
               action="workspace.rail"
-              icon={PanelLeft}
+              icon={SidebarLeft}
             />
             {currentDir && (
               <button
@@ -791,14 +791,14 @@ export default function TerminalPage() {
               onClick={() => setShowTools((v) => !v)}
               label={showTools ? "Hide files & git" : "Show files & git"}
               action="workspace.tools"
-              icon={PanelRight}
+              icon={SidebarRight}
             />
             <WorkspaceToggle
               active={immersive}
               onClick={toggleImmersive}
               label={immersive ? "Leave fullscreen" : "Fullscreen workspace"}
               action="terminal.fullscreen"
-              icon={immersive ? Minimize2 : Maximize2}
+              icon={immersive ? FullscreenClose : Fullscreen}
             />
           </div>
 
@@ -902,7 +902,7 @@ export default function TerminalPage() {
           ) : (
             <EmptyState
               className="flex-1"
-              icon={TerminalSquare}
+              icon={TerminalWindowIcon}
               title={data.sessions.length === 0 ? "No sessions yet" : "Pick a session"}
               description={
                 data.sessions.length === 0

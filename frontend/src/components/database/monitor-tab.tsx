@@ -2,17 +2,17 @@
 
 import { useState } from "react"
 import {
-  Activity,
-  CircleSlash,
+  ChartActivity,
   Copy,
+  CrossCircle,
   Database,
   Gauge,
-  HardDrive,
-  Hourglass,
-  Lock,
-  OctagonX,
-  Table2,
-} from "lucide-react"
+  Layout,
+  LockClosed,
+  Servers,
+  Slash,
+  Stopwatch,
+} from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { bytes, duration, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -101,7 +101,7 @@ function ActivityPanel({
 
   if (!activity.data.supported) {
     return (
-      <Notice tone="default" icon={CircleSlash} title="No session list on this engine">
+      <Notice tone="default" icon={Slash} title="No session list on this engine">
         {activity.data.reason ??
           "This engine has no server-side session concept, so there is nothing running to list."}
       </Notice>
@@ -117,20 +117,20 @@ function ActivityPanel({
   return (
     <Panel>
       <PanelHeader
-        icon={Activity}
+        icon={ChartActivity}
         title="Running now"
         description={`${sessions.length} session${sessions.length === 1 ? "" : "s"} · refreshed every 5s`}
         actions={
           <>
             {blocked.length > 0 && (
               <Badge variant="destructive" className="font-normal">
-                <Lock className="size-3" />
+                <LockClosed className="size-3" />
                 {blocked.length} blocked
               </Badge>
             )}
             {slowest > 60 && (
               <Badge variant="warning" className="font-normal">
-                <Hourglass className="size-3" />
+                <Stopwatch className="size-3" />
                 longest {duration(slowest)}
               </Badge>
             )}
@@ -140,7 +140,7 @@ function ActivityPanel({
       <PanelBody flush>
         {sessions.length === 0 ? (
           <EmptyState
-            icon={Activity}
+            icon={ChartActivity}
             title="Nothing running"
             description="The server reports no active sessions."
           />
@@ -246,7 +246,7 @@ function ActivityPanel({
                             })
                           }}
                         >
-                          <OctagonX className="size-3.5" />
+                          <CrossCircle className="size-3.5" />
                           Stop
                         </Button>
                       )}
@@ -366,7 +366,7 @@ function SessionDialog({
             </Button>
             {onStop && (
               <Button variant="destructive" onClick={onStop}>
-                <OctagonX className="size-3.5" />
+                <CrossCircle className="size-3.5" />
                 Stop session
               </Button>
             )}
@@ -446,7 +446,7 @@ function TableSizeDialog({
         <DialogFooter className="sm:justify-between">
           {onOpen ? (
             <Button size="sm" variant="ghost" onClick={onOpen}>
-              <Table2 className="size-3.5" />
+              <Layout className="size-3.5" />
               Browse this table
             </Button>
           ) : (
@@ -492,7 +492,7 @@ function StoragePanel({
   return (
     <Panel>
       <PanelHeader
-        icon={HardDrive}
+        icon={Servers}
         title="Storage"
         description={
           o.sizesKnown

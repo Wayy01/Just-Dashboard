@@ -2,7 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { History, RefreshCw, ScrollText, Search, SearchX, Waves } from "lucide-react"
+import {
+  ChartActivity,
+  ClockRewind,
+  Logs,
+  MagnifyingGlass,
+  MagnifyingGlassMinus,
+  RefreshClockwise,
+} from "@/components/icons"
 import { errorMessage, get } from "@/lib/api"
 import { plural } from "@/lib/format"
 import type {
@@ -101,7 +108,7 @@ export default function LogsPage() {
               <ExportDialog sourceId={sourceId} source={selected} filter={filter} boot={boot} />
             )}
             <Button variant="outline" size="sm" onClick={() => sources.refresh()}>
-              <RefreshCw className="size-4" />
+              <RefreshClockwise className="size-4" />
               Rescan
             </Button>
           </>
@@ -153,7 +160,7 @@ export default function LogsPage() {
         ) : (
           <EmptyState
             className="flex-1"
-            icon={ScrollText}
+            icon={Logs}
             title={sources.loading ? "Looking for logs…" : "No log sources on this host"}
             description={
               sources.loading
@@ -648,7 +655,7 @@ function LiveEmpty({
   if (state !== "open") {
     return (
       <EmptyState
-        icon={Waves}
+        icon={ChartActivity}
         title={state === "connecting" ? "Connecting…" : "Not connected"}
         description={
           state === "connecting"
@@ -661,13 +668,13 @@ function LiveEmpty({
   if (isFilterActive(filter)) {
     return (
       <EmptyState
-        icon={SearchX}
+        icon={MagnifyingGlassMinus}
         title="Nothing in the recent window matches"
         description="The filter was applied on the server, so this really is every matching line in the opening window — not a slice of it. History goes further back than a live tail can."
         action={
           <div className="flex flex-wrap justify-center gap-2">
             <Button size="sm" onClick={onSearchHistory}>
-              <History className="size-3.5" />
+              <ClockRewind className="size-3.5" />
               Search this log&apos;s history
             </Button>
             <Button size="sm" variant="outline" onClick={onClearFilter}>
@@ -680,7 +687,7 @@ function LiveEmpty({
   }
   return (
     <EmptyState
-      icon={Waves}
+      icon={ChartActivity}
       title="Nothing new yet"
       description="This log is quiet. New lines appear here the moment they are written."
     />
@@ -705,7 +712,7 @@ function SearchEmpty({
   onRun: () => void
 }) {
   if (loading) {
-    return <EmptyState icon={Search} title="Searching…" description="Reading the file server-side." />
+    return <EmptyState icon={MagnifyingGlass} title="Searching…" description="Reading the file server-side." />
   }
   if (error) {
     return <ErrorState error={new Error(error)} className="max-w-lg" />
@@ -713,12 +720,12 @@ function SearchEmpty({
   if (!result) {
     return (
       <EmptyState
-        icon={History}
+        icon={ClockRewind}
         title="Search the whole log, not just the tail"
         description="Type a term and press Enter. The scan happens on the server, so this works on a file far too large to send to a browser — and it reads the rotated archives too, which is where last night's answer usually is."
         action={
           <Button size="sm" onClick={onRun}>
-            <Search className="size-3.5" />
+            <MagnifyingGlass className="size-3.5" />
             Search
           </Button>
         }
@@ -728,7 +735,7 @@ function SearchEmpty({
   const hasArchives = (source.archives ?? 0) > 0
   return (
     <EmptyState
-      icon={SearchX}
+      icon={MagnifyingGlassMinus}
       title="No matches in that window"
       description={`Scanned ${result.scanned.toLocaleString()} lines in ${result.tookMillis}ms. Widen the window, relax the level filter, or look further back.`}
       action={

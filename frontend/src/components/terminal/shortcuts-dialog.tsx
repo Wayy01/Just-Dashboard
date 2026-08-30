@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, RotateCcw, X } from "lucide-react"
+import { Cross, RotateCounterClockwise, Warning } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import {
   SHORTCUTS,
@@ -106,7 +106,7 @@ export function ShortcutsDialog({
 
         {rejected && (
           <p className="flex items-center gap-2 rounded-md border border-warning/50 bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
-            <AlertTriangle className="size-3.5 shrink-0" />
+            <Warning className="size-3.5 shrink-0" />
             {rejected}
           </p>
         )}
@@ -131,7 +131,7 @@ export function ShortcutsDialog({
                           title="Back to the default"
                           onClick={() => resetShortcut(spec.action)}
                         >
-                          <RotateCcw className="size-3 text-muted-foreground hover:text-foreground" />
+                          <RotateCounterClockwise className="size-3 text-muted-foreground hover:text-foreground" />
                         </button>
                       )}
                       {chord && !isRecording && (
@@ -140,7 +140,7 @@ export function ShortcutsDialog({
                           title="Unbind"
                           onClick={() => bindShortcut(spec.action, "")}
                         >
-                          <X className="size-3 text-muted-foreground hover:text-destructive" />
+                          <Cross className="size-3 text-muted-foreground hover:text-destructive" />
                         </button>
                       )}
                       <button
@@ -197,7 +197,7 @@ export function ShortcutsDialog({
 
         <DialogFooter className="sm:justify-between">
           <Button size="sm" variant="ghost" onClick={() => resetAllShortcuts()}>
-            <RotateCcw className="size-3.5" />
+            <RotateCounterClockwise className="size-3.5" />
             Reset all
           </Button>
           <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>

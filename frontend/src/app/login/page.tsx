@@ -6,14 +6,14 @@ import {
   ArrowRight,
   Check,
   Copy,
-  ExternalLink,
+  External,
   Eye,
   EyeOff,
-  KeyRound,
-  Network,
-  ScrollText,
+  Key,
+  Logs,
+  NetworkDevice,
   ShieldCheck,
-} from "lucide-react"
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { ApiError, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -309,7 +309,7 @@ export default function LoginPage() {
 function BrandPanel() {
   const facts = [
     {
-      icon: Network,
+      icon: NetworkDevice,
       title: "Network allowlist first",
       body: "The allowlist runs before authentication, so an off-network attacker never reaches this form.",
     },
@@ -319,7 +319,7 @@ function BrandPanel() {
       body: "A password alone gets a partial session that can reach nothing but the 2FA routes.",
     },
     {
-      icon: ScrollText,
+      icon: Logs,
       title: "Everything is recorded",
       body: "Every state-changing request lands in the audit log with who, from where, and what happened.",
     },
@@ -427,7 +427,7 @@ function SecretBlock({ secret, otpauthUrl }: { secret: string; otpauthUrl: strin
         </Button>
         <Button type="button" variant="ghost" size="sm" asChild>
           <a href={otpauthUrl}>
-            <ExternalLink className="size-3.5" />
+            <External className="size-3.5" />
             Open in authenticator
           </a>
         </Button>
@@ -472,7 +472,7 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
           {copied ? "Copied" : "Copy all"}
         </Button>
         <Button className="flex-1" onClick={onDone}>
-          <KeyRound className="size-4" />I have saved them
+          <Key className="size-4" />I have saved them
         </Button>
       </div>
     </div>

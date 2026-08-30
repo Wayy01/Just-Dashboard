@@ -4,46 +4,50 @@ import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  Activity,
   Archive,
-  BadgeCheck,
+  ArrowUpDown,
+  BlendMode,
   Box,
-  Cable,
+  Bug,
   ChevronRight,
-  ChevronsUpDown,
-  Columns3,
+  CloudUpload,
+  Code,
+  Connection,
+  Crosshair,
   Database,
-  Disc3,
-  FileCode2,
-  FileText,
-  FolderTree,
+  FirewallCheck,
+  FolderOpen,
+  Gauge,
   GitBranch,
   Globe,
-  HardDrive,
+  GridMasonry,
+  GridSquare,
+  Inspect,
   Layers,
-  LayoutGrid,
+  Layout,
   LineChart,
-  ListChecks,
-  LogOut,
-  Network,
-  PackageCheck,
-  Palette,
-  Plug,
-  Radar,
-  Radio,
-  Rocket,
-  ScanLine,
-  ScrollText,
-  Search,
-  ShieldCheck,
+  ListOrdered,
+  Logout,
+  Logs,
+  MagnifyingGlass,
+  Monitoring,
+  Monorepo,
+  NetworkDevice,
+  Notes,
+  Puzzle,
+  Route,
+  Router,
+  Rss,
+  SecureConnection,
+  Servers,
   Shield,
+  ShieldCheck,
+  SignIn,
   Sparkles,
-  Siren,
-  SquareTerminal,
-  TerminalSquare,
+  Terminal,
+  TerminalWindow,
   Users,
-  Workflow,
-} from "lucide-react"
+} from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
 import { useCommandPalette } from "@/components/command-palette"
@@ -97,7 +101,7 @@ export const NAV: { label: string; items: NavItem[] }[] = [
   {
     label: "Server",
     items: [
-      { title: "Overview", href: "/", icon: Activity },
+      { title: "Overview", href: "/", icon: Gauge },
       { title: "Metrics", href: "/metrics", icon: LineChart },
       {
         title: "Docker",
@@ -105,35 +109,35 @@ export const NAV: { label: string; items: NavItem[] }[] = [
         icon: Box,
         children: [
           { title: "Containers", href: "/docker/containers", icon: Box },
-          { title: "Stacks", href: "/docker/stacks", icon: Layers },
-          { title: "Images", href: "/docker/images", icon: Disc3 },
-          { title: "Volumes", href: "/docker/volumes", icon: HardDrive },
-          { title: "Networks", href: "/docker/networks", icon: Network },
-          { title: "Events", href: "/docker/events", icon: Radio },
+          { title: "Stacks", href: "/docker/stacks", icon: GridMasonry },
+          { title: "Images", href: "/docker/images", icon: Layers },
+          { title: "Volumes", href: "/docker/volumes", icon: Servers },
+          { title: "Networks", href: "/docker/networks", icon: NetworkDevice },
+          { title: "Events", href: "/docker/events", icon: Rss },
         ],
       },
-      { title: "Processes", href: "/processes", icon: ListChecks },
-      { title: "Logs", href: "/logs", icon: ScrollText },
+      { title: "Processes", href: "/processes", icon: ListOrdered },
+      { title: "Logs", href: "/logs", icon: Logs },
     ],
   },
   {
     label: "Access",
     items: [
-      { title: "Terminal", href: "/terminal", icon: TerminalSquare, capability: "terminal" },
-      { title: "Files", href: "/files", icon: FolderTree },
+      { title: "Terminal", href: "/terminal", icon: TerminalWindow, capability: "terminal" },
+      { title: "Files", href: "/files", icon: FolderOpen },
       { title: "Git", href: "/git", icon: GitBranch },
       {
         title: "Databases",
         href: "/databases",
         icon: Database,
         children: [
-          { title: "Structure", href: "/databases/structure", icon: Columns3 },
-          { title: "Diagram", href: "/databases/diagram", icon: Workflow },
-          { title: "Query", href: "/databases/query", icon: SquareTerminal },
-          { title: "Find", href: "/databases/find", icon: Search },
-          { title: "Monitor", href: "/databases/monitor", icon: Activity },
-          { title: "Generate", href: "/databases/generate", icon: FileCode2 },
-          { title: "Connection", href: "/databases/connection", icon: Cable },
+          { title: "Structure", href: "/databases/structure", icon: Layout },
+          { title: "Diagram", href: "/databases/diagram", icon: Monorepo },
+          { title: "Query", href: "/databases/query", icon: Terminal },
+          { title: "Find", href: "/databases/find", icon: MagnifyingGlass },
+          { title: "Monitor", href: "/databases/monitor", icon: Monitoring },
+          { title: "Generate", href: "/databases/generate", icon: Code },
+          { title: "Connection", href: "/databases/connection", icon: Connection },
         ],
       },
     ],
@@ -147,10 +151,10 @@ export const NAV: { label: string; items: NavItem[] }[] = [
         icon: Globe,
         children: [
           { title: "Sites", href: "/proxy/sites", icon: Globe },
-          { title: "Certificates", href: "/proxy/certificates", icon: BadgeCheck },
-          { title: "TLS report", href: "/proxy/tls", icon: ScanLine },
-          { title: "Streams", href: "/proxy/streams", icon: Cable },
-          { title: "Ports", href: "/proxy/ports", icon: Plug },
+          { title: "Certificates", href: "/proxy/certificates", icon: ShieldCheck },
+          { title: "TLS report", href: "/proxy/tls", icon: Inspect },
+          { title: "Streams", href: "/proxy/streams", icon: Connection },
+          { title: "Ports", href: "/proxy/ports", icon: Router },
         ],
       },
       {
@@ -158,13 +162,13 @@ export const NAV: { label: string; items: NavItem[] }[] = [
         href: "/security",
         icon: Shield,
         children: [
-          { title: "Firewall", href: "/security/firewall", icon: Shield },
-          { title: "SSH", href: "/security/ssh", icon: TerminalSquare },
-          { title: "Intrusion", href: "/security/intrusion", icon: Siren },
-          { title: "Connections", href: "/security/connections", icon: Network },
-          { title: "Logins", href: "/security/logins", icon: Users },
-          { title: "Network", href: "/security/network", icon: Cable },
-          { title: "Tools", href: "/security/tools", icon: Radar },
+          { title: "Firewall", href: "/security/firewall", icon: FirewallCheck },
+          { title: "SSH", href: "/security/ssh", icon: SecureConnection },
+          { title: "Intrusion", href: "/security/intrusion", icon: Bug },
+          { title: "Connections", href: "/security/connections", icon: NetworkDevice },
+          { title: "Logins", href: "/security/logins", icon: SignIn },
+          { title: "Network", href: "/security/network", icon: Route },
+          { title: "Tools", href: "/security/tools", icon: Crosshair },
         ],
       },
     ],
@@ -173,11 +177,11 @@ export const NAV: { label: string; items: NavItem[] }[] = [
     label: "Operations",
     items: [
       { title: "Dashboard", href: "/dashboard", icon: Sparkles },
-      { title: "Packages", href: "/packages", icon: PackageCheck },
-      { title: "Deployments", href: "/deploy", icon: Rocket },
+      { title: "Packages", href: "/packages", icon: Puzzle },
+      { title: "Deployments", href: "/deploy", icon: CloudUpload },
       { title: "Backups", href: "/backups", icon: Archive },
       { title: "System users", href: "/system-users", icon: Users, capability: "system.admin" },
-      { title: "Audit log", href: "/audit", icon: FileText, capability: "system.admin" },
+      { title: "Audit log", href: "/audit", icon: Notes, capability: "system.admin" },
     ],
   },
 ]
@@ -185,7 +189,7 @@ export const NAV: { label: string; items: NavItem[] }[] = [
 /** Entries that live in the footer menu rather than a nav group. */
 export const PERSONAL_NAV: NavItem[] = [
   { title: "Account", href: "/account", icon: ShieldCheck },
-  { title: "Appearance", href: "/appearance", icon: Palette },
+  { title: "Appearance", href: "/appearance", icon: BlendMode },
 ]
 
 /** Whether a nav entry owns the given path. */
@@ -251,7 +255,7 @@ export function AppSidebar() {
           onClick={palette.open}
           className="raised flex h-8 w-full min-w-0 items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2 text-left text-[13px] text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0"
         >
-          <Search className="size-3.5 shrink-0" />
+          <MagnifyingGlass className="size-3.5 shrink-0" />
           <span className="flex-1 truncate group-data-[collapsible=icon]:hidden">Search</span>
           <kbd className="pointer-events-none rounded border border-sidebar-border bg-sidebar px-1 font-mono text-[10px] group-data-[collapsible=icon]:hidden">
             ⌘K
@@ -354,7 +358,7 @@ function NavParent({ item, pathname }: { item: NavItem; pathname: string }) {
   }
 
   const children: NavChild[] = [
-    { title: "Overview", href: item.href, icon: LayoutGrid },
+    { title: "Overview", href: item.href, icon: GridSquare },
     ...(item.children ?? []),
   ]
 
@@ -440,7 +444,7 @@ function UserCard({ collapsed }: { collapsed: boolean }) {
               {user?.role ?? "—"}
             </span>
           </span>
-          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+          <ArrowUpDown className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -466,7 +470,7 @@ function UserCard({ collapsed }: { collapsed: boolean }) {
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onSelect={() => logout()}>
-          <LogOut className="size-4" />
+          <Logout className="size-4" />
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

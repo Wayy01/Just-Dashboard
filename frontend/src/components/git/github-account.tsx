@@ -4,13 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Check,
   Copy,
-  ExternalLink,
-  KeyRound,
-  LogOut,
-  RefreshCw,
+  External,
+  Key,
+  Logout,
+  RefreshClockwise,
   ShieldCheck,
   Wrench,
-} from "lucide-react"
+} from "@/components/icons"
 import { errorMessage, post } from "@/lib/api"
 import { notify } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -246,13 +246,13 @@ export function GitHubAccountControl({
         {account.profileUrl && (
           <DropdownMenuItem asChild>
             <a href={account.profileUrl} target="_blank" rel="noreferrer">
-              <ExternalLink className="size-3.5" />
+              <External className="size-3.5" />
               View profile on GitHub
             </a>
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={() => status.refresh()}>
-          <RefreshCw className="size-3.5" />
+          <RefreshClockwise className="size-3.5" />
           Re-check
         </DropdownMenuItem>
         {canAdmin && (
@@ -282,7 +282,7 @@ export function GitHubAccountControl({
                 })
               }
             >
-              <LogOut className="size-3.5" />
+              <Logout className="size-3.5" />
               Sign out
             </DropdownMenuItem>
           </>
@@ -492,7 +492,7 @@ function SignInDialog({
                 </Button>
                 <Button size="sm" asChild>
                   <a href={stage.start.verificationUri} target="_blank" rel="noreferrer">
-                    <ExternalLink className="size-3.5" />
+                    <External className="size-3.5" />
                     Open github.com and enter it
                   </a>
                 </Button>
@@ -562,7 +562,7 @@ function SignInDialog({
             </div>
             <div className="flex gap-2">
               <Button className="flex-1" disabled={busy || !token.trim()} onClick={signInWithToken}>
-                {busy ? <Spinner className="size-4" /> : <KeyRound className="size-4" />}
+                {busy ? <Spinner className="size-4" /> : <Key className="size-4" />}
                 Sign in with token
               </Button>
               <Button variant="ghost" onClick={() => setMode("code")}>

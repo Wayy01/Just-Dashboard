@@ -1,7 +1,15 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Lock, Pencil, RotateCcw, Shield, ShieldAlert, Trash2 } from "lucide-react"
+import {
+  LockClosed,
+  Pencil,
+  RotateCounterClockwise,
+  Shield,
+  ShieldOff,
+  Trash,
+  Warning,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -135,12 +143,12 @@ export function FirewallPanel({
         <AreaFindings posture={posture} area="firewall" onFix={onFix} />
 
         {caps.readOnlyReason && (
-          <Notice icon={Lock} title={`${status.backend} can be read here, not changed`}>
+          <Notice icon={LockClosed} title={`${status.backend} can be read here, not changed`}>
             {caps.readOnlyReason}
           </Notice>
         )}
 
-        <Notice icon={ShieldAlert} title="Lockout protection">
+        <Notice icon={ShieldOff} title="Lockout protection">
           A rule that would block the address you are connected from is refused before it is
           applied, and so is an inbound default of deny on a host with no allow rule at all. A
           firewall change should never be the thing that costs you access to the box.
@@ -291,7 +299,7 @@ export function FirewallPanel({
                   })
                 }
               >
-                <RotateCcw className="size-3.5" />
+                <RotateCounterClockwise className="size-3.5" />
                 Reset
               </Button>
             )}
@@ -346,7 +354,7 @@ export function FirewallPanel({
                     <TableCell className="text-xs text-muted-foreground">
                       {rule.danger ? (
                         <span className="flex items-start gap-1.5 text-destructive">
-                          <AlertTriangle className="mt-px size-3 shrink-0" />
+                          <Warning className="mt-px size-3 shrink-0" />
                           <span>{rule.danger}</span>
                         </span>
                       ) : (
@@ -392,7 +400,7 @@ export function FirewallPanel({
                             })
                           }
                         >
-                          <Trash2 />
+                          <Trash />
                         </IconAction>
                       )}
                     </TableCell>

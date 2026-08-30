@@ -1,6 +1,6 @@
 "use client"
 
-import { HelpCircle } from "lucide-react"
+import { Question } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -68,7 +68,7 @@ export function ExplainIcon({ name, className }: { name: string; className?: str
           aria-label={`What is ${entry?.title ?? name}?`}
           className={cn("text-muted-foreground transition-colors hover:text-foreground", className)}
         >
-          <HelpCircle className="size-3.5" />
+          <Question className="size-3.5" />
         </button>
       </HoverCardTrigger>
       <HoverCardContent className="w-80 text-xs leading-relaxed">

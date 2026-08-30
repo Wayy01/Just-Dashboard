@@ -1,6 +1,6 @@
 "use client"
 
-import { Ban, History } from "lucide-react"
+import { ClockRewind, Slash } from "@/components/icons"
 import { get, ApiError } from "@/lib/api"
 import { timestamp } from "@/lib/format"
 import type { BanEvent, Fail2banJail } from "@/lib/types"
@@ -45,7 +45,7 @@ export function IntrusionPanels() {
   if (!data?.available) {
     return (
       <EmptyState
-        icon={Ban}
+        icon={Slash}
         title="fail2ban is not installed"
         description="It turns an endless brute-force against a port that has to stay open into a few attempts and a ban, which is the one thing a firewall cannot do for SSH."
       />
@@ -54,7 +54,7 @@ export function IntrusionPanels() {
   if (!data.running) {
     return (
       <EmptyState
-        icon={Ban}
+        icon={Slash}
         title="fail2ban is installed but not responding"
         description={
           data.error ?? "Installed and stopped is the state that looks protected and is not."
@@ -73,7 +73,7 @@ export function IntrusionPanels() {
         ))}
         {data.jails.length === 0 && (
           <EmptyState
-            icon={Ban}
+            icon={Slash}
             title="No jails configured"
             description="A running fail2ban with no jails bans nobody. Enable at least the sshd jail."
           />
@@ -103,7 +103,7 @@ function BanHistoryPanel() {
   return (
     <Panel>
       <PanelHeader
-        icon={History}
+        icon={ClockRewind}
         title="Ban activity"
         description="From fail2ban's own log — including bans that have since expired"
       />
@@ -117,7 +117,7 @@ function BanHistoryPanel() {
         ) : loading ? (
           <LoadingPanel />
         ) : !data?.length ? (
-          <EmptyState icon={History} title="No ban activity recorded" />
+          <EmptyState icon={ClockRewind} title="No ban activity recorded" />
         ) : (
           <Table containerClassName="max-h-[24rem]">
             <TableHeader>

@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react"
+import { ChevronDoubleDown, ChevronDoubleUp } from "@/components/icons"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /**
@@ -27,7 +27,7 @@ export function AheadBehind({
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-0.5 text-success">
-              <ArrowUpFromLine className="size-3" />
+              <ChevronDoubleUp className="size-3" />
               {ahead}
             </span>
           </TooltipTrigger>
@@ -38,7 +38,7 @@ export function AheadBehind({
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-0.5 text-warning">
-              <ArrowDownToLine className="size-3" />
+              <ChevronDoubleDown className="size-3" />
               {behind}
             </span>
           </TooltipTrigger>

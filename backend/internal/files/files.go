@@ -289,30 +289,76 @@ func lookupGroup(gid uint32) string {
 	return name
 }
 
+// editorLanguages is the extension the editor and the preview both key off.
+//
+// It is deliberately wider than the languages Monaco highlights: an extension
+// missing from here is not merely unhighlighted, it is a file the preview has
+// to fall back to sniffing bytes for, and a `.tf` or a `.vue` reported as
+// "plaintext" reads to the operator as "the dashboard does not know what this
+// is". Monaco ignores an id it has no grammar for, so an entry costs nothing.
 var editorLanguages = map[string]string{
 	".go": "go", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-	".ts": "typescript", ".tsx": "typescript", ".jsx": "javascript",
-	".json": "json", ".yml": "yaml", ".yaml": "yaml", ".toml": "toml",
-	".md": "markdown", ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+	".ts": "typescript", ".tsx": "typescript", ".jsx": "javascript", ".mts": "typescript",
+	".json": "json", ".jsonc": "json", ".json5": "json",
+	".yml": "yaml", ".yaml": "yaml", ".toml": "toml",
+	".md": "markdown", ".mdx": "markdown", ".rst": "plaintext",
+	".sh": "shell", ".bash": "shell", ".zsh": "shell", ".fish": "shell",
 	".py": "python", ".rb": "ruby", ".rs": "rust", ".php": "php",
-	".sql": "sql", ".html": "html", ".css": "css", ".scss": "scss",
-	".xml": "xml", ".ini": "ini", ".conf": "ini", ".env": "shell",
-	".dockerfile": "dockerfile", ".service": "ini", ".nginx": "nginx",
+	".sql": "sql", ".html": "html", ".htm": "html", ".css": "css",
+	".scss": "scss", ".less": "less", ".vue": "html", ".svelte": "html",
+	".xml": "xml", ".svg": "xml", ".ini": "ini", ".conf": "ini", ".cfg": "ini",
+	".env": "shell", ".properties": "ini",
+	".dockerfile": "dockerfile", ".service": "ini", ".socket": "ini",
+	".timer": "ini", ".mount": "ini", ".nginx": "nginx",
+	".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".hpp": "cpp",
+	".cs": "csharp", ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+	".swift": "swift", ".m": "objective-c", ".scala": "scala", ".clj": "clojure",
+	".ex": "elixir", ".exs": "elixir", ".erl": "erlang", ".hs": "haskell",
+	".lua": "lua", ".pl": "perl", ".r": "r", ".dart": "dart", ".zig": "plaintext",
+	".ps1": "powershell", ".bat": "bat", ".cmd": "bat", ".vim": "plaintext",
+	".tf": "hcl", ".tfvars": "hcl", ".hcl": "hcl", ".proto": "proto",
+	".graphql": "graphql", ".gql": "graphql", ".prisma": "plaintext",
+	".diff": "diff", ".patch": "diff", ".csv": "plaintext", ".tsv": "plaintext",
+	".txt": "plaintext", ".log": "plaintext", ".list": "plaintext",
+}
+
+// namedFiles are the files a server keeps that have no extension at all, and
+// which are therefore invisible to any mapping that only looks at one.
+var namedFiles = map[string]string{
+	"dockerfile": "dockerfile", "containerfile": "dockerfile",
+	"makefile": "makefile", "gnumakefile": "makefile",
+	"caddyfile": "caddyfile", "vagrantfile": "ruby", "gemfile": "ruby",
+	"rakefile": "ruby", "brewfile": "ruby", "procfile": "yaml",
+	"license": "plaintext", "readme": "markdown", "changelog": "markdown",
+	"authorized_keys": "plaintext", "known_hosts": "plaintext",
+	"hosts": "plaintext", "fstab": "plaintext", "crontab": "plaintext",
+	".gitignore": "plaintext", ".dockerignore": "plaintext",
+	".env": "shell", ".bashrc": "shell", ".zshrc": "shell", ".profile": "shell",
+	".bash_profile": "shell", ".editorconfig": "ini", ".gitconfig": "ini",
+	".npmrc": "ini", ".eslintrc": "json", ".prettierrc": "json",
 }
 
 func mimeHint(name string) string {
-	if lang, ok := editorLanguages[strings.ToLower(filepath.Ext(name))]; ok {
+	lower := strings.ToLower(name)
+	if lang, ok := namedFiles[lower]; ok {
 		return lang
 	}
-	switch strings.ToLower(name) {
-	case "dockerfile", "containerfile":
-		return "dockerfile"
-	case "makefile":
-		return "makefile"
-	case "caddyfile":
-		return "caddyfile"
+	if lang, ok := editorLanguages[filepath.Ext(lower)]; ok {
+		return lang
+	}
+	// `nginx.conf.bak`, `app.service.old`: the interesting extension is the
+	// one before the suffix that says this is a copy.
+	if backupSuffixes[filepath.Ext(lower)] {
+		if lang, ok := editorLanguages[filepath.Ext(strings.TrimSuffix(lower, filepath.Ext(lower)))]; ok {
+			return lang
+		}
 	}
 	return "plaintext"
+}
+
+var backupSuffixes = map[string]bool{
+	".bak": true, ".old": true, ".orig": true, ".save": true, ".dpkg-old": true,
+	".rpmsave": true, ".disabled": true,
 }
 
 type FileContent struct {

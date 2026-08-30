@@ -2,7 +2,7 @@
 
 import { useMemo } from "react"
 import Link from "next/link"
-import { BadgeCheck, Globe, Plug, Server, ShieldCheck } from "lucide-react"
+import { Globe, Router, Servers, ShieldCheck } from "@/components/icons"
 import { get } from "@/lib/api"
 import type { Certificate, Listener, VHost } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
@@ -65,7 +65,7 @@ export default function ProxyOverviewPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
         <StatTile
           label="Reverse proxy"
-          icon={Server}
+          icon={Servers}
           value={engine}
           hint={status?.certbot ? "certbot available" : "no certbot"}
           tone={status?.nginx || status?.caddy ? "default" : "warning"}
@@ -83,7 +83,7 @@ export default function ProxyOverviewPage() {
           <StatTile
             className="h-full transition-colors hover:border-primary/30"
             label="Certificates"
-            icon={BadgeCheck}
+            icon={ShieldCheck}
             value={certs.data?.length ?? "—"}
             hint={
               badCerts.length > 0
@@ -97,7 +97,7 @@ export default function ProxyOverviewPage() {
           <StatTile
             className="h-full transition-colors hover:border-primary/30"
             label="Exposed ports"
-            icon={Plug}
+            icon={Router}
             value={exposed.length}
             hint={exposed.length ? "reachable off the machine" : "all on loopback"}
             tone={exposed.length ? "warning" : "success"}

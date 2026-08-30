@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react"
 import type { JournalEntry, LogLine } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
-import { ListChecks } from "lucide-react"
+import { ListOrdered } from "@/components/icons"
 import { LogViewer } from "@/components/log-viewer"
 import { SidePanel } from "@/components/side-panel"
 
@@ -29,7 +29,7 @@ export function UnitJournalSheet({
     <SidePanel
       open={unit !== null}
       onOpenChange={onOpenChange}
-      icon={ListChecks}
+      icon={ListOrdered}
       title={unit ?? "Unit"}
       description="Live journal, newest at the bottom"
       bodyClassName="flex min-h-0 flex-1 flex-col p-4"

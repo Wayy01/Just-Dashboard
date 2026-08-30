@@ -1011,6 +1011,85 @@ export type FileContent = {
   modeOctal: string
 }
 
+/** One click on a row: what the thing is, without loading it. */
+export type FilePreview = {
+  path: string
+  name: string
+  kind: "dir" | "text" | "image" | "video" | "audio" | "pdf" | "archive" | "binary"
+  mime?: string
+  size: number
+  modified: string
+  modeOctal: string
+  owner?: string
+  group?: string
+  language?: string
+  text?: string
+  lines?: number
+  truncated?: boolean
+  editable: boolean
+  width?: number
+  height?: number
+  entries?: { name: string; size: number; isDir: boolean }[]
+  entryCount?: number
+  moreEntries?: boolean
+  archiveError?: string
+  childCount?: number
+  dirCount?: number
+  fileCount?: number
+  isSymlink?: boolean
+  symlinkTarget?: string
+  linkBroken?: boolean
+}
+
+export type FilePlace = {
+  name: string
+  path: string
+  kind: "home" | "root" | "user" | "notable"
+  hint?: string
+}
+
+export type FileBookmark = { path: string; name?: string }
+
+export type FilePlaces = {
+  home: string
+  roots: string[]
+  places: FilePlace[]
+  bookmarks: FileBookmark[]
+}
+
+export type FileFindHit = {
+  path: string
+  name: string
+  rel: string
+  dir: string
+  isDir: boolean
+  size: number
+  modified: string
+  score: number
+  /** UTF-16 offsets into `name`, for the highlight. */
+  matches?: number[]
+}
+
+export type FileFindResult = {
+  root: string
+  hits: FileFindHit[]
+  truncated: boolean
+  visited: number
+  elapsedMs: number
+}
+
+export type FileUsage = {
+  path: string
+  bytes: number
+  files: number
+  dirs: number
+  truncated: boolean
+  elapsedMs: number
+  largest?: { name: string; path: string; bytes: number; isDir: boolean }[]
+}
+
+export type FileChecksum = { path: string; algo: string; sum: string; size: number }
+
 export type VHost = {
   name: string
   kind: "nginx" | "caddy"

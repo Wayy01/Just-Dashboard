@@ -1,17 +1,17 @@
 "use client"
 
 import {
-  AlertTriangle,
-  CheckCircle2,
+  Bug,
+  CheckCircle,
+  CloudDownload,
   Globe,
-  HardDriveDownload,
-  Info,
-  Plug,
-  ShieldAlert,
+  Information,
+  Router,
   ShieldCheck,
-  Siren,
-  TerminalSquare,
-} from "lucide-react"
+  ShieldOff,
+  TerminalWindow,
+  Warning,
+} from "@/components/icons"
 import { relativeTime } from "@/lib/format"
 import type { Posture, SecurityFinding } from "@/lib/types"
 import { Panel, PanelBody, PanelHeader } from "@/components/panel"
@@ -47,7 +47,7 @@ export function PosturePanel({
   if (loading && !posture) {
     return (
       <Panel className={className}>
-        <PanelHeader icon={ShieldAlert} title="Security posture" />
+        <PanelHeader icon={ShieldOff} title="Security posture" />
         <PanelBody className="space-y-2">
           <Skeleton className="h-4 w-48" />
           <Skeleton className="h-4 w-72" />
@@ -62,7 +62,7 @@ export function PosturePanel({
   return (
     <Panel className={className}>
       <PanelHeader
-        icon={ok ? ShieldCheck : Siren}
+        icon={ok ? ShieldCheck : Bug}
         title="Security posture"
         description={`${posture.checks} checks · ${relativeTime(posture.checkedAt)}${
           posture.skipped.length > 0 ? ` · not checked: ${posture.skipped.join(", ")}` : ""
@@ -131,13 +131,13 @@ function toFinding(finding: SecurityFinding, onFix?: (f: SecurityFinding) => voi
  */
 function AreaIcon({ area, className }: { area: SecurityFinding["area"]; className?: string }) {
   if (area === "exposure") return <Globe className={className} />
-  if (area === "firewall") return <ShieldAlert className={className} />
-  if (area === "ssh") return <TerminalSquare className={className} />
-  if (area === "intrusion") return <Siren className={className} />
-  if (area === "ports") return <Plug className={className} />
+  if (area === "firewall") return <ShieldOff className={className} />
+  if (area === "ssh") return <TerminalWindow className={className} />
+  if (area === "intrusion") return <Bug className={className} />
+  if (area === "ports") return <Router className={className} />
   if (area === "tls") return <ShieldCheck className={className} />
-  if (area === "updates") return <HardDriveDownload className={className} />
-  return <Info className={className} />
+  if (area === "updates") return <CloudDownload className={className} />
+  return <Information className={className} />
 }
 
 /** The one-word verdict, small enough for a panel header. */
@@ -158,11 +158,11 @@ export function PostureBadge({
           : "Hardened"
   const Icon =
     status === "ok"
-      ? CheckCircle2
+      ? CheckCircle
       : status === "critical"
-        ? ShieldAlert
+        ? ShieldOff
         : status === "warning"
-          ? AlertTriangle
-          : Info
+          ? Warning
+          : Information
   return <Status verdict={status} label={label} icon={Icon} className={className} />
 }

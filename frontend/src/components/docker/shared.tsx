@@ -1,6 +1,6 @@
 "use client"
 
-import { ExternalLink } from "lucide-react"
+import { External } from "@/components/icons"
 import type { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 
@@ -44,7 +44,7 @@ export function PortLink({ ip, port, target }: { ip?: string; port: number; targ
       className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] transition-colors hover:border-primary/40 hover:text-primary"
     >
       {label}
-      <ExternalLink className="size-2.5" />
+      <External className="size-2.5" />
     </a>
   )
 }

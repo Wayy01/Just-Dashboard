@@ -1,7 +1,17 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { Clock, Copy, Database, KeyRound, Pencil, Plus, Save, Search, Trash2 } from "lucide-react"
+import {
+  Clock,
+  Copy,
+  Database,
+  FloppyDisk,
+  Key,
+  MagnifyingGlass,
+  Pencil,
+  Plus,
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post } from "@/lib/api"
 import { bytes } from "@/lib/format"
@@ -208,7 +218,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
               placeholder="user:*"
             />
             <Button size="sm" variant="outline" onClick={search}>
-              <Search className="size-3.5" />
+              <MagnifyingGlass className="size-3.5" />
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
@@ -257,7 +267,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
 
       <Panel>
         <PanelHeader
-          icon={KeyRound}
+          icon={Key}
           title={selected ?? "Pick a key"}
           description={
             value.data
@@ -278,7 +288,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
                   className="text-destructive"
                   onClick={() => deleteKey(selected)}
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash className="size-3.5" />
                   Delete
                 </Button>
               </>
@@ -286,7 +296,7 @@ export function RedisBrowser({ conn, confirm }: { conn: DbConnection; confirm: C
           }
         />
         <PanelBody flush>
-          {!selected && <EmptyState icon={KeyRound} title="Select a key to see its value" />}
+          {!selected && <EmptyState icon={Key} title="Select a key to see its value" />}
           {selected && value.loading && (
             <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
               <Spinner /> Reading…
@@ -489,7 +499,7 @@ function RenameKeyDialog({
             Cancel
           </Button>
           <Button disabled={!to.trim() || to === from || busy} onClick={submit}>
-            {busy ? <Spinner /> : <Save className="size-3.5" />}
+            {busy ? <Spinner /> : <FloppyDisk className="size-3.5" />}
             Rename
           </Button>
         </DialogFooter>
@@ -596,7 +606,7 @@ function RedisValueView({
           <div className="flex items-center gap-1.5">
             {canWrite && (
               <Button size="sm" onClick={save} disabled={busy}>
-                {busy ? <Spinner /> : <Save className="size-3.5" />}
+                {busy ? <Spinner /> : <FloppyDisk className="size-3.5" />}
                 Save
               </Button>
             )}
@@ -748,7 +758,7 @@ function MemberEditor({
                         title="Remove"
                         onClick={() => remove(r.member, r.key)}
                       >
-                        <Trash2 className="size-3.5" />
+                        <Trash className="size-3.5" />
                       </Button>
                     </div>
                   </TableCell>

@@ -2,18 +2,18 @@
 
 import { useCallback, useState } from "react"
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
   Check,
+  ChevronDoubleDown,
+  ChevronDoubleUp,
+  ClockRewind,
+  CornerUpLeft,
   GitBranch as GitBranchIcon,
-  GitCommitHorizontal,
-  History,
+  GitCommit as GitCommitIcon,
   Minus,
   Plus,
-  RefreshCw,
-  RotateCcw,
-  Undo2,
-} from "lucide-react"
+  RefreshClockwise,
+  RotateCounterClockwise,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { relativeTime, timestamp } from "@/lib/format"
@@ -249,7 +249,7 @@ function RepoHeader({
           )
         }
       >
-        <RefreshCw className="size-3.5" />
+        <RefreshClockwise className="size-3.5" />
       </GitButton>
       {canControl && (
         <>
@@ -261,7 +261,7 @@ function RepoHeader({
               run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))
             }
           >
-            <ArrowDownToLine className="size-3.5" />
+            <ChevronDoubleDown className="size-3.5" />
           </GitButton>
           <GitButton
             label="Push the current branch"
@@ -271,7 +271,7 @@ function RepoHeader({
               run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))
             }
           >
-            <ArrowUpFromLine className="size-3.5" />
+            <ChevronDoubleUp className="size-3.5" />
           </GitButton>
           <GitButton
             label="Stash working tree changes"
@@ -279,7 +279,7 @@ function RepoHeader({
             disabled={!!busy || status.data?.clean}
             onClick={() => run("Stashed", () => post<GitResult>("/git/stash", {}, { query: q }))}
           >
-            <Undo2 className="size-3.5" />
+            <CornerUpLeft className="size-3.5" />
           </GitButton>
           {stashes > 0 && (
             <GitButton
@@ -292,7 +292,7 @@ function RepoHeader({
                 )
               }
             >
-              <RotateCcw className="size-3.5" />
+              <RotateCounterClockwise className="size-3.5" />
             </GitButton>
           )}
         </>
@@ -496,7 +496,7 @@ function ChangesTab({
                             disabled={!!busy}
                             onClick={() => discard(f)}
                           >
-                            <RotateCcw className="size-3.5" />
+                            <RotateCounterClockwise className="size-3.5" />
                           </RowButton>
                         )}
                         {canControl && (
@@ -552,7 +552,7 @@ function ChangesTab({
                   disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
                   onClick={() => void commit(true)}
                 >
-                  <ArrowUpFromLine className="size-3.5" />
+                  <ChevronDoubleUp className="size-3.5" />
                   Commit &amp; push
                 </Button>
               </TooltipTrigger>
@@ -565,7 +565,7 @@ function ChangesTab({
                   disabled={!!busy || (!message.trim() && !amend) || staged.length === 0}
                   onClick={() => void commit(false)}
                 >
-                  <GitCommitHorizontal className="size-3.5" />
+                  <GitCommitIcon className="size-3.5" />
                   Commit
                 </Button>
               </TooltipTrigger>
@@ -610,7 +610,7 @@ function HistoryTab({
 
   if (log.error) return <ErrorState error={log.error} className="m-3" />
   if (log.loading && !log.data) return <LoadingRows className="p-3" rows={5} />
-  if (!log.data?.length) return <EmptyState className="m-3" icon={History} title="No commits yet" />
+  if (!log.data?.length) return <EmptyState className="m-3" icon={ClockRewind} title="No commits yet" />
 
   return (
     <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-1">
@@ -621,7 +621,7 @@ function HistoryTab({
               onClick={() => show(c)}
               className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[var(--row-hover)]"
             >
-              <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <GitCommitIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[12px]">{c.subject}</p>
                 <p className="truncate text-[10px] text-muted-foreground">
@@ -766,7 +766,7 @@ function AheadBehind({ ahead, behind }: { ahead: number; behind: number }) {
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-0.5 text-success">
-              <ArrowUpFromLine className="size-3" />
+              <ChevronDoubleUp className="size-3" />
               {ahead}
             </span>
           </TooltipTrigger>
@@ -777,7 +777,7 @@ function AheadBehind({ ahead, behind }: { ahead: number; behind: number }) {
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-0.5 text-warning">
-              <ArrowDownToLine className="size-3" />
+              <ChevronDoubleDown className="size-3" />
               {behind}
             </span>
           </TooltipTrigger>

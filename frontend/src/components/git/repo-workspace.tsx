@@ -3,16 +3,16 @@
 import { useCallback, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  ArrowDownToLine,
   ArrowLeft,
-  ArrowUpFromLine,
-  GitBranch as GitBranchIcon,
-  GitFork,
+  BranchPlus,
+  ChevronDoubleDown,
+  ChevronDoubleUp,
+  CornerUpLeft,
+  GitBranch,
   MoreHorizontal,
-  RefreshCw,
-  RotateCcw,
-  Undo2,
-} from "lucide-react"
+  RefreshClockwise,
+  RotateCounterClockwise,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -176,7 +176,7 @@ export function RepoWorkspace({
           <TooltipTrigger asChild>
             <button onClick={() => setTab("branches")} className="shrink-0">
               <Badge variant={head.detached ? "destructive" : "secondary"} className="font-normal">
-                <GitBranchIcon className="size-3" />
+                <GitBranch className="size-3" />
                 {head.branch || "—"}
               </Badge>
             </button>
@@ -197,7 +197,7 @@ export function RepoWorkspace({
               onClick={() => setGraphOpen((v) => !v)}
               aria-pressed={graphOpen}
             >
-              <GitFork className="size-4" />
+              <BranchPlus className="size-4" />
               Graph
             </Button>
           </TooltipTrigger>
@@ -216,7 +216,7 @@ export function RepoWorkspace({
                 )
               }
             >
-              <RefreshCw className={cn("size-4", busy === "Fetched" && "animate-spin")} />
+              <RefreshClockwise className={cn("size-4", busy === "Fetched" && "animate-spin")} />
               Fetch
             </Button>
           </TooltipTrigger>
@@ -236,7 +236,7 @@ export function RepoWorkspace({
                     run("Pulled", () => post<GitResult>("/git/pull", undefined, { query: q }))
                   }
                 >
-                  <ArrowDownToLine className="size-4" />
+                  <ChevronDoubleDown className="size-4" />
                   Pull
                   {head.behind > 0 && (
                     <span className="numeric ml-0.5 rounded bg-warning/20 px-1 text-[10px] text-warning">
@@ -258,7 +258,7 @@ export function RepoWorkspace({
                     run("Pushed", () => post<GitResult>("/git/push", undefined, { query: q }))
                   }
                 >
-                  <ArrowUpFromLine className="size-4" />
+                  <ChevronDoubleUp className="size-4" />
                   Push
                   {head.ahead > 0 && (
                     <span className="numeric ml-0.5 rounded bg-primary-foreground/20 px-1 text-[10px]">
@@ -459,14 +459,14 @@ function StashMenu({
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuLabel className="text-xs">Set changes aside</DropdownMenuLabel>
         <DropdownMenuItem disabled={clean} onSelect={onStash}>
-          <RotateCcw className="size-3.5" />
+          <RotateCounterClockwise className="size-3.5" />
           Stash changes
         </DropdownMenuItem>
         {stashes > 0 && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={onPop}>
-              <Undo2 className="size-3.5" />
+              <CornerUpLeft className="size-3.5" />
               Pop latest stash ({stashes})
             </DropdownMenuItem>
           </>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Upload } from "lucide-react"
+import { CloudUpload } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { post } from "@/lib/api"
@@ -225,7 +225,7 @@ export function ImportDialog({
             Close
           </Button>
           <Button onClick={submit} disabled={!data.trim() || busy}>
-            {busy ? <Spinner /> : <Upload className="size-4" />}
+            {busy ? <Spinner /> : <CloudUpload className="size-4" />}
             Import
           </Button>
         </DialogFooter>

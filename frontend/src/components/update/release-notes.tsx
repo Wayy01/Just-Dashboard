@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle } from "lucide-react"
+import { Warning } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { ChangeKind, Release } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
@@ -78,7 +78,7 @@ export function ReleaseNotes({
           )}
           {release.breaking && (
             <Badge variant="warning" className="text-[10px]">
-              <AlertTriangle className="size-3" />
+              <Warning className="size-3" />
               Needs attention
             </Badge>
           )}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, KeyRound, Network, TerminalSquare } from "lucide-react"
+import { Key, NetworkDevice, TerminalWindow, Warning } from "@/components/icons"
 import { get, post } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Job, SSHDConfig, SSHSetting } from "@/lib/types"
@@ -66,7 +66,7 @@ export function SSHPanel() {
   if (!admin) {
     return (
       <EmptyState
-        icon={TerminalSquare}
+        icon={TerminalWindow}
         title="SSH settings need the admin capability"
         description="They name the accounts that hold keys, which is a map of who can reach this machine."
       />
@@ -77,7 +77,7 @@ export function SSHPanel() {
   if (!data?.available) {
     return (
       <EmptyState
-        icon={TerminalSquare}
+        icon={TerminalWindow}
         title="No SSH server on this host"
         description={data?.error ?? "Neither sshd nor its configuration was found."}
       />
@@ -137,14 +137,14 @@ export function SSHPanel() {
         />
 
         {noKeys && (
-          <Notice tone="warning" icon={KeyRound} title="No account on this host has an SSH key">
+          <Notice tone="warning" icon={Key} title="No account on this host has an SSH key">
             Password authentication cannot safely be turned off until one does — with no key
             anywhere, doing so would leave nobody a way in, and the server refuses the change for
             that reason. Add a key from the Users page first.
           </Notice>
         )}
         {data.socket?.unit && (
-          <Notice icon={Network} title={`The port belongs to ${data.socket.unit}, not to sshd_config`}>
+          <Notice icon={NetworkDevice} title={`The port belongs to ${data.socket.unit}, not to sshd_config`}>
             This host runs socket-activated SSH — systemd holds the listener and hands sshd a
             connection, so sshd never binds a port of its own and the Port directive is read and
             ignored. Changing it here writes the directive <em>and</em> a drop-in for{" "}
@@ -154,7 +154,7 @@ export function SSHPanel() {
           </Notice>
         )}
         {data.hasMatchBlocks && (
-          <Notice icon={AlertTriangle} title="This configuration has Match blocks">
+          <Notice icon={Warning} title="This configuration has Match blocks">
             Some of these values are overridden for particular users or addresses. What is shown
             here is the unconditional configuration; the conditional parts are not editable from
             this page.
@@ -163,7 +163,7 @@ export function SSHPanel() {
 
         <Panel>
           <PanelHeader
-            icon={TerminalSquare}
+            icon={TerminalWindow}
             title="SSH server"
             description={
               data.socket?.unit
@@ -211,7 +211,7 @@ export function SSHPanel() {
 
         <Panel>
           <PanelHeader
-            icon={KeyRound}
+            icon={Key}
             title="Accounts with an authorized key"
             description="Who could still log in with password authentication switched off"
           />
@@ -224,7 +224,7 @@ export function SSHPanel() {
               <div className="flex flex-wrap gap-1.5">
                 {data.keyedAccounts.map((account) => (
                   <Badge key={account.user} variant="outline" className="font-normal">
-                    <KeyRound className="size-3" />
+                    <Key className="size-3" />
                     {account.user}
                     <span className="text-muted-foreground">
                       {account.keys} {account.keys === 1 ? "key" : "keys"}

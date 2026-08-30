@@ -2,17 +2,16 @@
 
 import { useState } from "react"
 import {
+  AcronymJson,
   ArrowDown,
   ArrowUp,
-  ChevronsUpDown,
+  ArrowUpDown,
   Copy,
-  CopyPlus,
-  ExternalLink,
-  FileJson,
+  External,
   MoreHorizontal,
   Pencil,
-  Trash2,
-} from "lucide-react"
+  Trash,
+} from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -199,7 +198,7 @@ export function ResultGrid({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-52">
                         <DropdownMenuItem onClick={() => copyJSON(rowRecord(row))}>
-                          <FileJson className="size-3.5" />
+                          <AcronymJson className="size-3.5" />
                           Copy as JSON
                         </DropdownMenuItem>
                         {onCopySQL && (
@@ -210,7 +209,7 @@ export function ResultGrid({
                         )}
                         {onDuplicate && (
                           <DropdownMenuItem onClick={() => onDuplicate(rowRecord(row))}>
-                            <CopyPlus className="size-3.5" />
+                            <Copy className="size-3.5" />
                             Duplicate row…
                           </DropdownMenuItem>
                         )}
@@ -221,7 +220,7 @@ export function ResultGrid({
                               variant="destructive"
                               onClick={() => onDelete(rowRecord(row))}
                             >
-                              <Trash2 className="size-3.5" />
+                              <Trash className="size-3.5" />
                               Delete row…
                             </DropdownMenuItem>
                           </>
@@ -255,7 +254,7 @@ export function ResultGrid({
                           title={`Open ${fk.refTable} where ${fk.refColumns[0]} = ${String(cell)}`}
                           className="shrink-0 text-muted-foreground/60 hover:text-primary"
                         >
-                          <ExternalLink className="size-3" />
+                          <External className="size-3" />
                         </button>
                       )}
                     </span>
@@ -282,7 +281,7 @@ export function ResultGrid({
 function SortIcon({ active, desc }: { active: boolean; desc: boolean }) {
   if (!active)
     return (
-      <ChevronsUpDown className="size-3 opacity-0 transition-opacity group-hover/sort:opacity-50" />
+      <ArrowUpDown className="size-3 opacity-0 transition-opacity group-hover/sort:opacity-50" />
     )
   return desc ? (
     <ArrowDown className="size-3 text-primary" />

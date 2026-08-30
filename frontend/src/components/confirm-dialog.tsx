@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle } from "lucide-react"
+import { Warning } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -107,7 +107,7 @@ function ConfirmBody({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {request.phrase && <AlertTriangle className="size-4 text-destructive" />}
+            {request.phrase && <Warning className="size-4 text-destructive" />}
             {request.title}
           </DialogTitle>
           <DialogDescription asChild>
