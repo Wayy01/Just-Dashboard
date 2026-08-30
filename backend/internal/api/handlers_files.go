@@ -25,7 +25,14 @@ func (s *Server) mountFileRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/stat", s.handle(s.handleFileStat))
 		r.Method(http.MethodGet, "/read", s.handle(s.handleFileRead))
 		r.Method(http.MethodGet, "/download", s.handle(s.handleFileDownload))
+		r.Method(http.MethodGet, "/raw", s.handle(s.handleFileRaw))
 		r.Method(http.MethodGet, "/search", s.handle(s.handleFileSearch))
+		r.Method(http.MethodGet, "/find", s.handle(s.handleFileFind))
+		r.Method(http.MethodGet, "/preview", s.handle(s.handleFilePreview))
+		r.Method(http.MethodGet, "/places", s.handle(s.handleFilePlaces))
+		r.Method(http.MethodGet, "/complete", s.handle(s.handleFileComplete))
+		r.Method(http.MethodGet, "/usage", s.handle(s.handleFileUsage))
+		r.Method(http.MethodGet, "/checksum", s.handle(s.handleFileChecksum))
 		r.Method(http.MethodGet, "/archive", s.handle(s.handleFileArchive))
 
 		r.Group(func(r chi.Router) {
@@ -38,6 +45,7 @@ func (s *Server) mountFileRoutes(r chi.Router) {
 			r.Method(http.MethodPost, "/copy", s.handle(s.handleFileCopy))
 			r.Method(http.MethodPost, "/symlink", s.handle(s.handleFileSymlink))
 			r.Method(http.MethodPost, "/extract", s.handle(s.handleFileExtract))
+			r.Method(http.MethodPut, "/bookmarks", s.handle(s.handleFileBookmarks))
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))

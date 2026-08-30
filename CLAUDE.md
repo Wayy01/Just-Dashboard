@@ -897,6 +897,81 @@ every volume at once — the alternative is an inspect per container on every po
 the health and uptime already resolved there. `Diagnose` inspects each container once and runs
 every rule against that one payload.
 
+### Files: what a thing is, before you open it
+
+`internal/files` was a listing, a reader and a writer, and the page on top of it answered
+every click by loading the file into Monaco — which is right for a config file and wrong for
+a picture, a tarball, a video and a two-gigabyte log, three of which arrived at the editor
+only to be refused. Five files answer the questions a file manager is actually asked:
+
+- **`preview.go`** is the single click. It reports what a thing *is* without loading it: a
+  trimmed head for text (whole lines, and a rune never cut in half by the byte limit), the
+  dimensions for an image, the first two hundred entries of a zip or tar without unpacking
+  anything, the child counts for a directory. `Editable` is separate from `Kind` on purpose —
+  a preview of the first hundred lines of a two-gigabyte log must not offer a Save that would
+  write those hundred lines over it. Extensions decide the media kinds and *bytes* decide the
+  rest, because a `.log` is sometimes a rotated binary and a file with no extension at all is
+  usually a script. `imageSize` parses webp and svg by hand: they are half of what a web root
+  holds and neither has a decoder in the standard library.
+- **`MediaType` is a security boundary, not a convenience.** `GET /files/raw` hands a file's
+  own bytes back with a content type the browser will act on, on the same origin as a session
+  that drives the Docker socket — so what it may serve is a closed allowlist (images, video,
+  audio, PDF) and everything else is refused rather than sniffed. HTML is not on it and must
+  not be: served inline it would run as this dashboard. The route tightens the CSP to
+  `sandbox` on top of the middleware's, which is what neuters a directly opened SVG, and it
+  is the one route in the API with a short `Cache-Control` instead of `no-store` — a grid of
+  forty thumbnails re-reads every JPEG on every scroll otherwise, and callers append the
+  file's mtime so a saved image is a different URL.
+- **`find.go`** is the fuzzy finder, and it is a different question from `search.go`: that one
+  takes a literal substring or a regular expression and optionally greps contents, this one
+  takes three half-remembered letters. Subsequence matching with the scoring that makes one
+  useful — the basename above the directories, a run above scattered characters, a boundary
+  above the middle of a word, a shallow path above a deep one — terms ANDed, and match
+  positions returned as **UTF-16 offsets** for the same reason `logsx` does it. It is bounded
+  in three directions (a time budget, a visit cap, a match cap) and *says* when it stopped
+  early: a fuzzy search that quietly answers from a third of the disk is worse than one that
+  admits it.
+- **`places.go`** is where the page opens and how it gets back. `Home` prefers `$HOME`, then
+  `/root`, then a single account under `/home`, and falls through to the first configured
+  root — every candidate checked against `Resolve`, because a shortcut that lands on "outside
+  the permitted roots" is worse than no shortcut. `Complete` is the other half of typing a
+  path: a prefix ending in a separator means "inside this directory", anything else means the
+  last component is being typed, and a dotfile appears only once a dot has been typed.
+- **`Usage` and `Checksum`** are the two figures a listing cannot show. Usage is a bounded
+  recursive walk that accumulates the per-child totals in the *same* pass — forty children
+  would otherwise be forty-one walks — and reports `Truncated` rather than quoting a partial
+  total as a total. A symlink counts as the link, or a tree with links into /usr reports the
+  size of the operating system.
+
+Bookmarks live in the `settings` table (`api/handlers_files_browse.go`) rather than in the
+browser, for the reason terminal folders do: which directory matters is a fact about the
+server, and it should be there from a phone. Recent folders are the opposite and stay in
+`useViewState`. The list is saved whole rather than one entry at a time, so an add, a removal
+and a reorder cannot disagree about the order, and every path is resolved before it is stored.
+
+On the frontend, `components/files/` is the page. `file-icon.tsx` is the vocabulary — roughly
+two hundred extensions, the files that have none (Dockerfile, authorized_keys, a lockfile) and
+the folders whose name says more than "folder" — mapped to eight **categories** rather than to
+languages, drawn in the terminal rail's `--tag-*` hues for the same reason those are fixed: a
+category is a label, and a label that changes hue with the theme stops being the same label.
+`file-actions.tsx` is the one menu both the row and the tile use, because a second copy is how
+an action ends up in one view and not the other. `preview-panel.tsx`, `image-editor.tsx`,
+`grid-view.tsx`, `path-bar.tsx`, `quick-open.tsx` and `places-rail.tsx` are the surfaces; the
+editor sheet gained wrap, a minimap, font size, a formatter, a language override, Ctrl+S, Save
+as and a guard before closing on unsaved work.
+
+Two layout rules on that page are load-bearing and easy to undo. The panel body **does not
+scroll** — whatever is inside it does — because a sticky table header sticks to its nearest
+scrolling ancestor, and with the body scrolling the header rode away with the rows. And the
+rail's tree waits for `/files/places` before it mounts: it caches what it fetched, so an
+install that narrowed `JD_FILE_ROOTS` would keep showing the refusal it got from listing "/".
+
+The image editor commits every operation to a **new canvas** rather than composing a live
+pipeline of parameters. That is what makes undo a stack of bitmaps instead of transformations
+to replay in the right order, and it is why "rotate, crop, rotate again" behaves the way it
+looks. Saving goes through the ordinary upload route, so the file keeps the owner and mode it
+already had.
+
 ### Logs: one filter, live or over history
 
 `internal/logsx` and `api/handlers_logs.go` were three products wearing one
