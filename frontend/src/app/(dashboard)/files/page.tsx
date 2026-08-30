@@ -488,6 +488,9 @@ export default function FilesPage() {
   // server refuses to list — and the tree caches what it fetched, so that
   // first refusal is what it keeps showing. It waits for the answer instead.
   const treeRoot = places.data?.roots[0]
+  // The rail shows the tree only when the tree is not the main view, and the
+  // places list is sized against that.
+  const railTree = view === "tree" ? undefined : treeRoot
 
   return (
     <Page fill>
@@ -588,6 +591,12 @@ export default function FilesPage() {
       <div className="flex min-h-0 flex-1 gap-3">
         {showRail && (
           <Panel className="hidden w-64 shrink-0 lg:flex">
+            {/* Both halves of the rail need a *bounded* height or neither can
+                scroll: an overflow-y-auto box that is free to grow simply
+                grows, and the panel's own overflow-hidden then clips whatever
+                did not fit with no way to reach it. So places takes at most
+                half the rail when the tree is under it, and all of it when it
+                is not. */}
             <PlacesRail
               places={places.data}
               path={path ?? "/"}
@@ -595,14 +604,16 @@ export default function FilesPage() {
               canWrite={canWrite}
               onNavigate={navigate}
               onBookmarksChange={(next) => void saveBookmarks(next)}
-              className="shrink-0 border-b border-hairline"
+              className={cn(
+                railTree ? "max-h-[50%] shrink-0 border-b border-hairline" : "min-h-0 flex-1",
+              )}
             />
             {/* No tree in the rail when the tree *is* the view: the same
                 control twice on one screen reads as a rendering bug. */}
-            <div className="min-h-0 flex-1">
-              {treeRoot && view !== "tree" && (
+            <div className="flex min-h-0 flex-1 flex-col">
+              {railTree && (
               <FileTree
-                root={treeRoot}
+                root={railTree}
                 statusMap={{}}
                 canWrite={canWrite}
                 canDelete={canDestruct}
@@ -646,9 +657,6 @@ export default function FilesPage() {
         >
           <PanelToolbar className="justify-between gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
-                <FolderTree className="size-3.5" />
-              </span>
               <PathBar
                 path={path ?? "/"}
                 home={places.data?.home}
