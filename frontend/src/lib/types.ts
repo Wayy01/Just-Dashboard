@@ -1,5 +1,10 @@
 export type Capability =
-  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
+  | "read"
+  | "service.control"
+  | "file.write"
+  | "terminal"
+  | "destructive"
+  | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -814,6 +819,40 @@ export type ProcessRow = {
   createTime: string
   cwd?: string
   exe?: string
+  ioReadBytes?: number
+  ioWriteBytes?: number
+  ioReadRate?: number
+  ioWriteRate?: number
+  fileDescriptors?: number
+  children?: number
+  state: "running" | "sleeping" | "blocked" | "stopped" | "zombie" | "other"
+  manager: "pm2" | "systemd" | "container" | "session" | "kernel" | "unmanaged"
+  managerName?: string
+}
+
+export type ProcessFacet = {
+  value: string
+  label: string
+  count: number
+}
+
+export type ProcessList = {
+  processes: ProcessRow[]
+  /** Rows matching the current filters before the response cap. */
+  total: number
+  /** Every process observed before filters. */
+  available: number
+  truncated: boolean
+  /** False on the first snapshot, before cumulative disk counters have a delta. */
+  ratesReady: boolean
+  users: ProcessFacet[]
+  states: ProcessFacet[]
+  managers: ProcessFacet[]
+}
+
+export type SystemdUnitDetail = {
+  unit: SystemdUnit
+  properties: Record<string, string>
 }
 
 export type CronJob = {
@@ -1132,7 +1171,14 @@ export type Listener = {
 }
 
 export type DbDriver =
-  "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "oracle" | "mongodb" | "redis"
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "sqlserver"
+  | "clickhouse"
+  | "oracle"
+  | "mongodb"
+  | "redis"
 
 /**
  * What one engine can do, as the server reports it.
