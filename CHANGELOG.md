@@ -4,6 +4,30 @@ Every release of Just Dashboard, newest first.
 
 **This file is generated.** The source is [`backend/internal/selfupdate/changelog.json`](backend/internal/selfupdate/changelog.json), which is the same file the dashboard reads — both the copy compiled into your build and the one it fetches to find out whether a newer version exists. Edit that, then run `scripts/release.sh <version>`.
 
+## 0.6.6 — 1 September 2026
+
+**The process table tells you what owns the work**
+
+The Processes page could rank a short list by CPU or memory and send SIGTERM, but it could not tell whether a row belonged to systemd, PM2, a container, a login or the kernel; its search silently ignored every process below the first 200; and disk pressure had no path back to the process causing it. The live inventory now identifies ownership from the host itself, chooses the resource that needs attention, exposes the counters behind that choice, and puts configuration and safe control beside the process instead of at the end of an SSH session.
+
+### Added
+
+- Live processes identify what owns them — PM2, systemd, a container, a login session, the kernel or nobody managing them
+  - The owner comes from the cgroup the kernel assigned, with PM2's own PID list overlaid where cgroups cannot tell its children apart. Search and filters cover owner, user, state, name, command and PID, and the complete inventory supplies the counts in each filter rather than only the rows currently on screen. An unmanaged label is deliberate: it says a process will not come back through a supervisor after it is stopped.
+- Automatic focus moves between CPU, memory and disk I/O when the host says the bottleneck moved
+  - Blocked tasks, iowait or I/O pressure rank processes by their current disk rate; low available memory or memory pressure ranks resident memory; otherwise CPU stays the useful default. The header says which signal made the choice, and CPU, memory, disk I/O or longest-running can still be pinned by hand. Refresh cadence and the number of returned rows are configurable and remembered on this screen.
+- A process opens into its executable, working directory, parent, uptime, threads, file descriptors, disk totals and scheduling priority
+  - Working directories and executables link into Files. Administrators can adjust the Linux nice value, and the full safe signal set is available with plain-language names — reload, pause and resume as well as terminate — behind the same confirmation and audit boundary as before. Process environments are deliberately not returned; they routinely hold credentials.
+- PM2 can gracefully reload an application and save the current list for its existing startup hook
+  - Saving runs pm2 save; it does not install or rewrite PM2's platform-specific boot integration. systemd details now put the effective account, working directory, restart policy, resource limits, current resource use and unit file beside the live journal, with a direct route to the unit file in Files.
+
+### Fixed
+
+- A process search now reaches the whole host instead of searching only the 200 rows already selected
+  - Filtering happens before sorting and the response cap, and the page separately reports how many matched, how many exist and whether the answer was truncated. The old page told you to filter to reach the rest, then made that impossible.
+- A stale process row cannot signal or reprioritise a different process that reused its PID
+  - Every control carries the start time of the process that was on screen. The server re-reads that PID immediately before acting and refuses with a refresh instruction if it now belongs to something else. Disk-rate sampling uses the same identity, so PID reuse cannot appear as an impossible I/O spike either.
+
 ## 0.6.5 — 30 August 2026
 
 **A file manager, rather than a directory listing with an editor attached**
