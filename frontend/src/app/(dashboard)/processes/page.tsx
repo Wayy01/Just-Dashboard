@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import {
   ChartActivity,
   Clock,
-  Cpu,
+  FloppyDisk,
   ListOrdered,
   Play,
   RotateClockwise,
@@ -13,26 +13,25 @@ import {
 } from "@/components/icons"
 import { notify } from "@/lib/toast"
 import { del, get, post, put } from "@/lib/api"
-import { bytes, duration, percent, relativeTime } from "@/lib/format"
+import { bytes, duration, percent } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { Crontab, PM2Process, ProcessRow, SystemdUnit } from "@/lib/types"
+import type { Crontab, PM2Process, SystemdUnit } from "@/lib/types"
 import { useViewState } from "@/lib/view-state"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { useMetrics } from "@/hooks/use-metrics"
 import { useConfirm } from "@/components/confirm-dialog"
-import { Page, PageHeader, Metric, MetricStrip, RowLink, SearchInput } from "@/components/page"
+import { Page, PageHeader, RowLink, SearchInput } from "@/components/page"
 import { Panel, PanelBody, PanelHeader, PanelToolbar, Well } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
 import { Status } from "@/components/status-dot"
 import { UnitJournalSheet } from "@/components/procs/unit-journal"
 import { PM2LogSheet } from "@/components/procs/pm2-logs"
+import { ProcessTableTab } from "@/components/procs/process-table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { IconAction } from "@/components/icon-action"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Select,
   SelectContent,
@@ -51,33 +50,33 @@ import {
 } from "@/components/ui/table"
 
 export default function ProcessesPage() {
-  // Which of the four this host is actually run from — a PM2 shop never
-  // looks at systemd, and the other way round. Remembered, so the page
-  // opens where it was left rather than on whichever tab is first.
-  const [tab, setTab] = useViewState("processes.tab", "pm2")
+  // Live is the one inventory every host has and now identifies which manager
+  // owns each row. A remembered explicit manager tab still opens where it was
+  // left; a new screen starts with the automatically classified whole host.
+  const [tab, setTab] = useViewState("processes.tab", "table")
 
   return (
     <Page>
       <PageHeader
         eyebrow="Server"
         title="Processes"
-        description="PM2 applications, systemd units, the raw process table and cron"
+        description="Live resource use, service ownership, application control and schedules"
       />
       <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-4">
         <TabsList>
+          <TabsTrigger value="table">Live</TabsTrigger>
           <TabsTrigger value="pm2">PM2</TabsTrigger>
           <TabsTrigger value="systemd">systemd</TabsTrigger>
-          <TabsTrigger value="table">Process table</TabsTrigger>
           <TabsTrigger value="cron">Cron</TabsTrigger>
         </TabsList>
+        <TabsContent value="table" className="min-w-0">
+          <ProcessTableTab />
+        </TabsContent>
         <TabsContent value="pm2" className="min-w-0">
           <PM2Tab />
         </TabsContent>
         <TabsContent value="systemd" className="min-w-0">
           <SystemdTab />
-        </TabsContent>
-        <TabsContent value="table" className="min-w-0">
-          <ProcessTableTab />
         </TabsContent>
         <TabsContent value="cron" className="min-w-0">
           <CronTab />
@@ -95,6 +94,7 @@ function PM2Tab() {
   const { can } = useAuth()
   const { confirm, dialog } = useConfirm()
   const [logsFor, setLogsFor] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<{ available: boolean; processes: PM2Process[] }>("/pm2/", undefined, signal),
     5000,
@@ -119,8 +119,26 @@ function PM2Tab() {
     await post(`/pm2/${encodeURIComponent(proc.name)}/${action}`, undefined, {
       confirm: confirmText,
     })
-    notify.success(`${proc.name} ${action}ed`)
+    const past =
+      action === "stop"
+        ? "stopped"
+        : action === "start"
+          ? "started"
+          : action === "reload"
+            ? "reloaded"
+            : "restarted"
+    notify.success(`${proc.name} ${past}`)
     refresh()
+  }
+
+  const saveStartupList = async () => {
+    setSaving(true)
+    try {
+      await post("/pm2/save")
+      notify.success("PM2 startup list saved")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const online = data.processes.filter((p) => p.status === "online").length
@@ -132,6 +150,19 @@ function PM2Tab() {
           icon={ChartActivity}
           title="PM2 applications"
           description={`${online} online of ${data.processes.length}`}
+          actions={
+            can("service.control") && (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={saving}
+                onClick={() => saveStartupList().catch((error) => notify.error(String(error)))}
+              >
+                <FloppyDisk className="size-3" />
+                {saving ? "Saving…" : "Save startup list"}
+              </Button>
+            )
+          }
         />
         <PanelBody flush>
           <Table containerClassName="max-h-[calc(100svh-20rem)]">
@@ -185,6 +216,14 @@ function PM2Tab() {
                           onClick={() => act(proc, "start").catch((e) => notify.error(String(e)))}
                         >
                           <Play />
+                        </IconAction>
+                      )}
+                      {proc.status === "online" && can("service.control") && (
+                        <IconAction
+                          label="Graceful reload"
+                          onClick={() => act(proc, "reload").catch((e) => notify.error(String(e)))}
+                        >
+                          <RotateClockwise />
                         </IconAction>
                       )}
                       {can("destructive") && (
@@ -306,7 +345,11 @@ function SystemdTab() {
         <PanelHeader
           icon={ListOrdered}
           title="systemd units"
-          description={`${visible.length} shown of ${data.units.length}`}
+          description={
+            visible.length > 200
+              ? `Showing 200 of ${visible.length} matches · ${data.units.length} units detected`
+              : `${visible.length} shown of ${data.units.length}`
+          }
           actions={
             failed > 0 && (
               <Badge variant="destructive" className="font-normal">
@@ -419,20 +462,21 @@ function SystemdTab() {
                           )}
                         </>
                       )}
-                      {can("system.admin") && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          className="text-muted-foreground"
-                          onClick={() =>
-                            act(unit, unit.enabled ? "disable" : "enable").catch((e) =>
-                              notify.error(String(e)),
-                            )
-                          }
-                        >
-                          {unit.enabled ? "Disable" : "Enable"}
-                        </Button>
-                      )}
+                      {can("system.admin") &&
+                        ["enabled", "enabled-runtime", "disabled"].includes(unit.unitFileState) && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="text-muted-foreground"
+                            onClick={() =>
+                              act(unit, unit.enabled ? "disable" : "enable").catch((e) =>
+                                notify.error(String(e)),
+                              )
+                            }
+                          >
+                            {unit.enabled ? "Disable" : "Enable"}
+                          </Button>
+                        )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -449,196 +493,6 @@ function SystemdTab() {
         </PanelBody>
       </Panel>
       <UnitJournalSheet unit={journalFor} onOpenChange={(o) => !o && setJournalFor(null)} />
-      {dialog}
-    </>
-  )
-}
-
-function ProcessTableTab() {
-  const { can } = useAuth()
-  const { confirm, dialog } = useConfirm()
-  const [query, setQuery] = useState("")
-  // "What is eating my CPU" and "what is eating my RAM" are asked equally
-  // often and have different answers — a leaking service sits at 0% CPU while
-  // holding six gigabytes, and a CPU-sorted list buries it. The server sorts
-  // before it truncates, so this changes which 200 rows come back, not just
-  // their order.
-  const [sort, setSort] = useViewState<"cpu" | "memory">("processes.table.sort", "cpu")
-  const { data, error, loading, refresh } = usePoll(
-    (signal) => get<ProcessRow[]>("/processes/", { limit: 200, q: query, sort }, signal),
-    4000,
-    [query, sort],
-  )
-  // The host figures the table is a breakdown of. Without them the heaviest
-  // row is a number with no denominator: 30% CPU is the whole problem on a
-  // quiet box and a rounding error on a busy one.
-  const { snapshot } = useMetrics()
-
-  if (loading && !data) return <LoadingPanel />
-  if (error) return <ErrorState error={error} />
-
-  const memTotal = snapshot?.memory.total ?? 0
-
-  return (
-    <>
-      <Panel>
-        <PanelHeader
-          icon={Cpu}
-          title="Process table"
-          description={
-            data && data.length >= 200
-              ? // The server caps the reply at 200 rows. Saying so beats letting
-                // someone conclude a process is not running when it was simply cut.
-                `Showing the 200 heaviest by ${sort === "cpu" ? "CPU" : "memory"} — filter to reach the rest`
-              : `${data?.length ?? 0} processes`
-          }
-          actions={
-            snapshot && (
-              <MetricStrip>
-                <Metric label="CPU" value={percent(snapshot.cpu.totalPercent, 0)} />
-                <Metric label="Available" value={bytes(snapshot.memory.available)} />
-                {/* Running and blocked, because they are what a long list of
-                    idle processes cannot tell you: how many are actually
-                    competing, and how many are stuck waiting on a device. */}
-                <Metric
-                  label="Run queue"
-                  value={`${snapshot.procs?.running ?? 0} / ${snapshot.procs?.blocked ?? 0}`}
-                />
-              </MetricStrip>
-            )
-          }
-        />
-        <PanelToolbar>
-          <SearchInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by name, command or user"
-          />
-          <ToggleGroup
-            type="single"
-            value={sort}
-            onValueChange={(next) => setSort((next as "cpu" | "memory") || sort)}
-            variant="outline"
-            size="sm"
-            aria-label="Sort by"
-          >
-            <ToggleGroupItem value="cpu" className="px-2.5 text-[11px]">
-              By CPU
-            </ToggleGroupItem>
-            <ToggleGroupItem value="memory" className="px-2.5 text-[11px]">
-              By memory
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </PanelToolbar>
-        <PanelBody flush>
-          <Table containerClassName="max-h-[calc(100svh-23rem)]">
-            <TableHeader className={stickyTableHeader}>
-              <TableRow>
-                <TableHead className="w-20">PID</TableHead>
-                <TableHead className="w-full">Process</TableHead>
-                <TableHead>User</TableHead>
-                <TableHead className="text-right">CPU</TableHead>
-                <TableHead className="text-right">Memory</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead className="w-px" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data?.map((proc) => (
-                <TableRow key={proc.pid} className="group">
-                  <TableCell className="numeric font-mono text-xs">{proc.pid}</TableCell>
-                  <TableCell>
-                    {/* A process name can be a full Chromium argv — hundreds of
-                        characters. Bounding it here is what keeps one row from
-                        setting the width of the whole table. */}
-                    <div className="max-w-[26rem] min-w-0">
-                      <div className="truncate text-[13px] font-medium" title={proc.name}>
-                        {proc.name}
-                      </div>
-                      <p
-                        className="truncate font-mono text-[11px] text-muted-foreground"
-                        title={proc.cmdline}
-                      >
-                        {proc.cmdline}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">{proc.username}</TableCell>
-                  {/* Weight, not just value: the eye finds the two rows that
-                      matter far faster in a column where most entries are
-                      grey and one is not. */}
-                  <TableCell
-                    className={cn(
-                      "numeric text-right font-mono text-xs",
-                      proc.cpuPercent >= 50
-                        ? "font-medium text-destructive"
-                        : proc.cpuPercent >= 10
-                          ? "text-warning"
-                          : "text-muted-foreground",
-                    )}
-                  >
-                    {percent(proc.cpuPercent)}
-                  </TableCell>
-                  <TableCell className="numeric text-right font-mono text-xs">
-                    {bytes(proc.rss)}
-                    {memTotal > 0 && (
-                      <span className="ml-1 text-muted-foreground">
-                        {((proc.rss / memTotal) * 100).toFixed(0)}%
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {relativeTime(proc.createTime)}
-                  </TableCell>
-                  <TableCell>
-                    {can("destructive") && (
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="text-destructive opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-                        onClick={() =>
-                          confirm({
-                            title: "Signal process",
-                            confirmLabel: "Send SIGTERM",
-                            description: (
-                              <>
-                                <p>
-                                  Sends SIGTERM to <b>{proc.name}</b> (pid {proc.pid}, user{" "}
-                                  {proc.username}).
-                                </p>
-                                <p className="font-mono text-xs text-muted-foreground">
-                                  {proc.cmdline}
-                                </p>
-                              </>
-                            ),
-                            action: async (c) => {
-                              await post(
-                                `/processes/${proc.pid}/signal`,
-                                { signal: "SIGTERM" },
-                                { confirm: c },
-                              )
-                              refresh()
-                            },
-                          })
-                        }
-                      >
-                        Kill
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {data?.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="p-0">
-                    <EmptyState icon={Cpu} title="No processes match" />
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </PanelBody>
-      </Panel>
       {dialog}
     </>
   )

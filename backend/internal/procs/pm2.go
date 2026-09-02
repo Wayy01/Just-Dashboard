@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -59,7 +60,11 @@ type pm2Raw struct {
 	} `json:"pm2_env"`
 }
 
-type PM2 struct{}
+type PM2 struct {
+	mu       sync.Mutex
+	cached   []PM2Process
+	cachedAt time.Time
+}
 
 func NewPM2() *PM2 { return &PM2{} }
 
@@ -68,6 +73,15 @@ func (p *PM2) Available() bool { return binaryExists("pm2") }
 func (p *PM2) List(ctx context.Context) ([]PM2Process, error) {
 	if !p.Available() {
 		return nil, fmt.Errorf("pm2 %w", ErrNotInstalled)
+	}
+	// Both the PM2 tab and the live process inventory ask for this list. One
+	// `pm2 jlist` every few seconds is enough; spawning two CLI clients on every
+	// poll costs more than the process table itself and they return the same
+	// daemon snapshot.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if time.Since(p.cachedAt) < 3*time.Second {
+		return append([]PM2Process(nil), p.cached...), nil
 	}
 	res, err := run(ctx, 20*time.Second, "pm2", "jlist")
 	if err != nil {
@@ -98,7 +112,9 @@ func (p *PM2) List(ctx context.Context) ([]PM2Process, error) {
 		out = append(out, proc)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	p.cached = append(p.cached[:0], out...)
+	p.cachedAt = time.Now()
+	return append([]PM2Process(nil), out...), nil
 }
 
 // PM2 reports these fields as number, string or bool depending on version and
@@ -144,7 +160,24 @@ func (p *PM2) Control(ctx context.Context, name string, action PM2Action) (*Comm
 	default:
 		return nil, fmt.Errorf("unknown pm2 action %q", action)
 	}
-	return run(ctx, 60*time.Second, "pm2", string(action), name)
+	result, err := run(ctx, 60*time.Second, "pm2", string(action), name)
+	if err == nil {
+		p.mu.Lock()
+		p.cachedAt = time.Time{}
+		p.mu.Unlock()
+	}
+	return result, err
+}
+
+// Save persists PM2's current inventory for its startup hook to resurrect on
+// boot. It does not install or rewrite the init integration: PM2 owns that
+// platform-specific configuration, while this action makes the current list
+// match what an existing hook will restore.
+func (p *PM2) Save(ctx context.Context) (*CommandResult, error) {
+	if !p.Available() {
+		return nil, fmt.Errorf("pm2 %w", ErrNotInstalled)
+	}
+	return run(ctx, 60*time.Second, "pm2", "save")
 }
 
 // LogPaths returns the on-disk log files for a process so the log tailer can

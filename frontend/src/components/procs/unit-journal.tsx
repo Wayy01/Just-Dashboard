@@ -1,11 +1,21 @@
 "use client"
 
+import Link from "next/link"
 import { useCallback, useState } from "react"
-import type { JournalEntry, LogLine } from "@/lib/types"
+import type { JournalEntry, LogLine, SystemdUnitDetail } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
+import { usePoll } from "@/hooks/use-poll"
+import { get } from "@/lib/api"
+import { bytes, relativeTime } from "@/lib/format"
 import { ListOrdered } from "@/components/icons"
 import { LogViewer } from "@/components/log-viewer"
+import { Detail, DetailList } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, Well } from "@/components/panel"
 import { SidePanel } from "@/components/side-panel"
+import { ErrorState, LoadingPanel } from "@/components/state"
+import { Status } from "@/components/status-dot"
+import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const LOG_LIMIT = 5000
 
@@ -31,12 +41,104 @@ export function UnitJournalSheet({
       onOpenChange={onOpenChange}
       icon={ListOrdered}
       title={unit ?? "Unit"}
-      description="Live journal, newest at the bottom"
-      bodyClassName="flex min-h-0 flex-1 flex-col p-4"
+      description="Service state, configuration and live journal"
+      bodyClassName="flex min-h-0 flex-1 flex-col"
     >
-      {/* Keyed on the unit so switching units starts a clean buffer. */}
-      {unit && <JournalStream key={unit} unit={unit} />}
+      {unit && (
+        <Tabs defaultValue="overview" className="min-h-0 flex-1 gap-0">
+          <div className="shrink-0 border-b border-hairline bg-surface-header/60 px-4 py-2">
+            <TabsList>
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="journal">Journal</TabsTrigger>
+            </TabsList>
+          </div>
+          <TabsContent value="overview" className="min-h-0 overflow-y-auto p-4">
+            <UnitOverview unit={unit} />
+          </TabsContent>
+          <TabsContent value="journal" className="min-h-0 flex-1 p-4">
+            {/* Keyed on the unit so switching units starts a clean buffer. */}
+            <JournalStream key={unit} unit={unit} />
+          </TabsContent>
+        </Tabs>
+      )}
     </SidePanel>
+  )
+}
+
+function UnitOverview({ unit }: { unit: string }) {
+  const detail = usePoll(
+    (signal) => get<SystemdUnitDetail>(`/systemd/${encodeURIComponent(unit)}`, undefined, signal),
+    5000,
+    [unit],
+  )
+  if (detail.loading) return <LoadingPanel />
+  if (detail.error) return <ErrorState error={detail.error} />
+  if (!detail.data) return null
+
+  const { unit: service, properties } = detail.data
+  const started = service.activeSince
+    ? new Date(service.activeSince * 1000).toISOString()
+    : undefined
+  return (
+    <div className="flex flex-col gap-4">
+      <Panel>
+        <PanelHeader
+          title="Service"
+          description={service.description}
+          actions={
+            <Status
+              state={service.activeState}
+              label={`${service.activeState} (${service.subState})`}
+            />
+          }
+        />
+        <PanelBody>
+          <DetailList>
+            <Detail label="Startup">{service.unitFileState || "unknown"}</Detail>
+            <Detail label="Main PID" className="font-mono">
+              {service.mainPid || "—"}
+            </Detail>
+            <Detail label="Active since">{relativeTime(started)}</Detail>
+            <Detail label="Memory">{bytes(service.memoryBytes)}</Detail>
+            <Detail label="Tasks">{service.tasks ?? "—"}</Detail>
+            <Detail label="Restarts">{service.restarts ?? 0}</Detail>
+            <Detail label="Last result">{service.result || "—"}</Detail>
+          </DetailList>
+          {service.fragmentPath && (
+            <Button asChild variant="outline" size="xs" className="mt-4">
+              <Link href={`/files?path=${encodeURIComponent(service.fragmentPath)}`}>
+                Open unit file
+              </Link>
+            </Button>
+          )}
+        </PanelBody>
+      </Panel>
+      <Panel>
+        <PanelHeader
+          title="Runtime policy"
+          description="The effective values systemd is enforcing now"
+        />
+        <PanelBody>
+          <DetailList>
+            <Detail label="Account">{properties.User || "root"}</Detail>
+            <Detail label="Group">{properties.Group || "default"}</Detail>
+            <Detail label="Working directory" className="break-all font-mono">
+              {properties.WorkingDirectory || "Not set"}
+            </Detail>
+            <Detail label="Restart policy">{properties.Restart || "no"}</Detail>
+            <Detail label="Memory limit">
+              {properties.MemoryMax && properties.MemoryMax !== "infinity"
+                ? bytes(Number(properties.MemoryMax))
+                : "No limit"}
+            </Detail>
+            <Detail label="Task limit">{properties.TasksMax || "No limit"}</Detail>
+          </DetailList>
+          {properties.ExecStart && (
+            <Well className="mt-4 max-h-36 whitespace-pre-wrap">{properties.ExecStart}</Well>
+          )}
+        </PanelBody>
+      </Panel>
+    </div>
   )
 }
 
@@ -65,5 +167,5 @@ function JournalStream({ unit }: { unit: string }) {
     query: { lines: 300 },
   })
 
-  return <LogViewer className="h-full" lines={lines} onClear={() => setLines([])} />
+  return <LogViewer className="h-full min-h-80" lines={lines} onClear={() => setLines([])} />
 }

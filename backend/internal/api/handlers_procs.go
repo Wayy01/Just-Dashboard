@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
@@ -21,6 +20,7 @@ func (s *Server) mountProcessRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{name}/logs/stream", s.handle(s.handlePM2LogStream))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
+			r.Method(http.MethodPost, "/save", s.handle(s.handlePM2Save))
 			r.Method(http.MethodPost, "/{name}/start", s.handle(s.pm2Action(procs.PM2Start)))
 			r.Method(http.MethodPost, "/{name}/reload", s.handle(s.pm2Action(procs.PM2Reload)))
 		})
@@ -54,7 +54,12 @@ func (s *Server) mountProcessRoutes(r chi.Router) {
 
 	r.Route("/processes", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleProcessList))
+		r.Method(http.MethodGet, "/inventory", s.handle(s.handleProcessInventory))
 		r.Method(http.MethodGet, "/{pid}", s.handle(s.handleProcessDetail))
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Method(http.MethodPut, "/{pid}/priority", s.handle(s.handleProcessPriority))
+		})
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodPost, "/{pid}/signal", s.handle(s.handleProcessSignal))
 		})
@@ -73,6 +78,16 @@ func (s *Server) mountProcessRoutes(r chi.Router) {
 			})
 		})
 	})
+}
+
+func (s *Server) handlePM2Save(w http.ResponseWriter, r *http.Request) error {
+	res, err := s.modules.pm2.Save(r.Context())
+	if err != nil {
+		return mapProcsError(err)
+	}
+	httpx.SetAudit(r, "pm2.save", "startup list", map[string]any{"exitCode": res.ExitCode})
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
 }
 
 func mapProcsError(err error) error {
@@ -360,27 +375,53 @@ func (s *Server) handleUnitJournalStream(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleProcessList(w http.ResponseWriter, r *http.Request) error {
-	ctx, cancel := timeoutCtx(r, 30*time.Second)
-	defer cancel()
-	list, err := s.modules.table.List(ctx,
-		atoiDefault(r.URL.Query().Get("limit"), 300),
-		procs.ParseOrder(r.URL.Query().Get("sort")))
+	list, err := s.processInventory(r)
 	if err != nil {
-		return httpx.Internal(err)
+		return err
 	}
-	if q := strings.ToLower(r.URL.Query().Get("q")); q != "" {
-		filtered := list[:0]
-		for _, p := range list {
-			if strings.Contains(strings.ToLower(p.Name), q) ||
-				strings.Contains(strings.ToLower(p.Cmdline), q) ||
-				strings.Contains(strings.ToLower(p.Username), q) {
-				filtered = append(filtered, p)
-			}
-		}
-		list = filtered
+	// Keep the original array response for API clients. The dashboard uses the
+	// inventory route because it also needs the full counts and filter facets.
+	httpx.JSON(w, http.StatusOK, list.Processes)
+	return nil
+}
+
+func (s *Server) handleProcessInventory(w http.ResponseWriter, r *http.Request) error {
+	list, err := s.processInventory(r)
+	if err != nil {
+		return err
 	}
 	httpx.JSON(w, http.StatusOK, list)
 	return nil
+}
+
+func (s *Server) processInventory(r *http.Request) (procs.ProcessList, error) {
+	ctx, cancel := timeoutCtx(r, 30*time.Second)
+	defer cancel()
+	rows, err := s.modules.table.Snapshot(ctx)
+	if err != nil {
+		return procs.ProcessList{}, httpx.Internal(err)
+	}
+	// PM2 is not represented in cgroups, so its own PID inventory is the only
+	// reliable way to tell a PM2 child from the same command started by hand.
+	// A broken optional manager must not take the raw process table with it.
+	if s.modules.pm2.Available() {
+		if managed, pmErr := s.modules.pm2.List(ctx); pmErr == nil {
+			procs.MarkPM2(rows, managed)
+		}
+	}
+	q := r.URL.Query()
+	limit := atoiDefault(q.Get("limit"), 200)
+	if limit < 50 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	list := procs.Select(rows, procs.ListOptions{
+		Limit: limit, Order: procs.ParseOrder(q.Get("sort")), Query: q.Get("q"),
+		User: q.Get("user"), State: q.Get("state"), Manager: q.Get("manager"),
+	})
+	return list, nil
 }
 
 func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) error {
@@ -392,12 +433,53 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return httpx.ErrNotFound
 	}
+	if s.modules.pm2.Available() {
+		if managed, pmErr := s.modules.pm2.List(r.Context()); pmErr == nil {
+			rows := []procs.Process{*p}
+			procs.MarkPM2(rows, managed)
+			*p = rows[0]
+		}
+	}
 	httpx.JSON(w, http.StatusOK, p)
 	return nil
 }
 
+type priorityRequest struct {
+	Nice      *int   `json:"nice"`
+	StartedAt string `json:"startedAt,omitempty"`
+}
+
+func (s *Server) handleProcessPriority(w http.ResponseWriter, r *http.Request) error {
+	pid64, err := strconv.ParseInt(chi.URLParam(r, "pid"), 10, 32)
+	if err != nil {
+		return httpx.BadRequest("invalid pid")
+	}
+	var req priorityRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Nice == nil {
+		return httpx.BadRequest("nice is required")
+	}
+	p, err := s.modules.table.Detail(r.Context(), int32(pid64))
+	if err != nil {
+		return httpx.ErrNotFound
+	}
+	if err := requireSameProcess(p, req.StartedAt); err != nil {
+		return err
+	}
+	if err := s.modules.table.SetNice(r.Context(), int32(pid64), *req.Nice); err != nil {
+		return httpx.BadRequest("%v", err)
+	}
+	httpx.SetAudit(r, "process.priority", p.Name,
+		map[string]any{"pid": pid64, "previous": p.Nice, "nice": *req.Nice})
+	httpx.NoContent(w)
+	return nil
+}
+
 type signalRequest struct {
-	Signal string `json:"signal"`
+	Signal    string `json:"signal"`
+	StartedAt string `json:"startedAt,omitempty"`
 }
 
 func (s *Server) handleProcessSignal(w http.ResponseWriter, r *http.Request) error {
@@ -417,6 +499,9 @@ func (s *Server) handleProcessSignal(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return httpx.ErrNotFound
 	}
+	if err := requireSameProcess(detail, req.StartedAt); err != nil {
+		return err
+	}
 	// No typed phrase: signalling a process is the process table's whole
 	// purpose, and a supervised one comes straight back. The dialog carries the
 	// pid and the command line, which is what identifies the right row.
@@ -426,6 +511,24 @@ func (s *Server) handleProcessSignal(w http.ResponseWriter, r *http.Request) err
 	httpx.SetAudit(r, "process.signal", detail.Name,
 		map[string]any{"pid": pid, "signal": req.Signal, "cmdline": detail.Cmdline})
 	httpx.NoContent(w)
+	return nil
+}
+
+// A PID can be reused between a table poll and a click. The create timestamp
+// turns the pair into the process the operator actually saw; old API clients
+// that do not send it keep working, while this UI fails closed on a mismatch.
+func requireSameProcess(process *procs.Process, startedAt string) error {
+	if startedAt == "" {
+		return nil
+	}
+	started, err := time.Parse(time.RFC3339Nano, startedAt)
+	if err != nil {
+		return httpx.BadRequest("invalid process start time")
+	}
+	if process.CreateTime.IsZero() || !process.CreateTime.Equal(started) {
+		return httpx.Err(http.StatusConflict, "process_replaced",
+			"that PID now belongs to a different process; refresh the list and try again")
+	}
 	return nil
 }
 

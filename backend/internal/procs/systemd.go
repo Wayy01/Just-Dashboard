@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/host"
 )
 
 type Unit struct {
@@ -163,16 +165,42 @@ func (s *Systemd) Show(ctx context.Context, name string) (*Unit, map[string]stri
 	if mem, err := strconv.ParseUint(props["MemoryCurrent"], 10, 64); err == nil {
 		u.Memory = mem
 	}
-	// systemd reports the activation timestamp in microseconds since epoch.
-	if ts, err := strconv.ParseInt(props["ActiveEnterTimestampMonotonic"], 10, 64); err == nil && ts > 0 {
-		if realtime, err := strconv.ParseInt(props["ActiveEnterTimestamp"], 10, 64); err == nil && realtime > 0 {
-			u.SinceUnix = realtime / 1_000_000
+	// The monotonic value is microseconds since boot, so combine it with host
+	// uptime rather than pretending the human-formatted timestamp is an epoch
+	// number (which left every "Active since" empty). This also avoids parsing
+	// whatever timezone and locale systemctl happened to print.
+	if monotonic, err := strconv.ParseUint(props["ActiveEnterTimestampMonotonic"], 10, 64); err == nil && monotonic > 0 {
+		if uptime, upErr := host.UptimeWithContext(ctx); upErr == nil {
+			u.SinceUnix = activeSinceUnix(monotonic, uptime, time.Now()).Unix()
 		}
+	} else if started, ok := parseSystemdTimestamp(props["ActiveEnterTimestamp"]); ok {
+		u.SinceUnix = started.Unix()
 	}
 	if u.Name == "" {
 		u.Name = name
 	}
 	return u, props, nil
+}
+
+func activeSinceUnix(monotonicUS, uptimeSeconds uint64, now time.Time) time.Time {
+	age := time.Duration(uptimeSeconds)*time.Second - time.Duration(monotonicUS)*time.Microsecond
+	if age < 0 {
+		age = 0
+	}
+	return now.Add(-age)
+}
+
+func parseSystemdTimestamp(value string) (time.Time, bool) {
+	for _, layout := range []string{
+		"Mon 2006-01-02 15:04:05 MST",
+		"Mon 2006-01-02 15:04:05 -0700",
+		time.RFC3339,
+	} {
+		if parsed, err := time.Parse(layout, strings.TrimSpace(value)); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func atoi(s string) int {
