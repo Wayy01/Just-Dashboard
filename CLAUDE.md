@@ -173,9 +173,11 @@ metadata is never trusted as the quota. `internal/sysinfo` reads the host throug
 `internal/auth` owns users, sessions, TOTP, recovery codes, API tokens. Cookie `vpsd_session` (HttpOnly,
 SameSite=Strict, Secure unless `JD_DEV`). A password alone yields a *partial* session accepted only by
 the 2FA routes (`AuthenticatePartial`); everything else answers `totp_required` /
-`totp_enrollment_required`. API tokens may narrow their creator's role, never widen it, and are demoted
-with the account. `auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP
-seeds, connection strings, deploy env, backup credentials.
+`totp_enrollment_required`. That is an invariant, not a deployment option: `JD_REQUIRE_2FA` is no longer
+read, and the `require2fa` status field remains `true` only for compatibility with existing frontends.
+API tokens may narrow their creator's role, never widen it, and are demoted with the account.
+`auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP seeds, connection
+strings, deploy env, backup credentials.
 
 State is SQLite in `JD_DATA_DIR`, schema as one `CREATE TABLE IF NOT EXISTS` block in
 `internal/store/store.go` with no migration tool (invariant 8). The file is still named `vpsd.db`

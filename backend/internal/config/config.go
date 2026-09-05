@@ -14,9 +14,9 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
-// Config is resolved once at boot from the environment. Every field that
-// weakens the security posture (allowlist, TLS, 2FA) fails closed: the zero
-// value is the restrictive one.
+// Config is resolved once at boot from the environment. Every configurable
+// field that weakens the security posture (such as the allowlist or TLS)
+// fails closed: the zero value is the restrictive one.
 type Config struct {
 	Addr           string
 	DataDir        string
@@ -24,7 +24,6 @@ type Config struct {
 	TrustedProxies []*net.IPNet
 	AllowedCIDRs   []*net.IPNet
 	AllowedOrigins []string
-	Require2FA     bool
 	SessionTTL     time.Duration
 	IdleTTL        time.Duration
 	DockerHost     string
@@ -74,7 +73,6 @@ func Load() (*Config, error) {
 		Addr:           env("JD_ADDR", "127.0.0.1:8080"),
 		DataDir:        env("JD_DATA_DIR", "/var/lib/just-dashboard"),
 		MasterKeyHex:   Env("JD_MASTER_KEY"),
-		Require2FA:     l.boolean("JD_REQUIRE_2FA", true),
 		SessionTTL:     l.duration("JD_SESSION_TTL", 12*time.Hour),
 		IdleTTL:        l.duration("JD_SESSION_IDLE_TTL", 60*time.Minute),
 		DockerHost:     env("JD_DOCKER_HOST", "unix:///var/run/docker.sock"),
@@ -149,7 +147,6 @@ func Load() (*Config, error) {
 // loader collects malformed settings so Load can refuse to start.
 //
 // These used to fall back to the default on a parse error, silently. That is
-// fine for JD_REQUIRE_2FA=ture, where the default is the secure answer, and
 // wrong for JD_SESSION_TTL=12 — no unit, so the operator who meant twelve
 // minutes gets twelve hours and nothing in the log disagrees with them. A
 // package whose doc comment promises to fail closed has to fail closed on the

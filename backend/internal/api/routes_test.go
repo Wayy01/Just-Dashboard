@@ -45,7 +45,6 @@ func testServer(t *testing.T) *Server {
 		Addr:         "127.0.0.1:8080",
 		DataDir:      t.TempDir(),
 		AllowedCIDRs: []*net.IPNet{loopback},
-		Require2FA:   true,
 		SessionTTL:   time.Hour,
 		IdleTTL:      time.Minute,
 		FileRoots:    []string{t.TempDir()},
@@ -56,7 +55,7 @@ func testServer(t *testing.T) *Server {
 		MetricsRetention: 24 * time.Hour,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
 	s := New(cfg, log, st, svc, sealer, audit.New(st, log), nil)
 	t.Cleanup(s.Shutdown)
 	return s

@@ -347,7 +347,6 @@ The installer writes the ones that matter. These are for tuning afterwards.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `JD_REQUIRE_2FA` | `true` | Mandatory two-factor. Turning it off is refused for accounts that already enrolled. |
 | `JD_TERMINAL_ENABLED` | `true` | The web terminal. |
 | `JD_TERMINAL_SHELL` | account's shell | Overrides the login shell. Empty honours `chsh`. |
 | `JD_TERMINAL_USER` | lowest regular account | Host account a terminal session logs in as. |

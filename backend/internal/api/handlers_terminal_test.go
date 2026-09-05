@@ -51,7 +51,6 @@ func terminalServer(t *testing.T) (*Server, http.Handler) {
 		Addr:           "127.0.0.1:8080",
 		DataDir:        t.TempDir(),
 		AllowedCIDRs:   []*net.IPNet{loopback},
-		Require2FA:     true,
 		SessionTTL:     time.Hour,
 		IdleTTL:        time.Minute,
 		FileRoots:      []string{t.TempDir()},
@@ -59,7 +58,7 @@ func terminalServer(t *testing.T) (*Server, http.Handler) {
 		TerminalEnable: true,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
 	s := New(cfg, log, st, svc, sealer, audit.New(st, log), nil)
 	if !s.modules.term.TmuxAvailable() {
 		t.Skip("the terminal module did not find tmux")

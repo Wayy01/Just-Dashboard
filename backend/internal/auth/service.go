@@ -33,14 +33,15 @@ type Service struct {
 	sealer     *Sealer
 	sessionTTL time.Duration
 	idleTTL    time.Duration
-	require2FA bool
 }
 
-func NewService(st *store.Store, sealer *Sealer, sessionTTL, idleTTL time.Duration, require2FA bool) *Service {
-	return &Service{st: st, sealer: sealer, sessionTTL: sessionTTL, idleTTL: idleTTL, require2FA: require2FA}
+func NewService(st *store.Store, sealer *Sealer, sessionTTL, idleTTL time.Duration) *Service {
+	return &Service{st: st, sealer: sealer, sessionTTL: sessionTTL, idleTTL: idleTTL}
 }
 
-func (s *Service) Require2FA() bool { return s.require2FA }
+// Require2FA remains in the status contract so existing frontends can render
+// the login flow, but it is a security invariant rather than configuration.
+func (s *Service) Require2FA() bool { return true }
 
 type User struct {
 	ID           int64     `json:"id"`
@@ -305,18 +306,15 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 
 	// A session always starts un-elevated. Nothing beyond the 2FA endpoints
 	// accepts it until the second factor is proved.
-	sess, token, err := s.newSession(ctx, u.ID, ip, userAgent, !s.require2FA && !u.TOTPEnabled)
+	sess, token, err := s.newSession(ctx, u.ID, ip, userAgent, false)
 	if err != nil {
 		return nil, err
 	}
 	res := &LoginResult{User: u, Token: token, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt}
-	switch {
-	case u.TOTPEnabled:
+	if u.TOTPEnabled {
 		res.NeedsTOTP = true
-	case s.require2FA:
+	} else {
 		res.NeedsEnroll = true
-	default:
-		s.st.DB.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, now.Unix(), u.ID)
 	}
 	return res, nil
 }
@@ -405,14 +403,6 @@ func (s *Service) elevate(ctx context.Context, sessionID string, userID int64) e
 		return err
 	}
 	_, err := s.st.DB.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, time.Now().Unix(), userID)
-	return err
-}
-
-func (s *Service) DisableTOTP(ctx context.Context, userID int64) error {
-	if s.require2FA {
-		return errors.New("two-factor authentication is mandatory and cannot be disabled")
-	}
-	_, err := s.st.DB.ExecContext(ctx, `UPDATE users SET totp_enabled = 0, totp_secret = '' WHERE id = ?`, userID)
 	return err
 }
 
