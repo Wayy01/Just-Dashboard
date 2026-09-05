@@ -6,6 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -163,5 +166,22 @@ func TestSessionMutationsRequireCSRFHeaderAndJSONContentType(t *testing.T) {
 	}
 	if w := request("text/plain", true); w.Code != http.StatusUnsupportedMediaType || !strings.Contains(w.Body.String(), "json_content_type_required") {
 		t.Fatalf("text/plain JSON returned %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+}
+
+func TestDiskUsageRespectsConfiguredFileRoots(t *testing.T) {
+	s := testServer(t)
+	c := &client{t: t, h: s.Routes(), cookie: signIn(t, s)}
+
+	if w := c.do(http.MethodGet, "/api/v1/system/disk-usage?path=/", "", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("disk usage outside file roots returned %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	root := s.modules.files.Roots()[0]
+	if err := os.WriteFile(filepath.Join(root, "sample"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/system/disk-usage?path=" + url.QueryEscape(root)
+	if w := c.do(http.MethodGet, path, "", nil); w.Code != http.StatusOK {
+		t.Fatalf("disk usage inside file roots returned %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
 	}
 }

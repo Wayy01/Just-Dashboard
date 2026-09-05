@@ -537,6 +537,9 @@ two-gigabyte log.
 - **`Usage`** accumulates per-child totals in the *same* bounded walk (forty children would otherwise be
   forty-one walks) and reports `Truncated` rather than quoting a partial total. A symlink counts as the
   link, or a tree with links into /usr reports the size of the operating system.
+- **`GET /system/disk-usage` is a file operation.** Its requested mount passes through `files.Resolve`,
+  recursive visits and top-level children are capped, and only two scans run concurrently. A result limit
+  controls the response size; it is not mistaken for a bound on the work needed to rank those results.
 
 Bookmarks live in the `settings` table (`handlers_files_browse.go`), not the browser — which directory
 matters is a fact about the server and should be there from a phone. Recent folders are the opposite and
