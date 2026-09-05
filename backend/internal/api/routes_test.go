@@ -121,6 +121,18 @@ func TestNoAPIRouteAnswersWithoutAuthentication(t *testing.T) {
 	}
 }
 
+func TestTerminalClipboardUploadRequiresAuthentication(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/terminal/0000000000000000/clipboard", nil)
+	req.RemoteAddr = "127.0.0.1:9999"
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "unauthorized") {
+		t.Fatalf("clipboard upload without a session = %d, want 401: %s", w.Code, w.Body.String())
+	}
+}
+
 // /healthz is the one deliberate exception: unauthenticated, outside the
 // allowlist, and revealing nothing.
 func TestHealthzIsReachable(t *testing.T) {

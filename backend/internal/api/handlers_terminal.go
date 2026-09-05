@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +28,7 @@ func (s *Server) mountTerminalRoutes(r chi.Router) {
 		r.Method(http.MethodPost, "/reattach", s.handle(s.handleTerminalReattach))
 		r.Method(http.MethodGet, "/{id}/attach", s.handle(s.handleTerminalAttach))
 		r.Method(http.MethodPost, "/{id}/detach", s.handle(s.handleTerminalDetach))
+		r.Method(http.MethodPost, "/{id}/clipboard", s.handle(s.handleTerminalClipboardUpload))
 
 		// Naming and filing a session. Addressed by tmux name rather than by
 		// session id, because the sessions most in need of a name are exactly
@@ -94,6 +98,16 @@ func mapTermError(err error) error {
 		return httpx.Err(http.StatusTooManyRequests, "too_many_sessions", err.Error())
 	case errors.Is(err, term.ErrNoPersistence):
 		return httpx.Err(http.StatusConflict, "not_persistent", err.Error())
+	case errors.Is(err, term.ErrSessionOwner):
+		return httpx.Err(http.StatusForbidden, "terminal_session_owner", err.Error())
+	case errors.Is(err, term.ErrClipboardType):
+		return httpx.Err(http.StatusUnsupportedMediaType, "unsupported_image_type",
+			"only PNG, JPEG and WebP clipboard images are supported")
+	case errors.Is(err, term.ErrClipboardTooLarge):
+		return httpx.Err(http.StatusRequestEntityTooLarge, "image_too_large",
+			"clipboard images are limited to 20 MB")
+	case errors.Is(err, term.ErrClipboardSessionID):
+		return httpx.BadRequest("invalid terminal session id")
 	default:
 		return httpx.Internal(err)
 	}
@@ -473,6 +487,93 @@ func (s *Server) handleTerminalDetach(w http.ResponseWriter, r *http.Request) er
 	httpx.SetAudit(r, "terminal.detach", id, nil)
 	httpx.NoContent(w)
 	return nil
+}
+
+// handleTerminalClipboardUpload moves an image out-of-band rather than
+// feeding binary clipboard data through the PTY. The destination is derived
+// entirely from the live session and a random server-side name; the multipart
+// filename is display metadata only and never participates in a filesystem
+// path.
+func (s *Server) handleTerminalClipboardUpload(w http.ResponseWriter, r *http.Request) error {
+	const multipartAllowance = 1 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, term.MaxClipboardImageBytes+multipartAllowance)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return httpx.BadRequest("expected a multipart image upload: %v", err)
+	}
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return mapTermError(term.ErrClipboardTooLarge)
+			}
+			return httpx.BadRequest("malformed clipboard upload: %v", err)
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			part.Close()
+			continue
+		}
+
+		declaredMIME, _, mimeErr := mime.ParseMediaType(part.Header.Get("Content-Type"))
+		if mimeErr != nil {
+			part.Close()
+			return mapTermError(term.ErrClipboardType)
+		}
+		originalName := clipboardDisplayName(part.FileName(), "clipboard")
+		file, saveErr := s.modules.term.SaveClipboard(
+			chi.URLParam(r, "id"), httpx.MustPrincipal(r).Username(), declaredMIME, part,
+		)
+		part.Close()
+		if saveErr != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(saveErr, &tooLarge) {
+				return mapTermError(term.ErrClipboardTooLarge)
+			}
+			if errors.Is(saveErr, term.ErrNotFound) {
+				return httpx.Err(http.StatusNotFound, "terminal_session_not_found",
+					"the terminal session no longer exists")
+			}
+			return mapTermError(saveErr)
+		}
+
+		if originalName == "clipboard" {
+			originalName = "clipboard" + filepath.Ext(file.Path)
+		}
+		httpx.SetAudit(r, "terminal.clipboard.upload", chi.URLParam(r, "id"), map[string]any{
+			"path": file.Path, "mime": file.MIME, "bytes": file.Size,
+		})
+		httpx.JSON(w, http.StatusCreated, map[string]any{
+			"path": file.Path, "name": originalName, "mime": file.MIME, "size": file.Size,
+		})
+		return nil
+	}
+	return httpx.BadRequest("no image file found in the upload")
+}
+
+// clipboardDisplayName is UI metadata, never a destination. Keeping it
+// bounded and free of control characters prevents a crafted multipart header
+// from turning a small toast into misleading terminal-like output.
+func clipboardDisplayName(raw, fallback string) string {
+	name := filepath.Base(strings.ReplaceAll(raw, `\`, "/"))
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name))
+	if name == "" || name == "." {
+		return fallback
+	}
+	runes := []rune(name)
+	if len(runes) > 120 {
+		name = string(runes[:120])
+	}
+	return name
 }
 
 func (s *Server) handleTerminalKill(w http.ResponseWriter, r *http.Request) error {
