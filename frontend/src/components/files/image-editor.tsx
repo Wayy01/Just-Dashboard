@@ -14,7 +14,7 @@ import {
   Sparkles,
 } from "@/components/icons"
 import { notify } from "@/lib/toast"
-import { API_BASE } from "@/lib/api"
+import { API_BASE, mutationHeaders } from "@/lib/api"
 import { bytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { SidePanel } from "@/components/side-panel"
@@ -257,7 +257,7 @@ function ImageEditor({
       form.append("file", blob, finalName)
       const res = await fetch(
         `${API_BASE}/files/upload?path=${encodeURIComponent(dir)}&overwrite=true`,
-        { method: "POST", credentials: "include", body: form },
+        { method: "POST", credentials: "include", headers: mutationHeaders(), body: form },
       )
       if (!res.ok) throw new Error((await res.json()).error?.message ?? res.statusText)
       notify.success(`Saved ${finalName}`, { description: `${bytes(blob.size)} · ${current.width}×${current.height}` })

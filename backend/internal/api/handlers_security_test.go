@@ -82,6 +82,9 @@ func (c *client) do(method, path, body string, headers map[string]string) *httpt
 	req := httptest.NewRequest(method, path, reader)
 	req.RemoteAddr = "127.0.0.1:5555"
 	req.Header.Set("Cookie", c.cookie)
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set(httpx.CSRFHeader, "1")
+	}
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}

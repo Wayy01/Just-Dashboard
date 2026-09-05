@@ -58,6 +58,7 @@ func (s *Server) Routes() http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(s.loginLim.Middleware)
 				r.Use(httpx.AuditMutations(s.Audit))
+				r.Use(httpx.RequireCSRF)
 				r.Method(http.MethodPost, "/auth/login", s.handle(s.handleLogin))
 			})
 
@@ -65,6 +66,7 @@ func (s *Server) Routes() http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(s.Authn.AuthenticatePartial)
 				r.Use(httpx.AuditMutations(s.Audit))
+				r.Use(httpx.RequireCSRF)
 				r.Method(http.MethodGet, "/auth/session", s.handle(s.handleSession))
 				r.Method(http.MethodPost, "/auth/2fa/setup", s.handle(s.handleTOTPSetup))
 				r.Method(http.MethodPost, "/auth/2fa/enable", s.handle(s.handleTOTPEnable))
@@ -84,6 +86,7 @@ func (s *Server) Routes() http.Handler {
 			}
 			r.Use(s.apiLim.ByPrincipal)
 			r.Use(httpx.AuditMutations(s.Audit))
+			r.Use(httpx.RequireCSRF)
 
 			s.mountAccountRoutes(r)
 			s.mountSystemRoutes(r)

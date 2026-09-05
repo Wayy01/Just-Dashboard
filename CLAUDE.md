@@ -66,7 +66,7 @@ the code on a network-restricted machine.
 `backend/internal/api/routes.go` is the map of the whole API. Every `/api/v1` request passes:
 
 ```
-network allowlist → rate limit → authenticate → capability → handler
+network allowlist → rate limit → authenticate → CSRF (session mutations) → capability → handler
 ```
 
 - **Allowlist before auth** (`httpx.AllowlistCIDRs`): an off-network attacker cannot reach the login
@@ -81,6 +81,10 @@ network allowlist → rate limit → authenticate → capability → handler
   minting tokens, account management).
 - **`httpx.AuditMutations`** records every state-changing request. WebSocket routes are GET and
   long-lived, so they call `s.recordAudit(...)` at open time — the event is "a terminal was opened".
+- **`httpx.RequireCSRF`** requires `X-JD-CSRF: 1` on every browser-session mutation, including login
+  and partial 2FA sessions. The header makes a same-site sibling origin preflight, and this application
+  grants no cross-origin browser access. Bearer tokens, agent mTLS and the HMAC webhook do not use
+  ambient cookies and are deliberately outside that check.
 
 Two deliberate exceptions: `/healthz` (unauthenticated, fixed body, no version or hostname) and
 `/api/v1/hooks/deploy/{hookID}` (HMAC over the raw body, still allowlisted, still audited so
@@ -93,7 +97,8 @@ the mount site is only the conversion.
 
 - Return `httpx.Err/BadRequest/Internal/Wrap`; never write an error body by hand. `httpx.WriteError` is
   the single renderer and is what keeps internal error strings off the wire.
-- Decode with `httpx.DecodeJSON` (4 MB cap, unknown fields rejected).
+- Decode with `httpx.DecodeJSON` (4 MB cap, `application/json` required, unknown fields and trailing
+  values rejected).
 - `s.destructive(r, ...)` = capability check + `destrLim` + audit. It does **not** enforce confirmation;
   the typed-phrase subset calls `httpx.RequireTypedConfirmation(w, r, phrase)` **inside** the handler,
   where the phrase is known, and it reaches the client as `error.phrase`. See invariant 3.
@@ -972,7 +977,8 @@ because only the host side can collide.
 
 Caddy is the only listener on anything but loopback and binds `{$JD_SITE}` **plus** loopback explicitly —
 site addresses alone would leave it listening on every interface. One origin for UI and API is
-load-bearing: `SameSite=Strict` cookies and the WebSocket origin check both depend on it. Caddy rewrites
+load-bearing: `SameSite=Strict` cookies, the mutation CSRF header and the WebSocket origin check all
+depend on it. Caddy rewrites
 `X-Forwarded-For` to the real client address (what makes `JD_TRUSTED_PROXIES` safe); `flush_interval -1`
 and zero read/write timeouts keep the long-lived streams alive. The backend container runs `privileged`,
 `pid: host`, `network_mode: host` with the Docker socket and real host paths mounted **at their real
@@ -1231,7 +1237,8 @@ one banner that stays is a missing login account — a broken feature rather tha
 ### Data and theming
 
 - `src/lib/api.ts` is the only fetch layer: `get/post/put/patch/del`, `credentials: "include"`,
-  `X-Confirm` passthrough, `ApiError` with `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
+  `X-JD-CSRF` on every mutation, `X-Confirm` passthrough, `ApiError` with
+  `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
   `downloadUrl()` build the non-JSON URLs.
 - `usePoll` — abort-per-run so a slow endpoint cannot stack requests, paused on a hidden tab.
 - `useSocket` — reconnect with backoff (these sockets ride a tunnel that drops routinely), handlers in a

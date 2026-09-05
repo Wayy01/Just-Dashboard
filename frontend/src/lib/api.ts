@@ -4,6 +4,8 @@
  * Two things every call here relies on:
  *  - `credentials: "include"` so the HttpOnly session cookie travels; the
  *    token is never readable from JS, which is the point of it.
+ *  - `X-JD-CSRF` on every mutation, which makes a forged browser request need
+ *    a CORS preflight the server will not authorise.
  *  - the `X-Confirm` header, which irreversible endpoints require. The server
  *    rejects the request without it, so a confirmation cannot be skipped by
  *    calling the API directly, and it sends back the exact phrase it wants in
@@ -11,6 +13,11 @@
  */
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1"
+
+/** Headers required on browser mutations, including multipart uploads. */
+export function mutationHeaders(): Record<string, string> {
+  return { "X-JD-CSRF": "1" }
+}
 
 export type ApiErrorBody = {
   error: { code: string; message: string; phrase?: string }
@@ -91,11 +98,15 @@ function buildUrl(path: string, query?: RequestOptions["query"]) {
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {}
+  const method = options.method ?? "GET"
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method.toUpperCase())) {
+    Object.assign(headers, mutationHeaders())
+  }
   if (options.body !== undefined) headers["Content-Type"] = "application/json"
   if (options.confirm) headers["X-Confirm"] = options.confirm
 
   const res = await fetch(buildUrl(path, options.query), {
-    method: options.method ?? "GET",
+    method,
     headers,
     credentials: "include",
     signal: options.signal,

@@ -14,6 +14,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -131,5 +132,36 @@ func TestHealthzIsReachable(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("healthz returned %d", w.Code)
+	}
+}
+
+// SameSite is a site boundary, not an origin boundary: a hostile sibling
+// origin can send the session cookie. The custom header forces a preflight,
+// and JSON content-type enforcement closes the simple text/plain route.
+func TestSessionMutationsRequireCSRFHeaderAndJSONContentType(t *testing.T) {
+	s := testServer(t)
+	h := s.Routes()
+	cookie := signIn(t, s)
+	body := `{"name":"csrf-test","image":"alpine"}`
+
+	request := func(contentType string, csrf bool) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/docker/containers/", strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:9999"
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Content-Type", contentType)
+		if csrf {
+			req.Header.Set(httpx.CSRFHeader, "1")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := request("text/plain", false); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "csrf_required") {
+		t.Fatalf("forged mutation returned %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	if w := request("text/plain", true); w.Code != http.StatusUnsupportedMediaType || !strings.Contains(w.Body.String(), "json_content_type_required") {
+		t.Fatalf("text/plain JSON returned %d %s", w.Code, strings.TrimSpace(w.Body.String()))
 	}
 }

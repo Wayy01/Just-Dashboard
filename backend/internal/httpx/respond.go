@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 )
 
@@ -92,10 +94,18 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func DecodeJSON(r *http.Request, dst any) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return Err(http.StatusUnsupportedMediaType, "json_content_type_required",
+			"request body must use application/json")
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return BadRequest("malformed request body: %v", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return BadRequest("request body must contain exactly one JSON value")
 	}
 	return nil
 }
