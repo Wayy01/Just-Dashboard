@@ -811,7 +811,9 @@ Redis on pure-Go drivers, so the image still needs no CGO.
   cannot see a certificate renewed and never reloaded, a proxy still offering TLS 1.0, or a redirect that
   quietly stopped. Each version is probed on a connection pinned to exactly that version; a version this
   client will not ask for is `unknown`, **never `refused`**, since reporting it absent would be false
-  reassurance about the versions that matter most. `grade` is a pure function of the scan.
+  reassurance about the versions that matter most. `grade` is a pure function of the scan. The live
+  certificate, TLS and DNS probes require `system.admin`: each emits traffic to a caller-chosen
+  destination, the same scanner boundary as `/network/probe`.
 - **`dns01.go` — wildcards and CDN-fronted domains**, which between them are most of the certificates
   people want: Let's Encrypt signs `*.example.com` only against DNS-01, and a Cloudflare-proxied domain
   never receives an HTTP challenge. Eight certbot plugins as a closed set (each names credentials and

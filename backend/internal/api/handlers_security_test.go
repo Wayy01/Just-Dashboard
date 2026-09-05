@@ -432,6 +432,21 @@ func TestTLSScanReportsAnUnreachableHost(t *testing.T) {
 	}
 }
 
+func TestReadonlyCannotUseServerSideDomainProbes(t *testing.T) {
+	s := testServer(t)
+	c := &client{t: t, h: s.Routes(), cookie: signInAs(t, s, "probe-viewer", auth.RoleReadOnly)}
+
+	for _, path := range []string{
+		"/api/v1/certificates/check?domain=127.0.0.1&port=1",
+		"/api/v1/certificates/scan?domain=127.0.0.1&port=1",
+		"/api/v1/certificates/dns?domain=localhost",
+	} {
+		if w := c.do(http.MethodGet, path, "", nil); w.Code != http.StatusForbidden {
+			t.Errorf("%s as readonly got %d, want 403: %s", path, w.Code, strings.TrimSpace(w.Body.String()))
+		}
+	}
+}
+
 // A readonly principal can read the verdict — knowing the machine is badly
 // configured is not privileged information — but cannot touch sshd.
 func TestReadonlyCannotChangeSSH(t *testing.T) {
