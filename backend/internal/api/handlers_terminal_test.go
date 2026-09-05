@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +25,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/term"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -87,8 +92,12 @@ func terminalServer(t *testing.T) (*Server, http.Handler) {
 	// The capability middleware on the route group needs somebody to check.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			username := req.Header.Get("X-Test-User")
+			if username == "" {
+				username = "tester"
+			}
 			p := &httpx.Principal{
-				User: &auth.User{ID: 1, Username: "tester"},
+				User: &auth.User{ID: 1, Username: username},
 				Role: auth.RoleAdmin, Kind: "session", IP: "127.0.0.1",
 			}
 			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
@@ -498,6 +507,117 @@ func TestSendKeysRefusesAnUnknownKey(t *testing.T) {
 	}
 	api.ok(http.MethodPost, base+"/windows/"+window+"/keys",
 		map[string]any{"keys": []string{"C-c"}}, "")
+}
+
+func clipboardUploadRequest(t *testing.T, path, filename, mimeType string, body []byte) *http.Request {
+	t.Helper()
+	var encoded bytes.Buffer
+	writer := multipart.NewWriter(&encoded)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+		"name": "file", "filename": filename,
+	}))
+	header.Set("Content-Type", mimeType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, &encoded)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+func TestTerminalClipboardUploadUsesSessionDirectoryAndIgnoresMultipartPath(t *testing.T) {
+	s, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.create("clipboard", "")
+	body := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	req := clipboardUploadRequest(t, "/terminal/"+created.ID+"/clipboard", "../../screenshot.png", "image/png", body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload = %d: %s", rec.Code, rec.Body.String())
+	}
+	var uploaded struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+		MIME string `json:"mime"`
+		Size int64  `json:"size"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &uploaded); err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(term.ClipboardRoot, created.ID)
+	if filepath.Dir(uploaded.Path) != wantDir {
+		t.Fatalf("path = %q, want a randomized file in %q", uploaded.Path, wantDir)
+	}
+	if uploaded.Name != "screenshot.png" || uploaded.MIME != "image/png" || uploaded.Size != int64(len(body)) {
+		t.Errorf("response = %+v", uploaded)
+	}
+	if _, err := os.Stat(filepath.Join(term.ClipboardRoot, "screenshot.png")); !os.IsNotExist(err) {
+		t.Errorf("multipart traversal wrote outside the session directory: %v", err)
+	}
+	if err := s.modules.term.Kill(context.Background(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wantDir); !os.IsNotExist(err) {
+		t.Errorf("ending the terminal left its clipboard directory behind: %v", err)
+	}
+}
+
+func TestTerminalClipboardUploadRejectsUnsupportedTypeAndMissingSession(t *testing.T) {
+	_, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.create("clipboard-errors", "")
+
+	gif := clipboardUploadRequest(t, "/terminal/"+created.ID+"/clipboard", "image.gif", "image/gif", []byte("GIF89a"))
+	gifRec := httptest.NewRecorder()
+	handler.ServeHTTP(gifRec, gif)
+	if gifRec.Code != http.StatusUnsupportedMediaType || !strings.Contains(gifRec.Body.String(), "unsupported_image_type") {
+		t.Fatalf("GIF upload = %d: %s", gifRec.Code, gifRec.Body.String())
+	}
+
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	missing := clipboardUploadRequest(t, "/terminal/0000000000000000/clipboard", "image.png", "image/png", png)
+	missingRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingRec, missing)
+	if missingRec.Code != http.StatusNotFound || !strings.Contains(missingRec.Body.String(), "terminal_session_not_found") {
+		t.Fatalf("missing session upload = %d, want 404: %s", missingRec.Code, missingRec.Body.String())
+	}
+}
+
+func TestTerminalClipboardUploadRejectsOversizedRequest(t *testing.T) {
+	_, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.create("clipboard-too-large", "")
+	body := make([]byte, term.MaxClipboardImageBytes+(2<<20))
+	copy(body, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	req := clipboardUploadRequest(t, "/terminal/"+created.ID+"/clipboard", "large.png", "image/png", body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "image_too_large") {
+		t.Fatalf("oversized upload = %d, want 413: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTerminalClipboardUploadEnforcesDashboardSessionOwnership(t *testing.T) {
+	_, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.create("owned", "")
+	body := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	req := clipboardUploadRequest(t, "/terminal/"+created.ID+"/clipboard", "image.png", "image/png", body)
+	req.Header.Set("X-Test-User", "somebody-else")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "terminal_session_owner") {
+		t.Fatalf("foreign session upload = %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 type testWindow struct {

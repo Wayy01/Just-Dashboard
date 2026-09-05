@@ -1184,6 +1184,14 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   `preventDefault`, so xterm leaves the key alone instead of sending ^V and the browser's own paste runs —
   arriving through `onData`, where the multi-line confirmation still sees it. Reading the clipboard there
   instead needs a permission Firefox does not grant at all.
+- **Clipboard images never enter the PTY.** A capture-phase paste listener on xterm's actual host leaves
+  text-only events completely alone, but sends PNG/JPEG/WebP files to
+  `POST /terminal/{id}/clipboard`. The handler binds the upload to the authenticated dashboard owner of
+  the live session, verifies the declared MIME against the bytes, and chooses the destination under
+  `/tmp/just-dashboard/<session-id>` itself. Only the returned absolute path goes through the existing
+  terminal socket, with no Enter. The backend container bind-mounts that temporary root at the same path
+  on the host; session directories are removed when their PTY truly ends and old files expire after seven
+  days, while a persistent tmux detach keeps them available.
 - **Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every line but
   the last immediately, and Ctrl+V, the context menu and the X11 middle click all arrive as one `onData`
   call — guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. That handler must call

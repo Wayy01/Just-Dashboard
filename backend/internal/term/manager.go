@@ -32,6 +32,7 @@ type Manager struct {
 	// of refusing to start a dashboard whose other fourteen pages are fine.
 	account    Account
 	accountErr error
+	clipboard  *clipboardStore
 }
 
 // reserve takes one of the session slots, or reports that none are free. The
@@ -57,9 +58,10 @@ func (m *Manager) reserve() (release func(), err error) {
 
 func NewManager(enabled bool, shell, username string) *Manager {
 	m := &Manager{
-		sessions: map[string]*Session{},
-		enabled:  enabled,
-		shell:    shell,
+		sessions:  map[string]*Session{},
+		enabled:   enabled,
+		shell:     shell,
+		clipboard: newClipboardStore(ClipboardRoot),
 	}
 	m.account, m.accountErr = resolveAccount(username)
 	// The host's tmux, not this image's. Sessions are created out there now,
@@ -340,7 +342,15 @@ func (m *Manager) remove(id string) {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	if ok {
+		// Close called before the read loop reached here means the manager is
+		// shutting down. A persisted tmux session is still running in that
+		// case, so its temporary files stay available and the TTL owns them.
+		// A read loop that ended on its own means the PTY truly exited.
+		wasClosed := sess.isClosed()
 		sess.Close()
+		if m.clipboard != nil && (!sess.Persisted || !wasClosed) {
+			m.clipboard.removeSession(id)
+		}
 	}
 }
 
@@ -357,7 +367,11 @@ func (m *Manager) Kill(ctx context.Context, id string) error {
 	if sess.TmuxName != "" {
 		hostexec.CommandOnHost(ctx, "tmux", "kill-session", "-t", sess.TmuxName).Run()
 	}
-	return sess.Close()
+	err := sess.Close()
+	if m.clipboard != nil {
+		m.clipboard.removeSession(id)
+	}
+	return err
 }
 
 // Detach drops the PTY without destroying the underlying tmux session, so the
@@ -680,8 +694,16 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 func (m *Manager) reap() {
 	t := time.NewTicker(5 * time.Minute)
 	for range t.C {
+		sessions := m.List()
+		if m.clipboard != nil {
+			live := make(map[string]bool, len(sessions))
+			for _, sess := range sessions {
+				live[sess.ID] = true
+			}
+			m.clipboard.cleanupExpired(time.Now().Add(-ClipboardTTL), live)
+		}
 		cutoff := time.Now().Add(-idleDetach)
-		for _, s := range m.List() {
+		for _, s := range sessions {
 			if s.Attached() > 0 || !s.LastActive().Before(cutoff) {
 				continue
 			}
