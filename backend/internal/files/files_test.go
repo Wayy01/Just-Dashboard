@@ -2,6 +2,7 @@ package files
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -101,7 +102,7 @@ func TestMutationsRejectOutwardSymlinkBeforeMissingDescendants(t *testing.T) {
 		}
 
 		dst := filepath.Join(root, "escape", "extract-parent", "extract")
-		if _, err := s.Extract(archive, dst); !errors.Is(err, ErrOutsideRoot) {
+		if _, err := s.Extract(context.Background(), archive, dst); !errors.Is(err, ErrOutsideRoot) {
 			t.Fatalf("Extract error = %v, want ErrOutsideRoot", err)
 		}
 		if _, err := os.Stat(filepath.Join(outside, "extract-parent")); !os.IsNotExist(err) {

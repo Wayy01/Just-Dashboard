@@ -4,11 +4,14 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/safepath"
 )
@@ -18,6 +21,16 @@ type ArchiveFormat string
 const (
 	FormatTarGz ArchiveFormat = "tar.gz"
 	FormatZip   ArchiveFormat = "zip"
+
+	maxExtractBytes     int64 = 8 << 30
+	maxExtractEntries         = 100_000
+	minExtractFreeBytes int64 = 1 << 30
+)
+
+var (
+	ErrArchiveTooLarge       = errors.New("archive expands beyond the safe extraction byte limit")
+	ErrArchiveTooManyEntries = errors.New("archive contains more than 100000 entries")
+	ErrArchiveNoSpace        = errors.New("archive extraction would leave less than 1 GiB free")
 )
 
 // Compress writes an archive of the given paths to w. Streaming rather than
@@ -129,7 +142,12 @@ func writeZip(w io.Writer, baseDir string, paths []string) error {
 // destination before anything is written: a crafted archive containing
 // "../../etc/cron.d/evil" is the classic path-traversal write primitive, and
 // refusing it is not optional.
-func (s *Service) Extract(archivePath, dest string) ([]string, error) {
+func (s *Service) Extract(ctx context.Context, archivePath, dest string) ([]string, error) {
+	// Serialising extraction keeps two requests from each reserving the same
+	// free space and then consuming it together.
+	s.extractMu.Lock()
+	defer s.extractMu.Unlock()
+
 	src, err := s.Resolve(archivePath)
 	if err != nil {
 		return nil, err
@@ -141,20 +159,93 @@ func (s *Service) Extract(archivePath, dest string) ([]string, error) {
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return nil, err
 	}
+	byteLimit, err := extractByteLimit(target)
+	if err != nil {
+		return nil, err
+	}
 	lower := strings.ToLower(src)
+	budget := &extractBudget{ctx: ctx, maxBytes: byteLimit, maxEntries: maxExtractEntries}
 	switch {
 	case strings.HasSuffix(lower, ".zip"):
-		return extractZip(src, target)
+		return extractZip(src, target, budget)
 	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
-		return extractTar(src, target, true)
+		return extractTar(src, target, true, budget)
 	case strings.HasSuffix(lower, ".tar"):
-		return extractTar(src, target, false)
+		return extractTar(src, target, false, budget)
 	default:
 		return nil, fmt.Errorf("unsupported archive format: %s", filepath.Base(src))
 	}
 }
 
-func extractTar(src, dest string, compressed bool) ([]string, error) {
+func extractByteLimit(dest string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dest, &st); err != nil {
+		return 0, err
+	}
+	available := int64(st.Bavail) * int64(st.Bsize)
+	if available <= minExtractFreeBytes {
+		return 0, ErrArchiveNoSpace
+	}
+	limit := available - minExtractFreeBytes
+	if limit > maxExtractBytes {
+		limit = maxExtractBytes
+	}
+	return limit, nil
+}
+
+type extractBudget struct {
+	ctx        context.Context
+	maxBytes   int64
+	written    int64
+	maxEntries int
+	entries    int
+}
+
+func (b *extractBudget) nextEntry() error {
+	if err := b.ctx.Err(); err != nil {
+		return err
+	}
+	if b.entries >= b.maxEntries {
+		return ErrArchiveTooManyEntries
+	}
+	b.entries++
+	return nil
+}
+
+func (b *extractBudget) copy(dst io.Writer, src io.Reader) error {
+	_, err := io.Copy(&extractWriter{budget: b, dst: dst}, src)
+	return err
+}
+
+type extractWriter struct {
+	budget *extractBudget
+	dst    io.Writer
+}
+
+func (w *extractWriter) Write(p []byte) (int, error) {
+	if err := w.budget.ctx.Err(); err != nil {
+		return 0, err
+	}
+	remaining := w.budget.maxBytes - w.budget.written
+	if remaining <= 0 {
+		return 0, ErrArchiveTooLarge
+	}
+	tooLarge := int64(len(p)) > remaining
+	if tooLarge {
+		p = p[:int(remaining)]
+	}
+	n, err := w.dst.Write(p)
+	w.budget.written += int64(n)
+	if err != nil {
+		return n, err
+	}
+	if tooLarge {
+		return n, ErrArchiveTooLarge
+	}
+	return n, nil
+}
+
+func extractTar(src, dest string, compressed bool, budget *extractBudget) ([]string, error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return nil, err
@@ -173,11 +264,17 @@ func extractTar(src, dest string, compressed bool) ([]string, error) {
 	written := []string{}
 	tr := tar.NewReader(reader)
 	for {
+		if err := budget.ctx.Err(); err != nil {
+			return written, err
+		}
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			return written, nil
 		}
 		if err != nil {
+			return written, err
+		}
+		if err := budget.nextEntry(); err != nil {
 			return written, err
 		}
 		path, err := safepath.Join(dest, hdr.Name)
@@ -206,11 +303,15 @@ func extractTar(src, dest string, compressed bool) ([]string, error) {
 			if err != nil {
 				return written, err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			if err := budget.copy(out, tr); err != nil {
 				out.Close()
+				os.Remove(path)
 				return written, err
 			}
-			out.Close()
+			if err := out.Close(); err != nil {
+				os.Remove(path)
+				return written, err
+			}
 		default:
 			continue
 		}
@@ -218,7 +319,7 @@ func extractTar(src, dest string, compressed bool) ([]string, error) {
 	}
 }
 
-func extractZip(src, dest string) ([]string, error) {
+func extractZip(src, dest string, budget *extractBudget) ([]string, error) {
 	zr, err := zip.OpenReader(src)
 	if err != nil {
 		return nil, err
@@ -227,6 +328,9 @@ func extractZip(src, dest string) ([]string, error) {
 
 	written := []string{}
 	for _, entry := range zr.File {
+		if err := budget.nextEntry(); err != nil {
+			return written, err
+		}
 		path, err := safepath.Join(dest, entry.Name)
 		if err != nil {
 			return written, err
@@ -250,11 +354,20 @@ func extractZip(src, dest string) ([]string, error) {
 			rc.Close()
 			return written, err
 		}
-		_, copyErr := io.Copy(out, rc)
-		out.Close()
-		rc.Close()
+		copyErr := budget.copy(out, rc)
+		closeOutErr := out.Close()
+		closeReadErr := rc.Close()
 		if copyErr != nil {
+			os.Remove(path)
 			return written, copyErr
+		}
+		if closeOutErr != nil {
+			os.Remove(path)
+			return written, closeOutErr
+		}
+		if closeReadErr != nil {
+			os.Remove(path)
+			return written, closeReadErr
 		}
 		written = append(written, path)
 	}

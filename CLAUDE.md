@@ -162,7 +162,10 @@ and chmod, which act *on* a symlink.
 `internal/safepath` holds the archive-unpacking rules (absolute symlink targets refused, nothing written
 through a symlink already in the destination, the final component unlinked rather than followed). Both
 `files/archive.go` and `backups/restore.go` use it; they used to carry a copy each of the same lexical
-prefix test, with the same hole. `internal/sysinfo` reads the host through gopsutil rather than parsing
+prefix test, with the same hole. File-manager extraction additionally stops after 100,000 entries or
+8 GiB of bytes actually written, reserves at least 1 GiB of free space, serialises extraction requests,
+removes the current partial file on failure, and obeys a ten-minute request deadline — compressed
+metadata is never trusted as the quota. `internal/sysinfo` reads the host through gopsutil rather than parsing
 `/proc`, so the same path works across kernels and inside a container with `/proc` bind-mounted.
 
 ### Auth, secrets, state

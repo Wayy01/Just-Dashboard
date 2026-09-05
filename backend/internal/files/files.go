@@ -31,7 +31,8 @@ var (
 const maxEditBytes = 8 << 20
 
 type Service struct {
-	roots []string
+	roots     []string
+	extractMu sync.Mutex
 }
 
 func New(roots []string) *Service {
