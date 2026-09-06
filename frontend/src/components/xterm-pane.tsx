@@ -17,6 +17,7 @@ import {
   Lightning,
   MagnifyingGlass,
   Minus,
+  MoreHorizontal,
   Plus,
   RotateClockwise,
   SettingsSliders,
@@ -87,10 +88,11 @@ type XtermTheme = NonNullable<Terminal["options"]["theme"]>
  * git hashes, vim comments, `ls -l` metadata — so it is kept clearly legible
  * either way.
  */
-const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> = {
-  dark: { black: 18, brightBlack: 44, white: 74 },
-  light: { black: 86, brightBlack: 56, white: 44 },
-}
+const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> =
+  {
+    dark: { black: 18, brightBlack: 44, white: 74 },
+    light: { black: 86, brightBlack: 56, white: 44 },
+  }
 
 /** cyan has no near-200° token in the palette, so it is the one hardcoded hue. */
 const TERMINAL_CYAN: Record<"dark" | "light", string> = {
@@ -955,10 +957,9 @@ export function XtermPane({
           )
         }
         notify.dismiss(toast)
-        notify.success(
-          `Image ${action} • ${result.name} • ${formatUploadSize(result.size)}`,
-          { description: result.path },
-        )
+        notify.success(`Image ${action} • ${result.name} • ${formatUploadSize(result.size)}`, {
+          description: result.path,
+        })
       } catch (err) {
         notify.dismiss(toast)
         if (err instanceof DOMException && err.name === "AbortError") return
@@ -1125,8 +1126,8 @@ export function XtermPane({
         className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface-header px-2.5 py-1.5">
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hairline bg-surface-header px-3 py-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {subtitle ?? path}
           {shellTitle && (
             <span className="ml-2 rounded bg-muted px-1 py-px text-[10px] text-foreground">
@@ -1136,7 +1137,7 @@ export function XtermPane({
         </span>
 
         {searching ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
             <Input
               autoFocus
               value={needle}
@@ -1149,6 +1150,7 @@ export function XtermPane({
                   termRef.current?.focus()
                 }
               }}
+              aria-label="Find in scrollback"
               placeholder="Find in scrollback"
               className="h-7 w-44 text-xs"
             />
@@ -1204,69 +1206,45 @@ export function XtermPane({
 
             <SnippetMenu snippets={snippets} onSend={(command) => send(command + "\r")} />
 
-            <PaneButton
-              label={`Copy selection (${formatChord(map["terminal.copy"])})`}
-              onClick={() => termRef.current && copySelection(termRef.current)}
-            >
-              <Copy className="size-3.5" />
-            </PaneButton>
-
-            <div className="flex items-center rounded-md border border-hairline">
-              <PaneButton
-                label="Smaller text"
-                onClick={() =>
-                  setTerminalSettings({ fontSize: Math.max(FONT_MIN, settings.fontSize - 1) })
-                }
-              >
-                <Minus className="size-3.5" />
-              </PaneButton>
-              <span className="numeric px-1 text-[10px] text-muted-foreground">
-                {settings.fontSize}
-              </span>
-              <PaneButton
-                label="Larger text"
-                onClick={() =>
-                  setTerminalSettings({ fontSize: Math.min(FONT_MAX, settings.fontSize + 1) })
-                }
-              >
-                <Plus className="size-3.5" />
-              </PaneButton>
-            </div>
-
             <SettingsMenu />
 
-            <PaneButton
-              label={`Clear the screen (${formatChord(map["terminal.clear"])})`}
-              onClick={() => {
-                termRef.current?.clear()
-                termRef.current?.focus()
-              }}
-            >
-              <Trash className="size-3.5" />
-            </PaneButton>
-
-            <PaneButton
-              label="Save the scrollback as a text file"
-              onClick={() => termRef.current && downloadScrollback(termRef.current)}
-            >
-              <Download className="size-3.5" />
-            </PaneButton>
-
-            {cwd && onOpenFiles && (
-              <PaneButton
-                label={`Open ${cwd} in the file manager`}
-                onClick={() => onOpenFiles(cwd)}
-              >
-                <FolderOpen className="size-3.5" />
-              </PaneButton>
-            )}
-
-            <PaneButton
-              label={`Keyboard shortcuts (${formatChord(map["terminal.shortcuts"])})`}
-              onClick={() => setShortcuts(true)}
-            >
-              <Command className="size-3.5" />
-            </PaneButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Terminal actions">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuLabel>Terminal actions</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onSelect={() => termRef.current && copySelection(termRef.current)}
+                >
+                  <Copy className="size-4" /> Copy selection
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => termRef.current && downloadScrollback(termRef.current)}
+                >
+                  <Download className="size-4" /> Save scrollback
+                </DropdownMenuItem>
+                {cwd && onOpenFiles && (
+                  <DropdownMenuItem onSelect={() => onOpenFiles(cwd)}>
+                    <FolderOpen className="size-4" /> Open working folder
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setShortcuts(true)}>
+                  <Command className="size-4" /> Keyboard shortcuts
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    termRef.current?.clear()
+                    termRef.current?.focus()
+                  }}
+                >
+                  <Trash className="size-4" /> Clear screen
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <PaneButton
               label={
@@ -1319,7 +1297,10 @@ export function XtermPane({
       <div className="relative min-h-0 flex-1">
         <div
           ref={hostRef}
-          className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
+          className={cn(
+            "h-full p-3 transition-colors duration-150 motion-reduce:transition-none",
+            bell && "bg-warning/25",
+          )}
           style={bell ? undefined : { backgroundColor: "var(--background)" }}
           // Click-to-focus-a-pane is a native capture listener installed with
           // the terminal, not a prop here: xterm stops the event before it
@@ -1373,14 +1354,15 @@ export function XtermPane({
       {/* The control keys, as buttons. Ctrl+C is unremarkable on a keyboard and
           impossible on a phone, and this panel is reached from a phone more
           often than its author would like. */}
-      <div className="flex flex-wrap items-center gap-1 border-t border-hairline bg-surface-header px-2 py-1">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
+        <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
         {CONTROL_KEYS.map((key) => (
           <Tooltip key={key.label}>
             <TooltipTrigger asChild>
               <Button
                 size="xs"
                 variant="ghost"
-                className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
                 onClick={() => send(key.bytes)}
               >
                 {key.label}
@@ -1534,6 +1516,30 @@ function SettingsMenu() {
       </Tooltip>
       <PopoverContent align="end" className="w-72 space-y-3 text-xs">
         <p className="eyebrow">Appearance</p>
+        <div className="flex items-center justify-between">
+          <span>Text size</span>
+          <div className="flex items-center rounded-md border border-hairline">
+            <PaneButton
+              label="Smaller text"
+              onClick={() =>
+                setTerminalSettings({ fontSize: Math.max(FONT_MIN, settings.fontSize - 1) })
+              }
+            >
+              <Minus className="size-3.5" />
+            </PaneButton>
+            <span className="numeric px-1 text-[10px] text-muted-foreground">
+              {settings.fontSize}
+            </span>
+            <PaneButton
+              label="Larger text"
+              onClick={() =>
+                setTerminalSettings({ fontSize: Math.min(FONT_MAX, settings.fontSize + 1) })
+              }
+            >
+              <Plus className="size-3.5" />
+            </PaneButton>
+          </div>
+        </div>
         <label className="flex items-center justify-between gap-2">
           Font
           <select

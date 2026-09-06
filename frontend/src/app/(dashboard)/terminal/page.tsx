@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
-  Fullscreen,
-  FullscreenClose,
   Layers,
   Plus,
   ShieldOff,
@@ -470,14 +468,18 @@ export default function TerminalPage() {
    */
   const focusTerminal = () => focusPaneRef.current?.()
 
-  const splitActive = (vertical: boolean) => {
-    if (!activeWindow || !tmuxName) return
+  const splitWindow = (index: number, vertical: boolean) => {
+    if (!tmuxName) return
     focusTerminal()
     void act(
-      () => post(`${persistent(tmuxName)}/windows/${activeWindow.index}/panes`, { vertical }),
+      () => post(`${persistent(tmuxName)}/windows/${index}/panes`, { vertical }),
       "Could not split that window",
       true,
     )
+  }
+
+  const splitActive = (vertical: boolean) => {
+    if (activeWindow) splitWindow(activeWindow.index, vertical)
   }
 
   const selectWindow = (index: number) => {
@@ -760,14 +762,10 @@ export default function TerminalPage() {
         )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          {/*
-              The workspace controls. Slim on purpose — every row here is a row
-              of shell output nobody can see — but this is the one place the rail
-              and the tools panel can be shown or hidden, and the whole workspace
-              taken fullscreen. In fullscreen these are the only way back to the
-              sessions list and the file tree, so the bar stays put there too.
-            */}
-          <div className="flex shrink-0 items-center gap-1 rounded-lg border bg-card px-1.5 py-1">
+          <div
+            className="flex shrink-0 items-center gap-2 rounded-xl border border-hairline bg-surface-header p-1.5"
+            aria-label="Terminal workspace"
+          >
             <WorkspaceToggle
               active={showRail}
               onClick={() => setShowRail((v) => !v)}
@@ -775,17 +773,42 @@ export default function TerminalPage() {
               action="workspace.rail"
               icon={SidebarLeft}
             />
-            {currentDir && (
-              <button
-                type="button"
-                onClick={() => router.push(`/files?path=${encodeURIComponent(currentDir)}`)}
-                className="min-w-0 truncate rounded px-1 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                title={`Open ${currentDir} in Files`}
-              >
-                {currentDir}
-              </button>
+            {tmuxName ? (
+              <WindowStrip
+                windows={windows.data ?? []}
+                sessionName={tmuxName}
+                sessionColour={activeSession?.colour}
+                onSelect={(index) => selectWindow(index)}
+                onRename={(index, name) =>
+                  windowPatch(index, { name }, "Could not rename that window")
+                }
+                onColour={(index, colour) =>
+                  windowPatch(index, { colour }, "Could not colour that window")
+                }
+                onReorder={(index, position) =>
+                  windowPatch(index, { position }, "Could not move that window")
+                }
+                onSplit={splitWindow}
+                onLayout={(index, layout) =>
+                  windowPatch(index, { layout }, "Could not rearrange the panes")
+                }
+                onSynchronize={(index, on) =>
+                  windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
+                }
+                onNew={() => {
+                  focusTerminal()
+                  void act(
+                    () => post(`${persistent(tmuxName)}/windows`, {}),
+                    "Could not open a window",
+                    true,
+                  )
+                }}
+                onClose={(index) => closeWindow(index)}
+              />
+            ) : (
+              <div className="flex-1 px-2 text-sm text-muted-foreground">Terminal</div>
             )}
-            <span className="flex-1" />
+
             <WorkspaceToggle
               active={showTools}
               onClick={() => setShowTools((v) => !v)}
@@ -793,48 +816,7 @@ export default function TerminalPage() {
               action="workspace.tools"
               icon={SidebarRight}
             />
-            <WorkspaceToggle
-              active={immersive}
-              onClick={toggleImmersive}
-              label={immersive ? "Leave fullscreen" : "Fullscreen workspace"}
-              action="terminal.fullscreen"
-              icon={immersive ? FullscreenClose : Fullscreen}
-            />
           </div>
-
-          {tmuxName && (
-            <WindowStrip
-              windows={windows.data ?? []}
-              sessionName={tmuxName}
-              sessionColour={activeSession?.colour}
-              onSelect={(index) => selectWindow(index)}
-              onRename={(index, name) =>
-                windowPatch(index, { name }, "Could not rename that window")
-              }
-              onColour={(index, colour) =>
-                windowPatch(index, { colour }, "Could not colour that window")
-              }
-              onReorder={(index, position) =>
-                windowPatch(index, { position }, "Could not move that window")
-              }
-              onSplit={(_index, vertical) => splitActive(vertical)}
-              onLayout={(index, layout) =>
-                windowPatch(index, { layout }, "Could not rearrange the panes")
-              }
-              onSynchronize={(index, on) =>
-                windowPatch(index, { synchronize: on }, "Could not change synchronised typing")
-              }
-              onNew={() => {
-                focusTerminal()
-                void act(
-                  () => post(`${persistent(tmuxName)}/windows`, {}),
-                  "Could not open a window",
-                  true,
-                )
-              }}
-              onClose={(index) => closeWindow(index)}
-            />
-          )}
 
           {tmuxName && activeWindow && (
             <PaneBar
@@ -977,12 +959,12 @@ function WorkspaceToggle({
           aria-label={label}
           aria-pressed={active}
           className={cn(
-            "size-7 shrink-0 p-0",
+            "size-10 shrink-0 rounded-lg p-0",
             active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:text-foreground",
           )}
           onClick={onClick}
         >
-          <Icon className="size-3.5" />
+          <Icon className="size-4" />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{chord ? `${label} · ${formatChord(chord)}` : label}</TooltipContent>
