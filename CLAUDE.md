@@ -990,7 +990,10 @@ because only the host side can collide.
 Caddy is the only listener on anything but loopback and binds `{$JD_SITE}` **plus** loopback explicitly —
 site addresses alone would leave it listening on every interface. One origin for UI and API is
 load-bearing: `SameSite=Strict` cookies, the mutation CSRF header and the WebSocket origin check all
-depend on it. Caddy rewrites
+depend on it. The frontend's `src/proxy.ts` creates a fresh CSP nonce per document and passes the policy
+into Next so framework scripts and the pre-paint theme script receive it; no production policy grants
+`script-src 'unsafe-inline'`. Caddy preserves that header and supplies a deny-all fallback for
+non-document responses, plus Permissions-Policy. Caddy rewrites
 `X-Forwarded-For` to the real client address (what makes `JD_TRUSTED_PROXIES` safe); `flush_interval -1`
 and zero read/write timeouts keep the long-lived streams alive. The backend container runs `privileged`,
 `pid: host`, `network_mode: host` with the Docker socket and real host paths mounted **at their real
@@ -1287,8 +1290,9 @@ one banner that stays is a missing login account — a broken feature rather tha
 - **Theming is light and dark, one palette**, in `globals.css`'s `:root` and `.dark`. `lib/themes.ts` holds
   only what does not belong in a component: `ThemeMode`, `DEFAULT_MODE` (dark), the storage key, and
   `themeBootstrapScript()`. That script is inlined in `<head>` so the stored choice applies **before first
-  paint** — reading it after hydration flashes a screen of near-black at anyone who chose light, on every
-  navigation that reloads the document; `<html>` carries `suppressHydrationWarning` for exactly that.
+  paint**, with the request's CSP nonce — reading it after hydration flashes a screen of near-black at
+  anyone who chose light, on every navigation that reloads the document; `<html>` carries
+  `suppressHydrationWarning` for exactly that.
   `hooks/use-theme.tsx` treats the document as the store (`useSyncExternalStore` over the root class)
   rather than holding a second copy to sync in an effect. The choice is in localStorage, not on the
   account: it belongs to the screen you are sitting at. `/appearance` is the page; ⌘K is the shortcut.
