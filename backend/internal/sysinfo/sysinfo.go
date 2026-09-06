@@ -580,17 +580,23 @@ func dirSize(ctx context.Context, root string, dev uint64, budget *dirScanBudget
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if err != nil {
+			// A successful response must not look complete when part of the tree
+			// could not be read. The handler reports this failure to the caller.
+			return err
+		}
 		if !budget.take() {
 			return ErrDirScanLimit
-		}
-		if err != nil {
-			return nil
 		}
 		if d.IsDir() {
 			// Do not descend into a different filesystem: the caller asked
 			// about this mount's consumption, not everything beneath it.
 			if path != root {
-				if childDev, err := deviceOf(path); err == nil && childDev != dev {
+				childDev, err := deviceOf(path)
+				if err != nil {
+					return err
+				}
+				if childDev != dev {
 					return filepath.SkipDir
 				}
 			}
@@ -598,7 +604,7 @@ func dirSize(ctx context.Context, root string, dev uint64, budget *dirScanBudget
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil
+			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil

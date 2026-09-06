@@ -33,3 +33,22 @@ func TestDirBreakdownBoundsChildrenAndRecursiveVisits(t *testing.T) {
 		t.Fatalf("bounded breakdown = %d entries, %v; want 2, nil", len(entries), err)
 	}
 }
+
+func TestDirBreakdownReportsUnreadableSubtrees(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read directories regardless of their mode")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+
+	if _, err := dirBreakdown(context.Background(), root, 10, 10, 100); err == nil {
+		t.Fatal("unreadable subtree produced a silently partial result")
+	}
+}
