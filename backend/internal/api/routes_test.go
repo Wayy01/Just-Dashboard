@@ -6,6 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -41,7 +45,6 @@ func testServer(t *testing.T) *Server {
 		Addr:         "127.0.0.1:8080",
 		DataDir:      t.TempDir(),
 		AllowedCIDRs: []*net.IPNet{loopback},
-		Require2FA:   true,
 		SessionTTL:   time.Hour,
 		IdleTTL:      time.Minute,
 		FileRoots:    []string{t.TempDir()},
@@ -52,7 +55,7 @@ func testServer(t *testing.T) *Server {
 		MetricsRetention: 24 * time.Hour,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
 	s := New(cfg, log, st, svc, sealer, audit.New(st, log), nil)
 	t.Cleanup(s.Shutdown)
 	return s
@@ -143,5 +146,53 @@ func TestHealthzIsReachable(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("healthz returned %d", w.Code)
+	}
+}
+
+// SameSite is a site boundary, not an origin boundary: a hostile sibling
+// origin can send the session cookie. The custom header forces a preflight,
+// and JSON content-type enforcement closes the simple text/plain route.
+func TestSessionMutationsRequireCSRFHeaderAndJSONContentType(t *testing.T) {
+	s := testServer(t)
+	h := s.Routes()
+	cookie := signIn(t, s)
+	body := `{"name":"csrf-test","image":"alpine"}`
+
+	request := func(contentType string, csrf bool) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/docker/containers/", strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:9999"
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Content-Type", contentType)
+		if csrf {
+			req.Header.Set(httpx.CSRFHeader, "1")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := request("text/plain", false); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "csrf_required") {
+		t.Fatalf("forged mutation returned %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	if w := request("text/plain", true); w.Code != http.StatusUnsupportedMediaType || !strings.Contains(w.Body.String(), "json_content_type_required") {
+		t.Fatalf("text/plain JSON returned %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+}
+
+func TestDiskUsageRespectsConfiguredFileRoots(t *testing.T) {
+	s := testServer(t)
+	c := &client{t: t, h: s.Routes(), cookie: signIn(t, s)}
+
+	if w := c.do(http.MethodGet, "/api/v1/system/disk-usage?path=/", "", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("disk usage outside file roots returned %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	root := s.modules.files.Roots()[0]
+	if err := os.WriteFile(filepath.Join(root, "sample"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/system/disk-usage?path=" + url.QueryEscape(root)
+	if w := c.do(http.MethodGet, path, "", nil); w.Code != http.StatusOK {
+		t.Fatalf("disk usage inside file roots returned %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
 	}
 }

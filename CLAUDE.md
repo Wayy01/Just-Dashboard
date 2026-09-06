@@ -55,7 +55,9 @@ emits and the parser cannot read is a field silently dropped on the next save.
 **Frontend notes.** bun only (`bun.lock`); never add `package-lock.json` or `yarn.lock`. Next's dev
 rewrite proxies HTTP but **not** WebSocket upgrades, so socket-backed pages in dev need
 `NEXT_PUBLIC_WS_BASE=http://localhost:8080` plus `JD_ALLOWED_ORIGINS=http://localhost:3000` on the
-backend. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
+backend. The default WebSocket origin check matches scheme, hostname, and effective port (`https` in
+production, `http` under `JD_DEV`); each cross-origin exception must be a complete origin in that
+allowlist. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
 it and leaves every editor spinning. `go.mod` declares `go 1.25.0` — check `go version` before blaming
 the code on a network-restricted machine.
 
@@ -66,7 +68,7 @@ the code on a network-restricted machine.
 `backend/internal/api/routes.go` is the map of the whole API. Every `/api/v1` request passes:
 
 ```
-network allowlist → rate limit → authenticate → capability → handler
+network allowlist → rate limit → authenticate → CSRF (session mutations) → capability → handler
 ```
 
 - **Allowlist before auth** (`httpx.AllowlistCIDRs`): an off-network attacker cannot reach the login
@@ -81,6 +83,10 @@ network allowlist → rate limit → authenticate → capability → handler
   minting tokens, account management).
 - **`httpx.AuditMutations`** records every state-changing request. WebSocket routes are GET and
   long-lived, so they call `s.recordAudit(...)` at open time — the event is "a terminal was opened".
+- **`httpx.RequireCSRF`** requires `X-JD-CSRF: 1` on every browser-session mutation, including login
+  and partial 2FA sessions. The header makes a same-site sibling origin preflight, and this application
+  grants no cross-origin browser access. Bearer tokens, agent mTLS and the HMAC webhook do not use
+  ambient cookies and are deliberately outside that check.
 
 Two deliberate exceptions: `/healthz` (unauthenticated, fixed body, no version or hostname) and
 `/api/v1/hooks/deploy/{hookID}` (HMAC over the raw body, still allowlisted, still audited so
@@ -93,7 +99,8 @@ the mount site is only the conversion.
 
 - Return `httpx.Err/BadRequest/Internal/Wrap`; never write an error body by hand. `httpx.WriteError` is
   the single renderer and is what keeps internal error strings off the wire.
-- Decode with `httpx.DecodeJSON` (4 MB cap, unknown fields rejected).
+- Decode with `httpx.DecodeJSON` (4 MB cap, `application/json` required, unknown fields and trailing
+  values rejected).
 - `s.destructive(r, ...)` = capability check + `destrLim` + audit. It does **not** enforce confirmation;
   the typed-phrase subset calls `httpx.RequireTypedConfirmation(w, r, phrase)` **inside** the handler,
   where the phrase is known, and it reaches the client as `error.phrase`. See invariant 3.
@@ -157,7 +164,10 @@ and chmod, which act *on* a symlink.
 `internal/safepath` holds the archive-unpacking rules (absolute symlink targets refused, nothing written
 through a symlink already in the destination, the final component unlinked rather than followed). Both
 `files/archive.go` and `backups/restore.go` use it; they used to carry a copy each of the same lexical
-prefix test, with the same hole. `internal/sysinfo` reads the host through gopsutil rather than parsing
+prefix test, with the same hole. File-manager extraction additionally stops after 100,000 entries or
+8 GiB of bytes actually written, reserves at least 1 GiB of free space, serialises extraction requests,
+removes the current partial file on failure, and obeys a ten-minute request deadline — compressed
+metadata is never trusted as the quota. `internal/sysinfo` reads the host through gopsutil rather than parsing
 `/proc`, so the same path works across kernels and inside a container with `/proc` bind-mounted.
 
 ### Auth, secrets, state
@@ -165,9 +175,11 @@ prefix test, with the same hole. `internal/sysinfo` reads the host through gopsu
 `internal/auth` owns users, sessions, TOTP, recovery codes, API tokens. Cookie `vpsd_session` (HttpOnly,
 SameSite=Strict, Secure unless `JD_DEV`). A password alone yields a *partial* session accepted only by
 the 2FA routes (`AuthenticatePartial`); everything else answers `totp_required` /
-`totp_enrollment_required`. API tokens may narrow their creator's role, never widen it, and are demoted
-with the account. `auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP
-seeds, connection strings, deploy env, backup credentials.
+`totp_enrollment_required`. That is an invariant, not a deployment option: `JD_REQUIRE_2FA` is no longer
+read, and the `require2fa` status field remains `true` only for compatibility with existing frontends.
+API tokens may narrow their creator's role, never widen it, and are demoted with the account.
+`auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP seeds, connection
+strings, deploy env, backup credentials.
 
 State is SQLite in `JD_DATA_DIR`, schema as one `CREATE TABLE IF NOT EXISTS` block in
 `internal/store/store.go` with no migration tool (invariant 8). The file is still named `vpsd.db`
@@ -532,6 +544,9 @@ two-gigabyte log.
 - **`Usage`** accumulates per-child totals in the *same* bounded walk (forty children would otherwise be
   forty-one walks) and reports `Truncated` rather than quoting a partial total. A symlink counts as the
   link, or a tree with links into /usr reports the size of the operating system.
+- **`GET /system/disk-usage` is a file operation.** Its requested mount passes through `files.Resolve`,
+  recursive visits and top-level children are capped, and only two scans run concurrently. A result limit
+  controls the response size; it is not mistaken for a bound on the work needed to rank those results.
 
 Bookmarks live in the `settings` table (`handlers_files_browse.go`), not the browser — which directory
 matters is a fact about the server and should be there from a phone. Recent folders are the opposite and
@@ -806,7 +821,9 @@ Redis on pure-Go drivers, so the image still needs no CGO.
   cannot see a certificate renewed and never reloaded, a proxy still offering TLS 1.0, or a redirect that
   quietly stopped. Each version is probed on a connection pinned to exactly that version; a version this
   client will not ask for is `unknown`, **never `refused`**, since reporting it absent would be false
-  reassurance about the versions that matter most. `grade` is a pure function of the scan.
+  reassurance about the versions that matter most. `grade` is a pure function of the scan. The live
+  certificate, TLS and DNS probes require `system.admin`: each emits traffic to a caller-chosen
+  destination, the same scanner boundary as `/network/probe`.
 - **`dns01.go` — wildcards and CDN-fronted domains**, which between them are most of the certificates
   people want: Let's Encrypt signs `*.example.com` only against DNS-01, and a Cloudflare-proxied domain
   never receives an HTTP challenge. Eight certbot plugins as a closed set (each names credentials and
@@ -972,7 +989,11 @@ because only the host side can collide.
 
 Caddy is the only listener on anything but loopback and binds `{$JD_SITE}` **plus** loopback explicitly —
 site addresses alone would leave it listening on every interface. One origin for UI and API is
-load-bearing: `SameSite=Strict` cookies and the WebSocket origin check both depend on it. Caddy rewrites
+load-bearing: `SameSite=Strict` cookies, the mutation CSRF header and the WebSocket origin check all
+depend on it. The frontend's `src/proxy.ts` creates a fresh CSP nonce per document and passes the policy
+into Next so framework scripts and the pre-paint theme script receive it; no production policy grants
+`script-src 'unsafe-inline'`. Caddy preserves that header and supplies a deny-all fallback for
+non-document responses, plus Permissions-Policy. Caddy rewrites
 `X-Forwarded-For` to the real client address (what makes `JD_TRUSTED_PROXIES` safe); `flush_interval -1`
 and zero read/write timeouts keep the long-lived streams alive. The backend container runs `privileged`,
 `pid: host`, `network_mode: host` with the Docker socket and real host paths mounted **at their real
@@ -1239,7 +1260,8 @@ one banner that stays is a missing login account — a broken feature rather tha
 ### Data and theming
 
 - `src/lib/api.ts` is the only fetch layer: `get/post/put/patch/del`, `credentials: "include"`,
-  `X-Confirm` passthrough, `ApiError` with `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
+  `X-JD-CSRF` on every mutation, `X-Confirm` passthrough, `ApiError` with
+  `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
   `downloadUrl()` build the non-JSON URLs.
 - `usePoll` — abort-per-run so a slow endpoint cannot stack requests, paused on a hidden tab.
 - `useSocket` — reconnect with backoff (these sockets ride a tunnel that drops routinely), handlers in a
@@ -1276,8 +1298,9 @@ one banner that stays is a missing login account — a broken feature rather tha
 - **Theming is light and dark, one palette**, in `globals.css`'s `:root` and `.dark`. `lib/themes.ts` holds
   only what does not belong in a component: `ThemeMode`, `DEFAULT_MODE` (dark), the storage key, and
   `themeBootstrapScript()`. That script is inlined in `<head>` so the stored choice applies **before first
-  paint** — reading it after hydration flashes a screen of near-black at anyone who chose light, on every
-  navigation that reloads the document; `<html>` carries `suppressHydrationWarning` for exactly that.
+  paint**, with the request's CSP nonce — reading it after hydration flashes a screen of near-black at
+  anyone who chose light, on every navigation that reloads the document; `<html>` carries
+  `suppressHydrationWarning` for exactly that.
   `hooks/use-theme.tsx` treats the document as the store (`useSyncExternalStore` over the root class)
   rather than holding a second copy to sync in an effect. The choice is in localStorage, not on the
   account: it belongs to the screen you are sitting at. `/appearance` is the page; ⌘K is the shortcut.

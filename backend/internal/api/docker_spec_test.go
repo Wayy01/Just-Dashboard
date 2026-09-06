@@ -279,6 +279,7 @@ func TestReclaimRoutesRequireTheDestructiveCapability(t *testing.T) {
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		req.Header.Set("Cookie", token)
+		req.Header.Set(httpx.CSRFHeader, "1")
 		req.RemoteAddr = "127.0.0.1:12345"
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)

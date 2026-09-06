@@ -1,6 +1,9 @@
 package files
 
 import (
+	"archive/zip"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,6 +41,74 @@ func TestResolveContainment(t *testing.T) {
 	if want := filepath.Join(root, "sub", "new.txt"); got != want {
 		t.Fatalf("Resolve = %q, want %q", got, want)
 	}
+}
+
+// Missing descendants used to make Resolve stop before it reached an outward
+// symlink. MkdirAll and archive/copy writers then followed that link as root.
+func TestMutationsRejectOutwardSymlinkBeforeMissingDescendants(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	s := New([]string{root})
+
+	t.Run("mkdir", func(t *testing.T) {
+		path := filepath.Join(root, "escape", "missing", "directory")
+		if err := s.Mkdir(path, 0o755); !errors.Is(err, ErrOutsideRoot) {
+			t.Fatalf("Mkdir error = %v, want ErrOutsideRoot", err)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "missing")); !os.IsNotExist(err) {
+			t.Fatalf("mkdir escaped the root: %v", err)
+		}
+	})
+
+	t.Run("copy", func(t *testing.T) {
+		src := filepath.Join(root, "source")
+		if err := os.Mkdir(src, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "payload"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(root, "escape", "copy-parent", "copy")
+		if err := s.Copy(src, dst); !errors.Is(err, ErrOutsideRoot) {
+			t.Fatalf("Copy error = %v, want ErrOutsideRoot", err)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "copy-parent")); !os.IsNotExist(err) {
+			t.Fatalf("copy escaped the root: %v", err)
+		}
+	})
+
+	t.Run("extract", func(t *testing.T) {
+		archive := filepath.Join(root, "payload.zip")
+		f, err := os.Create(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zw := zip.NewWriter(f)
+		entry, err := zw.Create("payload")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		dst := filepath.Join(root, "escape", "extract-parent", "extract")
+		if _, err := s.Extract(context.Background(), archive, dst); !errors.Is(err, ErrOutsideRoot) {
+			t.Fatalf("Extract error = %v, want ErrOutsideRoot", err)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "extract-parent")); !os.IsNotExist(err) {
+			t.Fatalf("extract escaped the root: %v", err)
+		}
+	})
 }
 
 // ResolveEntry exists because Resolve dereferences, which is wrong for every
