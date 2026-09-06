@@ -341,7 +341,7 @@ The installer writes the ones that matter. These are for tuning afterwards.
 | `JD_BACKEND_PORT` | `8080` | The API's loopback port, behind the proxy. |
 | `JD_FRONTEND_PORT` | `3000` | The UI's loopback port, behind the proxy. |
 | `JD_ADDR` | `127.0.0.1:$JD_BACKEND_PORT` | Where the API binds, if you need to override the host as well as the port. Leave it on loopback; the proxy is the entry point. |
-| `JD_ALLOWED_ORIGINS` | none | Extra browser origins allowed to open WebSockets. Only needed if the UI is served from a different origin. |
+| `JD_ALLOWED_ORIGINS` | none | Complete browser origins allowed to open WebSockets. Scheme, host, and port must match; only needed if the UI is served from a different origin. |
 
 **Behaviour**
 

@@ -50,7 +50,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Servic
 		Audit:  aud,
 		Agent:  id,
 		Authn:  &httpx.Authenticator{Svc: svc, Secure: !cfg.Dev},
-		WS:     wsx.NewUpgrader(cfg.AllowedOrigins),
+		WS:     wsx.NewUpgrader(cfg.AllowedOrigins, !cfg.Dev),
 		// Login is deliberately tight: five attempts a minute per address on
 		// top of the per-account lockout.
 		loginLim: httpx.NewLimiter(10, 5),

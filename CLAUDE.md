@@ -55,7 +55,9 @@ emits and the parser cannot read is a field silently dropped on the next save.
 **Frontend notes.** bun only (`bun.lock`); never add `package-lock.json` or `yarn.lock`. Next's dev
 rewrite proxies HTTP but **not** WebSocket upgrades, so socket-backed pages in dev need
 `NEXT_PUBLIC_WS_BASE=http://localhost:8080` plus `JD_ALLOWED_ORIGINS=http://localhost:3000` on the
-backend. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
+backend. The default WebSocket origin check matches scheme, hostname, and effective port (`https` in
+production, `http` under `JD_DEV`); each cross-origin exception must be a complete origin in that
+allowlist. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
 it and leaves every editor spinning. `go.mod` declares `go 1.25.0` — check `go version` before blaming
 the code on a network-restricted machine.
 
