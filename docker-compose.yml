@@ -96,6 +96,10 @@ services:
       - /srv:/srv
       - /root:/root
       - /etc:/etc
+      # Clipboard images pasted into the web terminal are temporary host
+      # files. Mount this one directory at the same absolute path so the path
+      # inserted into the host-side PTY names the bytes the backend wrote.
+      - /tmp/just-dashboard:/tmp/just-dashboard
       - /var/log:/var/log
       - /var/lib/just-dashboard:/var/lib/just-dashboard
       - /var/backups/just-dashboard:/var/backups/just-dashboard

@@ -102,6 +102,10 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
 
+  return readResponse<T>(res)
+}
+
+async function readResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
@@ -124,6 +128,21 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     )
   }
   return parsed as T
+}
+
+/** Multipart POST through the same authenticated fetch/error path as JSON. */
+export async function postForm<T>(
+  path: string,
+  body: FormData,
+  opts: Pick<RequestOptions, "query" | "signal"> = {},
+): Promise<T> {
+  const res = await fetch(buildUrl(path, opts.query), {
+    method: "POST",
+    credentials: "include",
+    signal: opts.signal,
+    body,
+  })
+  return readResponse<T>(res)
 }
 
 export const get = <T>(path: string, query?: RequestOptions["query"], signal?: AbortSignal) =>
