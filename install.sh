@@ -480,6 +480,27 @@ fi
 
 # ── build and start ─────────────────────────────────────────────────────────
 
+# Clipboard images cross from the backend container into a host-side shell.
+# The shared root therefore has to be owned by the root-running backend: it
+# deliberately refuses a directory a local account could replace underneath
+# it. Compose normally creates a missing bind source as root, but an existing
+# directory keeps its old owner, which left image paste returning HTTP 500 on
+# installs where the operator had created this path first.
+CLIPBOARD_ROOT=/tmp/just-dashboard
+if [ ! -e "$CLIPBOARD_ROOT" ] && [ ! -L "$CLIPBOARD_ROOT" ]; then
+	mkdir --mode=0711 "$CLIPBOARD_ROOT"
+fi
+if [ ! -d "$CLIPBOARD_ROOT" ] || [ -L "$CLIPBOARD_ROOT" ]; then
+	die "$CLIPBOARD_ROOT must be a real directory, not a file or symlink."
+fi
+# Do not follow an object swapped in by the current owner. Once the real
+# directory is root-owned, /tmp's sticky bit prevents that owner replacing it.
+chown --no-dereference root:root "$CLIPBOARD_ROOT"
+if [ ! -d "$CLIPBOARD_ROOT" ] || [ -L "$CLIPBOARD_ROOT" ]; then
+	die "$CLIPBOARD_ROOT changed while its ownership was being secured."
+fi
+chmod 0711 "$CLIPBOARD_ROOT"
+
 step "Building and starting the stack"
 say "  ${DIM}First build compiles the Go backend and the Next.js frontend; give it a few minutes.${RESET}"
 say ""
