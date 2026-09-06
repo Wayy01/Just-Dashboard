@@ -3,6 +3,7 @@ import {
   chooseClipboardImage,
   insertTerminalPath,
   interceptClipboardImagePaste,
+  uploadTerminalImage,
 } from "./terminal-upload"
 
 function item(kind, type, file = null) {
@@ -67,5 +68,35 @@ describe("terminal clipboard images", () => {
   test("refuses a returned path containing terminal control characters", () => {
     expect(() => insertTerminalPath("/tmp/screenshot.png\nrm -rf /", () => {})).toThrow()
     expect(() => insertTerminalPath("/tmp/just-dashboard/a;rm-rf/clipboard-image.png", () => {})).toThrow()
+  })
+
+  test("sends CSRF proof with the multipart upload", async () => {
+    const originalFetch = globalThis.fetch
+    let request
+    globalThis.fetch = async (input, init) => {
+      request = { input, init }
+      return new Response(
+        JSON.stringify({
+          path: `/tmp/just-dashboard/abc123abc123abcd/clipboard-${"f".repeat(32)}.png`,
+          name: "screenshot.png",
+          mime: "image/png",
+          size: 5,
+        }),
+        { status: 201 },
+      )
+    }
+
+    try {
+      await uploadTerminalImage(
+        "abc123abc123abcd",
+        new File(["image"], "screenshot.png", { type: "image/png" }),
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    expect(request.input).toBe("/api/v1/terminal/abc123abc123abcd/clipboard")
+    expect(request.init.method).toBe("POST")
+    expect(request.init.headers).toEqual({ "X-JD-CSRF": "1" })
   })
 })

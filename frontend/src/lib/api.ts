@@ -149,6 +149,7 @@ export async function postForm<T>(
 ): Promise<T> {
   const res = await fetch(buildUrl(path, opts.query), {
     method: "POST",
+    headers: mutationHeaders(),
     credentials: "include",
     signal: opts.signal,
     body,
