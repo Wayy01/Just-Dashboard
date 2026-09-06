@@ -31,6 +31,13 @@ import { cn } from "@/lib/utils"
 import { useTheme } from "@/hooks/use-theme"
 import { actionFor, formatChord, useKeymap } from "@/lib/terminal-keymap"
 import {
+  chooseDroppedImage,
+  formatUploadSize,
+  insertTerminalPath,
+  interceptClipboardImagePaste,
+  uploadTerminalImage,
+} from "@/lib/terminal-upload"
+import {
   FONT_MAX,
   FONT_MIN,
   TERMINAL_FONTS,
@@ -248,6 +255,7 @@ export function XtermPane({
   copyMode,
   onToggleFullscreen,
   fullscreenActive,
+  terminalSessionId,
 }: {
   path: string
   query?: Query
@@ -296,6 +304,8 @@ export function XtermPane({
    */
   onToggleFullscreen?: () => void
   fullscreenActive?: boolean
+  /** Enables session-scoped image paste/drop on the real terminal page only. */
+  terminalSessionId?: string
 }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -347,6 +357,7 @@ export function XtermPane({
   // that must be forwarded intact and must not be put on screen.
   const [pendingPaste, setPendingPaste] = useState<{ raw: string; text: string } | null>(null)
   const [bell, setBell] = useState(false)
+  const [imageDrag, setImageDrag] = useState(false)
   // The title the shell sets through OSC 0/2 — which for anybody with a
   // configured prompt is the command that is running. It is the one label the
   // pane can carry that says what this terminal is *doing* rather than what it
@@ -368,6 +379,10 @@ export function XtermPane({
   const searchRef = useRef<SearchAddon | null>(null)
   const fitRef = useRef<{ fit: () => void } | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
+  // The upload path uses this exact input writer after its HTTP request
+  // finishes. It is assigned by the live socket effect so a returned path
+  // travels through the same transport and copy-mode handling as typing.
+  const inputRef = useRef<((data: string) => boolean) | null>(null)
   const modeRef = useRef(mode)
   // Settings are read inside the connect effect, which must not re-run when
   // one changes: rebuilding the terminal would drop the scrollback and, on a
@@ -701,6 +716,15 @@ export function XtermPane({
         }
       }
 
+      const insertInput = (data: string) => {
+        if (socket.readyState !== WebSocket.OPEN || replaying) return false
+        leaveCopyMode()
+        socket.send(data)
+        term.focus()
+        return true
+      }
+      inputRef.current = insertInput
+
       disposables.push(
         term.onData((data) => {
           if (socket.readyState !== WebSocket.OPEN) return
@@ -867,6 +891,7 @@ export function XtermPane({
         searchRef.current = null
         fitRef.current = null
         socketRef.current = null
+        if (inputRef.current === insertInput) inputRef.current = null
       }
     })()
 
@@ -896,6 +921,109 @@ export function XtermPane({
       focusRef.current = null
     }
   }, [focusRef])
+
+  // Clipboard images and dragged images take an authenticated HTTP path to
+  // the server, then only the returned filename goes through the PTY socket.
+  // A native capture listener is deliberate: xterm owns the hidden textarea
+  // that receives paste, so the terminal container must see an image before
+  // xterm can mistake it for ordinary paste data. Text-only events return
+  // without even calling preventDefault and keep xterm's existing behaviour.
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || !terminalSessionId) return
+
+    const controller = new AbortController()
+    let dragDepth = 0
+
+    const unsupported = (mime: string) =>
+      notify.error(
+        "Image type not supported",
+        new Error(`${mime || "This file type"} cannot be pasted. Use PNG, JPEG or WebP.`),
+      )
+
+    const upload = async (file: File, action: "pasted" | "dropped") => {
+      const toast = notify.loading(action === "pasted" ? "Pasting image…" : "Uploading image…")
+      try {
+        const result = await uploadTerminalImage(terminalSessionId, file, controller.signal)
+        let inserted = false
+        insertTerminalPath(result.path, (path) => {
+          inserted = inputRef.current?.(path) ?? false
+        })
+        if (!inserted) {
+          throw new Error(
+            `The image was saved at ${result.path}, but the terminal is no longer connected.`,
+          )
+        }
+        notify.dismiss(toast)
+        notify.success(
+          `Image ${action} • ${result.name} • ${formatUploadSize(result.size)}`,
+          { description: result.path },
+        )
+      } catch (err) {
+        notify.dismiss(toast)
+        if (err instanceof DOMException && err.name === "AbortError") return
+        notify.error(`Could not ${action === "pasted" ? "paste" : "upload"} image`, err)
+      }
+    }
+
+    const onPaste = (event: ClipboardEvent) => {
+      const intercepted = interceptClipboardImagePaste(
+        event,
+        (file) => void upload(file, "pasted"),
+        unsupported,
+      )
+      if (intercepted) event.stopPropagation()
+    }
+
+    const carriesFiles = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files")
+
+    const onDragEnter = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth++
+      setImageDrag(true)
+    }
+    const onDragOver = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"
+    }
+    const onDragLeave = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth = Math.max(0, dragDepth - 1)
+      if (dragDepth === 0) setImageDrag(false)
+    }
+    const onDrop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth = 0
+      setImageDrag(false)
+      const choice = chooseDroppedImage(event.dataTransfer?.files ?? [])
+      if (choice.kind === "image") void upload(choice.file, "dropped")
+      else if (choice.kind === "unsupported") unsupported(choice.mime)
+    }
+
+    host.addEventListener("paste", onPaste, { capture: true })
+    host.addEventListener("dragenter", onDragEnter, { capture: true })
+    host.addEventListener("dragover", onDragOver, { capture: true })
+    host.addEventListener("dragleave", onDragLeave, { capture: true })
+    host.addEventListener("drop", onDrop, { capture: true })
+    return () => {
+      controller.abort()
+      setImageDrag(false)
+      host.removeEventListener("paste", onPaste, { capture: true })
+      host.removeEventListener("dragenter", onDragEnter, { capture: true })
+      host.removeEventListener("dragover", onDragOver, { capture: true })
+      host.removeEventListener("dragleave", onDragLeave, { capture: true })
+      host.removeEventListener("drop", onDrop, { capture: true })
+    }
+  }, [terminalSessionId])
 
   // Anything that changes the cell size changes the geometry, so the PTY has
   // to be told — otherwise the remote shell keeps wrapping for the old one.
@@ -1206,6 +1334,11 @@ export function XtermPane({
             }
           }}
         />
+        {imageDrag && (
+          <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-primary bg-background/90 text-xs font-medium text-primary shadow-sm">
+            Drop image to upload and paste its path
+          </div>
+        )}
         {(!atBottom || scrolledBack) && (
           <Button
             size="xs"

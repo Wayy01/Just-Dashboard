@@ -100,6 +100,12 @@ func (s *Session) LastActive() time.Time {
 	return s.lastActive
 }
 
+func (s *Session) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
 // Meta reads back everything about the session that was the operator's choice
 // rather than the shell's state.
 func (s *Session) Meta() SessionMeta {
