@@ -1173,7 +1173,12 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   by hand**: the browser's snapshot composites a transparent row onto an opaque white rectangle with hard
   corners and exposes no way to style it, so `dnd.ts` builds an off-screen chip in the theme's tokens,
   hands it to `setDragImage` and removes it next frame.
-- `window-strip.tsx` is the window chips plus `PaneBar`. A pane's label is the command running in it:
+- `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
+  toggles: sessions on the left and Files/Git on the right. There is no working-directory title bar.
+  Window menus retain split, layout, rename, colour and close actions; active tabs scroll into view.
+  The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
+  folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
+  `PaneBar` labels each pane with the command running in it:
   "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
 - `tags.tsx` is the colour vocabulary. `--tag-*` lives in `globals.css` and is the one deliberate exception
   to "compute it from the palette": a tag is a label the operator applied, and one that changed hue with
