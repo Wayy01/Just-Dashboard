@@ -6,6 +6,9 @@ Reviewed branch: `security/best-practices-review-20260905`
 
 Base revision: `b27072d9481c4f676faa8ff6ef1e936d052f9a3e` (`main`)
 
+Remediation completed: 2026-09-06 on the reviewed branch. Finding evidence and line references below
+describe the base revision so the original review remains reproducible.
+
 ## Executive summary
 
 Just Dashboard has a notably deliberate security design for a root-equivalent administration
@@ -14,7 +17,8 @@ authentication, capability checks on API routes, secure session-cookie defaults,
 authentication enabled by default, request-body limits, parameterized database access, argv-based
 host command execution, audit middleware, and defensive archive path joining.
 
-Eight issues remain: **2 High, 4 Medium, and 2 Low**. No Critical issue was identified.
+The review identified **2 High, 4 Medium, and 2 Low** issues. No Critical issue was identified. All
+eight findings were subsequently remediated on this branch and are mapped to their fixes below.
 
 The two highest-risk issues are:
 
@@ -34,6 +38,33 @@ check that ignores scheme, and no browser Content Security Policy.
 
 This is a source review, not a claim that every finding is exploitable in every deployment. Each
 finding below lists the required conditions and the controls that reduce its likelihood.
+
+## Remediation status
+
+| ID | Status | Fix |
+| --- | --- | --- |
+| JD-SEC-001 | Resolved | `c50140b` walks to and resolves the nearest existing ancestor before accepting missing descendants, with mutation regressions for symlink escapes. |
+| JD-SEC-002 | Resolved | `3ec6d05` requires a browser-only mutation header, enforces JSON media types and single JSON values, and updates every frontend mutation path. |
+| JD-SEC-003 | Resolved | `a1f20c7` moves live TLS, port-scan, and DNS probes behind `system.admin`. |
+| JD-SEC-004 | Resolved | `1d97fb9` confines scans to file roots and adds result, traversal, directory-entry, and concurrency limits. |
+| JD-SEC-005 | Resolved | `5400ff7` adds actual expanded-byte, entry-count, free-space, concurrency, cancellation, and execution-time extraction limits. |
+| JD-SEC-006 | Resolved | `6939eed` removes the 2FA configuration bypass and always starts password sessions with a second factor outstanding. |
+| JD-SEC-007 | Resolved | `ff2392b` compares WebSocket scheme, normalized hostname, and effective port, retaining only complete explicit exceptions. |
+| JD-SEC-008 | Resolved | `b1f70f0` supplies per-document CSP nonces, a Caddy deny-all fallback, and a restrictive Permissions-Policy. |
+
+Post-remediation validation:
+
+- `go test ./...`: passed with the parent shell's `TMUX` and legacy configuration variables removed;
+  those variables otherwise redirect the repository's real-tmux tests or alter their fixtures.
+- `go test -race` passed for `internal/httpx`, `internal/files`, `internal/sysinfo`, `internal/auth`, and
+  `internal/wsx`.
+- `go vet ./...` and `go build ./...`: passed.
+- `bun run lint` and `bun run build`: passed; all application routes are now dynamically rendered so
+  each response receives a fresh CSP nonce.
+- Caddy configuration validation and `docker compose config -q`: passed.
+- A production build served through the shipped Caddy topology returned the nonce CSP and
+  Permissions-Policy; all 14 emitted scripts carried the response nonce, and a headless Chromium load
+  reported no CSP violations.
 
 ## Scope and validation
 
