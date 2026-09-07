@@ -16,8 +16,14 @@ type SocketOptions = {
   onOpen?: () => void
   onClose?: () => void
   enabled?: boolean
-  /** Query parameters appended to the endpoint. */
-  query?: Record<string, string | number | boolean | undefined | null>
+  /**
+   * Query parameters appended to the endpoint. A factory is evaluated for
+   * each reconnect, which lets resumable streams send their latest sequence
+   * without reconnecting merely because that sequence advanced.
+   */
+  query?:
+    | Record<string, string | number | boolean | undefined | null>
+    | (() => Record<string, string | number | boolean | undefined | null>)
 }
 
 export type SocketState = "connecting" | "open" | "closed" | "error"
@@ -42,7 +48,8 @@ export function useSocket(path: string, options: SocketOptions = {}) {
   })
   const socketRef = useRef<WebSocket | null>(null)
 
-  const queryKey = JSON.stringify(options.query ?? {})
+  const queryKey =
+    typeof options.query === "function" ? "query-factory" : JSON.stringify(options.query ?? {})
 
   useEffect(() => {
     if (!enabled) return
@@ -52,7 +59,8 @@ export function useSocket(path: string, options: SocketOptions = {}) {
 
     const connect = () => {
       setState("connecting")
-      const ws = new WebSocket(wsUrl(path, handlers.current.query))
+      const query = handlers.current.query
+      const ws = new WebSocket(wsUrl(path, typeof query === "function" ? query() : query))
       ws.binaryType = "arraybuffer"
       socketRef.current = ws
 

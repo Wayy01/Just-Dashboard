@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -126,6 +128,182 @@ func (c *Client) RunComposeStream(ctx context.Context, dir string, action Compos
 	return 0, nil
 }
 
+// ComposeReleaseSpec is an immutable deployment-owned Compose invocation.
+// Every source file and the generated image-pinning override is named
+// explicitly; the dashboard process environment is never inherited for
+// interpolation.
+type ComposeReleaseSpec struct {
+	ProjectName      string
+	ProjectDirectory string
+	Files            []string
+	OverrideFile     string
+	Environment      map[string]string
+}
+
+type ComposeReleaseAction string
+
+const (
+	ComposeReleaseUp    ComposeReleaseAction = "up"
+	ComposeReleaseStart ComposeReleaseAction = "start"
+	ComposeReleaseStop  ComposeReleaseAction = "stop"
+	ComposeReleaseKill  ComposeReleaseAction = "kill"
+	ComposeReleaseDown  ComposeReleaseAction = "down"
+)
+
+// RunComposeRelease invokes Compose with only reviewed, structured arguments.
+// The temporary env file is removed before this method returns, including on
+// cancellation and command failure.
+func (c *Client) RunComposeRelease(
+	ctx context.Context,
+	spec ComposeReleaseSpec,
+	action ComposeReleaseAction,
+	graceSeconds int,
+	emit func(LogLine) error,
+) error {
+	if !validComposeProjectName(spec.ProjectName) || !dirExists(spec.ProjectDirectory) ||
+		len(spec.Files) == 0 || len(spec.Files) > 16 || graceSeconds < 0 || graceSeconds > 300 {
+		return errors.New("invalid deployment Compose invocation")
+	}
+	args := []string{"compose", "--project-name", spec.ProjectName, "--project-directory", spec.ProjectDirectory}
+	for _, configured := range spec.Files {
+		path := configured
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(spec.ProjectDirectory, filepath.Clean(path))
+		}
+		if !containedComposeFile(spec.ProjectDirectory, path) {
+			return errors.New("deployment Compose file escapes its workspace")
+		}
+		args = append(args, "-f", path)
+	}
+	if spec.OverrideFile == "" || !containedComposeFile(spec.ProjectDirectory, spec.OverrideFile) {
+		return errors.New("deployment Compose override is outside its workspace")
+	}
+	args = append(args, "-f", spec.OverrideFile)
+
+	envFile, err := writeComposeReleaseEnv(spec.ProjectDirectory, spec.Environment)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(envFile)
+	args = append(args, "--env-file", envFile)
+	switch action {
+	case ComposeReleaseUp:
+		args = append(args, "up", "-d", "--no-build", "--remove-orphans")
+	case ComposeReleaseStart:
+		args = append(args, "start")
+	case ComposeReleaseStop:
+		args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds))
+	case ComposeReleaseKill:
+		args = append(args, "kill", "--signal", "SIGKILL")
+	case ComposeReleaseDown:
+		args = append(args, "down", "--remove-orphans", "--timeout", strconv.Itoa(graceSeconds))
+	default:
+		return errors.New("unknown deployment Compose action")
+	}
+
+	commandCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, "docker", args...)
+	command.Dir = spec.ProjectDirectory
+	command.Env = composeReleaseProcessEnvironment(c.host, spec.ProjectDirectory)
+	lines := make(chan LogLine, 64)
+	done := make(chan struct{})
+	var emitErr error
+	go func() {
+		defer close(done)
+		for line := range lines {
+			if emit != nil && emitErr == nil {
+				emitErr = emit(line)
+			}
+		}
+	}()
+	code, runErr := streamCommand(commandCtx, command, lines)
+	close(lines)
+	<-done
+	if emitErr != nil {
+		return emitErr
+	}
+	if runErr != nil {
+		return runErr
+	}
+	if code != 0 {
+		return fmt.Errorf("docker compose exited with status %d", code)
+	}
+	return nil
+}
+
+func validComposeProjectName(value string) bool {
+	if value == "" || len(value) > 63 {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') ||
+			(index > 0 && (character == '-' || character == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func containedComposeFile(root, candidate string) bool {
+	root, candidate = filepath.Clean(root), filepath.Clean(candidate)
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != "." && relative != ".." &&
+		!strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+func writeComposeReleaseEnv(directory string, values map[string]string) (string, error) {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if !validComposeEnvironmentName(key) {
+			return "", errors.New("invalid deployment Compose environment name")
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var contents strings.Builder
+	contents.WriteString("# temporary Just Dashboard release environment\n")
+	for _, key := range keys {
+		contents.WriteString(key)
+		contents.WriteByte('=')
+		contents.WriteString(strconv.Quote(values[key]))
+		contents.WriteByte('\n')
+	}
+	file, err := os.CreateTemp(directory, ".just-dashboard-env-*")
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		os.Remove(name)
+		return "", err
+	}
+	if _, err := file.WriteString(contents.String()); err != nil {
+		file.Close()
+		os.Remove(name)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+func composeReleaseProcessEnvironment(host, directory string) []string {
+	environment := []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + directory,
+		"DOCKER_CONFIG=" + filepath.Join(directory, ".docker-empty"),
+		"COMPOSE_PROGRESS=plain", "DOCKER_CLI_HINTS=false", "BUILDKIT_PROGRESS=plain",
+	}
+	if host != "" {
+		environment = append(environment, "DOCKER_HOST="+host)
+	}
+	return environment
+}
+
 // ComposeFileFor picks the file to edit for a stack.
 //
 // Compose supports several names and an override file layered on top. The
@@ -168,6 +346,130 @@ type ComposeValidation struct {
 	Services []string `json:"services"`
 }
 
+// ComposeInput is one file in an ordered Compose configuration. Paths are
+// relative labels used only inside a temporary validation workspace.
+type ComposeInput struct {
+	Path    string
+	Content string
+}
+
+// ValidateComposePlan validates untrusted deployment-planning input without
+// inheriting dashboard variables or loading a project .env file. Variable
+// names discovered by the structural parser receive inert placeholders; no
+// deployment secret enters this subprocess or its output.
+func (c *Client) ValidateComposePlan(
+	ctx context.Context,
+	dir string,
+	inputs []ComposeInput,
+	variables []string,
+) (*ComposeValidation, error) {
+	if len(inputs) == 0 || len(inputs) > 16 {
+		return &ComposeValidation{Valid: false, Error: "between 1 and 16 Compose files are required", Services: []string{}}, nil
+	}
+	temporary, err := os.MkdirTemp("", "just-dashboard-compose-plan-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(temporary)
+	if err := os.Chmod(temporary, 0o700); err != nil {
+		return nil, err
+	}
+
+	projectDirectory := dir
+	if projectDirectory == "" || projectDirectory == "." {
+		projectDirectory = temporary
+	}
+	envPath := filepath.Join(temporary, "planning.env")
+	if err := os.WriteFile(envPath, []byte("# isolated deployment planning environment\n"), 0o600); err != nil {
+		return nil, err
+	}
+	args := []string{"compose", "--project-directory", projectDirectory, "--env-file", envPath}
+	total := 0
+	seenPaths := map[string]bool{}
+	for index, input := range inputs {
+		total += len(input.Content)
+		clean := filepath.Clean(input.Path)
+		if total > 4<<20 || clean == "." || filepath.IsAbs(clean) || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) || seenPaths[clean] {
+			return &ComposeValidation{Valid: false, Error: "Compose input path or size is invalid", Services: []string{}}, nil
+		}
+		seenPaths[clean] = true
+		path := filepath.Join(temporary, strconv.Itoa(index)+"-"+filepath.Base(clean))
+		if err := os.WriteFile(path, []byte(input.Content), 0o600); err != nil {
+			return nil, err
+		}
+		args = append(args, "-f", path)
+	}
+
+	environment := []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + temporary, "DOCKER_CONFIG=" + filepath.Join(temporary, "docker-config"),
+		"COMPOSE_PROGRESS=plain", "DOCKER_CLI_HINTS=false", "BUILDKIT_PROGRESS=plain",
+	}
+	seenVariables := map[string]bool{}
+	for _, variable := range variables {
+		if !validComposeEnvironmentName(variable) || seenVariables[variable] {
+			return &ComposeValidation{Valid: false, Error: "Compose variable name is invalid", Services: []string{}}, nil
+		}
+		seenVariables[variable] = true
+		environment = append(environment, variable+"=just-dashboard-planning-placeholder")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	run := func(suffix ...string) (string, string, error) {
+		cmd := exec.CommandContext(ctx, "docker", append(args, suffix...)...)
+		cmd.Dir = projectDirectory
+		cmd.Env = environment
+		stdout, stderr := &boundedComposeBuffer{limit: 8 << 20}, &boundedComposeBuffer{limit: 1 << 20}
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
+	}
+	if _, stderr, err := run("config", "--quiet"); err != nil {
+		return &ComposeValidation{Valid: false, Error: cleanComposeError(stderr, err), Services: []string{}}, nil
+	}
+	validation := &ComposeValidation{Valid: true, Services: []string{}}
+	if names, _, err := run("config", "--services"); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(names), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				validation.Services = append(validation.Services, line)
+			}
+		}
+	}
+	return validation, nil
+}
+
+func validComposeEnvironmentName(value string) bool {
+	if value == "" || !((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_') {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		if !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') || character == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+type boundedComposeBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedComposeBuffer) Write(value []byte) (int, error) {
+	original := len(value)
+	remaining := b.limit - b.Len()
+	if remaining > 0 {
+		if len(value) > remaining {
+			value = value[:remaining]
+		}
+		_, _ = b.Buffer.Write(value)
+	}
+	return original, nil
+}
+
 // ValidateCompose runs the candidate content through the compose parser
 // without writing it anywhere.
 //
@@ -208,6 +510,71 @@ func (c *Client) ValidateCompose(ctx context.Context, dir, content string) (*Com
 	}
 	_ = out
 	return v, nil
+}
+
+// ValidateComposeFiles asks Compose to merge and validate an ordered set of
+// files. Candidate content is written only to a private temporary directory
+// and removed before this call returns; the source tree is never changed.
+func (c *Client) ValidateComposeFiles(ctx context.Context, dir string, inputs []ComposeInput) (*ComposeValidation, error) {
+	if len(inputs) == 1 {
+		return c.ValidateCompose(ctx, dir, inputs[0].Content)
+	}
+	if len(inputs) == 0 || len(inputs) > 16 {
+		return &ComposeValidation{Valid: false, Error: "between 1 and 16 Compose files are required", Services: []string{}}, nil
+	}
+	temporary, err := os.MkdirTemp("", "just-dashboard-compose-validate-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(temporary)
+
+	args := []string{"compose", "--project-directory", dir}
+	total := 0
+	for index, input := range inputs {
+		total += len(input.Content)
+		if total > 4<<20 {
+			return &ComposeValidation{Valid: false, Error: "Compose input exceeds 4 MiB", Services: []string{}}, nil
+		}
+		clean := filepath.Clean(input.Path)
+		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return &ComposeValidation{Valid: false, Error: "Compose file path escapes the validation workspace", Services: []string{}}, nil
+		}
+		path := filepath.Join(temporary, filepath.Base(clean))
+		if index > 0 {
+			path = filepath.Join(temporary, strconv.Itoa(index)+"-"+filepath.Base(clean))
+		}
+		if err := os.WriteFile(path, []byte(input.Content), 0o600); err != nil {
+			return nil, err
+		}
+		args = append(args, "-f", path)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	run := func(suffix ...string) (string, string, error) {
+		cmd := exec.CommandContext(ctx, "docker", append(args, suffix...)...)
+		cmd.Dir = dir
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
+	}
+	if _, stderr, err := run("config", "--quiet"); err != nil {
+		return &ComposeValidation{Valid: false, Error: cleanComposeError(stderr, err), Services: []string{}}, nil
+	}
+	validation := &ComposeValidation{Valid: true, Services: []string{}}
+	if names, _, err := run("config", "--services"); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(names), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				validation.Services = append(validation.Services, line)
+			}
+		}
+	}
+	if full, _, err := run("config"); err == nil {
+		validation.Normalised = full
+	}
+	return validation, nil
 }
 
 // cleanComposeError trims compose's error output to the part that names the

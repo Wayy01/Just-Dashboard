@@ -1,0 +1,428 @@
+package deploy
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type MaterializedSource struct {
+	Workspace string `json:"workspace"`
+	Root      string `json:"root"`
+	Revision  string `json:"revision,omitempty"`
+	Digest    string `json:"digest,omitempty"`
+}
+
+type materializedSourceMarker struct {
+	Source   DraftSourceConfig `json:"source"`
+	Identity SourceIdentity    `json:"identity"`
+	Root     string            `json:"root"`
+}
+
+// Materialize creates a private, deterministic workspace for one run. Remote
+// and local Git sources are checked out at the recorded object id; an operator
+// checkout is never reset or used as the mutable build context.
+func (a *HostSourceAnalyzer) Materialize(
+	ctx context.Context,
+	source DraftSourceConfig,
+	identity SourceIdentity,
+	runID int64,
+	workspaceRoot string,
+) (*MaterializedSource, error) {
+	if runID <= 0 || workspaceRoot == "" {
+		return nil, fmt.Errorf("%w: materialization workspace is invalid", ErrInvalidSource)
+	}
+	source = canonicalSourceConfig(source)
+	if err := source.Validate(); err != nil {
+		return nil, err
+	}
+	if err := makePrivateDirectory(workspaceRoot); err != nil {
+		return nil, err
+	}
+	workspace := filepath.Join(workspaceRoot, "run-"+strconv.FormatInt(runID, 10))
+	markerPath := filepath.Join(workspace, "source.json")
+	sourceRoot := filepath.Join(workspace, "source")
+	if existing, err := readMaterializedMarker(markerPath); err == nil {
+		if sameMaterializedIdentity(existing, source, identity) {
+			root, rootErr := containedSubdirectory(sourceRoot, source.Subdirectory)
+			if rootErr == nil {
+				return &MaterializedSource{
+					Workspace: workspace, Root: root,
+					Revision: immutableSourceRevision(identity), Digest: identity.Digest,
+				}, nil
+			}
+		}
+	}
+	// workspace is derived only from the trusted root and numeric run id.
+	if err := os.RemoveAll(workspace); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(sourceRoot, 0o700); err != nil {
+		return nil, err
+	}
+
+	switch source.Mode {
+	case SourceModeGitURL, SourceModeConnectedRepository, SourceModeComposeGit:
+		if err := a.materializeRemoteGit(ctx, source, identity, sourceRoot); err != nil {
+			_ = os.RemoveAll(workspace)
+			return nil, err
+		}
+	case SourceModeLocalCheckout, SourceModeExistingCheckout:
+		if identity.Revision == "" {
+			_ = os.RemoveAll(workspace)
+			return nil, fmt.Errorf("%w: local Git source has no immutable revision", ErrInvalidSource)
+		}
+		if err := a.materializeLocalGit(ctx, source, identity, sourceRoot); err != nil {
+			_ = os.RemoveAll(workspace)
+			return nil, err
+		}
+	case SourceModeComposeLocal:
+		local, err := a.resolveLocalRoot(source.LocalPath, "")
+		if err != nil {
+			_ = os.RemoveAll(workspace)
+			return nil, err
+		}
+		if err := copyContainedTree(local, sourceRoot, copyTreeLimits{}); err != nil {
+			_ = os.RemoveAll(workspace)
+			return nil, err
+		}
+	case SourceModeComposePaste, SourceModeComposeUpload:
+		for _, document := range source.ComposeFiles {
+			if !safeRelativePath(document.Path) {
+				_ = os.RemoveAll(workspace)
+				return nil, fmt.Errorf("%w: Compose materialization path is invalid", ErrInvalidCompose)
+			}
+			path := filepath.Join(sourceRoot, filepath.Clean(document.Path))
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				_ = os.RemoveAll(workspace)
+				return nil, err
+			}
+			if err := os.WriteFile(path, []byte(document.Content), 0o600); err != nil {
+				_ = os.RemoveAll(workspace)
+				return nil, err
+			}
+		}
+	case SourceModeImageReference:
+		// An image release has no filesystem source. Keeping the empty,
+		// private workspace makes cleanup and evidence uniform.
+	case SourceModeExistingContainer, SourceModeExistingStack:
+		_ = os.RemoveAll(workspace)
+		return nil, fmt.Errorf("%w: observed imports must be adopted before materialization", ErrUnsupportedSource)
+	case SourceModeBlueprint:
+		_ = os.RemoveAll(workspace)
+		return nil, fmt.Errorf("%w: blueprint materialization is owned by checkpoint C9", ErrUnsupportedSource)
+	default:
+		_ = os.RemoveAll(workspace)
+		return nil, ErrUnsupportedSource
+	}
+	root, err := containedSubdirectory(sourceRoot, source.Subdirectory)
+	if err != nil {
+		_ = os.RemoveAll(workspace)
+		return nil, err
+	}
+	marker := materializedSourceMarker{Source: source, Identity: identity, Root: root}
+	raw, _ := json.Marshal(marker)
+	if err := os.WriteFile(markerPath, raw, 0o600); err != nil {
+		_ = os.RemoveAll(workspace)
+		return nil, err
+	}
+	return &MaterializedSource{
+		Workspace: workspace, Root: root,
+		Revision: immutableSourceRevision(identity), Digest: identity.Digest,
+	}, nil
+}
+
+func (a *HostSourceAnalyzer) materializeRemoteGit(
+	ctx context.Context,
+	source DraftSourceConfig,
+	identity SourceIdentity,
+	target string,
+) error {
+	if !validGitObjectID(identity.Revision) {
+		return fmt.Errorf("%w: remote Git identity has no immutable object id", ErrInvalidRef)
+	}
+	remote, _, err := remoteForSource(source)
+	if err != nil {
+		return err
+	}
+	if identity.Remote != remote {
+		return fmt.Errorf("%w: saved remote identity changed", ErrInvalidSource)
+	}
+	cacheRoot, cleanupCache, err := a.planningCacheRoot()
+	if err != nil {
+		return err
+	}
+	defer cleanupCache()
+	environment, cleanupCredential, err := a.gitEnvironment(ctx, cacheRoot, remote, source.CredentialID)
+	if err != nil {
+		return err
+	}
+	defer cleanupCredential()
+
+	a.gitMu.Lock()
+	defer a.gitMu.Unlock()
+	mirrorRoot := filepath.Join(cacheRoot, "git-mirrors")
+	if err := makePrivateDirectory(mirrorRoot); err != nil {
+		return err
+	}
+	mirror := filepath.Join(mirrorRoot, strings.TrimPrefix(digestBytes([]byte(remote)), "sha256:")+".git")
+	if err := ensurePlanningMirror(ctx, mirror, remote, environment); err != nil {
+		return err
+	}
+	if _, err := runPlanningGit(ctx, mirror, environment, "cat-file", "-e", identity.Revision+"^{commit}"); err != nil {
+		remoteRef, _ := planningGitRef(source.Ref)
+		releaseRef := "refs/just-dashboard/releases/" + identity.Revision
+		if _, fetchErr := runPlanningGit(ctx, mirror, environment,
+			"fetch", "--force", "--no-tags", "origin", "+"+remoteRef+":"+releaseRef); fetchErr != nil {
+			return fmt.Errorf("%w: recorded Git object is no longer available", ErrSourceUnavailable)
+		}
+		resolved, resolveErr := runPlanningGit(ctx, mirror, environment, "rev-parse", releaseRef)
+		if resolveErr != nil || strings.TrimSpace(resolved) != identity.Revision {
+			return fmt.Errorf("%w: source ref moved after preflight; refusing a different revision", ErrSourceUnavailable)
+		}
+	}
+	if err := cloneExactGit(ctx, mirror, target, identity.Revision, nil); err != nil {
+		return err
+	}
+	if _, err := runPlanningGit(ctx, target, environment, "remote", "set-url", "origin", remote); err != nil {
+		return err
+	}
+	return materializeGitExtras(ctx, target, environment, source)
+}
+
+func (a *HostSourceAnalyzer) materializeLocalGit(
+	ctx context.Context,
+	source DraftSourceConfig,
+	identity SourceIdentity,
+	target string,
+) error {
+	local, err := a.resolveLocalRoot(source.LocalPath, "")
+	if err != nil {
+		return err
+	}
+	if _, err := runPlanningGit(ctx, local, nil, "cat-file", "-e", identity.Revision+"^{commit}"); err != nil {
+		return fmt.Errorf("%w: recorded local Git object is unavailable", ErrSourceUnavailable)
+	}
+	if err := cloneExactGit(ctx, local, target, identity.Revision, nil); err != nil {
+		return err
+	}
+	return materializeGitExtras(ctx, target, nil, source)
+}
+
+func cloneExactGit(
+	ctx context.Context,
+	repository, target, revision string,
+	environment []string,
+) error {
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
+	cloneCtx, cancelClone := context.WithTimeout(ctx, 10*time.Minute)
+	_, err := runPlanningGit(cloneCtx, "", environment,
+		"clone", "--local", "--no-hardlinks", "--no-checkout", "--", repository, target)
+	cancelClone()
+	if err != nil {
+		return fmt.Errorf("%w: contained release clone failed", ErrSourceUnavailable)
+	}
+	checkoutCtx, cancelCheckout := context.WithTimeout(ctx, 10*time.Minute)
+	_, err = runPlanningGit(checkoutCtx, target, environment, "checkout", "--detach", "--force", revision)
+	cancelCheckout()
+	if err != nil {
+		return fmt.Errorf("%w: exact release checkout failed", ErrSourceUnavailable)
+	}
+	resolved, err := runPlanningGit(ctx, target, environment, "rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(resolved) != revision {
+		return fmt.Errorf("%w: materialized Git revision does not match the release", ErrSourceUnavailable)
+	}
+	return nil
+}
+
+func materializeGitExtras(
+	ctx context.Context,
+	target string,
+	environment []string,
+	source DraftSourceConfig,
+) error {
+	if source.IncludeSubmodules {
+		submoduleCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		_, err := runPlanningGit(submoduleCtx, target, environment,
+			"submodule", "update", "--init", "--recursive", "--depth=1")
+		cancel()
+		if err != nil {
+			return fmt.Errorf("%w: required Git submodules could not be materialized", ErrSourceUnavailable)
+		}
+	}
+	if source.IncludeLFS {
+		lfsCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		_, err := runPlanningGit(lfsCtx, target, environment, "lfs", "pull")
+		cancel()
+		if err != nil {
+			return fmt.Errorf("%w: required Git LFS objects could not be materialized", ErrSourceUnavailable)
+		}
+	}
+	return nil
+}
+
+func containedSubdirectory(root, relative string) (string, error) {
+	target := root
+	if relative != "" {
+		if !safeRelativePath(relative) {
+			return "", fmt.Errorf("%w: source subdirectory is invalid", ErrInvalidSource)
+		}
+		target = filepath.Join(root, filepath.Clean(relative))
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("%w: source root is unavailable", ErrSourceUnavailable)
+	}
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("%w: source subdirectory is unavailable", ErrSourceUnavailable)
+	}
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%w: source subdirectory escapes its materialized root", ErrInvalidSource)
+	}
+	info, err := os.Stat(realTarget)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%w: source subdirectory is unavailable", ErrSourceUnavailable)
+	}
+	return realTarget, nil
+}
+
+func readMaterializedMarker(path string) (materializedSourceMarker, error) {
+	var marker materializedSourceMarker
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return marker, err
+	}
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		return marker, err
+	}
+	return marker, nil
+}
+
+func sameMaterializedIdentity(marker materializedSourceMarker, source DraftSourceConfig, identity SourceIdentity) bool {
+	leftSource, _ := json.Marshal(canonicalSourceConfig(marker.Source))
+	rightSource, _ := json.Marshal(canonicalSourceConfig(source))
+	leftIdentity, _ := json.Marshal(marker.Identity)
+	rightIdentity, _ := json.Marshal(identity)
+	return string(leftSource) == string(rightSource) && string(leftIdentity) == string(rightIdentity)
+}
+
+type copyTreeLimits struct {
+	MaxFiles int
+	MaxBytes int64
+}
+
+func (limits copyTreeLimits) normalized() copyTreeLimits {
+	if limits.MaxFiles <= 0 {
+		limits.MaxFiles = 100_000
+	}
+	if limits.MaxBytes <= 0 {
+		limits.MaxBytes = 1 << 30
+	}
+	return limits
+}
+
+func copyContainedTree(source, target string, limits copyTreeLimits) error {
+	limits = limits.normalized()
+	sourceInfo, err := os.Lstat(source)
+	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: local source root is not a regular directory", ErrInvalidSource)
+	}
+	files := 0
+	var bytesCopied int64
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == ".just-dashboard") {
+			return filepath.SkipDir
+		}
+		files++
+		if files > limits.MaxFiles {
+			return fmt.Errorf("%w: local source exceeds %d entries", ErrInvalidSource, limits.MaxFiles)
+		}
+		destination := filepath.Join(target, relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode()
+		switch {
+		case mode.IsDir():
+			return os.MkdirAll(destination, mode.Perm()&0o777)
+		case mode&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if filepath.IsAbs(link) {
+				return fmt.Errorf("%w: absolute source symlink %s", ErrInvalidSource, relative)
+			}
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(relative), link))
+			if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("%w: source symlink %s escapes its root", ErrInvalidSource, relative)
+			}
+			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+				return err
+			}
+			return os.Symlink(link, destination)
+		case mode.IsRegular():
+			bytesCopied += info.Size()
+			if bytesCopied > limits.MaxBytes {
+				return fmt.Errorf("%w: local source exceeds %d bytes", ErrInvalidSource, limits.MaxBytes)
+			}
+			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+				return err
+			}
+			return copyRegularFile(path, destination, mode.Perm()&0o777)
+		default:
+			return fmt.Errorf("%w: special source entry %s is not supported", ErrInvalidSource, relative)
+		}
+	})
+}
+
+func copyRegularFile(source, target string, mode os.FileMode) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	return errors.Join(copyErr, closeErr)
+}
+
+func (source MaterializedSource) Cleanup() (bool, error) {
+	if source.Workspace == "" || filepath.Base(source.Workspace) == "." ||
+		!strings.HasPrefix(filepath.Base(source.Workspace), "run-") {
+		return false, fmt.Errorf("refusing to clean an invalid deployment workspace")
+	}
+	if _, err := os.Lstat(source.Workspace); os.IsNotExist(err) {
+		return true, nil
+	}
+	if err := os.RemoveAll(source.Workspace); err != nil {
+		return false, err
+	}
+	return true, nil
+}

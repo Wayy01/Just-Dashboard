@@ -283,7 +283,13 @@ func (s *Service) ApplySite(ctx context.Context, spec *SiteSpec, enable, reload,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.applySiteLocked(ctx, spec, content, enable, reload, overwrite)
+}
 
+// applySiteLocked performs ApplySite after rendering. The caller holds s.mu;
+// deployment cutovers use this form so snapshot, apply, and recovery are one
+// serialized proxy transaction.
+func (s *Service) applySiteLocked(ctx context.Context, spec *SiteSpec, content string, enable, reload, overwrite bool) (*SiteResult, error) {
 	available := filepath.Join(s.nginxDir, "sites-available", spec.Name)
 	if _, err := os.Stat(filepath.Dir(available)); err != nil {
 		// A host keeping everything in conf.d has no sites-available, and

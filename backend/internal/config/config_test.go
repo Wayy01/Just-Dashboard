@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
@@ -63,6 +65,79 @@ func TestAdoptLegacyDataLeavesFreshInstallsAlone(t *testing.T) {
 
 	if got := adoptLegacyData(current, legacy); got != current {
 		t.Fatalf("no legacy database exists, so nothing should be adopted: got %q", got)
+	}
+}
+
+func TestDeployRootsRejectsExplicitEmptyValue(t *testing.T) {
+	t.Setenv("JD_DEPLOY_ROOTS", "  ")
+	l := &loader{}
+	if roots := deployRoots(l); roots != nil {
+		t.Fatalf("deployRoots = %#v, want nil", roots)
+	}
+	if len(l.errs) != 1 {
+		t.Fatalf("errors = %#v, want one configuration error", l.errs)
+	}
+}
+
+func TestDeployRootsRetainsShippedDefaultWhenUnset(t *testing.T) {
+	for _, key := range []string{"JD_DEPLOY_ROOTS", "VPSD_DEPLOY_ROOTS"} {
+		value, set := os.LookupEnv(key)
+		t.Cleanup(func() {
+			if set {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := &loader{}
+	want := []string{"/opt", "/srv", "/home", "/root"}
+	got := deployRoots(l)
+	if len(got) != len(want) {
+		t.Fatalf("deployRoots = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("deployRoots = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestDeploymentWorkerSettingsUseBoundedDefaults(t *testing.T) {
+	l := &loader{}
+	if got := l.integer("JD_DEPLOY_HEAVY_SLOTS", 1, 1, 8); got != 1 {
+		t.Fatalf("heavy slots = %d, want 1", got)
+	}
+	if got := l.integer("JD_DEPLOY_LIGHT_SLOTS", 2, 1, 8); got != 2 {
+		t.Fatalf("light slots = %d, want 2", got)
+	}
+	if got := l.boundedDuration("JD_DEPLOY_LEASE_TTL", 30*time.Second, 5*time.Second, 5*time.Minute); got != 30*time.Second {
+		t.Fatalf("lease TTL = %s, want 30s", got)
+	}
+	if err := l.err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeploymentWorkerSettingsRejectMalformedAndOutOfRangeValues(t *testing.T) {
+	t.Setenv("JD_DEPLOY_HEAVY_SLOTS", "many")
+	t.Setenv("JD_DEPLOY_LIGHT_SLOTS", "0")
+	t.Setenv("JD_DEPLOY_LEASE_TTL", "4s")
+	l := &loader{}
+	_ = l.integer("JD_DEPLOY_HEAVY_SLOTS", 1, 1, 8)
+	_ = l.integer("JD_DEPLOY_LIGHT_SLOTS", 2, 1, 8)
+	_ = l.boundedDuration("JD_DEPLOY_LEASE_TTL", 30*time.Second, 5*time.Second, 5*time.Minute)
+	err := l.err()
+	if err == nil {
+		t.Fatal("invalid deployment worker settings were accepted")
+	}
+	for _, key := range []string{"JD_DEPLOY_HEAVY_SLOTS", "JD_DEPLOY_LIGHT_SLOTS", "JD_DEPLOY_LEASE_TTL"} {
+		if !strings.Contains(err.Error(), key) {
+			t.Fatalf("error %q does not identify %s", err, key)
+		}
 	}
 }
 

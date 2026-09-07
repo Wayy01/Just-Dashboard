@@ -14,3 +14,5 @@ data/
 *.db-wal
 *.db-shm
 frontend/shot*.mjs
+frontend/playwright-report/
+frontend/test-results/

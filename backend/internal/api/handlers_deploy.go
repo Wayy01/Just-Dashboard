@@ -1,9 +1,17 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
@@ -14,18 +22,49 @@ import (
 
 func (s *Server) mountDeployRoutes(r chi.Router) {
 	r.Route("/deploy", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(httpx.RequireSession)
+			r.Method(http.MethodGet, "/drafts/{draft}", s.handle(s.handleDeploymentDraftGet))
+			r.Method(http.MethodPut, "/drafts/{draft}", s.handle(s.handleDeploymentDraftSave))
+			r.Method(http.MethodPost, "/drafts/{draft}/detect", s.handle(s.handleDeploymentDraftDetect))
+			r.Method(http.MethodPost, "/drafts/{draft}/preflight", s.handle(s.handleDeploymentDraftPreflight))
+		})
 		r.Method(http.MethodGet, "/", s.handle(s.handleDeployList))
 		r.Method(http.MethodGet, "/{id}", s.handle(s.handleDeployGet))
 		r.Method(http.MethodGet, "/{id}/runs", s.handle(s.handleDeployRuns))
+		r.Method(http.MethodGet, "/{id}/runs/{run}", s.handle(s.handleDeploymentRunGet))
+		r.Method(http.MethodGet, "/{id}/runs/{run}/stream", s.handle(s.handleDeploymentRunStream))
 		r.Method(http.MethodGet, "/{id}/commits", s.handle(s.handleDeployCommits))
 		r.Method(http.MethodGet, "/{id}/env", s.handle(s.handleDeployEnvList))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/releases", s.handle(s.handleDeploymentReleases))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/variables", s.handle(s.handleDeploymentVariables))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/pending", s.handle(s.handleDeploymentPending))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/configuration", s.handle(s.handleDeploymentConfiguration))
 
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
 			r.Method(http.MethodPost, "/{id}/run", s.handle(s.handleDeployRun))
+			r.Method(http.MethodPost, "/{id}/environments/{env}/runs", s.handle(s.handleDeploymentRunCreate))
+			r.Method(http.MethodPost, "/{id}/runs/{run}/cancel", s.handle(s.handleDeploymentRunCancel))
+			r.Method(http.MethodPost, "/{id}/runs/{run}/retry", s.handle(s.handleDeploymentRunRetry))
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			r.Group(func(r chi.Router) {
+				r.Use(httpx.RequireSession)
+				r.Method(http.MethodPost, "/drafts", s.handle(s.handleDeploymentDraftCreate))
+				r.Method(http.MethodPost, "/drafts/{draft}/commit", s.handle(s.handleDeploymentDraftCommit))
+				r.Method(http.MethodPost, "/import/preview", s.handle(s.handleDeploymentImportPreview))
+				r.Method(http.MethodPost, "/import/adopt", s.handle(s.handleDeploymentImportAdopt))
+				r.Method(http.MethodGet, "/{id}/environments/{env}/variables/{name}/reveal", s.handle(s.handleDeploymentVariableReveal))
+				r.Method(http.MethodPut, "/{id}/environments/{env}/variables/{name}", s.handle(s.handleDeploymentVariablePut))
+				r.Method(http.MethodDelete, "/{id}/environments/{env}/variables/{name}", s.handle(s.handleDeploymentVariableDelete))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/variables/import", s.handle(s.handleDeploymentDotenvImport))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/variables/{name}/generate", s.handle(s.handleDeploymentVariableGenerate))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/variables/{name}/rotate", s.handle(s.handleDeploymentVariableRotate))
+				r.Method(http.MethodPut, "/{id}/environments/{env}/configuration", s.handle(s.handleDeploymentConfigurationSave))
+				r.Method(http.MethodPost, "/{id}/removal-plan", s.handle(s.handleDeploymentRemovalPlan))
+			})
 			r.Method(http.MethodPost, "/", s.handle(s.handleDeployCreate))
 			r.Method(http.MethodPut, "/{id}", s.handle(s.handleDeployUpdate))
 			r.Method(http.MethodPost, "/{id}/rotate-secret", s.handle(s.handleDeployRotateSecret))
@@ -35,7 +74,10 @@ func (s *Server) mountDeployRoutes(r chi.Router) {
 		})
 		s.destructive(r, func(r chi.Router) {
 			r.Method(http.MethodDelete, "/{id}", s.handle(s.handleDeployDelete))
+			r.Method(http.MethodPost, "/{id}/archive", s.handle(s.handleDeploymentArchive))
+			r.Method(http.MethodPost, "/{id}/remove-managed", s.handle(s.handleDeploymentRemoveManaged))
 			r.Method(http.MethodPost, "/{id}/rollback", s.handle(s.handleDeployRollback))
+			r.Method(http.MethodPost, "/{id}/environments/{env}/rollback", s.handle(s.handleDeploymentReleaseRollback))
 		})
 	})
 }
@@ -50,6 +92,20 @@ func mapDeployError(err error) error {
 		return httpx.Err(http.StatusForbidden, "hook_disabled", err.Error())
 	case errors.Is(err, deploy.ErrBadSignature):
 		return httpx.Err(http.StatusUnauthorized, "bad_signature", err.Error())
+	case errors.Is(err, deploy.ErrEnvironmentNotFound):
+		return httpx.Err(http.StatusNotFound, "environment_not_found", err.Error())
+	case errors.Is(err, deploy.ErrRunNotFound):
+		return httpx.Err(http.StatusNotFound, "run_not_found", err.Error())
+	case errors.Is(err, deploy.ErrIdempotencyConflict):
+		return httpx.Err(http.StatusConflict, "idempotency_conflict", err.Error())
+	case errors.Is(err, deploy.ErrRunTerminal):
+		return httpx.Err(http.StatusConflict, "run_terminal", err.Error())
+	case errors.Is(err, deploy.ErrRunNotCancellable):
+		return httpx.Err(http.StatusConflict, "run_not_cancellable", err.Error())
+	case errors.Is(err, deploy.ErrRunNotRetryable):
+		return httpx.Err(http.StatusConflict, "run_not_retryable", err.Error())
+	case errors.Is(err, deploy.ErrInvalidPlan), errors.Is(err, deploy.ErrArtifactMissing):
+		return httpx.Err(http.StatusUnprocessableEntity, "invalid_release", err.Error())
 	default:
 		return httpx.BadRequest("%v", err)
 	}
@@ -63,6 +119,17 @@ func (s *Server) enrichProject(r *http.Request, p *deploy.Project) {
 }
 
 func (s *Server) handleDeployList(w http.ResponseWriter, r *http.Request) error {
+	if r.URL.Query().Get("view") == "fleet" {
+		fleet, err := s.modules.deployRuns.Fleet(r.Context(), deploy.QueueBudget{
+			Heavy: s.Cfg.DeployHeavySlots,
+			Light: s.Cfg.DeployLightSlots,
+		})
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		httpx.JSON(w, http.StatusOK, fleet)
+		return nil
+	}
 	projects, err := s.modules.deployStore.List(r.Context())
 	if err != nil {
 		return httpx.Internal(err)
@@ -87,9 +154,19 @@ func (s *Server) handleDeployGet(w http.ResponseWriter, r *http.Request) error {
 	if last, err := s.modules.deployStore.LastRun(r.Context(), id); err == nil {
 		p.LastRun = last
 	}
+	running, err := s.modules.deployRuns.ProjectActive(r.Context(), id)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	summary, err := s.modules.deployRuns.DeploymentSummary(r.Context(), id, deploy.QueueBudget{
+		Heavy: s.Cfg.DeployHeavySlots,
+		Light: s.Cfg.DeployLightSlots,
+	})
+	if err != nil {
+		return mapDeployError(err)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"project": p,
-		"running": s.modules.deployer.IsRunning(id),
+		"project": p, "running": running, "deployment": summary,
 	})
 	return nil
 }
@@ -153,18 +230,16 @@ func (s *Server) handleDeployDelete(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	project, err := s.modules.deployStore.Get(r.Context(), id)
+	project, err := s.modules.deployStore.Archive(r.Context(), id)
 	if err != nil {
 		return mapDeployError(err)
 	}
-	// No typed phrase: this removes a hook and its history, and the checkout on
-	// disk is deliberately left where it is — the running site does not notice.
-	if err := s.modules.deployStore.Delete(r.Context(), id); err != nil {
-		return httpx.Internal(err)
-	}
-	// The checkout on disk is left alone: removing the hook should not remove
-	// the running application.
-	httpx.SetAudit(r, "deploy.project.delete", project.Name, nil)
+	// The legacy DELETE spelling remains compatible, but its 0.6.7 semantics
+	// are the same safe archive as POST /archive. Runtime and data are removed
+	// only by the separately previewed remove-managed operation.
+	httpx.SetAudit(r, "deploy.archive", project.Name, map[string]any{
+		"deploymentId": id, "legacyMethod": true, "resourcesRemoved": false,
+	})
 	httpx.NoContent(w)
 	return nil
 }
@@ -196,21 +271,30 @@ func (s *Server) handleDeployRun(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapDeployError(err)
 	}
-	if s.modules.deployer.IsRunning(id) {
-		return httpx.Err(http.StatusConflict, "already_running", deploy.ErrAlreadyDeploying.Error())
+	method, err := s.modules.deployRuns.DeploymentBuildMethod(r.Context(), id)
+	if err != nil {
+		return mapDeployError(err)
 	}
 	p := httpx.MustPrincipal(r)
-	// A build can run for many minutes, so the deployment is detached and the
-	// run row is what the UI follows.
-	go func(actor string) {
-		ctx, cancel := detachedContext(60 * 60)
-		defer cancel()
-		if _, err := s.modules.deployer.Deploy(ctx, id, "manual", actor); err != nil {
-			s.Log.Error("deployment failed", "project", project.Name, "err", err)
+	var run *deploy.EngineRun
+	if method == deploy.BuildLegacyCompose {
+		run, err = s.enqueueLegacyDeployment(r.Context(), project, deploy.OperationDeploy,
+			deploy.TriggerManual, p.Username(), "", "")
+	} else {
+		environmentID, _, environmentErr := s.modules.deployRuns.ProductionEnvironment(r.Context(), id)
+		if environmentErr != nil {
+			return mapDeployError(environmentErr)
 		}
-	}(p.Username())
+		run, err = s.enqueueNormalizedDeployment(r.Context(), project, environmentID,
+			deploy.OperationDeploy, 0, deploy.TriggerManual, p.Username(), "")
+	}
+	if err != nil {
+		return mapDeployError(err)
+	}
 	httpx.SetAudit(r, "deploy.run", project.Name, map[string]any{"branch": project.Branch})
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"started": true, "project": project.Name})
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"started": true, "project": project.Name, "runId": run.ID, "state": run.State,
+	})
 	return nil
 }
 
@@ -237,19 +321,16 @@ func (s *Server) handleDeployRollback(w http.ResponseWriter, r *http.Request) er
 	// No typed phrase: a rollback is itself the recovery action, reached under
 	// exactly the pressure that makes a typing exercise harmful, and it is
 	// undone by deploying forward again.
-	if s.modules.deployer.IsRunning(id) {
-		return httpx.Err(http.StatusConflict, "already_running", deploy.ErrAlreadyDeploying.Error())
-	}
 	p := httpx.MustPrincipal(r)
-	go func(actor string) {
-		ctx, cancel := detachedContext(60 * 60)
-		defer cancel()
-		if _, err := s.modules.deployer.Rollback(ctx, id, req.Commit, actor); err != nil {
-			s.Log.Error("rollback failed", "project", project.Name, "commit", req.Commit, "err", err)
-		}
-	}(p.Username())
+	run, err := s.enqueueLegacyDeployment(r.Context(), project, deploy.OperationRollback,
+		deploy.TriggerRollback, p.Username(), req.Commit, "")
+	if err != nil {
+		return mapDeployError(err)
+	}
 	httpx.SetAudit(r, "deploy.rollback", project.Name, map[string]any{"commit": req.Commit})
-	httpx.JSON(w, http.StatusAccepted, map[string]any{"started": true, "commit": req.Commit})
+	httpx.JSON(w, http.StatusAccepted, map[string]any{
+		"started": true, "commit": req.Commit, "runId": run.ID, "state": run.State,
+	})
 	return nil
 }
 
@@ -258,15 +339,400 @@ func (s *Server) handleDeployRuns(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	runs, err := s.modules.deployStore.Runs(r.Context(), id, atoiDefault(r.URL.Query().Get("limit"), 30))
+	limit := atoiDefault(r.URL.Query().Get("limit"), 30)
+	if r.URL.Query().Get("view") == "engine" {
+		runs, err := s.modules.deployRuns.ProjectRuns(r.Context(), id, limit)
+		if err != nil {
+			return httpx.Internal(err)
+		}
+		running, activeErr := s.modules.deployRuns.ProjectActive(r.Context(), id)
+		if activeErr != nil {
+			return httpx.Internal(activeErr)
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"runs": runs, "running": running})
+		return nil
+	}
+	runs, err := s.modules.deployStore.Runs(r.Context(), id, limit)
 	if err != nil {
 		return httpx.Internal(err)
 	}
+	running, activeErr := s.modules.deployRuns.ProjectActive(r.Context(), id)
+	if activeErr != nil {
+		return httpx.Internal(activeErr)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"runs":    runs,
-		"running": s.modules.deployer.IsRunning(id),
+		"running": running,
 	})
 	return nil
+}
+
+type deploymentRunCreateRequest struct {
+	Operation deploy.Operation `json:"operation"`
+	ReleaseID int64            `json:"releaseId,omitempty"`
+}
+
+type deploymentRollbackRequest struct {
+	ReleaseID int64 `json:"releaseId"`
+}
+
+func (s *Server) handleDeploymentReleases(w http.ResponseWriter, r *http.Request) error {
+	projectID, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	environmentID, err := strconv.ParseInt(chi.URLParam(r, "env"), 10, 64)
+	if err != nil || environmentID <= 0 {
+		return httpx.BadRequest("environment id must be a positive integer")
+	}
+	releases, err := s.modules.deployRuns.EnvironmentReleases(
+		r.Context(), projectID, environmentID, atoiDefault(r.URL.Query().Get("limit"), 30),
+	)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	httpx.JSON(w, http.StatusOK, releases)
+	return nil
+}
+
+func (s *Server) handleDeploymentReleaseRollback(w http.ResponseWriter, r *http.Request) error {
+	projectID, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	environmentID, err := strconv.ParseInt(chi.URLParam(r, "env"), 10, 64)
+	if err != nil || environmentID <= 0 {
+		return httpx.BadRequest("environment id must be a positive integer")
+	}
+	var req deploymentRollbackRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.ReleaseID <= 0 {
+		return httpx.BadRequest("releaseId must be a positive integer")
+	}
+	project, err := s.modules.deployStore.Get(r.Context(), projectID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	p := httpx.MustPrincipal(r)
+	run, err := s.enqueueNormalizedDeployment(r.Context(), project, environmentID,
+		deploy.OperationRollback, req.ReleaseID, deploy.TriggerRollback, p.Username(),
+		strings.TrimSpace(r.Header.Get("Idempotency-Key")))
+	if err != nil {
+		return mapDeployError(err)
+	}
+	httpx.SetAudit(r, "deploy.release.rollback", fmt.Sprint(req.ReleaseID), map[string]any{
+		"deploymentId": projectID, "environmentId": environmentID, "runId": run.ID,
+	})
+	httpx.JSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+func (s *Server) handleDeploymentRunCreate(w http.ResponseWriter, r *http.Request) error {
+	projectID, err := parseID(r)
+	if err != nil {
+		return err
+	}
+	environmentID, err := strconv.ParseInt(chi.URLParam(r, "env"), 10, 64)
+	if err != nil || environmentID <= 0 {
+		return httpx.BadRequest("environment id must be a positive integer")
+	}
+	var req deploymentRunCreateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	if req.Operation == "" {
+		req.Operation = deploy.OperationDeploy
+	}
+	project, err := s.modules.deployStore.Get(r.Context(), projectID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	target, err := s.modules.deployRuns.EnvironmentExecutionTarget(r.Context(), projectID, environmentID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	p := httpx.MustPrincipal(r)
+	var run *deploy.EngineRun
+	if target.BuildMethod == deploy.BuildLegacyCompose {
+		if req.Operation != deploy.OperationDeploy || req.ReleaseID != 0 {
+			return httpx.BadRequest("operation %q is not available for a legacy deployment", req.Operation)
+		}
+		productionID, _, productionErr := s.modules.deployRuns.ProductionEnvironment(r.Context(), projectID)
+		if productionErr != nil || productionID != environmentID {
+			return mapDeployError(deploy.ErrEnvironmentNotFound)
+		}
+		run, err = s.enqueueLegacyDeployment(r.Context(), project, req.Operation,
+			deploy.TriggerManual, p.Username(), "", strings.TrimSpace(r.Header.Get("Idempotency-Key")))
+	} else {
+		if req.Operation == deploy.OperationRollback {
+			return httpx.BadRequest("use the rollback endpoint for a release rollback")
+		}
+		if req.ReleaseID != 0 {
+			return httpx.BadRequest("releaseId is accepted only by rollback")
+		}
+		run, err = s.enqueueNormalizedDeployment(r.Context(), project, environmentID,
+			req.Operation, 0, deploy.TriggerManual, p.Username(), strings.TrimSpace(r.Header.Get("Idempotency-Key")))
+	}
+	if err != nil {
+		return mapDeployError(err)
+	}
+	httpx.SetAudit(r, "deploy.run.request", fmt.Sprint(run.ID), map[string]any{
+		"deploymentId": projectID, "environmentId": environmentID, "operation": req.Operation,
+	})
+	httpx.JSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+func (s *Server) enqueueNormalizedDeployment(
+	ctx context.Context,
+	project *deploy.Project,
+	environmentID int64,
+	operation deploy.Operation,
+	targetReleaseID int64,
+	trigger deploy.TriggerKind,
+	actor, idempotencyKey string,
+) (*deploy.EngineRun, error) {
+	target, err := s.modules.deployRuns.EnvironmentExecutionTarget(ctx, project.ID, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	if target.BuildMethod == deploy.BuildLegacyCompose {
+		return nil, fmt.Errorf("%w: normalized action requires a normalized deployment", deploy.ErrInvalidPlan)
+	}
+	planRevision := target.DesiredRevision
+	variableSnapshotRunID := int64(0)
+	var selected *deploy.ReleaseWithArtifacts
+	switch operation {
+	case deploy.OperationDeploy, deploy.OperationForceBuild:
+		if targetReleaseID != 0 {
+			return nil, fmt.Errorf("%w: this operation does not accept a release target", deploy.ErrInvalidPlan)
+		}
+	case deploy.OperationRedeploy, deploy.OperationRestart:
+		if targetReleaseID == 0 {
+			targetReleaseID = target.LiveReleaseID
+		}
+		if targetReleaseID == 0 || targetReleaseID != target.LiveReleaseID {
+			return nil, fmt.Errorf("%w: this operation requires the current live release", deploy.ErrInvalidPlan)
+		}
+	case deploy.OperationRollback:
+		if targetReleaseID <= 0 || targetReleaseID == target.LiveReleaseID {
+			return nil, fmt.Errorf("%w: rollback requires a retained, non-live release", deploy.ErrInvalidPlan)
+		}
+	default:
+		return nil, fmt.Errorf("%w: operation %q is not a supported deployment action", deploy.ErrInvalidPlan, operation)
+	}
+	if targetReleaseID != 0 {
+		selected, err = s.modules.deployRuns.Release(ctx, targetReleaseID)
+		if err != nil {
+			return nil, err
+		}
+		if selected.Release.ProjectID != project.ID || selected.Release.EnvironmentID != environmentID {
+			return nil, fmt.Errorf("%w: release target belongs to another environment", deploy.ErrInvalidPlan)
+		}
+		if operation == deploy.OperationRollback && selected.Release.State != "retained" {
+			return nil, fmt.Errorf("%w: rollback target is not retained", deploy.ErrInvalidPlan)
+		}
+		if (operation == deploy.OperationRedeploy || operation == deploy.OperationRestart) && selected.Release.State != "live" {
+			return nil, fmt.Errorf("%w: operation target is no longer live", deploy.ErrInvalidPlan)
+		}
+		planRevision = selected.Release.PlanRevision
+		variableSnapshotRunID = selected.Release.RunID
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"compatibility": false, "targetReleaseId": targetReleaseID, "changedPaths": []string{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	steps := append([]deploy.StepKey(nil), deploy.DefaultStepKeys...)
+	slot := deploy.SlotHeavy
+	priority := 500
+	switch operation {
+	case deploy.OperationRedeploy, deploy.OperationRollback:
+		steps = []deploy.StepKey{
+			deploy.StepRenderRuntime, deploy.StepBackupGate, deploy.StepStartCandidate,
+			deploy.StepVerifyReadiness, deploy.StepVerifySmoke, deploy.StepActivate,
+			deploy.StepRetirePrevious, deploy.StepRecordRelease, deploy.StepNotify,
+		}
+	case deploy.OperationRestart:
+		steps = []deploy.StepKey{
+			deploy.StepStartCandidate, deploy.StepVerifyReadiness, deploy.StepVerifySmoke,
+			deploy.StepRecordRelease, deploy.StepNotify,
+		}
+		slot = deploy.SlotLight
+	}
+	if operation == deploy.OperationRollback {
+		priority = 1000
+	}
+	digestInput := fmt.Sprintf("normalized:%d:%d:%s:%d:%d", project.ID, environmentID,
+		operation, planRevision, targetReleaseID)
+	digest := sha256.Sum256([]byte(digestInput))
+	run, _, err := s.modules.deployRuns.Enqueue(ctx, deploy.RunRequest{
+		ProjectID: project.ID, EnvironmentID: environmentID, Operation: operation,
+		Trigger: trigger, Actor: actor, IdempotencyKey: idempotencyKey,
+		RequestDigest: hex.EncodeToString(digest[:]), PlanRevision: planRevision,
+		VariableSnapshotRunID: variableSnapshotRunID,
+		Priority:              priority, SlotClass: slot, Metadata: metadata, Steps: steps,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.modules.deployEngine.Notify()
+	return run, nil
+}
+
+func (s *Server) handleDeploymentRunGet(w http.ResponseWriter, r *http.Request) error {
+	projectID, runID, err := deploymentRunIDs(r)
+	if err != nil {
+		return err
+	}
+	snapshot, err := s.modules.deployRuns.Snapshot(r.Context(), runID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	if snapshot.Run.ProjectID != projectID {
+		return mapDeployError(deploy.ErrRunNotFound)
+	}
+	httpx.JSON(w, http.StatusOK, snapshot)
+	return nil
+}
+
+func (s *Server) handleDeploymentRunCancel(w http.ResponseWriter, r *http.Request) error {
+	projectID, runID, err := deploymentRunIDs(r)
+	if err != nil {
+		return err
+	}
+	run, err := s.modules.deployRuns.Run(r.Context(), runID)
+	if err != nil || run.ProjectID != projectID {
+		if err == nil {
+			err = deploy.ErrRunNotFound
+		}
+		return mapDeployError(err)
+	}
+	run, err = s.modules.deployEngine.Cancel(r.Context(), runID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	httpx.SetAudit(r, "deploy.run.cancel", fmt.Sprint(runID), nil)
+	httpx.JSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+func (s *Server) handleDeploymentRunRetry(w http.ResponseWriter, r *http.Request) error {
+	projectID, runID, err := deploymentRunIDs(r)
+	if err != nil {
+		return err
+	}
+	prior, err := s.modules.deployRuns.Run(r.Context(), runID)
+	if err != nil || prior.ProjectID != projectID {
+		if err == nil {
+			err = deploy.ErrRunNotFound
+		}
+		return mapDeployError(err)
+	}
+	p := httpx.MustPrincipal(r)
+	run, _, err := s.modules.deployRuns.Retry(r.Context(), runID, p.Username(),
+		strings.TrimSpace(r.Header.Get("Idempotency-Key")))
+	if err != nil {
+		return mapDeployError(err)
+	}
+	s.modules.deployEngine.Notify()
+	httpx.SetAudit(r, "deploy.run.retry", fmt.Sprint(run.ID), map[string]any{"retryOfRunId": runID})
+	httpx.JSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+func (s *Server) handleDeploymentRunStream(w http.ResponseWriter, r *http.Request) error {
+	projectID, runID, err := deploymentRunIDs(r)
+	if err != nil {
+		return err
+	}
+	snapshot, err := s.modules.deployRuns.Snapshot(r.Context(), runID)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	if snapshot.Run.ProjectID != projectID {
+		return mapDeployError(deploy.ErrRunNotFound)
+	}
+	after := int64(0)
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		after, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || after < 0 {
+			return httpx.BadRequest("after must be a non-negative sequence")
+		}
+	}
+	backlog, live, unsubscribe, err := s.modules.deployRuns.Subscribe(r.Context(), runID, after)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	defer unsubscribe()
+	s.recordAudit(r, "deploy.run.stream.open", fmt.Sprint(runID), map[string]any{"after": after})
+	conn, err := s.WS.Upgrade(w, r)
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	ctx, cancel := contextWithCancel(r)
+	defer cancel()
+	go conn.Keepalive(ctx)
+	go conn.DrainControl(cancel)
+	if err := conn.Send("snapshot", snapshot); err != nil {
+		return nil
+	}
+	if len(backlog) > 0 {
+		if err := conn.Send("events", backlog); err != nil {
+			return nil
+		}
+	}
+	batch := make([]deploy.RunEvent, 0, 64)
+	flush := time.NewTicker(120 * time.Millisecond)
+	defer flush.Stop()
+	send := func() bool {
+		if len(batch) == 0 {
+			return true
+		}
+		if err := conn.Send("events", batch); err != nil {
+			return false
+		}
+		batch = batch[:0]
+		return true
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event, open := <-live:
+			if !open {
+				send()
+				if final, err := s.modules.deployRuns.Snapshot(context.Background(), runID); err == nil {
+					conn.Send("snapshot", final)
+				}
+				return nil
+			}
+			batch = append(batch, event)
+			if len(batch) == cap(batch) && !send() {
+				return nil
+			}
+		case <-flush.C:
+			if !send() {
+				return nil
+			}
+		}
+	}
+}
+
+func deploymentRunIDs(r *http.Request) (projectID, runID int64, err error) {
+	projectID, err = parseID(r)
+	if err != nil {
+		return 0, 0, err
+	}
+	runID, parseErr := strconv.ParseInt(chi.URLParam(r, "run"), 10, 64)
+	if parseErr != nil || runID <= 0 {
+		return 0, 0, httpx.BadRequest("run id must be a positive integer")
+	}
+	return projectID, runID, nil
 }
 
 func (s *Server) handleDeployCommits(w http.ResponseWriter, r *http.Request) error {
@@ -410,21 +876,55 @@ func (s *Server) handleDeployWebhook(w http.ResponseWriter, r *http.Request) err
 		httpx.SetAudit(r, "deploy.webhook", project.Name, map[string]any{"reason": "hook disabled"})
 		return httpx.Err(http.StatusForbidden, "hook_disabled", deploy.ErrDisabled.Error())
 	}
-	if s.modules.deployer.IsRunning(project.ID) {
-		httpx.SetAudit(r, "deploy.webhook", project.Name, map[string]any{"reason": "already deploying"})
-		return httpx.Err(http.StatusConflict, "already_running", deploy.ErrAlreadyDeploying.Error())
-	}
 	httpx.SetAudit(r, "deploy.webhook", project.Name,
 		map[string]any{"branch": project.Branch, "bytes": len(body)})
-	go func() {
-		ctx, cancel := detachedContext(60 * 60)
-		defer cancel()
-		if _, err := s.modules.deployer.Deploy(ctx, project.ID, "webhook", "ci"); err != nil {
-			s.Log.Error("webhook deployment failed", "project", project.Name, "err", err)
-		}
-	}()
+	run, err := s.enqueueLegacyDeployment(r.Context(), project, deploy.OperationDeploy,
+		deploy.TriggerLegacyHook, "ci", "", "")
+	if err != nil {
+		return mapDeployError(err)
+	}
 	httpx.JSON(w, http.StatusAccepted, map[string]any{
 		"accepted": true, "project": project.Name, "branch": project.Branch,
+		"runId": run.ID, "state": run.State,
 	})
 	return nil
+}
+
+func (s *Server) enqueueLegacyDeployment(
+	ctx context.Context,
+	project *deploy.Project,
+	operation deploy.Operation,
+	trigger deploy.TriggerKind,
+	actor, targetCommit, idempotencyKey string,
+) (*deploy.EngineRun, error) {
+	environmentID, revision, err := s.modules.deployRuns.ProductionEnvironment(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"compatibility": true, "targetCommit": targetCommit, "changedPaths": []string{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	digestInput := fmt.Sprintf("legacy:%d:%d:%s:%s:%s:%s",
+		project.ID, environmentID, operation, trigger, project.Branch, targetCommit)
+	digest := sha256.Sum256([]byte(digestInput))
+	priority := 500
+	if operation == deploy.OperationRollback {
+		priority = 1000
+	}
+	run, _, err := s.modules.deployRuns.Enqueue(ctx, deploy.RunRequest{
+		ProjectID: project.ID, EnvironmentID: environmentID,
+		Operation: operation, Trigger: trigger, Actor: actor,
+		IdempotencyKey: idempotencyKey,
+		RequestDigest:  hex.EncodeToString(digest[:]), PlanRevision: revision,
+		Priority: priority, SlotClass: deploy.SlotHeavy,
+		Metadata: metadata, Steps: []deploy.StepKey{deploy.StepLegacyPipeline},
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.modules.deployEngine.Notify()
+	return run, nil
 }

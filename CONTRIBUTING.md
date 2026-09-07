@@ -46,7 +46,17 @@ carries no licensing question at all.
 
 ## Before you open a pull request
 
-- Run the checks: `cd frontend && bun run build` and `cd backend && go build ./...`.
+- Run the checks: `cd backend && go build ./... && go vet ./... && go test ./...`, then
+  `cd ../frontend && bun run lint && bun run build && bun run test:browser`. Install the required
+  Chromium build once with `bun run test:browser:install`.
+- Changes to deployment builders or artifact handling also run the opt-in Docker boundary on a release
+  host: `JD_DEPLOY_LIVE=1 go test ./internal/deploy -run TestLiveC4ArtifactAdapters -count=1 -v`.
+- Changes to runtime activation, checks, graceful shutdown or Compose release ownership also run
+  `JD_DEPLOY_LIVE=1 go test ./internal/deploy -run TestLiveC5ActivationAdapters -count=1 -v` on a Docker
+  and Buildx release host.
+- Changes to deployment variables, feature links, backup gates or managed-resource lifecycle also run
+  `go test -race ./internal/deploy ./internal/api ./internal/proxysvc ./internal/backups ./internal/store -count=1`;
+  the browser gate covers the normalized Configuration, Variables, Network and Storage tabs.
 - Keep the security posture intact. The network allowlist runs before
   authentication, two-factor is mandatory, every destructive route sits behind
   the destructive capability with an audit entry, and the rare irreversible ones

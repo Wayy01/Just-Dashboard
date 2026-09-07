@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/agent"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
@@ -85,12 +86,23 @@ func (s *Server) Start(ctx context.Context) error {
 	// needs to be told about a release is the one who has not opened the
 	// dashboard in a month.
 	s.modules.selfUpdate.Start(ctx)
-	return s.modules.backupSched.Start(ctx)
+	if err := s.modules.backupSched.Start(ctx); err != nil {
+		return err
+	}
+	return s.modules.deployEngine.Start(ctx)
 }
 
 // Shutdown releases the resources that outlive a request: database pools,
 // live PTY sessions, the metrics sampler and the backup scheduler.
 func (s *Server) Shutdown() {
+	// Stop fresh claims first. Active work is given a bounded grace to reach a
+	// persisted boundary; Engine.Shutdown never injects a cancellation into an
+	// activation or restoration.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := s.modules.deployEngine.Shutdown(ctx); err != nil && s.Log != nil {
+		s.Log.Warn("deployment engine did not finish before shutdown", "err", err)
+	}
+	cancel()
 	s.modules.metrics.Stop()
 	s.modules.backupSched.Stop()
 	s.modules.selfUpdate.Stop()

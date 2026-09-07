@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/files"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 )
 
@@ -23,29 +24,33 @@ var (
 type Store struct {
 	st     *store.Store
 	sealer *auth.Sealer
-	// roots bounds the repository paths a project may name, the way
-	// JD_FILE_ROOTS and JD_GIT_ROOTS bound their features.
-	roots []string
+	// paths is the canonical symlink-aware resolver scoped to JD_DEPLOY_ROOTS.
+	paths *files.Service
 }
 
 func NewStore(st *store.Store, sealer *auth.Sealer, roots []string) *Store {
-	return &Store{st: st, sealer: sealer, roots: roots}
+	return &Store{st: st, sealer: sealer, paths: files.New(roots)}
 }
 
-const projectCols = `id, name, repo_path, branch, compose_file, pre_command, post_command, hook_id, enabled, created_at`
+const projectCols = `id, name, profile, repo_path, branch, compose_file, pre_command, post_command, hook_id, enabled, created_at, updated_at, archived_at`
 
 func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var (
-		p       Project
-		enabled int
-		created int64
+		p                          Project
+		enabled                    int
+		created, updated, archived int64
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.RepoPath, &p.Branch, &p.ComposeFile,
-		&p.PreCommand, &p.PostCommand, &p.HookID, &enabled, &created); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Profile, &p.RepoPath, &p.Branch, &p.ComposeFile,
+		&p.PreCommand, &p.PostCommand, &p.HookID, &enabled, &created, &updated, &archived); err != nil {
 		return nil, err
 	}
 	p.Enabled = enabled == 1
 	p.CreatedAt = time.Unix(created, 0).UTC()
+	if updated == 0 {
+		updated = created
+	}
+	p.UpdatedAt = time.Unix(updated, 0).UTC()
+	p.ArchivedAt = unixTimePtr(archived)
 	return &p, nil
 }
 
@@ -106,7 +111,7 @@ func (s *Store) countEnv(ctx context.Context, projectID int64) int {
 // Create returns the webhook secret alongside the project. It is the only time
 // the secret is available: only its sealed form is retained.
 func (s *Store) Create(ctx context.Context, p *Project) (*Project, string, error) {
-	if err := p.Validate(s.roots); err != nil {
+	if err := p.Validate(s.paths); err != nil {
 		return nil, "", err
 	}
 	secret := auth.RandomToken(24)
@@ -135,11 +140,14 @@ func (s *Store) Create(ctx context.Context, p *Project) (*Project, string, error
 	if err != nil {
 		return nil, "", err
 	}
+	if err := s.st.NormalizeLegacyDeployments(ctx); err != nil {
+		return nil, "", err
+	}
 	return created, secret, nil
 }
 
 func (s *Store) Update(ctx context.Context, id int64, p *Project) (*Project, error) {
-	if err := p.Validate(s.roots); err != nil {
+	if err := p.Validate(s.paths); err != nil {
 		return nil, err
 	}
 	if _, err := s.Get(ctx, id); err != nil {
@@ -162,6 +170,36 @@ func (s *Store) Update(ctx context.Context, id int64, p *Project) (*Project, err
 func (s *Store) Delete(ctx context.Context, id int64) error {
 	_, err := s.st.DB.ExecContext(ctx, `DELETE FROM deploy_projects WHERE id = ?`, id)
 	return err
+}
+
+// Archive is the default deployment lifecycle action. It disables every
+// trigger but deliberately leaves runtime, release, artifact, route and data
+// ownership rows intact; removing managed resources is separately previewed.
+func (s *Store) Archive(ctx context.Context, id int64) (*Project, error) {
+	tx, err := s.st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Unix()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE deploy_projects SET archived_at = CASE WHEN archived_at = 0 THEN ? ELSE archived_at END,
+		       enabled = 0, updated_at = ? WHERE id = ?`, now, now, id)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return nil, ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE deploy_triggers SET enabled = 0, updated_at = ?
+		 WHERE environment_id IN (SELECT id FROM deploy_environments WHERE project_id = ?)`, now, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 // RotateSecret issues a new webhook secret, invalidating the old one.

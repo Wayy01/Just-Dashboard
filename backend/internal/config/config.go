@@ -18,29 +18,32 @@ import (
 // weakens the security posture (allowlist, TLS, 2FA) fails closed: the zero
 // value is the restrictive one.
 type Config struct {
-	Addr           string
-	DataDir        string
-	MasterKeyHex   string
-	TrustedProxies []*net.IPNet
-	AllowedCIDRs   []*net.IPNet
-	AllowedOrigins []string
-	Require2FA     bool
-	SessionTTL     time.Duration
-	IdleTTL        time.Duration
-	DockerHost     string
-	TerminalEnable bool
-	AgentMode      bool
-	TerminalShell  string
-	TerminalUser   string
-	FileRoots      []string
-	LogRoots       []string
-	NginxDir       string
-	CaddyFile      string
-	ComposeRoots   []string
-	GitRoots       []string
-	DeployRoots    []string
-	BackupLocalDir string
-	Dev            bool
+	Addr             string
+	DataDir          string
+	MasterKeyHex     string
+	TrustedProxies   []*net.IPNet
+	AllowedCIDRs     []*net.IPNet
+	AllowedOrigins   []string
+	Require2FA       bool
+	SessionTTL       time.Duration
+	IdleTTL          time.Duration
+	DockerHost       string
+	TerminalEnable   bool
+	AgentMode        bool
+	TerminalShell    string
+	TerminalUser     string
+	FileRoots        []string
+	LogRoots         []string
+	NginxDir         string
+	CaddyFile        string
+	ComposeRoots     []string
+	GitRoots         []string
+	DeployRoots      []string
+	DeployHeavySlots int
+	DeployLightSlots int
+	DeployLeaseTTL   time.Duration
+	BackupLocalDir   string
+	Dev              bool
 
 	// MetricsInterval is how often the backend samples the host into its
 	// own history, independently of any browser. MetricsRetention of 0
@@ -93,7 +96,10 @@ func Load() (*Config, error) {
 		CaddyFile:        env("JD_CADDYFILE", "/etc/caddy/Caddyfile"),
 		ComposeRoots:     envList("JD_COMPOSE_ROOTS", "/opt,/srv,/home"),
 		GitRoots:         envList("JD_GIT_ROOTS", "/opt,/srv,/home,/root"),
-		DeployRoots:      envList("JD_DEPLOY_ROOTS", "/opt,/srv,/home,/root"),
+		DeployRoots:      deployRoots(l),
+		DeployHeavySlots: l.integer("JD_DEPLOY_HEAVY_SLOTS", 1, 1, 8),
+		DeployLightSlots: l.integer("JD_DEPLOY_LIGHT_SLOTS", 2, 1, 8),
+		DeployLeaseTTL:   l.boundedDuration("JD_DEPLOY_LEASE_TTL", 30*time.Second, 5*time.Second, 5*time.Minute),
 		BackupLocalDir:   env("JD_BACKUP_DIR", "/var/backups/just-dashboard"),
 		Dev:              l.boolean("JD_DEV", false),
 		MetricsInterval:  l.window("JD_METRICS_INTERVAL", metrics.DefaultInterval),
@@ -184,6 +190,35 @@ func (l *loader) duration(k string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func (l *loader) boundedDuration(k string, def, min, max time.Duration) time.Duration {
+	d := l.duration(k, def)
+	if Env(k) == "" {
+		return d
+	}
+	if d < min || d > max {
+		l.errs = append(l.errs, fmt.Sprintf("%s must be between %s and %s", k, min, max))
+		return def
+	}
+	return d
+}
+
+func (l *loader) integer(k string, def, min, max int) int {
+	v := Env(k)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Sprintf("%s=%q is not an integer", k, v))
+		return def
+	}
+	if n < min || n > max {
+		l.errs = append(l.errs, fmt.Sprintf("%s must be between %d and %d", k, min, max))
+		return def
+	}
+	return n
 }
 
 // window is duration, extended with the day and week suffixes time.ParseDuration
@@ -317,4 +352,20 @@ func envList(k, def string) []string {
 		}
 	}
 	return out
+}
+
+func deployRoots(l *loader) []string {
+	// Unlike the general list settings, an explicitly empty deployment root
+	// must not acquire a permissive filesystem default. Unset keeps the shipped
+	// compatibility roots; set-but-empty is a configuration error.
+	for _, key := range []string{"JD_DEPLOY_ROOTS", "VPSD_DEPLOY_ROOTS"} {
+		if raw, ok := os.LookupEnv(key); ok {
+			if strings.TrimSpace(raw) == "" {
+				l.errs = append(l.errs, key+" must contain at least one absolute path")
+				return nil
+			}
+			break
+		}
+	}
+	return envList("JD_DEPLOY_ROOTS", "/opt,/srv,/home,/root")
 }

@@ -21,13 +21,41 @@ package hostexec
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 )
+
+// GroupResult is durable cleanup evidence for an interrupted host command.
+// ExitCode follows os.ProcessState.ExitCode: -1 means a signal terminated the
+// leader. TERM and KILL are recorded separately so restart reconciliation can
+// distinguish graceful cleanup from a forced stop.
+type GroupResult struct {
+	TERMSent bool `json:"termSent"`
+	KILLSent bool `json:"killSent"`
+	ExitCode int  `json:"exitCode"`
+}
+
+// GroupError reports that RunGroup stopped a command because its context was
+// cancelled. It unwraps to the context error and carries the cleanup evidence
+// adapters persist on the corresponding deployment step.
+type GroupError struct {
+	Cause  error
+	Result GroupResult
+}
+
+func (e *GroupError) Error() string {
+	return fmt.Sprintf("process group cancelled (TERM=%t KILL=%t exit=%d): %v",
+		e.Result.TERMSent, e.Result.KILLSent, e.Result.ExitCode, e.Cause)
+}
+
+func (e *GroupError) Unwrap() error { return e.Cause }
 
 // nsenterArgs enters the host's mount, UTS, IPC, network and PID namespaces.
 // The mount namespace is the one that matters — it is what makes the host's
@@ -91,17 +119,30 @@ func OnHost(name string) bool {
 // it must. The argument vector is passed through unchanged and never through a
 // shell, so the caller's validation still holds.
 func Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return CommandInDir(ctx, "", name, args...)
+}
+
+// CommandInDir is Command starting in a chosen directory. Local commands use
+// exec.Cmd.Dir. A host fallback passes the directory to nsenter itself because
+// changing directory before entering a different mount namespace does not
+// preserve it. Callers must resolve and contain dir before it reaches here.
+func CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	if _, err := exec.LookPath(name); err == nil {
-		return exec.CommandContext(ctx, name, args...)
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = dir
+		return cmd
 	}
 	if hostReachable() {
-		full := append(append([]string{}, nsenterArgs...), name)
+		full := inDirArgs(dir)
+		full = append(full, name)
 		full = append(full, args...)
 		return exec.CommandContext(ctx, "nsenter", full...)
 	}
 	// Nothing can run it; return the direct form so the caller reports the
 	// ordinary "executable not found" rather than an nsenter error.
-	return exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	return cmd
 }
 
 // CommandOnHost always crosses into the host's namespaces, even when the
@@ -131,14 +172,99 @@ func CommandOnHostInDir(ctx context.Context, dir, name string, args ...string) *
 		cmd.Dir = dir
 		return cmd
 	}
+	full := inDirArgs(dir)
+	full = append(full, name)
+	full = append(full, args...)
+	return exec.CommandContext(ctx, "nsenter", full...)
+}
+
+// RunGroup runs cmd as a new Unix process group. Cancellation signals the
+// entire tree with TERM, waits for grace, then signals any survivors with
+// KILL. A direct Process.Kill is insufficient for shell hooks and tools such
+// as Compose because their descendants otherwise outlive the deployment run.
+//
+// cmd may have been made with exec.CommandContext. RunGroup disables its
+// direct-child cancellation hook and owns termination so the group policy is
+// applied exactly once.
+func RunGroup(ctx context.Context, cmd *exec.Cmd, grace time.Duration) (GroupResult, error) {
+	result := GroupResult{ExitCode: -1}
+	if err := ctx.Err(); err != nil {
+		return result, &GroupError{Cause: err, Result: result}
+	}
+	if grace <= 0 {
+		grace = 5 * time.Second
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+	cmd.Cancel = nil
+	cmd.WaitDelay = 0
+	if err := cmd.Start(); err != nil {
+		return result, err
+	}
+
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case err := <-waited:
+		result.ExitCode = cmd.ProcessState.ExitCode()
+		return result, err
+	case <-ctx.Done():
+	}
+
+	pgid := cmd.Process.Pid
+	if err := syscall.Kill(-pgid, syscall.SIGTERM); err == nil {
+		result.TERMSent = true
+	} else if !errors.Is(err, syscall.ESRCH) {
+		// Continue toward KILL even if TERM was refused. The final group probe
+		// and wait still establish whether cleanup completed.
+		result.TERMSent = false
+	}
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	var waitErr error
+	waitComplete := false
+	for groupAlive(pgid) {
+		select {
+		case waitErr = <-waited:
+			waitComplete = true
+		case <-ticker.C:
+		case <-timer.C:
+			if err := syscall.Kill(-pgid, syscall.SIGKILL); err == nil {
+				result.KILLSent = true
+			}
+			if !waitComplete {
+				waitErr = <-waited
+				waitComplete = true
+			}
+			result.ExitCode = cmd.ProcessState.ExitCode()
+			return result, &GroupError{Cause: ctx.Err(), Result: result}
+		}
+	}
+	if !waitComplete {
+		waitErr = <-waited
+	}
+	_ = waitErr // The context cause is the public error; exit is evidence.
+	result.ExitCode = cmd.ProcessState.ExitCode()
+	return result, &GroupError{Cause: ctx.Err(), Result: result}
+}
+
+func groupAlive(pgid int) bool {
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func inDirArgs(dir string) []string {
 	full := append([]string{}, nsenterArgs...)
 	if dir != "" {
 		// Inserted before the `--` that ends nsenter's own options.
 		full = append(full[:len(full)-1], "--wd="+dir, "--")
 	}
-	full = append(full, name)
-	full = append(full, args...)
-	return exec.CommandContext(ctx, "nsenter", full...)
+	return full
 }
 
 // AvailableOnHost reports whether the host has a binary, ignoring this
@@ -210,9 +336,13 @@ func AsOwner(cmd *exec.Cmd) {
 	if !ok {
 		return
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: owner.UID, Gid: owner.GID},
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
+	// Preserve process-group and namespace settings established by a runner;
+	// owner dropping is one part of the execution policy, not a replacement
+	// for every other SysProcAttr field.
+	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: owner.UID, Gid: owner.GID}
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()
 	}
