@@ -33,6 +33,7 @@ type Manager struct {
 	account    Account
 	accountErr error
 	clipboard  *clipboardStore
+	shellDir   string
 }
 
 // reserve takes one of the session slots, or reports that none are free. The
@@ -158,7 +159,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// A requested directory changes *how* the login is assembled rather than
 	// being applied on top of it — see loginArgv, where a plain login's
 	// chdir-to-home is the thing standing in the way.
-	argv := m.account.loginArgv(m.shell, startDir != "")
+	argv := m.loginArgv(startDir != "")
 	if startDir != "" {
 		// The directory the command itself starts in. It has to be handed to
 		// hostexec rather than set on cmd.Dir: a host command crosses into the
@@ -570,7 +571,7 @@ func (m *Manager) sessionExists(tmuxName string) bool {
 // anything supplied per request. Each field is quoted anyway, so a shell path
 // or account name containing a space is passed as one word rather than two.
 func (m *Manager) defaultCommand() string {
-	argv := m.account.loginArgv(m.shell, true)
+	argv := m.loginArgv(true)
 	quoted := make([]string, 0, len(argv))
 	for _, arg := range argv {
 		quoted = append(quoted, shellWord(arg))

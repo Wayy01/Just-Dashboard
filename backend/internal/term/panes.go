@@ -370,3 +370,66 @@ func (m *Manager) InCopyMode(ctx context.Context, tmuxName string) (bool, error)
 	}
 	return strings.TrimSpace(string(out)) == "1", nil
 }
+
+// ScrollState describes tmux history. Offset counts back from the live screen.
+type ScrollState struct {
+	Active  bool `json:"active"`
+	Offset  int  `json:"offset"`
+	History int  `json:"history"`
+	Height  int  `json:"height"`
+}
+
+func (m *Manager) ScrollState(ctx context.Context, name string) (ScrollState, error) {
+	if !m.useTmux || name == "" {
+		return ScrollState{}, nil
+	}
+	out, err := hostexec.CommandOnHost(ctx, "tmux", "display-message", "-p", "-t", name,
+		"#{pane_in_mode}|#{scroll_position}|#{history_size}|#{pane_height}").Output()
+	if err != nil {
+		return ScrollState{}, err
+	}
+	fields := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(fields) != 4 {
+		return ScrollState{}, errors.New("invalid tmux scroll state")
+	}
+	state := ScrollState{Active: fields[0] == "1"}
+	state.Offset, _ = strconv.Atoi(fields[1])
+	state.History, _ = strconv.Atoi(fields[2])
+	state.Height, _ = strconv.Atoi(fields[3])
+	return state, nil
+}
+
+// Only the authenticated attach socket calls this with its own session name.
+func (m *Manager) ScrollTo(ctx context.Context, name string, offset int) error {
+	if !m.useTmux || name == "" {
+		return ErrNoPersistence
+	}
+	state, err := m.ScrollState(ctx, name)
+	if err != nil {
+		return err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > state.History {
+		offset = state.History
+	}
+	if offset == 0 {
+		return m.ExitCopyMode(ctx, name)
+	}
+	if !state.Active {
+		if err := hostexec.CommandOnHost(ctx, "tmux", "copy-mode", "-t", name).Run(); err != nil {
+			return err
+		}
+	}
+	delta := offset - state.Offset
+	if delta == 0 {
+		return nil
+	}
+	direction := "scroll-up"
+	if delta < 0 {
+		direction = "scroll-down"
+		delta = -delta
+	}
+	return hostexec.CommandOnHost(ctx, "tmux", "send-keys", "-X", "-N", strconv.Itoa(delta), "-t", name, direction).Run()
+}
