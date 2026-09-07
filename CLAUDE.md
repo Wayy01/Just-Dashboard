@@ -1194,9 +1194,10 @@ gradient `.card-sheen` on panels, three lines on buttons) made one claim in two 
 Two deliberate exceptions:
 
 - **The nav stays flat.** The lift works by making one thing stand out from what is behind it, which stops
-  meaning anything when forty-nine rows claim it at once; a nav is a *list*, and what should stand out is
-  the item you are on, which the active item's solid primary fill does. What survived the experiment is
-  the spacing: `SidebarMenu`/`SidebarMenuSub` at `gap-2`.
+  meaning anything when forty-nine rows claim it at once; a nav is a *list*. The current destination uses
+  the sidebar accent fill and medium label weight at both navigation depths, keeping location visible
+  without an inverted primary pill competing with the page. What survived the experiment is the spacing:
+  `SidebarMenu`/`SidebarMenuSub` at `gap-2`.
 - **Ghost and link buttons stay flat**, and so do inputs and textareas. Ghost is 142 of ~400 buttons — the
   quiet action at the end of a table row — and giving it a face turns every row into a strip of controls
   competing with its own data. A page where fields and buttons are equally raised has no hierarchy left.
@@ -1318,7 +1319,10 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   corners and exposes no way to style it, so `dnd.ts` builds an off-screen chip in the theme's tokens,
   hands it to `setDragImage` and removes it next frame.
 - `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
-  toggles: sessions on the left and Files/Git on the right. There is no working-directory title bar.
+  toggles: sessions on the left and Files/Git on the right. The tabs share one quiet recessed rail;
+  inactive windows stay flat inside it and only the active window takes the shared `raised` surface, so
+  the strip reads as one workspace control instead of a row of outlined buttons. There is no
+  working-directory title bar.
   Window menus retain split, layout, rename and colour actions; active tabs scroll into view.
   Every tab has a visible close button. Closing the last window closes its session through the session
   endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
