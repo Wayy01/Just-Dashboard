@@ -61,6 +61,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { CommandComposer, CommandStarters } from "@/components/terminal/command-composer"
 import { ShortcutsDialog } from "@/components/terminal/shortcuts-dialog"
 import {
   Dialog,
@@ -258,7 +259,11 @@ export function XtermPane({
   onToggleFullscreen,
   fullscreenActive,
   terminalSessionId,
+  workbench = false,
+  contextLabel = "Shell",
 }: {
+  workbench?: boolean
+  contextLabel?: string
   path: string
   query?: Query
   className?: string
@@ -309,6 +314,10 @@ export function XtermPane({
   /** Enables session-scoped image paste/drop on the real terminal page only. */
   terminalSessionId?: string
 }) {
+  const [draft, setDraft] = useState("")
+  const [showStarters, setShowStarters] = useState(true)
+  const [directMode, setDirectMode] = useState(false)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<"connecting" | "open" | "closed">("connecting")
@@ -357,7 +366,11 @@ export function XtermPane({
   // and the readable version to show. They differ whenever the shell has
   // bracketed paste on, where the text arrives wrapped in escape sequences
   // that must be forwarded intact and must not be put on screen.
-  const [pendingPaste, setPendingPaste] = useState<{ raw: string; text: string } | null>(null)
+  const [pendingPaste, setPendingPaste] = useState<{
+    raw: string
+    text: string
+    submit?: () => void
+  } | null>(null)
   const [bell, setBell] = useState(false)
   const [imageDrag, setImageDrag] = useState(false)
   // The title the shell sets through OSC 0/2 — which for anybody with a
@@ -646,7 +659,8 @@ export function XtermPane({
         setState("open")
         setError(undefined)
         sendResize()
-        term.focus()
+        if (composerRef.current?.offsetParent) composerRef.current.focus()
+        else term.focus()
         // The session may have been left scrolled back by whoever was here
         // before — copy mode outlives the socket the way everything else in a
         // tmux session does — and a pane that is in a mode reads as a pane
@@ -727,6 +741,7 @@ export function XtermPane({
       }
       inputRef.current = insertInput
 
+      disposables.push(term.onKey(() => setShowStarters(false)))
       disposables.push(
         term.onData((data) => {
           if (socket.readyState !== WebSocket.OPEN) return
@@ -1115,6 +1130,24 @@ export function XtermPane({
     termRef.current?.focus()
   }, [])
 
+  const submitDraft = () => {
+    if (!draft.trim() || state !== "open") return
+    // A draft is editable text, never a vehicle for pasted terminal escape codes.
+    if (/[\x00-\x08\x0b-\x1f\x7f]/.test(draft)) {
+      notify.error("Remove control characters from the command before sending it")
+      return
+    }
+    const submit = () => {
+      if (inputRef.current?.(draft.replace(/\n/g, "\r") + "\r")) {
+        setDraft("")
+        setShowStarters(false)
+      } else notify.error("The terminal is not ready; your draft has been kept")
+    }
+    if (draft.includes("\n") && settings.confirmMultilinePaste) {
+      setPendingPaste({ raw: draft, text: draft, submit })
+    } else submit()
+  }
+
   return (
     <div
       ref={frameRef}
@@ -1123,10 +1156,34 @@ export function XtermPane({
         // In fullscreen the pane is the whole screen, so the rounded corners
         // and border would draw a frame around nothing.
         fullscreen && "rounded-none border-0",
+        workbench && "terminal-workbench",
         className,
       )}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hairline bg-surface-header px-3 py-2">
+        {workbench && (
+          <div className="mr-3 flex items-center rounded-lg border border-hairline p-0.5">
+            <Button
+              size="xs"
+              variant={!directMode ? "secondary" : "ghost"}
+              aria-pressed={!directMode}
+              onClick={() => setDirectMode(false)}
+            >
+              Workspace
+            </Button>
+            <Button
+              size="xs"
+              variant={directMode ? "secondary" : "ghost"}
+              aria-pressed={directMode}
+              onClick={() => {
+                setDirectMode(true)
+                termRef.current?.focus()
+              }}
+            >
+              Focus
+            </Button>
+          </div>
+        )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {subtitle ?? path}
           {shellTitle && (
@@ -1232,6 +1289,16 @@ export function XtermPane({
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
+                {workbench && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setDirectMode(false)
+                      setShowStarters(true)
+                    }}
+                  >
+                    Command starters
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem onSelect={() => setShortcuts(true)}>
                   <Command className="size-4" /> Keyboard shortcuts
                 </DropdownMenuItem>
@@ -1294,11 +1361,40 @@ export function XtermPane({
         </p>
       )}
 
-      <div className="relative min-h-0 flex-1">
+      {workbench && !directMode && showStarters && (
+        <CommandStarters
+          onClose={() => setShowStarters(false)}
+          onPick={(command) => {
+            setDraft(command)
+            composerRef.current?.focus()
+          }}
+        />
+      )}
+      {workbench && !directMode && (
+        <div className="flex shrink-0 items-center gap-2 px-5 py-2 text-[10px] text-muted-foreground">
+          <span className="h-px flex-1 bg-hairline" />
+          <button
+            type="button"
+            onClick={() => termRef.current?.focus()}
+            className="hover:text-foreground"
+          >
+            Live terminal · click to type directly
+          </button>
+          <span className="h-px flex-1 bg-hairline" />
+        </div>
+      )}
+      <div
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 overflow-hidden",
+          workbench &&
+            !directMode &&
+            "mx-3 mb-3 rounded-xl border border-hairline bg-background sm:mx-4",
+        )}
+      >
         <div
           ref={hostRef}
           className={cn(
-            "h-full p-3 transition-colors duration-150 motion-reduce:transition-none",
+            "absolute inset-2 overflow-hidden transition-colors duration-150 motion-reduce:transition-none",
             bell && "bg-warning/25",
           )}
           style={bell ? undefined : { backgroundColor: "var(--background)" }}
@@ -1354,30 +1450,44 @@ export function XtermPane({
       {/* The control keys, as buttons. Ctrl+C is unremarkable on a keyboard and
           impossible on a phone, and this panel is reached from a phone more
           often than its author would like. */}
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
-        <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
-        {CONTROL_KEYS.map((key) => (
-          <Tooltip key={key.label}>
-            <TooltipTrigger asChild>
-              <Button
-                size="xs"
-                variant="ghost"
-                className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                onClick={() => send(key.bytes)}
-              >
-                {key.label}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{key.hint}</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
+      {workbench && !directMode && (
+        <CommandComposer
+          draft={draft}
+          onDraft={setDraft}
+          onSubmit={submitDraft}
+          onFocusTerminal={() => termRef.current?.focus()}
+          connected={state === "open"}
+          contextLabel={contextLabel}
+          inputRef={composerRef}
+        />
+      )}
+      {(!workbench || directMode) && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
+          <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
+          {CONTROL_KEYS.map((key) => (
+            <Tooltip key={key.label}>
+              <TooltipTrigger asChild>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={() => send(key.bytes)}
+                >
+                  {key.label}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{key.hint}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      )}
 
       <PasteConfirmation
         paste={pendingPaste}
         onCancel={() => setPendingPaste(null)}
         onConfirm={() => {
-          if (pendingPaste) send(pendingPaste.raw)
+          if (pendingPaste?.submit) pendingPaste.submit()
+          else if (pendingPaste) send(pendingPaste.raw)
           setPendingPaste(null)
         }}
       />
@@ -1683,8 +1793,8 @@ function PasteConfirmation({
         <DialogHeader>
           <DialogTitle>Paste {lines.length} lines?</DialogTitle>
           <DialogDescription>
-            Every line but the last ends in a newline, so the shell will run it as soon as it
-            arrives — this is not text going into the prompt for you to check first.
+            This text contains line breaks that can execute commands as soon as they reach the
+            terminal. Review every line before sending it.
           </DialogDescription>
         </DialogHeader>
         <pre className="max-h-56 overflow-auto rounded-md border bg-surface-sunken p-2 font-mono text-[11px] whitespace-pre-wrap">

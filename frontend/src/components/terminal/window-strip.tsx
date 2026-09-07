@@ -113,7 +113,7 @@ export function WindowStrip({
               sessionName={sessionName}
               colour={win.colour || sessionColour}
               inserting={dropAt === position}
-              closable={windows.length > 1}
+              closable
               onSelect={() => onSelect(win.index)}
               onStartRename={() => setRenaming(win.index)}
               onColour={(colour) => onColour(win.index, colour)}
@@ -341,6 +341,16 @@ function WindowChip({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {closable && (
+        <button
+          type="button"
+          aria-label={`Close window ${win.name}`}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
+          onClick={onClose}
+        >
+          <Cross className="size-3.5" />
+        </button>
+      )}
     </div>
   )
 }

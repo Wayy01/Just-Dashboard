@@ -1175,9 +1175,18 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   hands it to `setDragImage` and removes it next frame.
 - `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
   toggles: sessions on the left and Files/Git on the right. There is no working-directory title bar.
-  Window menus retain split, layout, rename, colour and close actions; active tabs scroll into view.
+  Window menus retain split, layout, rename and colour actions; active tabs scroll into view.
+  Every tab has a visible close button. Closing the last window closes its session through the session
+  endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
   The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
   folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
+  `command-composer.tsx` is the terminal page's Workspace view: starter cards prepare editable drafts,
+  an explicit Send writes to the focused terminal, and Focus hides the composer and cards for full-screen
+  tools. The live emulator stays mounted across mode changes; output is never parsed into guessed command
+  blocks. Drafts stay in component memory, never persistent command history. Multiline drafts use the
+  existing paste confirmation; control characters are rejected, and writes share the upload input
+  writer's replay suppression and copy-mode exit. Other emulator consumers retain their direct UI.
+  The terminal host is absolutely inset into its output region so its own rows cannot grow its parent.
   `PaneBar` labels each pane with the command running in it:
   "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
 - `tags.tsx` is the colour vocabulary. `--tag-*` lives in `globals.css` and is the one deliberate exception
@@ -1256,6 +1265,10 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   keyboard back** — the strips and pane bar are buttons and keep the focus they were given, so `XtermPane`
   takes a `focusRef` and the page calls it *before* the request (the switch is a round trip to tmux, the
   focus is not).
+
+**Shell-here links are consumed once.** The page removes `cwd` and `folder` from the current history
+entry before creating the session, preserving other query parameters and the hash. A refresh cannot
+replay a launch or recreate a closed session; a later explicit Shell here link can still launch anew.
 
 **The page has no header.** A terminal is the one screen whose content *is* the viewport, and a title band
 plus a notice cost about a fifth of the pane on a laptop. The breadcrumb says where you are, "New session"
