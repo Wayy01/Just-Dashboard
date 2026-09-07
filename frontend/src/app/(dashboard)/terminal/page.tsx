@@ -172,18 +172,20 @@ export default function TerminalPage() {
     return () => document.removeEventListener("fullscreenchange", onChange)
   }, [])
 
-  // Opening a shell starts a process on the server, so this fires at most once
-  // per mount: the ref is set before the call, which is what stops React's
-  // development double-invoke from spawning two.
-  //
-  // It deliberately does not skip when sessions already exist. It used to, on
-  // the reasoning that a shell is expensive and one may as well be reused —
-  // which quietly broke the feature for everybody who keeps a terminal open,
-  // i.e. everybody: "Shell here" landed them in whatever directory their
-  // existing session happened to be in.
+  // A Shell here URL is a launch request, not a standing instruction. Consume it
+  // before the POST so refresh (even while it is pending) cannot create another
+  // shell. Keep unrelated query parameters and the hash intact.
   useEffect(() => {
-    if (launched.current || !requestedCwd || !data) return
+    if (!requestedCwd) {
+      launched.current = false
+      return
+    }
+    if (launched.current || !data) return
     launched.current = true
+    const url = new URL(window.location.href)
+    url.searchParams.delete("cwd")
+    url.searchParams.delete("folder")
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash)
     void openSession(requestedCwd, requestedFolder)
   }, [requestedCwd, requestedFolder, data, openSession])
 
@@ -514,12 +516,30 @@ export default function TerminalPage() {
   }
 
   const closeWindow = (index: number) => {
-    focusTerminal()
-    void act(
-      () => del(`${persistent(tmuxName!)}/windows/${index}`),
-      "Could not close that window",
-      true,
-    )
+    if (!tmuxName || !activeSession?.id) return
+    const lastWindow = (windows.data?.length ?? 0) === 1
+    const name = windows.data?.find((win) => win.index === index)?.name ?? "window"
+    confirm({
+      title: lastWindow ? `Close session ${activeSession.title}?` : `Close ${name}?`,
+      description: lastWindow
+        ? "This is the last window. Closing it ends the session and its running programs."
+        : "The programs running in this window will end.",
+      confirmLabel: lastWindow ? "Close session" : "Close window",
+      action: async () => {
+        // Let the confirmation own errors; act/closeSession handle theirs by
+        // returning, which would otherwise make a refusal look like success.
+        await del(
+          lastWindow ? `/terminal/${activeSession.id}` : `${persistent(tmuxName)}/windows/${index}`,
+        )
+        if (lastWindow) setPicked(null)
+        else {
+          void windows.refresh()
+          void panes.refresh()
+        }
+        await refresh()
+      },
+      onDone: focusTerminal,
+    })
   }
 
   const closePane = (pane: number) => {
@@ -711,7 +731,7 @@ export default function TerminalPage() {
           } as React.CSSProperties
         }
         className={cn(
-          "flex min-h-0 flex-1 flex-col gap-3 lg:flex-row",
+          "flex min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row",
           // The overlay is CSS so the panel toggles never touch the
           // Fullscreen API; the real fullscreen request rides on top of it.
           immersive && "fixed inset-0 z-50 gap-2 overflow-hidden bg-background p-2",
@@ -832,6 +852,8 @@ export default function TerminalPage() {
               key={active}
               path={`/terminal/${active}/attach`}
               terminalSessionId={active}
+              workbench
+              contextLabel={activeWindow?.name ?? "Shell"}
               // The prompt inside already says where you are; the header says
               // who, which is the fact a root-equivalent shell should never
               // make you go and check.

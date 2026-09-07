@@ -8,6 +8,10 @@ const browser = await chromium.launch({ headless: true })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 const errors = []
 const mutations = []
+const input = []
+let sessionPresent = true
+let closedWindows = 0
+let closedSessions = 0
 page.on("pageerror", (error) => errors.push(error.message))
 let windows = ["codex", "server logs", "shell"].map((name, index) => ({
   index,
@@ -26,6 +30,19 @@ await page.route("**/api/v1/**", async (route) => {
   const path = new URL(route.request().url()).pathname.replace("/api/v1", "")
   let data = {}
   if (route.request().method() === "POST") mutations.push(path)
+  if (path === "/terminal/" && route.request().method() === "POST") {
+    sessionPresent = true
+    return route.fulfill({ json: { id: "preview" } })
+  }
+  if (path === "/terminal/preview" && route.request().method() === "DELETE") {
+    sessionPresent = false
+    closedSessions++
+  }
+  if (/\/windows\/\d+$/.test(path) && route.request().method() === "DELETE") {
+    closedWindows++
+    windows = windows.filter((win) => win.index !== Number(path.split("/").at(-1)))
+    windows = windows.map((win, i) => ({ ...win, active: i === 0 }))
+  }
   if (path === "/system/metrics")
     return route.fulfill({
       status: 503,
@@ -44,19 +61,21 @@ await page.route("**/api/v1/**", async (route) => {
       tmux: true,
       login: { user: "ubuntu", home: "/home/ubuntu", shell: "/bin/bash" },
       folders: [],
-      sessions: [
-        {
-          id: "preview",
-          tmuxName: "preview",
-          title: "Workspace",
-          user: "ubuntu",
-          live: true,
-          persisted: true,
-          windows: windows.length,
-          cwd: "/home/ubuntu/Just-Dashboard",
-          createdAt: new Date().toISOString(),
-        },
-      ],
+      sessions: sessionPresent
+        ? [
+            {
+              id: "preview",
+              tmuxName: "preview",
+              title: "Workspace",
+              user: "ubuntu",
+              live: true,
+              persisted: true,
+              windows: windows.length,
+              cwd: "/home/ubuntu/Just-Dashboard",
+              createdAt: new Date().toISOString(),
+            },
+          ]
+        : [],
     }
   else if (path.endsWith("/windows")) data = windows
   else if (/\/windows\/\d+$/.test(path) && route.request().method() === "PATCH") {
@@ -77,13 +96,47 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
       ),
     )
     socket.onMessage((message) => {
-      if (typeof message === "string" && !message.startsWith("{")) socket.send(Buffer.from(message))
+      if (typeof message === "string" && !message.startsWith("{")) {
+        input.push(message)
+        socket.send(Buffer.from(message))
+      }
     })
   }
 })
 try {
   await page.goto(`${process.env.JD_BROWSER_BASE_URL ?? "http://127.0.0.1:3107"}/terminal`)
   await page.locator(".xterm-screen").waitFor()
+  await page.getByRole("heading", { name: "What are you working on?" }).waitFor()
+  await page.screenshot({ animations: "disabled", path: "/tmp/workbench-welcome.png" })
+  const sentBeforeStarter = input.length
+  await page.getByRole("button", { name: /Explore files/ }).click()
+  const draft = page.getByRole("textbox", { name: "Command draft" })
+  assert.equal(await draft.inputValue(), "ls -lah")
+  assert.equal(input.length, sentBeforeStarter, "starter must only prepare a draft")
+  await draft.press("Enter")
+  await page.waitForFunction(
+    () => document.querySelector('textarea[aria-label="Command draft"]').value === "",
+  )
+  assert(input.includes("ls -lah\r"))
+  await draft.fill("echo one\necho two")
+  const beforeMultiline = input.length
+  await draft.press("Enter")
+  await page.getByRole("dialog").waitFor()
+  assert.equal(input.length, beforeMultiline, "multiline must wait for confirmation")
+  await page.getByRole("button", { name: "Cancel", exact: true }).click()
+  assert.equal(await draft.inputValue(), "echo one\necho two")
+  await draft.press("Enter")
+  await page.getByRole("button", { name: "Paste and run", exact: true }).click()
+  await page.waitForFunction(
+    () => document.querySelector('textarea[aria-label="Command draft"]').value === "",
+  )
+  assert(input.includes("echo one\recho two\r"))
+  await page.getByRole("button", { name: "Focus", exact: true }).click()
+  assert.equal(await draft.count(), 0)
+  await page.locator(".xterm-helper-textarea").press("a")
+  await page.getByRole("button", { name: "Workspace", exact: true }).click()
+  await draft.waitFor()
+  assert(input.includes("a"), "direct terminal typing must still work")
   const bar = page.locator('[aria-label="Terminal workspace"]')
   assert.equal(await bar.locator(":scope > button").count(), 2)
   assert.equal(await bar.getByText("/home/ubuntu/Just-Dashboard", { exact: true }).count(), 0)
@@ -91,6 +144,10 @@ try {
     const box = await tab.boundingBox()
     assert(box.width >= 144 && box.height >= 44)
   }
+  assert.equal(
+    await page.getByRole("button", { name: "Close window codex", exact: true }).count(),
+    1,
+  )
   await page.getByRole("button", { name: "server logs", exact: true }).click()
   await page.locator('[data-window="1"][data-active="true"]').waitFor()
   await page.getByRole("button", { name: "More for window server logs" }).click()
@@ -129,9 +186,56 @@ try {
   await page.locator('[data-window="2"][data-active="true"]').waitFor()
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
   await page.screenshot({ animations: "disabled", path: "/tmp/terminal-mobile.png" })
+  const screen = await page.locator(".xterm-screen").boundingBox()
+  const host = await page.locator(".xterm-screen").locator("../..").boundingBox()
+  assert(screen.y + screen.height <= host.y + host.height + 1, "terminal rows must fit inside host")
+  const beforeLaunch = mutations.filter((path) => path === "/terminal/").length
+  await page.goto(
+    `${process.env.JD_BROWSER_BASE_URL ?? "http://127.0.0.1:3107"}/terminal?cwd=%2Fhome%2Fubuntu&folder=work&keep=1#shell`,
+  )
+  await page.waitForURL((url) => !url.searchParams.has("cwd"))
+  await page.locator(".xterm-screen").waitFor()
+  assert.equal(mutations.filter((path) => path === "/terminal/").length, beforeLaunch + 1)
+  assert(page.url().includes("keep=1#shell"))
+  for (let i = 0; i < 2; i++) {
+    await page.reload()
+    await page.locator(".xterm-screen").waitFor()
+  }
+  assert.equal(
+    mutations.filter((path) => path === "/terminal/").length,
+    beforeLaunch + 1,
+    "refresh must not create sessions",
+  )
+  // The visible X uses confirmation, and the last window closes the session
+  // rather than calling the backend's deliberately refused last-window delete.
+  while (windows.length > 1) {
+    const name = windows[0].name
+    const beforeClose = closedWindows
+    await page.getByRole("button", { name: `Close window ${name}`, exact: true }).click()
+    await page.getByRole("dialog").waitFor()
+    assert.equal(closedWindows, beforeClose)
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.equal(closedWindows, beforeClose)
+    await page.getByRole("button", { name: `Close window ${name}`, exact: true }).click()
+    await page.getByRole("button", { name: "Close window", exact: true }).click()
+    await page
+      .getByRole("button", { name: `Close window ${name}`, exact: true })
+      .waitFor({ state: "detached" })
+  }
+  await page.getByRole("button", { name: `Close window ${windows[0].name}`, exact: true }).click()
+  await page.getByRole("button", { name: "Close session", exact: true }).click()
+  await page.getByText("No sessions yet", { exact: true }).waitFor()
+  assert.equal(closedSessions, 1)
+  await page.reload()
+  await page.getByText("No sessions yet", { exact: true }).waitFor()
+  assert.equal(
+    mutations.filter((path) => path === "/terminal/").length,
+    beforeLaunch + 1,
+    "closed sessions must stay closed after refresh",
+  )
   assert.deepEqual(errors, [])
   console.log(
-    "PASS: large tabs, two panel controls, switch/rename, actions, search, panel toggles, dark/light and mobile layout",
+    "PASS: workspace composer, safe multiline input, direct typing, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
   )
 } finally {
   await browser.close()
