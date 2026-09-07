@@ -361,6 +361,9 @@ type probeRequest struct {
 	Target string `json:"target"`
 	Port   int    `json:"port,omitempty"`
 	Record string `json:"record,omitempty"`
+	// Option carries a tool's closed-set choice — the STARTTLS protocol — and
+	// is ignored by tools that take none, so one shape serves every card.
+	Option string `json:"option,omitempty"`
 }
 
 func (s *Server) handleNetworkProbe(w http.ResponseWriter, r *http.Request) error {
@@ -390,13 +393,44 @@ func (s *Server) handleNetworkProbe(w http.ResponseWriter, r *http.Request) erro
 		res, err = s.modules.netsec.TLSCert(ctx, req.Target, req.Port)
 	case "whois":
 		res, err = s.modules.netsec.Whois(ctx, req.Target)
+	case "dnsauth":
+		res, err = s.modules.netsec.DNSAuthority(ctx, req.Target)
+	case "banner":
+		res, err = s.modules.netsec.BannerGrab(ctx, req.Target, req.Port)
+	case "ssh":
+		res, err = s.modules.netsec.SSHScan(ctx, req.Target, req.Port)
+	case "starttls":
+		res, err = s.modules.netsec.STARTTLSCheck(ctx, req.Target, req.Port, req.Option)
+	case "tlssurvey":
+		res, err = s.modules.netsec.TLSSurvey(ctx, req.Target, req.Port)
+	case "dnsbl":
+		res, err = s.modules.netsec.DNSBLCheck(ctx, req.Target)
+	case "asn":
+		res, err = s.modules.netsec.ASNLookup(ctx, req.Target)
+	case "mx":
+		res, err = s.modules.netsec.MXCheck(ctx, req.Target)
+	case "httpsec":
+		res, err = s.modules.netsec.HTTPSecurity(ctx, req.Target, req.Port)
+	case "siteaudit":
+		res, err = s.modules.netsec.SiteAudit(ctx, req.Target, req.Port)
+	case "listeners":
+		res, err = s.modules.netsec.Listeners(ctx)
+	case "egress":
+		res, err = s.modules.netsec.Egress(ctx)
+	case "neigh":
+		res, err = s.modules.netsec.Neighbours(ctx)
 	default:
-		return httpx.BadRequest("tool must be ping, traceroute, dns, port, scan, http, tls or whois")
+		return httpx.BadRequest("tool must be ping, traceroute, dns, port, scan, http, tls, whois, " +
+			"dnsauth, banner, ssh, starttls, tlssurvey, dnsbl, asn, mx, httpsec, siteaudit, listeners, egress or neigh")
 	}
 	if err != nil {
 		return httpx.BadRequest("%v", err)
 	}
-	httpx.SetAudit(r, "network.probe", req.Tool, map[string]any{"target": req.Target})
+	detail := map[string]any{"target": req.Target}
+	if req.Option != "" {
+		detail["option"] = req.Option
+	}
+	httpx.SetAudit(r, "network.probe", req.Tool, detail)
 	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }
