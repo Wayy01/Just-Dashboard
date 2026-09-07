@@ -54,18 +54,20 @@ type moduleSet struct {
 	// jobs runs the operations that take longer than a request should:
 	// certbot, package upgrades, sshd applies. They outlive the request that
 	// started them and are watched by id rather than by the socket.
-	jobs            *jobs.Manager
-	backupStore     *backups.Store
-	backupRunner    *backups.Runner
-	backupSched     *backups.Scheduler
-	deployStore     *deploy.Store
-	deployer        *deploy.Deployer
-	deployRuns      *deploy.OrchestrationStore
-	deployEngine    *deploy.Engine
-	deployPlanning  *deploy.PlanningStore
-	deploySources   *deploy.HostSourceAnalyzer
-	deployPreflight *deploy.HostPreflightObserver
-	deployArtifacts *deploy.ArtifactBuilder
+	jobs             *jobs.Manager
+	backupStore      *backups.Store
+	backupRunner     *backups.Runner
+	backupSched      *backups.Scheduler
+	deployStore      *deploy.Store
+	deployer         *deploy.Deployer
+	deployRuns       *deploy.OrchestrationStore
+	deployEngine     *deploy.Engine
+	deployPlanning   *deploy.PlanningStore
+	deploySources    *deploy.HostSourceAnalyzer
+	deployPreflight  *deploy.HostPreflightObserver
+	deployArtifacts  *deploy.ArtifactBuilder
+	deployAutomation *deploy.AutomationStore
+	deploySchedule   *deploy.AutomationScheduler
 }
 
 func (s *Server) initModules() {
@@ -129,6 +131,7 @@ func (s *Server) initModules() {
 	s.modules.deployer = deploy.NewDeployer(s.modules.deployStore, s.Log)
 	s.modules.deployRuns = deploy.NewOrchestrationStore(s.Store)
 	s.modules.deployPlanning = deploy.NewPlanningStore(s.Store, s.Sealer, s.Cfg.DeployRoots)
+	s.modules.deployAutomation = deploy.NewAutomationStore(s.Store, s.Sealer)
 	s.modules.deploySources = deploy.NewHostSourceAnalyzer(
 		s.Cfg.DeployRoots,
 		s.Cfg.ComposeRoots,
@@ -156,7 +159,8 @@ func (s *Server) initModules() {
 		s.modules.proxy,
 		filepath.Join(s.Cfg.DataDir, "deployment-workspaces"),
 	).WithPreflightObserver(s.modules.deployPreflight).
-		WithBackupGate(newDeploymentBackupGate(s.modules.backupStore, s.modules.backupRunner))
+		WithBackupGate(newDeploymentBackupGate(s.modules.backupStore, s.modules.backupRunner)).
+		WithNotifications(s.modules.deployAutomation)
 	s.modules.deployEngine = deploy.NewEngine(
 		s.modules.deployRuns,
 		deploy.NewDeploymentStepExecutor(
@@ -173,6 +177,7 @@ func (s *Server) initModules() {
 		},
 		s.Log,
 	)
+	s.modules.deploySchedule = deploy.NewAutomationScheduler(s.modules.deployAutomation, s.dispatchDeploymentSchedule)
 }
 
 // listSiblings is how internal/selfupdate sees this host's containers.

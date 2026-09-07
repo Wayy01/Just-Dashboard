@@ -40,6 +40,10 @@ func (s *Server) mountDeployRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{id}/environments/{env}/variables", s.handle(s.handleDeploymentVariables))
 		r.Method(http.MethodGet, "/{id}/environments/{env}/pending", s.handle(s.handleDeploymentPending))
 		r.Method(http.MethodGet, "/{id}/environments/{env}/configuration", s.handle(s.handleDeploymentConfiguration))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/triggers", s.handle(s.handleDeploymentTriggers))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/schedules", s.handle(s.handleDeploymentSchedules))
+		r.Method(http.MethodGet, "/{id}/previews", s.handle(s.handleDeploymentPreviews))
+		r.Method(http.MethodGet, "/notifications", s.handle(s.handleDeploymentNotifications))
 
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
@@ -64,6 +68,15 @@ func (s *Server) mountDeployRoutes(r chi.Router) {
 				r.Method(http.MethodPost, "/{id}/environments/{env}/variables/{name}/rotate", s.handle(s.handleDeploymentVariableRotate))
 				r.Method(http.MethodPut, "/{id}/environments/{env}/configuration", s.handle(s.handleDeploymentConfigurationSave))
 				r.Method(http.MethodPost, "/{id}/removal-plan", s.handle(s.handleDeploymentRemovalPlan))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/triggers", s.handle(s.handleDeploymentTriggerCreate))
+				r.Method(http.MethodPut, "/{id}/environments/{env}/triggers/{trigger}", s.handle(s.handleDeploymentTriggerUpdate))
+				r.Method(http.MethodDelete, "/{id}/environments/{env}/triggers/{trigger}", s.handle(s.handleDeploymentTriggerDelete))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/watch-paths/simulate", s.handle(s.handleDeploymentWatchPathSimulate))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/schedules", s.handle(s.handleDeploymentScheduleCreate))
+				r.Method(http.MethodDelete, "/{id}/environments/{env}/schedules/{schedule}", s.handle(s.handleDeploymentScheduleDelete))
+				r.Method(http.MethodPost, "/notifications", s.handle(s.handleDeploymentNotificationCreate))
+				r.Method(http.MethodPost, "/notifications/{channel}/test", s.handle(s.handleDeploymentNotificationTest))
+				r.Method(http.MethodDelete, "/notifications/{channel}", s.handle(s.handleDeploymentNotificationDelete))
 			})
 			r.Method(http.MethodPost, "/", s.handle(s.handleDeployCreate))
 			r.Method(http.MethodPut, "/{id}", s.handle(s.handleDeployUpdate))
@@ -505,7 +518,7 @@ func (s *Server) enqueueNormalizedDeployment(
 	variableSnapshotRunID := int64(0)
 	var selected *deploy.ReleaseWithArtifacts
 	switch operation {
-	case deploy.OperationDeploy, deploy.OperationForceBuild:
+	case deploy.OperationDeploy, deploy.OperationForceBuild, deploy.OperationPreviewCreate, deploy.OperationPreviewUpdate, deploy.OperationScheduled:
 		if targetReleaseID != 0 {
 			return nil, fmt.Errorf("%w: this operation does not accept a release target", deploy.ErrInvalidPlan)
 		}
@@ -561,6 +574,9 @@ func (s *Server) enqueueNormalizedDeployment(
 			deploy.StepStartCandidate, deploy.StepVerifyReadiness, deploy.StepVerifySmoke,
 			deploy.StepRecordRelease, deploy.StepNotify,
 		}
+		slot = deploy.SlotLight
+	case deploy.OperationPreviewRemove:
+		steps = []deploy.StepKey{deploy.StepRetirePrevious, deploy.StepNotify}
 		slot = deploy.SlotLight
 	}
 	if operation == deploy.OperationRollback {

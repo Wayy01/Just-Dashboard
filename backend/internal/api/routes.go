@@ -47,6 +47,13 @@ func (s *Server) Routes() http.Handler {
 			// on the one route reachable without a dashboard session.
 			r.Use(httpx.AuditMutations(s.Audit))
 			r.Method(http.MethodPost, "/deploy/{hookID}", s.handle(s.handleDeployWebhook))
+			r.Method(http.MethodPost, "/providers/{provider}/{hookID}", s.handle(s.handleDeploymentProviderWebhook))
+			r.Method(http.MethodPost, "/scoped/{hookID}", s.handle(s.handleDeploymentGenericWebhook))
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(s.apiLim.Middleware)
+			r.Use(httpx.AuditMutations(s.Audit))
+			r.Method(http.MethodPost, "/deploy/{id}/hooks/{triggerID}", s.handle(s.handleDeploymentGenericWebhook))
 		})
 
 		if s.Cfg.AgentMode {

@@ -93,6 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.modules.backupSched.Start(ctx); err != nil {
 		return err
 	}
+	s.modules.deploySchedule.Start(ctx)
 	return s.modules.deployEngine.Start(ctx)
 }
 
@@ -109,6 +110,7 @@ func (s *Server) Shutdown() {
 	cancel()
 	s.modules.metrics.Stop()
 	s.modules.backupSched.Stop()
+	s.modules.deploySchedule.Stop()
 	s.modules.selfUpdate.Stop()
 	s.modules.term.Shutdown()
 	s.modules.dbs.Shutdown()

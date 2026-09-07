@@ -35,7 +35,7 @@ import type {
   EnvVar,
 } from "@/lib/types"
 import { Page, PageHeader, Metric, MetricStrip } from "@/components/page"
-import { Panel, PanelBody, PanelHeader, Well } from "@/components/panel"
+import { Panel, PanelBody, PanelHeader } from "@/components/panel"
 import { EmptyState, ErrorState, LoadingPanel, Notice } from "@/components/state"
 import {
   DeploymentStatus,
@@ -52,6 +52,7 @@ import {
   NormalizedStorageTab,
   NormalizedVariablesTab,
 } from "@/components/deploy/deployment-configuration"
+import { DeploymentAutomation } from "@/components/deploy/deployment-automation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -332,9 +333,12 @@ export function DeploymentWorkspace() {
           <OwnedFeatureTab kind="storage" deployment={deployment} />
         ))}
       {activeTab === "automations" && (
-        <AutomationsTab
-          project={project}
-          normalized={deployment.buildMethod !== "legacy_compose"}
+        <DeploymentAutomation
+          projectID={project.id}
+          environmentID={environmentID}
+          legacyHook={project.hookUrl}
+          legacyEnabled={project.enabled}
+          normalized={normalized}
         />
       )}
       {activeTab === "metrics" && <OwnedFeatureTab kind="metrics" deployment={deployment} />}
@@ -940,43 +944,6 @@ function OwnedFeatureTab({
         </Button>
       </PanelBody>
     </Panel>
-  )
-}
-
-function AutomationsTab({ project, normalized }: { project: DeployProject; normalized: boolean }) {
-  return (
-    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-      <Panel>
-        <PanelHeader icon={GitBranch} title="Deploy on push" />
-        <PanelBody className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-muted-foreground">Legacy deployment hook</span>
-            <Badge variant={project.enabled ? "default" : "secondary"}>
-              {project.enabled ? "Enabled" : "Disabled"}
-            </Badge>
-          </div>
-          {project.hookUrl ? (
-            <Well className="break-all select-all">{project.hookUrl}</Well>
-          ) : (
-            <p className="text-xs text-muted-foreground">No hook URL is available.</p>
-          )}
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Sign webhook bodies with this deployment&apos;s secret. Secret rotation remains
-            available through the legacy API and is audited.
-          </p>
-        </PanelBody>
-      </Panel>
-      <Panel>
-        <PanelHeader icon={RefreshClockwise} title="Automation policy" />
-        <PanelBody>
-          <Notice title={normalized ? "Pending integration" : "Legacy compatibility active"}>
-            {normalized
-              ? "Normalized deploy-on-push rules, watched paths, schedules, and update policies arrive in the automation checkpoint."
-              : `Pushes to ${project.branch || "the configured branch"} can request the same persistent compatibility run as the manual action.`}
-          </Notice>
-        </PanelBody>
-      </Panel>
-    </div>
   )
 }
 

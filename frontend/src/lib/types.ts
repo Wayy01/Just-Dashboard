@@ -1799,6 +1799,50 @@ export type DeploymentRelease = {
   pinned: boolean
 }
 
+export type DeploymentTrigger = {
+  id: number
+  environmentId: number
+  projectId: number
+  name: string
+  kind: "generic_hook" | "api" | "github" | "gitlab" | "bitbucket" | "gitea" | "legacy_hook"
+  provider?: string
+  config: {
+    repository?: string
+    ref?: string
+    events?: string[]
+    watchInclude?: string[]
+    watchExclude?: string[]
+    preview?: boolean
+    previewQuota?: number
+    previewDomain?: string
+  }
+  hookId?: string
+  enabled: boolean
+  lastDeliveryAt?: string
+  lastStatus?: string
+}
+
+export type DeploymentSchedule = {
+  id: number
+  environmentId: number
+  name: string
+  expression: string
+  timezone: string
+  enabled: boolean
+  nextRunAt?: string
+  steps: { action: string; config: Record<string, unknown>; required: boolean }[]
+}
+
+export type DeploymentPreview = {
+  id: number
+  triggerId: number
+  providerRef: string
+  environmentId: number
+  environmentSlug: string
+  state: "open" | "closed"
+  updatedAt: string
+}
+
 export type DeploymentActiveWork = {
   run: DeploymentEngineRun
   projectName: string

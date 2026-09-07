@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
 )
@@ -55,6 +56,12 @@ type NormalizedStepExecutor struct {
 	preflight     PreflightObserver
 	proxy         ActivationProxy
 	workspaceRoot string
+	notifications *AutomationStore
+}
+
+func (e *NormalizedStepExecutor) WithNotifications(store *AutomationStore) *NormalizedStepExecutor {
+	e.notifications = store
+	return e
 }
 
 // WithBackupGate attaches the existing Backups feature through its narrow
@@ -179,13 +186,55 @@ func (e *NormalizedStepExecutor) Execute(ctx context.Context, execution StepExec
 	case StepRecordRelease:
 		return e.recordRelease(ctx, execution)
 	case StepNotify:
-		return StepResult{State: StepSkipped, Evidence: mustJSON(map[string]any{"reason": "no notification policy configured"})}
+		return e.notify(ctx, execution)
 	default:
 		return StepResult{
 			State: StepUnavailable, ErrorCode: "unsupported_runtime",
 			ErrorMessage: fmt.Sprintf("normalized runtime step %s is not implemented yet", execution.Step.Key),
 		}
 	}
+}
+
+func (e *NormalizedStepExecutor) notify(ctx context.Context, execution StepExecution) StepResult {
+	if e.notifications == nil {
+		return StepResult{State: StepSkipped, Evidence: mustJSON(map[string]any{"reason": "no notification service configured"})}
+	}
+	channels, err := e.notifications.ListNotificationChannels(ctx)
+	if err != nil {
+		return StepResult{State: StepWarning, Evidence: mustJSON(map[string]any{"delivered": 0, "failed": 1, "reason": "notification channels unavailable"})}
+	}
+	delivered, failed := 0, 0
+	for _, channel := range channels {
+		if !channel.Enabled || !notificationEventSelected(channel.Events, "run.finished") {
+			continue
+		}
+		err := e.notifications.DeliverNotification(ctx, nil, channel.ID, NotificationEnvelope{Event: "run.finished", RunID: execution.Run.ID, ProjectID: execution.Run.ProjectID, EnvironmentID: execution.Run.EnvironmentID, State: string(RunSucceeded), SentAt: time.Now().UTC()})
+		if err != nil {
+			failed++
+		} else {
+			delivered++
+		}
+	}
+	state := StepPassed
+	if delivered == 0 && failed == 0 {
+		state = StepSkipped
+	}
+	if failed > 0 {
+		state = StepWarning
+	}
+	return StepResult{State: state, Evidence: mustJSON(map[string]any{"delivered": delivered, "failed": failed})}
+}
+
+func notificationEventSelected(events []string, want string) bool {
+	if len(events) == 0 {
+		return true
+	}
+	for _, event := range events {
+		if event == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *NormalizedStepExecutor) analyzePlan(
