@@ -694,19 +694,48 @@
     -8px 0;
 }
 
-/* The workbench frames the real PTY; it never reconstructs output from text.
-   A size container lets small windows give their space back to live output. */
-.terminal-workbench {
-  container-type: size;
-  background: linear-gradient(155deg, var(--surface-header), var(--surface-sunken) 65%);
+/* tmux owns history for persistent sessions. Hide the unrelated emulator
+   scrollbar, while leaving its wheel handler available to interactive apps. */
+.terminal-tmux .xterm .xterm-scrollable-element > .scrollbar {
+  display: none !important;
 }
-@container (max-height: 560px) {
-  .terminal-starters {
-    display: none;
-  }
+.terminal-tmux .xterm-viewport {
+  scrollbar-width: none;
 }
-@container (max-height: 280px) {
-  .terminal-composer {
-    display: none;
-  }
+.terminal-history {
+  writing-mode: vertical-lr;
+  direction: ltr;
+  appearance: none;
+  background: transparent;
+  margin: 0;
+  height: calc(100% - 1.5rem);
+}
+.terminal-history::-webkit-slider-runnable-track {
+  width: 4px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.terminal-history::-webkit-slider-thumb {
+  appearance: none;
+  width: 8px;
+  height: 32px;
+  margin-left: -2px;
+  background: var(--muted-foreground);
+  border-radius: 8px;
+}
+.terminal-history::-moz-range-track {
+  width: 4px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.terminal-history::-moz-range-thumb {
+  width: 8px;
+  height: 32px;
+  border: 0;
+  background: var(--muted-foreground);
+  border-radius: 8px;
+}
+.terminal-history:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }

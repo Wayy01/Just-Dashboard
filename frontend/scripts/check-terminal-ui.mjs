@@ -9,6 +9,8 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 const errors = []
 const mutations = []
 const input = []
+const controls = []
+let scrollOffset = 40
 let sessionPresent = true
 let closedWindows = 0
 let closedSessions = 0
@@ -92,10 +94,23 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
   if (socket.url().includes("/attach")) {
     socket.send(
       Buffer.from(
-        "\x1b[32mubuntu\x1b[0m ~/Just-Dashboard\r\n$ git status\r\nOn branch main\r\nYour branch is up to date with origin/main.\r\n\r\nnothing to commit, working tree clean\r\n\r\n\x1b[32mubuntu\x1b[0m ~/Just-Dashboard\r\n$ ",
+        "\x1b[32m~/Just-Dashboard\x1b[0m\r\n❯ git status\r\nOn branch main\r\nYour branch is up to date with origin/main.\r\n\r\nnothing to commit, working tree clean\r\n\r\n\x1b[32m~/Just-Dashboard\x1b[0m\r\n❯ ",
       ),
     )
     socket.onMessage((message) => {
+      if (typeof message === "string" && message.startsWith("{")) {
+        const control = JSON.parse(message)
+        controls.push(control)
+        if (control.type === "exit-copy") scrollOffset = 0
+        if (control.type === "scroll-to") scrollOffset = control.offset
+        if (["sync-copy", "exit-copy", "scroll-to"].includes(control.type))
+          socket.send(
+            JSON.stringify({
+              type: "copy-mode",
+              data: { active: scrollOffset > 0, offset: scrollOffset, history: 100, height: 30 },
+            }),
+          )
+      }
       if (typeof message === "string" && !message.startsWith("{")) {
         input.push(message)
         socket.send(Buffer.from(message))
@@ -106,37 +121,25 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
 try {
   await page.goto(`${process.env.JD_BROWSER_BASE_URL ?? "http://127.0.0.1:3107"}/terminal`)
   await page.locator(".xterm-screen").waitFor()
-  await page.getByRole("heading", { name: "What are you working on?" }).waitFor()
-  await page.screenshot({ animations: "disabled", path: "/tmp/workbench-welcome.png" })
-  const sentBeforeStarter = input.length
-  await page.getByRole("button", { name: /Explore files/ }).click()
-  const draft = page.getByRole("textbox", { name: "Command draft" })
-  assert.equal(await draft.inputValue(), "ls -lah")
-  assert.equal(input.length, sentBeforeStarter, "starter must only prepare a draft")
-  await draft.press("Enter")
-  await page.waitForFunction(
-    () => document.querySelector('textarea[aria-label="Command draft"]').value === "",
+  assert.equal(await page.getByRole("textbox", { name: "Command draft" }).count(), 0)
+  assert.equal(await page.getByRole("button", { name: "Focus", exact: true }).count(), 0)
+  const jump = page.getByRole("button", { name: "Jump to the end", exact: true })
+  await jump.click()
+  assert(
+    controls.some((c) => c.type === "exit-copy"),
+    "jump must reach the socket",
   )
-  assert(input.includes("ls -lah\r"))
-  await draft.fill("echo one\necho two")
-  const beforeMultiline = input.length
-  await draft.press("Enter")
-  await page.getByRole("dialog").waitFor()
-  assert.equal(input.length, beforeMultiline, "multiline must wait for confirmation")
-  await page.getByRole("button", { name: "Cancel", exact: true }).click()
-  assert.equal(await draft.inputValue(), "echo one\necho two")
-  await draft.press("Enter")
-  await page.getByRole("button", { name: "Paste and run", exact: true }).click()
-  await page.waitForFunction(
-    () => document.querySelector('textarea[aria-label="Command draft"]').value === "",
-  )
-  assert(input.includes("echo one\recho two\r"))
-  await page.getByRole("button", { name: "Focus", exact: true }).click()
-  assert.equal(await draft.count(), 0)
+  await jump.waitFor({ state: "hidden" })
+  const scrollbar = page.getByRole("slider", { name: "Terminal scrollback" })
+  await scrollbar.focus()
+  await scrollbar.press("Home")
+  await jump.waitFor()
+  assert(controls.some((c) => c.type === "scroll-to" && c.offset === 100))
+  await jump.click()
   await page.locator(".xterm-helper-textarea").press("a")
-  await page.getByRole("button", { name: "Workspace", exact: true }).click()
-  await draft.waitFor()
-  assert(input.includes("a"), "direct terminal typing must still work")
+  await page.locator(".xterm-helper-textarea").press("Tab")
+  assert(input.includes("a"), "native typing must reach the shell")
+  assert(input.includes("\t"), "Tab must reach native shell completion")
   const bar = page.locator('[aria-label="Terminal workspace"]')
   assert.equal(await bar.locator(":scope > button").count(), 2)
   assert.equal(await bar.getByText("/home/ubuntu/Just-Dashboard", { exact: true }).count(), 0)
@@ -235,7 +238,7 @@ try {
   )
   assert.deepEqual(errors, [])
   console.log(
-    "PASS: workspace composer, safe multiline input, direct typing, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
+    "PASS: native typing and Tab, clickable jump, scroll seeking, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
   )
 } finally {
   await browser.close()
