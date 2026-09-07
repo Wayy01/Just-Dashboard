@@ -91,7 +91,7 @@ export function WindowStrip({
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1">
       <div
-        className="flex min-w-0 items-center gap-1 overflow-x-auto"
+        className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-xl border border-hairline bg-muted/25 p-1"
         aria-label="Terminal windows"
       >
         {windows.map((win, position) =>
@@ -235,10 +235,10 @@ function WindowChip({
       }}
       style={tagStyle(colour)}
       className={cn(
-        "group flex h-11 min-w-36 max-w-64 flex-1 shrink-0 items-center gap-1 rounded-lg border px-2 text-sm transition-colors",
+        "group flex h-10 min-w-36 max-w-64 flex-1 shrink-0 items-center gap-1 rounded-lg border px-2 text-sm transition-colors",
         win.active
-          ? "border-primary/45 bg-primary/12 text-foreground shadow-sm"
-          : "border-hairline bg-[var(--control)] text-muted-foreground hover:border-primary/25 hover:bg-accent",
+          ? "raised border-hairline bg-[var(--control)] text-foreground"
+          : "border-transparent bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
         inserting && "border-l-2 border-l-primary",
       )}
     >
