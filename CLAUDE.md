@@ -72,7 +72,9 @@ JD_DEPLOY_LIVE=1 go test ./internal/deploy -run TestLiveC4ArtifactAdapters -coun
 **Frontend notes.** bun only (`bun.lock`); never add `package-lock.json` or `yarn.lock`. Next's dev
 rewrite proxies HTTP but **not** WebSocket upgrades, so socket-backed pages in dev need
 `NEXT_PUBLIC_WS_BASE=http://localhost:8080` plus `JD_ALLOWED_ORIGINS=http://localhost:3000` on the
-backend. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
+backend. The default WebSocket origin check matches scheme, hostname, and effective port (`https` in
+production, `http` under `JD_DEV`); each cross-origin exception must be a complete origin in that
+allowlist. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
 it and leaves every editor spinning. `go.mod` declares `go 1.25.0` — check `go version` before blaming
 the code on a network-restricted machine.
 
@@ -90,7 +92,7 @@ on failure under ignored `test-results`/`playwright-report` directories.
 `backend/internal/api/routes.go` is the map of the whole API. Every `/api/v1` request passes:
 
 ```
-network allowlist → rate limit → authenticate → capability → handler
+network allowlist → rate limit → authenticate → CSRF (session mutations) → capability → handler
 ```
 
 - **Allowlist before auth** (`httpx.AllowlistCIDRs`): an off-network attacker cannot reach the login
@@ -105,6 +107,10 @@ network allowlist → rate limit → authenticate → capability → handler
   minting tokens, account management).
 - **`httpx.AuditMutations`** records every state-changing request. WebSocket routes are GET and
   long-lived, so they call `s.recordAudit(...)` at open time — the event is "a terminal was opened".
+- **`httpx.RequireCSRF`** requires `X-JD-CSRF: 1` on every browser-session mutation, including login
+  and partial 2FA sessions. The header makes a same-site sibling origin preflight, and this application
+  grants no cross-origin browser access. Bearer tokens, agent mTLS and the HMAC webhook do not use
+  ambient cookies and are deliberately outside that check.
 
 Two deliberate exceptions: `/healthz` (unauthenticated, fixed body, no version or hostname) and
 `/api/v1/hooks/deploy/{hookID}` (HMAC over the raw body, still allowlisted, still audited so
@@ -117,7 +123,8 @@ the mount site is only the conversion.
 
 - Return `httpx.Err/BadRequest/Internal/Wrap`; never write an error body by hand. `httpx.WriteError` is
   the single renderer and is what keeps internal error strings off the wire.
-- Decode with `httpx.DecodeJSON` (4 MB cap, unknown fields rejected).
+- Decode with `httpx.DecodeJSON` (4 MB cap, `application/json` required, unknown fields and trailing
+  values rejected).
 - `s.destructive(r, ...)` = capability check + `destrLim` + audit. It does **not** enforce confirmation;
   the typed-phrase subset calls `httpx.RequireTypedConfirmation(w, r, phrase)` **inside** the handler,
   where the phrase is known, and it reaches the client as `error.phrase`. See invariant 3.
@@ -182,7 +189,10 @@ and chmod, which act *on* a symlink.
 `internal/safepath` holds the archive-unpacking rules (absolute symlink targets refused, nothing written
 through a symlink already in the destination, the final component unlinked rather than followed). Both
 `files/archive.go` and `backups/restore.go` use it; they used to carry a copy each of the same lexical
-prefix test, with the same hole. `internal/sysinfo` reads the host through gopsutil rather than parsing
+prefix test, with the same hole. File-manager extraction additionally stops after 100,000 entries or
+8 GiB of bytes actually written, reserves at least 1 GiB of free space, serialises extraction requests,
+removes the current partial file on failure, and obeys a ten-minute request deadline — compressed
+metadata is never trusted as the quota. `internal/sysinfo` reads the host through gopsutil rather than parsing
 `/proc`, so the same path works across kernels and inside a container with `/proc` bind-mounted.
 
 ### Auth, secrets, state
@@ -190,9 +200,11 @@ prefix test, with the same hole. `internal/sysinfo` reads the host through gopsu
 `internal/auth` owns users, sessions, TOTP, recovery codes, API tokens. Cookie `vpsd_session` (HttpOnly,
 SameSite=Strict, Secure unless `JD_DEV`). A password alone yields a *partial* session accepted only by
 the 2FA routes (`AuthenticatePartial`); everything else answers `totp_required` /
-`totp_enrollment_required`. API tokens may narrow their creator's role, never widen it, and are demoted
-with the account. `auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP
-seeds, connection strings, deploy env, backup credentials.
+`totp_enrollment_required`. That is an invariant, not a deployment option: `JD_REQUIRE_2FA` is no longer
+read, and the `require2fa` status field remains `true` only for compatibility with existing frontends.
+API tokens may narrow their creator's role, never widen it, and are demoted with the account.
+`auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP seeds, connection
+strings, deploy env, backup credentials.
 
 State is SQLite in `JD_DATA_DIR`, schema as one `CREATE TABLE IF NOT EXISTS` block in
 `internal/store/store.go` with no migration tool (invariant 8). The file is still named `vpsd.db`
@@ -560,6 +572,9 @@ two-gigabyte log.
 - **`Usage`** accumulates per-child totals in the *same* bounded walk (forty children would otherwise be
   forty-one walks) and reports `Truncated` rather than quoting a partial total. A symlink counts as the
   link, or a tree with links into /usr reports the size of the operating system.
+- **`GET /system/disk-usage` is a file operation.** Its requested mount passes through `files.Resolve`,
+  recursive visits and top-level children are capped, and only two scans run concurrently. A result limit
+  controls the response size; it is not mistaken for a bound on the work needed to rank those results.
 
 Bookmarks live in the `settings` table (`handlers_files_browse.go`), not the browser — which directory
 matters is a fact about the server and should be there from a phone. Recent folders are the opposite and
@@ -568,7 +583,9 @@ disagree about order; every path is resolved before storing.
 
 Frontend `components/files/`: `file-icon.tsx` is the vocabulary (~200 extensions, the files with none —
 Dockerfile, authorized_keys, lockfiles — and the folders whose name says more than "folder") mapped to
-eight **categories** rather than languages, in the terminal rail's `--tag-*` hues. `file-actions.tsx` is
+eight **categories** rather than languages, in the terminal rail's `--tag-*` hues, drawn from Material
+Design Icons (`@mdi/js`); every other glyph in the product comes from the Heroicons vocabulary in
+`components/icons.tsx`. `file-actions.tsx` is
 the one menu both the row and the tile use, or an action ends up in one view only. Two layout rules are
 easy to undo: **the panel body does not scroll** (a sticky table header sticks to its nearest scrolling
 ancestor, and the header rode away with the rows), and **the rail's tree waits for `/files/places`**
@@ -834,7 +851,9 @@ Redis on pure-Go drivers, so the image still needs no CGO.
   cannot see a certificate renewed and never reloaded, a proxy still offering TLS 1.0, or a redirect that
   quietly stopped. Each version is probed on a connection pinned to exactly that version; a version this
   client will not ask for is `unknown`, **never `refused`**, since reporting it absent would be false
-  reassurance about the versions that matter most. `grade` is a pure function of the scan.
+  reassurance about the versions that matter most. `grade` is a pure function of the scan. The live
+  certificate, TLS and DNS probes require `system.admin`: each emits traffic to a caller-chosen
+  destination, the same scanner boundary as `/network/probe`.
 - **`dns01.go` — wildcards and CDN-fronted domains**, which between them are most of the certificates
   people want: Let's Encrypt signs `*.example.com` only against DNS-01, and a Cloudflare-proxied domain
   never receives an HTTP challenge. Eight certbot plugins as a closed set (each names credentials and
@@ -1113,7 +1132,11 @@ because only the host side can collide.
 
 Caddy is the only listener on anything but loopback and binds `{$JD_SITE}` **plus** loopback explicitly —
 site addresses alone would leave it listening on every interface. One origin for UI and API is
-load-bearing: `SameSite=Strict` cookies and the WebSocket origin check both depend on it. Caddy rewrites
+load-bearing: `SameSite=Strict` cookies, the mutation CSRF header and the WebSocket origin check all
+depend on it. The frontend's `src/proxy.ts` creates a fresh CSP nonce per document and passes the policy
+into Next so framework scripts and the pre-paint theme script receive it; no production policy grants
+`script-src 'unsafe-inline'`. Caddy preserves that header and supplies a deny-all fallback for
+non-document responses, plus Permissions-Policy. Caddy rewrites
 `X-Forwarded-For` to the real client address (what makes `JD_TRUSTED_PROXIES` safe); `flush_interval -1`
 and zero read/write timeouts keep the long-lived streams alive. The backend container runs `privileged`,
 `pid: host`, `network_mode: host` with the Docker socket and real host paths mounted **at their real
@@ -1184,7 +1207,8 @@ colour, the version as small muted text beside it. No mark, no tile, no straplin
 rendering of the product's name, so sidebar, sign-in and splash agree and a rename is one file. `LogoMark`
 is the single letter the collapsed rail falls back to.
 
-`components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 35 primitives) — compose rather than
+`components/ui/*` is generated shadcn/ui (new-york, zinc, 35 primitives) with its icons rewired to
+the Heroicons vocabulary in `components/icons.tsx` — compose rather than
 edit. Feature pieces live in `components/<feature>/`: `database/`, `docker/`, `files/`, `git/`, `logs/`,
 `metrics/`, `packages/`, `procs/`, `proxy/`, `security/`, `terminal/`, `update/`.
 
@@ -1293,7 +1317,26 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   by hand**: the browser's snapshot composites a transparent row onto an opaque white rectangle with hard
   corners and exposes no way to style it, so `dnd.ts` builds an off-screen chip in the theme's tokens,
   hands it to `setDragImage` and removes it next frame.
-- `window-strip.tsx` is the window chips plus `PaneBar`. A pane's label is the command running in it:
+- `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
+  toggles: sessions on the left and Files/Git on the right. There is no working-directory title bar.
+  Window menus retain split, layout, rename and colour actions; active tabs scroll into view.
+  Every tab has a visible close button. Closing the last window closes its session through the session
+  endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
+  The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
+  folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
+  Input stays in the shell: there is no separate composer or Workspace/Focus mode. Bundled Bash and
+  Zsh startup files install a compact directory/chevron prompt and native Tab completion in new windows.
+  Account profiles and interactive configuration still load; account dotfiles are never edited.
+  `term.SetupShell` atomically installs readable scripts in the process-owned shared terminal root's
+  `.shell` directory, rejecting symlink or foreign-owned directories. A constant login bootstrap passes
+  shell and startup paths as positional arguments; unsupported shells retain their ordinary startup.
+  Existing running shells are not modified. Reattached sessions receive the updated default command
+  for future windows and splits.
+  A custom scrollbar uses tmux's actual history position, with throttled updates while scrolling and
+  after output. Its seek control and Jump to the end sit above the emulator's mouse layer. Other
+  emulator consumers keep their normal scrollbar and receive no tmux-specific controls.
+  The terminal host is absolutely inset into its output region so its own rows cannot grow its parent.
+  `PaneBar` labels each pane with the command running in it:
   "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
 - `tags.tsx` is the colour vocabulary. `--tag-*` lives in `globals.css` and is the one deliberate exception
   to "compute it from the palette": a tag is a label the operator applied, and one that changed hue with
@@ -1325,6 +1368,14 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   `preventDefault`, so xterm leaves the key alone instead of sending ^V and the browser's own paste runs —
   arriving through `onData`, where the multi-line confirmation still sees it. Reading the clipboard there
   instead needs a permission Firefox does not grant at all.
+- **Clipboard images never enter the PTY.** A capture-phase paste listener on xterm's actual host leaves
+  text-only events completely alone, but sends PNG/JPEG/WebP files to
+  `POST /terminal/{id}/clipboard`. The handler binds the upload to the authenticated dashboard owner of
+  the live session, verifies the declared MIME against the bytes, and chooses the destination under
+  `/tmp/just-dashboard/<session-id>` itself. Only the returned absolute path goes through the existing
+  terminal socket, with no Enter. The backend container bind-mounts that temporary root at the same path
+  on the host; session directories are removed when their PTY truly ends and old files expire after seven
+  days, while a persistent tmux detach keeps them available.
 - **Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every line but
   the last immediately, and Ctrl+V, the context menu and the X11 middle click all arrive as one `onData`
   call — guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. That handler must call
@@ -1370,6 +1421,10 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   takes a `focusRef` and the page calls it *before* the request (the switch is a round trip to tmux, the
   focus is not).
 
+**Shell-here links are consumed once.** The page removes `cwd` and `folder` from the current history
+entry before creating the session, preserving other query parameters and the hash. A refresh cannot
+replay a launch or recreate a closed session; a later explicit Shell here link can still launch anew.
+
 **The page has no header.** A terminal is the one screen whose content *is* the viewport, and a title band
 plus a notice cost about a fifth of the pane on a laptop. The breadcrumb says where you are, "New session"
 sits in the rail beside "New folder", and which account a shell runs as is on the pane's own header. The
@@ -1378,7 +1433,8 @@ one banner that stays is a missing login account — a broken feature rather tha
 ### Data and theming
 
 - `src/lib/api.ts` is the only fetch layer: `get/post/put/patch/del`, `credentials: "include"`,
-  `X-Confirm` passthrough, `ApiError` with `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
+  `X-JD-CSRF` on every mutation, `X-Confirm` passthrough, `ApiError` with
+  `needsConfirmation`/`isAuthProblem`/`needsTotp`; `wsUrl()` and
   `downloadUrl()` build the non-JSON URLs.
 - `usePoll` — abort-per-run so a slow endpoint cannot stack requests, paused on a hidden tab.
 - `useSocket` — reconnect with backoff (these sockets ride a tunnel that drops routinely), handlers in a
@@ -1415,8 +1471,9 @@ one banner that stays is a missing login account — a broken feature rather tha
 - **Theming is light and dark, one palette**, in `globals.css`'s `:root` and `.dark`. `lib/themes.ts` holds
   only what does not belong in a component: `ThemeMode`, `DEFAULT_MODE` (dark), the storage key, and
   `themeBootstrapScript()`. That script is inlined in `<head>` so the stored choice applies **before first
-  paint** — reading it after hydration flashes a screen of near-black at anyone who chose light, on every
-  navigation that reloads the document; `<html>` carries `suppressHydrationWarning` for exactly that.
+  paint**, with the request's CSP nonce — reading it after hydration flashes a screen of near-black at
+  anyone who chose light, on every navigation that reloads the document; `<html>` carries
+  `suppressHydrationWarning` for exactly that.
   `hooks/use-theme.tsx` treats the document as the store (`useSyncExternalStore` over the root class)
   rather than holding a second copy to sync in an effect. The choice is in localStorage, not on the
   account: it belongs to the screen you are sitting at. `/appearance` is the page; ⌘K is the shortcut.
@@ -1447,9 +1504,10 @@ A change that weakens any of these has to say so explicitly.
 5. Every state-changing request lands in the audit log.
 6. Client-supplied paths go through `files.Resolve` — including the ones that do not look like file
    operations (bind-mount source, build context, a new stack's directory). Host commands go through
-   `hostexec` with an argv, never a shell string. The one shell is `deploy.Deployer.shell`, deliberately:
+   `hostexec` with an argv, never a shell string. Request-defined shell source is confined to `deploy.Deployer.shell`, deliberately:
    those are pipelines an admin stored for their own project, not anything supplied per request. Do not add
-   a second, and do not "fix" that one into an argv. `dockerx` invokes the `docker` binary in three places
+   a second request-defined shell, and do not "fix" that one into an argv. Terminal startup also uses
+   a bundled constant bootstrap to load the native prompt; paths remain separate positional arguments. `dockerx` invokes the `docker` binary in three places
    (compose, the streaming runner, `Build`) because the Engine API has no equivalent; all three build argv
    explicitly.
 7. Nothing but Caddy binds a routable address.

@@ -31,7 +31,8 @@ var (
 const maxEditBytes = 8 << 20
 
 type Service struct {
-	roots []string
+	roots     []string
+	extractMu sync.Mutex
 }
 
 func New(roots []string) *Service {
@@ -50,9 +51,9 @@ func New(roots []string) *Service {
 func (s *Service) Roots() []string { return s.roots }
 
 // Resolve validates a client-supplied path. It checks the literal cleaned path
-// and, when the target exists, the symlink-resolved one — a symlink inside a
-// root pointing outside it must not become a way out. For a path that does not
-// exist yet (a file being created) the parent directory is checked instead.
+// and the nearest existing ancestor after resolving symlinks — a symlink inside
+// a root pointing outside it must not become a way out, even when several path
+// components below that link do not exist yet.
 func (s *Service) Resolve(path string) (string, error) {
 	if path == "" {
 		path = s.roots[0]
@@ -64,21 +65,9 @@ func (s *Service) Resolve(path string) (string, error) {
 	if !s.within(abs) {
 		return "", fmt.Errorf("%w: %s", ErrOutsideRoot, path)
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	resolved, err := resolveFromExistingAncestor(abs)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
-		if err != nil {
-			// The parent does not exist either; the literal check above is
-			// the strongest guarantee available and it already passed.
-			return abs, nil
-		}
-		if !s.within(parent) {
-			return "", fmt.Errorf("%w: %s", ErrOutsideRoot, path)
-		}
-		return filepath.Join(parent, filepath.Base(abs)), nil
+		return "", err
 	}
 	if !s.within(resolved) {
 		return "", fmt.Errorf("%w: %s resolves outside the permitted roots", ErrOutsideRoot, path)
@@ -114,19 +103,48 @@ func (s *Service) ResolveEntry(path string) (string, error) {
 			return abs, nil
 		}
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	parent, err := resolveFromExistingAncestor(filepath.Dir(abs))
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		// The parent does not exist; the literal check above is the strongest
-		// guarantee available and it already passed.
-		return abs, nil
+		return "", err
 	}
 	if !s.within(parent) {
 		return "", fmt.Errorf("%w: %s resolves outside the permitted roots", ErrOutsideRoot, path)
 	}
 	return filepath.Join(parent, filepath.Base(abs)), nil
+}
+
+// resolveFromExistingAncestor preserves the missing suffix but resolves every
+// ancestor that already exists. Checking only the immediate parent leaves an
+// outward symlink hidden whenever two new directories follow it.
+func resolveFromExistingAncestor(path string) (string, error) {
+	current := path
+	missing := []string{}
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		// A broken symlink exists even though EvalSymlinks reports ENOENT. Do
+		// not treat it as an ordinary missing component: its target could be
+		// created outside the roots after this check.
+		if _, lstatErr := os.Lstat(current); lstatErr == nil {
+			return "", err
+		} else if !os.IsNotExist(lstatErr) {
+			return "", lstatErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func (s *Service) within(abs string) bool {

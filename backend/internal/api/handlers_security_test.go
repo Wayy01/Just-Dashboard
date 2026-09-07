@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +84,9 @@ func (c *client) do(method, path, body string, headers map[string]string) *httpt
 	req := httptest.NewRequest(method, path, reader)
 	req.RemoteAddr = "127.0.0.1:5555"
 	req.Header.Set("Cookie", c.cookie)
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set(httpx.CSRFHeader, "1")
+	}
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -185,6 +190,52 @@ func TestNetworkProbeRejectsABadTarget(t *testing.T) {
 	w = c.do(http.MethodPost, "/api/v1/network/probe", `{"tool":"exploit","target":"example.com"}`, nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown tool accepted: %d", w.Code)
+	}
+}
+
+// The extended tools ride the same route: host-local ones answer without a
+// target, a bad option is refused before anything runs, and a refused port
+// comes back as a result rather than an error.
+func TestNetworkProbeExtendedTools(t *testing.T) {
+	c, _ := newClient(t)
+	for _, tool := range []string{"listeners", "egress", "neigh"} {
+		w := c.do(http.MethodPost, "/api/v1/network/probe",
+			`{"tool":"`+tool+`","target":""}`, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: got %d: %s", tool, w.Code, w.Body.String())
+		}
+		var res netsec.ProbeResult
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.Tool != tool {
+			t.Errorf("%s: answered as %q", tool, res.Tool)
+		}
+	}
+	// A closed loopback port refuses fast: the banner tool's failure path,
+	// through the whole chain.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedPort := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	w := c.do(http.MethodPost, "/api/v1/network/probe",
+		`{"tool":"banner","target":"127.0.0.1","port":`+strconv.Itoa(closedPort)+`}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("banner: got %d: %s", w.Code, w.Body.String())
+	}
+	var res netsec.ProbeResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.OK {
+		t.Errorf("banner against a closed port reported ok: %+v", res)
+	}
+	w = c.do(http.MethodPost, "/api/v1/network/probe",
+		`{"tool":"starttls","target":"127.0.0.1","port":25,"option":"gopher"}`, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad starttls protocol accepted: %d", w.Code)
 	}
 }
 
@@ -426,6 +477,21 @@ func TestTLSScanReportsAnUnreachableHost(t *testing.T) {
 	}
 	if scan.Grade != "F" || len(scan.Findings) == 0 {
 		t.Fatalf("got grade %q with %d findings", scan.Grade, len(scan.Findings))
+	}
+}
+
+func TestReadonlyCannotUseServerSideDomainProbes(t *testing.T) {
+	s := testServer(t)
+	c := &client{t: t, h: s.Routes(), cookie: signInAs(t, s, "probe-viewer", auth.RoleReadOnly)}
+
+	for _, path := range []string{
+		"/api/v1/certificates/check?domain=127.0.0.1&port=1",
+		"/api/v1/certificates/scan?domain=127.0.0.1&port=1",
+		"/api/v1/certificates/dns?domain=localhost",
+	} {
+		if w := c.do(http.MethodGet, path, "", nil); w.Code != http.StatusForbidden {
+			t.Errorf("%s as readonly got %d, want 403: %s", path, w.Code, strings.TrimSpace(w.Body.String()))
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -194,10 +195,31 @@ func (s *Server) handleDiskBreakdown(w http.ResponseWriter, r *http.Request) err
 		path = "/"
 	}
 	limit := atoiDefault(r.URL.Query().Get("limit"), 25)
+	if limit < 1 {
+		return httpx.BadRequest("limit must be positive")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	resolved, err := s.modules.files.Resolve(path)
+	if err != nil {
+		return mapFileError(err)
+	}
+	select {
+	case s.diskScans <- struct{}{}:
+		defer func() { <-s.diskScans }()
+	default:
+		return httpx.Err(http.StatusTooManyRequests, "disk_scan_busy",
+			"two disk usage scans are already running")
+	}
 	ctx, cancel := timeoutCtx(r, 45*time.Second)
 	defer cancel()
-	entries, err := sysinfo.DirBreakdown(ctx, path, limit)
+	entries, err := sysinfo.DirBreakdown(ctx, resolved, limit)
 	if err != nil {
+		if errors.Is(err, sysinfo.ErrDirScanLimit) {
+			return httpx.Err(http.StatusUnprocessableEntity, "disk_scan_limit",
+				"the directory is too large to scan safely")
+		}
 		return httpx.BadRequest("cannot scan %s: %v", path, err)
 	}
 	httpx.JSON(w, http.StatusOK, entries)

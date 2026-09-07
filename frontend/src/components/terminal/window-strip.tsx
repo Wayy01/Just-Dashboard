@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Bell,
   BlendMode,
@@ -88,73 +88,56 @@ export function WindowStrip({
   const [dropAt, setDropAt] = useState<number | null>(null)
   const active = windows.find((w) => w.active)
 
-  if (windows.length === 0) return null
-
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1">
-      {windows.map((win, position) =>
-        renaming === win.index ? (
-          <WindowNameInput
-            key={win.index}
-            value={win.name}
-            onCommit={(value) => {
-              if (value) onRename(win.index, value)
-              setRenaming(null)
-            }}
-            onCancel={() => setRenaming(null)}
-          />
-        ) : (
-          <WindowChip
-            key={win.index}
-            win={win}
-            position={position}
-            sessionName={sessionName}
-            colour={win.colour || sessionColour}
-            inserting={dropAt === position}
-            closable={windows.length > 1}
-            onSelect={() => onSelect(win.index)}
-            onStartRename={() => setRenaming(win.index)}
-            onColour={(colour) => onColour(win.index, colour)}
-            onClose={() => onClose(win.index)}
-            onSplit={(vertical) => onSplit(win.index, vertical)}
-            onLayout={(layout) => onLayout(win.index, layout)}
-            onSynchronize={(on) => onSynchronize(win.index, on)}
-            onDragOverChip={() => setDropAt(position)}
-            onDropChip={(event) => {
-              setDropAt(null)
-              const payload = readDrop(event, "window")
-              endDrag()
-              if (payload?.kind !== "window" || payload.session !== sessionName) return
-              if (payload.position !== position) onReorder(payload.index, position)
-            }}
-            onDragEndChip={() => setDropAt(null)}
-          />
-        ),
-      )}
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <div
+        className="flex min-w-0 items-center gap-1 overflow-x-auto"
+        aria-label="Terminal windows"
+      >
+        {windows.map((win, position) =>
+          renaming === win.index ? (
+            <WindowNameInput
+              key={win.index}
+              value={win.name}
+              onCommit={(value) => {
+                if (value) onRename(win.index, value)
+                setRenaming(null)
+              }}
+              onCancel={() => setRenaming(null)}
+            />
+          ) : (
+            <WindowChip
+              key={win.index}
+              win={win}
+              position={position}
+              sessionName={sessionName}
+              colour={win.colour || sessionColour}
+              inserting={dropAt === position}
+              closable
+              onSelect={() => onSelect(win.index)}
+              onStartRename={() => setRenaming(win.index)}
+              onColour={(colour) => onColour(win.index, colour)}
+              onClose={() => onClose(win.index)}
+              onSplit={(vertical) => onSplit(win.index, vertical)}
+              onLayout={(layout) => onLayout(win.index, layout)}
+              onSynchronize={(on) => onSynchronize(win.index, on)}
+              onDragOverChip={() => setDropAt(position)}
+              onDropChip={(event) => {
+                setDropAt(null)
+                const payload = readDrop(event, "window")
+                endDrag()
+                if (payload?.kind !== "window" || payload.session !== sessionName) return
+                if (payload.position !== position) onReorder(payload.index, position)
+              }}
+              onDragEndChip={() => setDropAt(null)}
+            />
+          ),
+        )}
 
-      <IconAction label="New window" className="size-6" onClick={onNew}>
-        <Plus />
-      </IconAction>
-
-      {active && (
-        <>
-          <span className="mx-0.5 h-4 w-px bg-hairline" />
-          <IconAction
-            label="Split into two panes, side by side"
-            className="size-6"
-            onClick={() => onSplit(active.index, true)}
-          >
-            <SidebarRight />
-          </IconAction>
-          <IconAction
-            label="Split into two panes, one above the other"
-            className="size-6"
-            onClick={() => onSplit(active.index, false)}
-          >
-            <Footer />
-          </IconAction>
-        </>
-      )}
+        <IconAction label="New window" className="size-10 shrink-0" onClick={onNew}>
+          <Plus />
+        </IconAction>
+      </div>
 
       {/*
         Synchronised input is drawn as a standing warning rather than as a
@@ -212,9 +195,15 @@ function WindowChip({
   onDragEndChip: () => void
 }) {
   const tag = tagVar(colour)
+  const chipRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (win.active) chipRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [win.active])
   return (
     <div
+      ref={chipRef}
       draggable
+      data-active={win.active}
       data-window={win.index}
       onDragStart={(event) =>
         beginDrag(
@@ -246,20 +235,26 @@ function WindowChip({
       }}
       style={tagStyle(colour)}
       className={cn(
-        "group flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+        "group flex h-11 min-w-36 max-w-64 flex-1 shrink-0 items-center gap-1 rounded-lg border px-2 text-sm transition-colors",
         win.active
-          ? "border-primary/40 bg-primary/10 text-foreground"
-          : "border-hairline text-muted-foreground hover:bg-accent",
+          ? "border-primary/45 bg-primary/12 text-foreground shadow-sm"
+          : "border-hairline bg-[var(--control)] text-muted-foreground hover:border-primary/25 hover:bg-accent",
         inserting && "border-l-2 border-l-primary",
       )}
     >
-      <button className="flex items-center gap-1" onClick={onSelect} onDoubleClick={onStartRename}>
+      <button
+        aria-current={win.active ? "page" : undefined}
+        title={win.name}
+        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={onSelect}
+        onDoubleClick={onStartRename}
+      >
         {tag ? (
           <TagSwatch colour={colour} className="size-1.5" />
         ) : (
           <TerminalWindowIcon className="size-3" />
         )}
-        <span className="max-w-32 truncate">{win.name}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{win.name}</span>
         {win.panes > 1 && <span className="numeric text-[9px] opacity-70">{win.panes}p</span>}
         {win.zoomed && <Fullscreen className="size-2.5 text-primary" />}
         {win.synchronized && <Linked className="size-2.5 text-warning" />}
@@ -281,7 +276,7 @@ function WindowChip({
             size="icon-sm"
             variant="ghost"
             aria-label={`More for window ${win.name}`}
-            className="size-4 opacity-0 transition-opacity group-hover:opacity-100 [&_svg:not([class*='size-'])]:size-3"
+            className="size-7 shrink-0 text-muted-foreground [&_svg:not([class*='size-'])]:size-3.5"
           >
             <MoreHorizontal />
           </Button>
@@ -332,11 +327,7 @@ function WindowChip({
             className="gap-2 text-xs"
             onSelect={() => onSynchronize(!win.synchronized)}
           >
-            {win.synchronized ? (
-              <Slash className="size-3.5" />
-            ) : (
-              <Linked className="size-3.5" />
-            )}
+            {win.synchronized ? <Slash className="size-3.5" /> : <Linked className="size-3.5" />}
             {win.synchronized ? "Stop synchronised typing" : "Type into every pane at once"}
           </DropdownMenuItem>
           {closable && (
@@ -350,14 +341,14 @@ function WindowChip({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-
       {closable && (
         <button
+          type="button"
           aria-label={`Close window ${win.name}`}
-          className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring"
           onClick={onClose}
         >
-          <Cross className="size-3" />
+          <Cross className="size-3.5" />
         </button>
       )}
     </div>
@@ -394,7 +385,7 @@ export function PaneBar({
 }) {
   if (panes.length < 2) return null
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-md border border-hairline bg-surface-header px-1.5 py-1">
+    <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg bg-surface-header px-2 py-1">
       <span className="eyebrow pr-1 text-[9px]">Panes</span>
       {panes.map((pane) => (
         <div
@@ -405,7 +396,7 @@ export function PaneBar({
           data-pane={pane.index}
           data-active={pane.active}
           className={cn(
-            "group flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors",
+            "group flex min-h-8 items-center gap-2 rounded-md px-2 text-xs transition-colors",
             pane.active ? "bg-primary/12 text-foreground" : "text-muted-foreground hover:bg-accent",
           )}
         >
@@ -420,14 +411,14 @@ export function PaneBar({
           </button>
           <IconAction
             label="Zoom this pane to fill the window"
-            className="size-4 opacity-0 transition-opacity group-hover:opacity-100 [&_svg:not([class*='size-'])]:size-3"
+            className="size-7 [&_svg:not([class*='size-'])]:size-3"
             onClick={() => onZoom(pane.index)}
           >
             <Fullscreen />
           </IconAction>
           <IconAction
             label="Close this pane"
-            className="size-4 text-destructive opacity-0 transition-opacity group-hover:opacity-100 [&_svg:not([class*='size-'])]:size-3"
+            className="size-7 text-destructive [&_svg:not([class*='size-'])]:size-3"
             onClick={() => onClose(pane.index)}
           >
             <Cross />
@@ -452,9 +443,10 @@ function WindowNameInput({
   return (
     <Input
       autoFocus
+      aria-label="Window name"
       value={draft}
       spellCheck={false}
-      className="h-6 w-32 text-xs"
+      className="h-11 w-44 shrink-0 text-sm"
       onChange={(e) => setDraft(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") onCommit(draft.trim())

@@ -120,8 +120,7 @@
   --raise-gloss: oklch(1 0 0 / 0.13);
   --raise-lip: oklch(0 0 0 / 0.08);
   --raise-press: oklch(0 0 0 / 0.07);
-  --raise-drop:
-    0 1px 1px 0 oklch(0 0 0 / 0.05), 0 2px 4px -2px oklch(0 0 0 / 0.07);
+  --raise-drop: 0 1px 1px 0 oklch(0 0 0 / 0.05), 0 2px 4px -2px oklch(0 0 0 / 0.07);
 }
 
 .dark {
@@ -212,8 +211,7 @@
   --raise-gloss: oklch(1 0 0 / 0.045);
   --raise-lip: oklch(0 0 0 / 0.3);
   --raise-press: oklch(0 0 0 / 0.24);
-  --raise-drop:
-    0 1px 1.5px 0 oklch(0 0 0 / 0.4), 0 2px 5px -2px oklch(0 0 0 / 0.35);
+  --raise-drop: 0 1px 1.5px 0 oklch(0 0 0 / 0.4), 0 2px 5px -2px oklch(0 0 0 / 0.35);
 }
 
 /* ---------------------------------------------------------------------------
@@ -694,4 +692,50 @@
     0 8px,
     8px -8px,
     -8px 0;
+}
+
+/* tmux owns history for persistent sessions. Hide the unrelated emulator
+   scrollbar, while leaving its wheel handler available to interactive apps. */
+.terminal-tmux .xterm .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+}
+.terminal-tmux .xterm-viewport {
+  scrollbar-width: none;
+}
+.terminal-history {
+  writing-mode: vertical-lr;
+  direction: ltr;
+  appearance: none;
+  background: transparent;
+  margin: 0;
+  height: calc(100% - 1.5rem);
+}
+.terminal-history::-webkit-slider-runnable-track {
+  width: 4px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.terminal-history::-webkit-slider-thumb {
+  appearance: none;
+  width: 8px;
+  height: 32px;
+  margin-left: -2px;
+  background: var(--muted-foreground);
+  border-radius: 8px;
+}
+.terminal-history::-moz-range-track {
+  width: 4px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.terminal-history::-moz-range-thumb {
+  width: 8px;
+  height: 32px;
+  border: 0;
+  background: var(--muted-foreground);
+  border-radius: 8px;
+}
+.terminal-history:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }

@@ -105,7 +105,7 @@ func run(agentFlag, agentReset bool) error {
 	if err != nil {
 		return err
 	}
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
 	aud := audit.New(st, log)
 
 	var identity *agent.Identity
@@ -175,7 +175,7 @@ func run(agentFlag, agentReset bool) error {
 		log.Info("just-dashboard listening",
 			"version", version.Version,
 			"addr", cfg.Addr, "allowlist", len(cfg.AllowedCIDRs),
-			"require2fa", cfg.Require2FA, "agent", cfg.AgentMode)
+			"agent", cfg.AgentMode)
 		var err error
 		if cfg.AgentMode {
 			// The certificate and key are already in the TLS config.

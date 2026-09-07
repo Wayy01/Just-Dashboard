@@ -301,10 +301,6 @@ fi
 
 step "Behaviour"
 
-REQUIRE_2FA=true
-yes_no "Require two-factor authentication? (strongly recommended)" y || REQUIRE_2FA=false
-[ "$REQUIRE_2FA" = "false" ] && warn "two-factor disabled — a password alone will be enough"
-
 TERMINAL=true
 yes_no "Enable the web terminal? (a real shell with this process's privileges)" y || TERMINAL=false
 
@@ -407,7 +403,6 @@ JD_ALLOWED_CIDRS=$CIDRS
 JD_TRUSTED_PROXIES=127.0.0.1/32
 JD_ALLOWED_ORIGINS=
 
-JD_REQUIRE_2FA=$REQUIRE_2FA
 JD_TERMINAL_ENABLED=$TERMINAL
 
 # Used once, to create the first account. Safe to remove afterwards.
@@ -611,10 +606,8 @@ if [ "${KEEP_ENV:-0}" -eq 0 ]; then
 	else
 		say "    password  ${DIM}(the one you chose)${RESET}"
 	fi
-	if [ "$REQUIRE_2FA" = "true" ]; then
-		say ""
-		say "  You will be asked to enrol an authenticator app before anything else works."
-	fi
+	say ""
+	say "  You will be asked to enrol an authenticator app before anything else works."
 fi
 
 say ""

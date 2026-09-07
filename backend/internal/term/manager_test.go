@@ -23,6 +23,8 @@ import (
 // tmux takes its socket directory from TMUX_TMPDIR, and every `tmux` this
 // package runs is a child of this process, so setting it here is enough.
 func TestMain(m *testing.M) {
+	// A parent tmux session overrides TMUX_TMPDIR unless cleared first.
+	os.Unsetenv("TMUX")
 	dir, err := os.MkdirTemp("", "jdtmux")
 	if err == nil {
 		// Short, because a unix socket path has about a hundred characters to

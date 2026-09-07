@@ -89,6 +89,11 @@ func (s *Server) initModules() {
 	s.modules.cron = procs.NewCron()
 	s.modules.logs = logsx.New(s.Cfg.LogRoots)
 	s.modules.term = term.NewManager(s.Cfg.TerminalEnable, s.Cfg.TerminalShell, s.Cfg.TerminalUser)
+	if s.Cfg.TerminalEnable {
+		if err := s.modules.term.SetupShell(); err != nil {
+			s.Log.Warn("terminal prompt setup unavailable", "error", err)
+		}
+	}
 	s.modules.files = files.New(s.Cfg.FileRoots)
 	s.modules.git = gitx.New(s.Cfg.GitRoots)
 	s.modules.github = ghx.New()

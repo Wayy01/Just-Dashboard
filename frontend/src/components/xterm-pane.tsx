@@ -17,6 +17,7 @@ import {
   Lightning,
   MagnifyingGlass,
   Minus,
+  MoreHorizontal,
   Plus,
   RotateClockwise,
   SettingsSliders,
@@ -30,6 +31,13 @@ import { wsUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useTheme } from "@/hooks/use-theme"
 import { actionFor, formatChord, useKeymap } from "@/lib/terminal-keymap"
+import {
+  chooseDroppedImage,
+  formatUploadSize,
+  insertTerminalPath,
+  interceptClipboardImagePaste,
+  uploadTerminalImage,
+} from "@/lib/terminal-upload"
 import {
   FONT_MAX,
   FONT_MIN,
@@ -80,10 +88,11 @@ type XtermTheme = NonNullable<Terminal["options"]["theme"]>
  * git hashes, vim comments, `ls -l` metadata — so it is kept clearly legible
  * either way.
  */
-const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> = {
-  dark: { black: 18, brightBlack: 44, white: 74 },
-  light: { black: 86, brightBlack: 56, white: 44 },
-}
+const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number; white: number }> =
+  {
+    dark: { black: 18, brightBlack: 44, white: 74 },
+    light: { black: 86, brightBlack: 56, white: 44 },
+  }
 
 /** cyan has no near-200° token in the palette, so it is the one hardcoded hue. */
 const TERMINAL_CYAN: Record<"dark" | "light", string> = {
@@ -220,6 +229,7 @@ function resolveTerminalTheme(mode: "dark" | "light"): XtermTheme {
  *  the difference — which is the point, since Ctrl+C has to interrupt rather
  *  than be delivered as text. */
 const CONTROL_KEYS = [
+  { label: "Tab", hint: "Autocomplete command or path", bytes: "\t" },
   { label: "Ctrl+C", hint: "Interrupt what is running", bytes: "\u0003" },
   { label: "Ctrl+D", hint: "End of input — logs a shell out", bytes: "\u0004" },
   { label: "Ctrl+Z", hint: "Suspend to the background", bytes: "\u001a" },
@@ -248,6 +258,7 @@ export function XtermPane({
   copyMode,
   onToggleFullscreen,
   fullscreenActive,
+  terminalSessionId,
 }: {
   path: string
   query?: Query
@@ -296,6 +307,8 @@ export function XtermPane({
    */
   onToggleFullscreen?: () => void
   fullscreenActive?: boolean
+  /** Enables session-scoped image paste/drop on the real terminal page only. */
+  terminalSessionId?: string
 }) {
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -327,6 +340,8 @@ export function XtermPane({
   // a button offering to return a terminal that had never moved. The wheel
   // only *asks* now, and `#{pane_in_mode}` coming back over the socket is what
   // puts the button on screen.
+  const [scroll, setScroll] = useState({ offset: 0, history: 0, height: 0 })
+  const draggingScroll = useRef(false)
   const [scrolledBack, setScrolledBack] = useState(false)
   const scrolledBackRef = useRef(false)
   // A wheel tick has gone out and tmux has not yet said what became of it.
@@ -345,8 +360,12 @@ export function XtermPane({
   // and the readable version to show. They differ whenever the shell has
   // bracketed paste on, where the text arrives wrapped in escape sequences
   // that must be forwarded intact and must not be put on screen.
-  const [pendingPaste, setPendingPaste] = useState<{ raw: string; text: string } | null>(null)
+  const [pendingPaste, setPendingPaste] = useState<{
+    raw: string
+    text: string
+  } | null>(null)
   const [bell, setBell] = useState(false)
+  const [imageDrag, setImageDrag] = useState(false)
   // The title the shell sets through OSC 0/2 — which for anybody with a
   // configured prompt is the command that is running. It is the one label the
   // pane can carry that says what this terminal is *doing* rather than what it
@@ -368,6 +387,10 @@ export function XtermPane({
   const searchRef = useRef<SearchAddon | null>(null)
   const fitRef = useRef<{ fit: () => void } | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
+  // The upload path uses this exact input writer after its HTTP request
+  // finishes. It is assigned by the live socket effect so a returned path
+  // travels through the same transport and copy-mode handling as typing.
+  const inputRef = useRef<((data: string) => boolean) | null>(null)
   const modeRef = useRef(mode)
   // Settings are read inside the connect effect, which must not re-run when
   // one changes: rebuilding the terminal would drop the scrollback and, on a
@@ -692,6 +715,12 @@ export function XtermPane({
               if (!active) wheeledRef.current = false
               scrolledBackRef.current = active
               setScrolledBack(active)
+              if (!draggingScroll.current)
+                setScroll({
+                  offset: Math.max(0, Number(msg.data?.offset) || 0),
+                  history: Math.max(0, Number(msg.data?.history) || 0),
+                  height: Math.max(0, Number(msg.data?.height) || 0),
+                })
             }
           } catch {
             term.write(event.data)
@@ -703,6 +732,7 @@ export function XtermPane({
         // timeout.
         term.write(new Uint8Array(event.data as ArrayBuffer), () => {
           replaying = false
+          scheduleCopySync()
         })
       }
       socket.onclose = () => {
@@ -729,6 +759,15 @@ export function XtermPane({
           socket.send(JSON.stringify({ type: "exit-copy" }))
         }
       }
+
+      const insertInput = (data: string) => {
+        if (socket.readyState !== WebSocket.OPEN || replaying) return false
+        leaveCopyMode()
+        socket.send(data)
+        term.focus()
+        return true
+      }
+      inputRef.current = insertInput
 
       disposables.push(
         term.onData((data) => {
@@ -819,14 +858,14 @@ export function XtermPane({
       // moves the history only when the program in the pane has *not* asked
       // for the mouse; scrolling down leaves copy mode only once it reaches
       // the very bottom, which the browser cannot see either. So each gesture
-      // ends in one question — trailing-edge, once the wheel settles, rather
-      // than one a frame — and the `copy-mode` frame carrying
+      // updates one throttled query, including during a continuous scroll — and the `copy-mode` frame carrying
       // `#{pane_in_mode}` is the answer that drives the affordance.
       let syncTimer: ReturnType<typeof setTimeout> | undefined
       const scheduleCopySync = () => {
         if (!copyModeRef.current) return
-        clearTimeout(syncTimer)
+        if (syncTimer) return
         syncTimer = setTimeout(() => {
+          syncTimer = undefined
           if (socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({ type: "sync-copy" }))
           }
@@ -836,6 +875,7 @@ export function XtermPane({
       const onWheel = (event: WheelEvent) => {
         if (event.ctrlKey) {
           event.preventDefault()
+          event.stopPropagation()
           const step = event.deltaY > 0 ? -1 : 1
           setTerminalSettings({
             fontSize: Math.min(FONT_MAX, Math.max(FONT_MIN, settingsRef.current.fontSize + step)),
@@ -896,6 +936,7 @@ export function XtermPane({
         searchRef.current = null
         fitRef.current = null
         socketRef.current = null
+        if (inputRef.current === insertInput) inputRef.current = null
       }
     })()
 
@@ -925,6 +966,108 @@ export function XtermPane({
       focusRef.current = null
     }
   }, [focusRef])
+
+  // Clipboard images and dragged images take an authenticated HTTP path to
+  // the server, then only the returned filename goes through the PTY socket.
+  // A native capture listener is deliberate: xterm owns the hidden textarea
+  // that receives paste, so the terminal container must see an image before
+  // xterm can mistake it for ordinary paste data. Text-only events return
+  // without even calling preventDefault and keep xterm's existing behaviour.
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || !terminalSessionId) return
+
+    const controller = new AbortController()
+    let dragDepth = 0
+
+    const unsupported = (mime: string) =>
+      notify.error(
+        "Image type not supported",
+        new Error(`${mime || "This file type"} cannot be pasted. Use PNG, JPEG or WebP.`),
+      )
+
+    const upload = async (file: File, action: "pasted" | "dropped") => {
+      const toast = notify.loading(action === "pasted" ? "Pasting image…" : "Uploading image…")
+      try {
+        const result = await uploadTerminalImage(terminalSessionId, file, controller.signal)
+        let inserted = false
+        insertTerminalPath(result.path, (path) => {
+          inserted = inputRef.current?.(path) ?? false
+        })
+        if (!inserted) {
+          throw new Error(
+            `The image was saved at ${result.path}, but the terminal is no longer connected.`,
+          )
+        }
+        notify.dismiss(toast)
+        notify.success(`Image ${action} • ${result.name} • ${formatUploadSize(result.size)}`, {
+          description: result.path,
+        })
+      } catch (err) {
+        notify.dismiss(toast)
+        if (err instanceof DOMException && err.name === "AbortError") return
+        notify.error(`Could not ${action === "pasted" ? "paste" : "upload"} image`, err)
+      }
+    }
+
+    const onPaste = (event: ClipboardEvent) => {
+      const intercepted = interceptClipboardImagePaste(
+        event,
+        (file) => void upload(file, "pasted"),
+        unsupported,
+      )
+      if (intercepted) event.stopPropagation()
+    }
+
+    const carriesFiles = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files")
+
+    const onDragEnter = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth++
+      setImageDrag(true)
+    }
+    const onDragOver = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"
+    }
+    const onDragLeave = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth = Math.max(0, dragDepth - 1)
+      if (dragDepth === 0) setImageDrag(false)
+    }
+    const onDrop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      dragDepth = 0
+      setImageDrag(false)
+      const choice = chooseDroppedImage(event.dataTransfer?.files ?? [])
+      if (choice.kind === "image") void upload(choice.file, "dropped")
+      else if (choice.kind === "unsupported") unsupported(choice.mime)
+    }
+
+    host.addEventListener("paste", onPaste, { capture: true })
+    host.addEventListener("dragenter", onDragEnter, { capture: true })
+    host.addEventListener("dragover", onDragOver, { capture: true })
+    host.addEventListener("dragleave", onDragLeave, { capture: true })
+    host.addEventListener("drop", onDrop, { capture: true })
+    return () => {
+      controller.abort()
+      setImageDrag(false)
+      host.removeEventListener("paste", onPaste, { capture: true })
+      host.removeEventListener("dragenter", onDragEnter, { capture: true })
+      host.removeEventListener("dragover", onDragOver, { capture: true })
+      host.removeEventListener("dragleave", onDragLeave, { capture: true })
+      host.removeEventListener("drop", onDrop, { capture: true })
+    }
+  }, [terminalSessionId])
 
   // Anything that changes the cell size changes the geometry, so the PTY has
   // to be told — otherwise the remote shell keeps wrapping for the old one.
@@ -1023,11 +1166,12 @@ export function XtermPane({
         // In fullscreen the pane is the whole screen, so the rounded corners
         // and border would draw a frame around nothing.
         fullscreen && "rounded-none border-0",
+        copyMode && "terminal-tmux",
         className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface-header px-2.5 py-1.5">
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hairline bg-surface-header px-3 py-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {subtitle ?? path}
           {shellTitle && (
             <span className="ml-2 rounded bg-muted px-1 py-px text-[10px] text-foreground">
@@ -1037,7 +1181,7 @@ export function XtermPane({
         </span>
 
         {searching ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
             <Input
               autoFocus
               value={needle}
@@ -1050,6 +1194,7 @@ export function XtermPane({
                   termRef.current?.focus()
                 }
               }}
+              aria-label="Find in scrollback"
               placeholder="Find in scrollback"
               className="h-7 w-44 text-xs"
             />
@@ -1105,69 +1250,45 @@ export function XtermPane({
 
             <SnippetMenu snippets={snippets} onSend={(command) => send(command + "\r")} />
 
-            <PaneButton
-              label={`Copy selection (${formatChord(map["terminal.copy"])})`}
-              onClick={() => termRef.current && copySelection(termRef.current)}
-            >
-              <Copy className="size-3.5" />
-            </PaneButton>
-
-            <div className="flex items-center rounded-md border border-hairline">
-              <PaneButton
-                label="Smaller text"
-                onClick={() =>
-                  setTerminalSettings({ fontSize: Math.max(FONT_MIN, settings.fontSize - 1) })
-                }
-              >
-                <Minus className="size-3.5" />
-              </PaneButton>
-              <span className="numeric px-1 text-[10px] text-muted-foreground">
-                {settings.fontSize}
-              </span>
-              <PaneButton
-                label="Larger text"
-                onClick={() =>
-                  setTerminalSettings({ fontSize: Math.min(FONT_MAX, settings.fontSize + 1) })
-                }
-              >
-                <Plus className="size-3.5" />
-              </PaneButton>
-            </div>
-
             <SettingsMenu />
 
-            <PaneButton
-              label={`Clear the screen (${formatChord(map["terminal.clear"])})`}
-              onClick={() => {
-                termRef.current?.clear()
-                termRef.current?.focus()
-              }}
-            >
-              <Trash className="size-3.5" />
-            </PaneButton>
-
-            <PaneButton
-              label="Save the scrollback as a text file"
-              onClick={() => termRef.current && downloadScrollback(termRef.current)}
-            >
-              <Download className="size-3.5" />
-            </PaneButton>
-
-            {cwd && onOpenFiles && (
-              <PaneButton
-                label={`Open ${cwd} in the file manager`}
-                onClick={() => onOpenFiles(cwd)}
-              >
-                <FolderOpen className="size-3.5" />
-              </PaneButton>
-            )}
-
-            <PaneButton
-              label={`Keyboard shortcuts (${formatChord(map["terminal.shortcuts"])})`}
-              onClick={() => setShortcuts(true)}
-            >
-              <Command className="size-3.5" />
-            </PaneButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Terminal actions">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuLabel>Terminal actions</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onSelect={() => termRef.current && copySelection(termRef.current)}
+                >
+                  <Copy className="size-4" /> Copy selection
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => termRef.current && downloadScrollback(termRef.current)}
+                >
+                  <Download className="size-4" /> Save scrollback
+                </DropdownMenuItem>
+                {cwd && onOpenFiles && (
+                  <DropdownMenuItem onSelect={() => onOpenFiles(cwd)}>
+                    <FolderOpen className="size-4" /> Open working folder
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setShortcuts(true)}>
+                  <Command className="size-4" /> Keyboard shortcuts
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    termRef.current?.clear()
+                    termRef.current?.focus()
+                  }}
+                >
+                  <Trash className="size-4" /> Clear screen
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <PaneButton
               label={
@@ -1217,10 +1338,13 @@ export function XtermPane({
         </p>
       )}
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative isolate min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           ref={hostRef}
-          className={cn("h-full p-2 transition-colors duration-150", bell && "bg-warning/25")}
+          className={cn(
+            "absolute inset-3 z-0 overflow-hidden transition-colors duration-150 motion-reduce:transition-none",
+            bell && "bg-warning/25",
+          )}
           style={bell ? undefined : { backgroundColor: "var(--background)" }}
           // Click-to-focus-a-pane is a native capture listener installed with
           // the terminal, not a prop here: xterm stops the event before it
@@ -1235,11 +1359,52 @@ export function XtermPane({
             }
           }}
         />
+        {copyMode && scroll.history > 0 && (
+          <input
+            type="range"
+            aria-label="Terminal scrollback"
+            aria-valuetext={
+              scroll.offset ? `${scroll.offset} lines above live output` : "Live output"
+            }
+            min={0}
+            max={scroll.history}
+            step={1}
+            value={scroll.history - Math.min(scroll.offset, scroll.history)}
+            className="terminal-history absolute top-3 right-0.5 bottom-3 z-20 w-3 cursor-pointer"
+            onPointerDown={() => {
+              draggingScroll.current = true
+            }}
+            onChange={(event) => {
+              const offset = scroll.history - Number(event.target.value)
+              setScroll((value) => ({ ...value, offset }))
+              if (!draggingScroll.current && socketRef.current?.readyState === WebSocket.OPEN)
+                socketRef.current.send(JSON.stringify({ type: "scroll-to", offset }))
+            }}
+            onPointerUp={(event) => {
+              draggingScroll.current = false
+              if (socketRef.current?.readyState === WebSocket.OPEN)
+                socketRef.current.send(
+                  JSON.stringify({
+                    type: "scroll-to",
+                    offset: scroll.history - Number(event.currentTarget.value),
+                  }),
+                )
+            }}
+            onPointerCancel={() => {
+              draggingScroll.current = false
+            }}
+          />
+        )}
+        {imageDrag && (
+          <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-primary bg-background/90 text-xs font-medium text-primary shadow-sm">
+            Drop image to upload and paste its path
+          </div>
+        )}
         {(!atBottom || scrolledBack) && (
           <Button
             size="xs"
             variant="secondary"
-            className="absolute right-4 bottom-4 shadow-md"
+            className="absolute right-7 bottom-4 z-20 pointer-events-auto shadow-md"
             onClick={() => {
               // Two scrollbacks can be behind this: the emulator's, when
               // there is no tmux, and tmux's own. Ending both is what "the
@@ -1269,14 +1434,15 @@ export function XtermPane({
       {/* The control keys, as buttons. Ctrl+C is unremarkable on a keyboard and
           impossible on a phone, and this panel is reached from a phone more
           often than its author would like. */}
-      <div className="flex flex-wrap items-center gap-1 border-t border-hairline bg-surface-header px-2 py-1">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
+        <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
         {CONTROL_KEYS.map((key) => (
           <Tooltip key={key.label}>
             <TooltipTrigger asChild>
               <Button
                 size="xs"
                 variant="ghost"
-                className="h-5 px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
                 onClick={() => send(key.bytes)}
               >
                 {key.label}
@@ -1430,6 +1596,30 @@ function SettingsMenu() {
       </Tooltip>
       <PopoverContent align="end" className="w-72 space-y-3 text-xs">
         <p className="eyebrow">Appearance</p>
+        <div className="flex items-center justify-between">
+          <span>Text size</span>
+          <div className="flex items-center rounded-md border border-hairline">
+            <PaneButton
+              label="Smaller text"
+              onClick={() =>
+                setTerminalSettings({ fontSize: Math.max(FONT_MIN, settings.fontSize - 1) })
+              }
+            >
+              <Minus className="size-3.5" />
+            </PaneButton>
+            <span className="numeric px-1 text-[10px] text-muted-foreground">
+              {settings.fontSize}
+            </span>
+            <PaneButton
+              label="Larger text"
+              onClick={() =>
+                setTerminalSettings({ fontSize: Math.min(FONT_MAX, settings.fontSize + 1) })
+              }
+            >
+              <Plus className="size-3.5" />
+            </PaneButton>
+          </div>
+        </div>
         <label className="flex items-center justify-between gap-2">
           Font
           <select
@@ -1573,8 +1763,8 @@ function PasteConfirmation({
         <DialogHeader>
           <DialogTitle>Paste {lines.length} lines?</DialogTitle>
           <DialogDescription>
-            Every line but the last ends in a newline, so the shell will run it as soon as it
-            arrives — this is not text going into the prompt for you to check first.
+            This text contains line breaks that can execute commands as soon as they reach the
+            terminal. Review every line before sending it.
           </DialogDescription>
         </DialogHeader>
         <pre className="max-h-56 overflow-auto rounded-md border bg-surface-sunken p-2 font-mono text-[11px] whitespace-pre-wrap">

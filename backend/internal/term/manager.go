@@ -32,6 +32,8 @@ type Manager struct {
 	// of refusing to start a dashboard whose other fourteen pages are fine.
 	account    Account
 	accountErr error
+	clipboard  *clipboardStore
+	shellDir   string
 }
 
 // reserve takes one of the session slots, or reports that none are free. The
@@ -57,9 +59,10 @@ func (m *Manager) reserve() (release func(), err error) {
 
 func NewManager(enabled bool, shell, username string) *Manager {
 	m := &Manager{
-		sessions: map[string]*Session{},
-		enabled:  enabled,
-		shell:    shell,
+		sessions:  map[string]*Session{},
+		enabled:   enabled,
+		shell:     shell,
+		clipboard: newClipboardStore(ClipboardRoot),
 	}
 	m.account, m.accountErr = resolveAccount(username)
 	// The host's tmux, not this image's. Sessions are created out there now,
@@ -156,7 +159,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// A requested directory changes *how* the login is assembled rather than
 	// being applied on top of it — see loginArgv, where a plain login's
 	// chdir-to-home is the thing standing in the way.
-	argv := m.account.loginArgv(m.shell, startDir != "")
+	argv := m.loginArgv(startDir != "")
 	if startDir != "" {
 		// The directory the command itself starts in. It has to be handed to
 		// hostexec rather than set on cmd.Dir: a host command crosses into the
@@ -340,7 +343,15 @@ func (m *Manager) remove(id string) {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	if ok {
+		// Close called before the read loop reached here means the manager is
+		// shutting down. A persisted tmux session is still running in that
+		// case, so its temporary files stay available and the TTL owns them.
+		// A read loop that ended on its own means the PTY truly exited.
+		wasClosed := sess.isClosed()
 		sess.Close()
+		if m.clipboard != nil && (!sess.Persisted || !wasClosed) {
+			m.clipboard.removeSession(id)
+		}
 	}
 }
 
@@ -357,7 +368,11 @@ func (m *Manager) Kill(ctx context.Context, id string) error {
 	if sess.TmuxName != "" {
 		hostexec.CommandOnHost(ctx, "tmux", "kill-session", "-t", sess.TmuxName).Run()
 	}
-	return sess.Close()
+	err := sess.Close()
+	if m.clipboard != nil {
+		m.clipboard.removeSession(id)
+	}
+	return err
 }
 
 // Detach drops the PTY without destroying the underlying tmux session, so the
@@ -556,7 +571,7 @@ func (m *Manager) sessionExists(tmuxName string) bool {
 // anything supplied per request. Each field is quoted anyway, so a shell path
 // or account name containing a space is passed as one word rather than two.
 func (m *Manager) defaultCommand() string {
-	argv := m.account.loginArgv(m.shell, true)
+	argv := m.loginArgv(true)
 	quoted := make([]string, 0, len(argv))
 	for _, arg := range argv {
 		quoted = append(quoted, shellWord(arg))
@@ -680,8 +695,16 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 func (m *Manager) reap() {
 	t := time.NewTicker(5 * time.Minute)
 	for range t.C {
+		sessions := m.List()
+		if m.clipboard != nil {
+			live := make(map[string]bool, len(sessions))
+			for _, sess := range sessions {
+				live[sess.ID] = true
+			}
+			m.clipboard.cleanupExpired(time.Now().Add(-ClipboardTTL), live)
+		}
 		cutoff := time.Now().Add(-idleDetach)
-		for _, s := range m.List() {
+		for _, s := range sessions {
 			if s.Attached() > 0 || !s.LastActive().Before(cutoff) {
 				continue
 			}

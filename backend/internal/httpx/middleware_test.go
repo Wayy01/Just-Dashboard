@@ -116,3 +116,38 @@ func TestAllowlistRefusesWhenNothingIsAllowed(t *testing.T) {
 		t.Fatalf("an empty allowlist must permit nothing: %d", res.Code)
 	}
 }
+
+func TestRequireCSRFProtectsOnlyAmbientSessionRequests(t *testing.T) {
+	final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := RequireCSRF(final)
+
+	request := func(method string, p *Principal, header bool) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/v1/test", nil)
+		if p != nil {
+			r = r.WithContext(WithPrincipal(r.Context(), p))
+		}
+		if header {
+			r.Header.Set(CSRFHeader, "1")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	if w := request(http.MethodPost, &Principal{Kind: "session"}, false); w.Code != http.StatusForbidden {
+		t.Fatalf("session mutation without CSRF header returned %d", w.Code)
+	}
+	if w := request(http.MethodPost, &Principal{Kind: "session"}, true); w.Code != http.StatusNoContent {
+		t.Fatalf("session mutation with CSRF header returned %d", w.Code)
+	}
+	if w := request(http.MethodPost, &Principal{Kind: "token"}, false); w.Code != http.StatusNoContent {
+		t.Fatalf("bearer-token mutation was treated as CSRF-prone: %d", w.Code)
+	}
+	if w := request(http.MethodGet, &Principal{Kind: "session"}, false); w.Code != http.StatusNoContent {
+		t.Fatalf("safe session request required CSRF header: %d", w.Code)
+	}
+	if w := request(http.MethodPost, nil, false); w.Code != http.StatusForbidden {
+		t.Fatalf("login-like mutation without CSRF header returned %d", w.Code)
+	}
+}

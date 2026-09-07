@@ -2,6 +2,7 @@ package files
 
 import (
 	"archive/tar"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,7 @@ func TestExtractRejectsMaliciousArchivePathsBeforeOutsideWrite(t *testing.T) {
 	}
 
 	service := New([]string{root})
-	if _, err := service.Extract(archivePath, filepath.Join(root, "destination")); err == nil {
+	if _, err := service.Extract(context.Background(), archivePath, filepath.Join(root, "destination")); err == nil {
 		t.Fatal("archive traversal was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(sandbox, "outside", "evil")); !os.IsNotExist(err) {
@@ -68,7 +69,7 @@ func TestExtractRejectsAbsoluteArchiveSymlinkTargetBeforeFollowupWrite(t *testin
 	}
 
 	service := New([]string{root})
-	if _, err := service.Extract(archivePath, filepath.Join(root, "destination")); err == nil {
+	if _, err := service.Extract(context.Background(), archivePath, filepath.Join(root, "destination")); err == nil {
 		t.Fatal("absolute archive symlink target was accepted")
 	}
 	if _, err := os.Lstat(filepath.Join(root, "destination", "link")); !os.IsNotExist(err) {

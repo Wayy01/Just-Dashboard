@@ -7,12 +7,15 @@
     "build": "node scripts/sync-monaco.mjs && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "bun test src",
     "test:browser": "playwright test",
     "test:browser:install": "playwright install chromium"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",
+    "@heroicons/react": "^2.2.0",
     "@hookform/resolvers": "^5.9.1",
+    "@mdi/js": "^7.4.47",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-accordion": "^1.2.20",
     "@radix-ui/react-alert-dialog": "^1.1.23",
@@ -47,7 +50,6 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.4.0",
-    "geist-icons": "^1.3.0",
     "monaco-editor": "0.56.0",
     "next": "16.3.1",
     "next-themes": "^0.4.6",

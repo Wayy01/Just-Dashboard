@@ -35,14 +35,17 @@ func (s *Server) mountProxyRoutes(r chi.Router) {
 
 	r.Route("/certificates", func(r chi.Router) {
 		r.Method(http.MethodGet, "/", s.handle(s.handleCertList))
-		r.Method(http.MethodGet, "/check", s.handle(s.handleCertCheck))
-		r.Method(http.MethodGet, "/scan", s.handle(s.handleTLSScan))
-		r.Method(http.MethodGet, "/dns", s.handle(s.handleDomainDNS))
 		r.Method(http.MethodGet, "/certbot", s.handle(s.handleCertbot))
 		r.Method(http.MethodGet, "/dns-providers", s.handle(s.handleDNSProviders))
 		r.Method(http.MethodGet, "/watched", s.handle(s.handleWatchedDomains))
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapSystemAdmin))
+			// These checks emit traffic to caller-chosen destinations. Keeping
+			// them with the host-administration routes prevents a read-only
+			// account from turning the server into an internal network scanner.
+			r.Method(http.MethodGet, "/check", s.handle(s.handleCertCheck))
+			r.Method(http.MethodGet, "/scan", s.handle(s.handleTLSScan))
+			r.Method(http.MethodGet, "/dns", s.handle(s.handleDomainDNS))
 			r.Method(http.MethodPost, "/watched", s.handle(s.handleWatchDomain))
 			r.Method(http.MethodDelete, "/watched/{id}", s.handle(s.handleUnwatchDomain))
 			r.Method(http.MethodPost, "/issue", s.handle(s.handleCertIssue))

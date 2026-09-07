@@ -7,6 +7,7 @@ package wsx
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,11 +28,27 @@ const (
 
 type Upgrader struct {
 	up             websocket.Upgrader
-	allowedOrigins []string
+	expectedScheme string
+	allowedOrigins []origin
 }
 
-func NewUpgrader(allowedOrigins []string) *Upgrader {
-	u := &Upgrader{allowedOrigins: allowedOrigins}
+type origin struct {
+	scheme string
+	host   string
+	port   string
+}
+
+func NewUpgrader(allowedOrigins []string, secure bool) *Upgrader {
+	expectedScheme := "http"
+	if secure {
+		expectedScheme = "https"
+	}
+	u := &Upgrader{expectedScheme: expectedScheme}
+	for _, raw := range allowedOrigins {
+		if allowed, ok := parseOrigin(strings.TrimSpace(raw)); ok {
+			u.allowedOrigins = append(u.allowedOrigins, allowed)
+		}
+	}
 	u.up = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -53,15 +70,52 @@ func (u *Upgrader) checkOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	if strings.EqualFold(o.Host, r.Host) {
+	candidate, ok := originFromURL(o)
+	if !ok {
+		return false
+	}
+	sameSite, ok := parseOrigin(u.expectedScheme + "://" + r.Host)
+	if ok && candidate == sameSite {
 		return true
 	}
 	for _, allowed := range u.allowedOrigins {
-		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
+		if candidate == allowed {
 			return true
 		}
 	}
 	return false
+}
+
+func parseOrigin(raw string) (origin, bool) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return origin{}, false
+	}
+	return originFromURL(u)
+}
+
+func originFromURL(u *url.URL) (origin, bool) {
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Host == "" || u.User != nil ||
+		u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return origin{}, false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return origin{}, false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return origin{scheme: scheme, host: host, port: port}, true
 }
 
 func (u *Upgrader) Upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error) {

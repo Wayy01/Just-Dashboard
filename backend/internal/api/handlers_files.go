@@ -64,6 +64,9 @@ func mapFileError(err error) error {
 		return httpx.Err(http.StatusForbidden, "outside_root", err.Error())
 	case errors.Is(err, files.ErrTooLarge):
 		return httpx.Err(http.StatusRequestEntityTooLarge, "too_large", err.Error())
+	case errors.Is(err, files.ErrArchiveTooLarge), errors.Is(err, files.ErrArchiveTooManyEntries),
+		errors.Is(err, files.ErrArchiveNoSpace):
+		return httpx.Err(http.StatusRequestEntityTooLarge, "archive_limit", err.Error())
 	case errors.Is(err, files.ErrIsDir), errors.Is(err, files.ErrNotDir):
 		return httpx.Err(http.StatusBadRequest, "wrong_type", err.Error())
 	case errors.Is(err, fs.ErrNotExist):
@@ -370,7 +373,9 @@ func (s *Server) handleFileExtract(w http.ResponseWriter, r *http.Request) error
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		return err
 	}
-	written, err := s.modules.files.Extract(req.Archive, req.Destination)
+	ctx, cancel := timeoutCtx(r, 10*time.Minute)
+	defer cancel()
+	written, err := s.modules.files.Extract(ctx, req.Archive, req.Destination)
 	if err != nil {
 		return mapFileError(err)
 	}

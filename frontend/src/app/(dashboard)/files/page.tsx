@@ -27,7 +27,7 @@ import {
   Trash,
 } from "@/components/icons"
 import { notify } from "@/lib/toast"
-import { API_BASE, del, downloadUrl, get, post, put } from "@/lib/api"
+import { API_BASE, del, downloadUrl, get, mutationHeaders, post, put } from "@/lib/api"
 import { truncateMiddle } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { FileBookmark, FileEntry, FileListing, FilePlaces } from "@/lib/types"
@@ -223,7 +223,7 @@ export default function FilesPage() {
     try {
       const res = await fetch(
         `${API_BASE}/files/upload?path=${encodeURIComponent(path)}&overwrite=true`,
-        { method: "POST", credentials: "include", body: form },
+        { method: "POST", credentials: "include", headers: mutationHeaders(), body: form },
       )
       if (!res.ok) throw new Error((await res.json()).error?.message ?? res.statusText)
       notify.success(`Uploaded ${arr.length} file${arr.length === 1 ? "" : "s"}`)

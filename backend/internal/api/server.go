@@ -34,6 +34,9 @@ type Server struct {
 	loginLim *httpx.Limiter
 	apiLim   *httpx.Limiter
 	destrLim *httpx.Limiter
+	// Disk usage recursively visits client-selected trees. Two concurrent
+	// scans are enough for the UI without letting requests multiply host I/O.
+	diskScans chan struct{}
 
 	modules moduleSet
 }
@@ -48,14 +51,15 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Servic
 		Audit:  aud,
 		Agent:  id,
 		Authn:  &httpx.Authenticator{Svc: svc, Secure: !cfg.Dev},
-		WS:     wsx.NewUpgrader(cfg.AllowedOrigins),
+		WS:     wsx.NewUpgrader(cfg.AllowedOrigins, !cfg.Dev),
 		// Login is deliberately tight: five attempts a minute per address on
 		// top of the per-account lockout.
 		loginLim: httpx.NewLimiter(10, 5),
 		apiLim:   httpx.NewLimiter(600, 120),
 		// Destructive routes get their own budget so a scripted delete loop
 		// cannot run away even with a valid admin token.
-		destrLim: httpx.NewLimiter(30, 10),
+		destrLim:  httpx.NewLimiter(30, 10),
+		diskScans: make(chan struct{}, 2),
 	}
 	s.initModules()
 	return s

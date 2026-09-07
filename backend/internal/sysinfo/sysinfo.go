@@ -5,6 +5,8 @@ package sysinfo
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -499,22 +501,45 @@ type DirEntry struct {
 	Entries int    `json:"entries"`
 }
 
+var ErrDirScanLimit = errors.New("directory scan exceeded its work limit")
+
+const (
+	maxDirBreakdownChildren = 10_000
+	maxDirBreakdownVisits   = 250_000
+)
+
 // DirBreakdown answers "what is eating this mount". It walks one level deep
 // and sums each child recursively, staying on the starting filesystem so a
 // scan of / does not wander into network mounts or /proc.
 func DirBreakdown(ctx context.Context, root string, limit int) ([]DirEntry, error) {
-	entries, err := os.ReadDir(root)
+	return dirBreakdown(ctx, root, limit, maxDirBreakdownChildren, maxDirBreakdownVisits)
+}
+
+func dirBreakdown(ctx context.Context, root string, limit, maxChildren, maxVisits int) ([]DirEntry, error) {
+	dir, err := os.Open(root)
 	if err != nil {
 		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(maxChildren + 1)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(entries) > maxChildren {
+		return nil, ErrDirScanLimit
 	}
 	rootDev, err := deviceOf(root)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]DirEntry, 0, len(entries))
+	budget := dirScanBudget{remaining: maxVisits}
 	for _, e := range entries {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if !budget.take() {
+			return nil, ErrDirScanLimit
 		}
 		full := filepath.Join(root, e.Name())
 		info, err := e.Info()
@@ -525,7 +550,10 @@ func DirBreakdown(ctx context.Context, root string, limit int) ([]DirEntry, erro
 			out = append(out, DirEntry{Name: e.Name(), Path: full, Size: info.Size()})
 			continue
 		}
-		size, count := dirSize(ctx, full, rootDev)
+		size, count, err := dirSize(ctx, full, rootDev, &budget)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, DirEntry{Name: e.Name(), Path: full, Size: size, IsDir: true, Entries: count})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Size > out[j].Size })
@@ -535,21 +563,40 @@ func DirBreakdown(ctx context.Context, root string, limit int) ([]DirEntry, erro
 	return out, nil
 }
 
-func dirSize(ctx context.Context, root string, dev uint64) (int64, int) {
+type dirScanBudget struct{ remaining int }
+
+func (b *dirScanBudget) take() bool {
+	if b.remaining <= 0 {
+		return false
+	}
+	b.remaining--
+	return true
+}
+
+func dirSize(ctx context.Context, root string, dev uint64, budget *dirScanBudget) (int64, int, error) {
 	var total int64
 	var count int
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			return nil
+			// A successful response must not look complete when part of the tree
+			// could not be read. The handler reports this failure to the caller.
+			return err
+		}
+		if !budget.take() {
+			return ErrDirScanLimit
 		}
 		if d.IsDir() {
 			// Do not descend into a different filesystem: the caller asked
 			// about this mount's consumption, not everything beneath it.
 			if path != root {
-				if childDev, err := deviceOf(path); err == nil && childDev != dev {
+				childDev, err := deviceOf(path)
+				if err != nil {
+					return err
+				}
+				if childDev != dev {
 					return filepath.SkipDir
 				}
 			}
@@ -557,7 +604,7 @@ func dirSize(ctx context.Context, root string, dev uint64) (int64, int) {
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil
+			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
@@ -566,5 +613,5 @@ func dirSize(ctx context.Context, root string, dev uint64) (int64, int) {
 		count++
 		return nil
 	})
-	return total, count
+	return total, count, err
 }
