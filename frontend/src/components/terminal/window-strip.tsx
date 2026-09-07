@@ -237,8 +237,8 @@ function WindowChip({
       className={cn(
         "group flex h-11 min-w-36 max-w-64 flex-1 shrink-0 items-center gap-1 rounded-lg border px-2 text-sm transition-colors",
         win.active
-          ? "border-hairline bg-background text-foreground shadow-sm"
-          : "border-transparent text-muted-foreground hover:bg-accent",
+          ? "border-primary/45 bg-primary/12 text-foreground shadow-sm"
+          : "border-hairline bg-[var(--control)] text-muted-foreground hover:border-primary/25 hover:bg-accent",
         inserting && "border-l-2 border-l-primary",
       )}
     >

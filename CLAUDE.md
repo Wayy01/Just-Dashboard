@@ -555,7 +555,9 @@ disagree about order; every path is resolved before storing.
 
 Frontend `components/files/`: `file-icon.tsx` is the vocabulary (~200 extensions, the files with none —
 Dockerfile, authorized_keys, lockfiles — and the folders whose name says more than "folder") mapped to
-eight **categories** rather than languages, in the terminal rail's `--tag-*` hues. `file-actions.tsx` is
+eight **categories** rather than languages, in the terminal rail's `--tag-*` hues, drawn from Material
+Design Icons (`@mdi/js`); every other glyph in the product comes from the Heroicons vocabulary in
+`components/icons.tsx`. `file-actions.tsx` is
 the one menu both the row and the tile use, or an action ends up in one view only. Two layout rules are
 easy to undo: **the panel body does not scroll** (a sticky table header sticks to its nearest scrolling
 ancestor, and the header rode away with the rows), and **the rail's tree waits for `/files/places`**
@@ -1064,7 +1066,8 @@ colour, the version as small muted text beside it. No mark, no tile, no straplin
 rendering of the product's name, so sidebar, sign-in and splash agree and a rename is one file. `LogoMark`
 is the single letter the collapsed rail falls back to.
 
-`components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 35 primitives) — compose rather than
+`components/ui/*` is generated shadcn/ui (new-york, zinc, 35 primitives) with its icons rewired to
+the Heroicons vocabulary in `components/icons.tsx` — compose rather than
 edit. Feature pieces live in `components/<feature>/`: `database/`, `docker/`, `files/`, `git/`, `logs/`,
 `metrics/`, `packages/`, `procs/`, `proxy/`, `security/`, `terminal/`, `update/`.
 
@@ -1180,12 +1183,17 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
   The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
   folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
-  `command-composer.tsx` is the terminal page's Workspace view: starter cards prepare editable drafts,
-  an explicit Send writes to the focused terminal, and Focus hides the composer and cards for full-screen
-  tools. The live emulator stays mounted across mode changes; output is never parsed into guessed command
-  blocks. Drafts stay in component memory, never persistent command history. Multiline drafts use the
-  existing paste confirmation; control characters are rejected, and writes share the upload input
-  writer's replay suppression and copy-mode exit. Other emulator consumers retain their direct UI.
+  Input stays in the shell: there is no separate composer or Workspace/Focus mode. Bundled Bash and
+  Zsh startup files install a compact directory/chevron prompt and native Tab completion in new windows.
+  Account profiles and interactive configuration still load; account dotfiles are never edited.
+  `term.SetupShell` atomically installs readable scripts in the process-owned shared terminal root's
+  `.shell` directory, rejecting symlink or foreign-owned directories. A constant login bootstrap passes
+  shell and startup paths as positional arguments; unsupported shells retain their ordinary startup.
+  Existing running shells are not modified. Reattached sessions receive the updated default command
+  for future windows and splits.
+  A custom scrollbar uses tmux's actual history position, with throttled updates while scrolling and
+  after output. Its seek control and Jump to the end sit above the emulator's mouse layer. Other
+  emulator consumers keep their normal scrollbar and receive no tmux-specific controls.
   The terminal host is absolutely inset into its output region so its own rows cannot grow its parent.
   `PaneBar` labels each pane with the command running in it:
   "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
@@ -1349,9 +1357,10 @@ A change that weakens any of these has to say so explicitly.
 5. Every state-changing request lands in the audit log.
 6. Client-supplied paths go through `files.Resolve` — including the ones that do not look like file
    operations (bind-mount source, build context, a new stack's directory). Host commands go through
-   `hostexec` with an argv, never a shell string. The one shell is `deploy.Deployer.shell`, deliberately:
+   `hostexec` with an argv, never a shell string. Request-defined shell source is confined to `deploy.Deployer.shell`, deliberately:
    those are pipelines an admin stored for their own project, not anything supplied per request. Do not add
-   a second, and do not "fix" that one into an argv. `dockerx` invokes the `docker` binary in three places
+   a second request-defined shell, and do not "fix" that one into an argv. Terminal startup also uses
+   a bundled constant bootstrap to load the native prompt; paths remain separate positional arguments. `dockerx` invokes the `docker` binary in three places
    (compose, the streaming runner, `Build`) because the Engine API has no equivalent; all three build argv
    explicitly.
 7. Nothing but Caddy binds a routable address.

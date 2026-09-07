@@ -346,7 +346,7 @@ func (m *Manager) NewWindow(ctx context.Context, tmuxName, name, cwd string) err
 	// not depend on that option having been set, and this is the path the
 	// dashboard's own button takes. Without either, tmux runs the shell of
 	// whoever started the tmux server: the dashboard, as root.
-	args = append(args, m.account.loginArgv(m.shell, true)...)
+	args = append(args, m.loginArgv(true)...)
 	return hostexec.CommandOnHost(ctx, "tmux", args...).Run()
 }
 

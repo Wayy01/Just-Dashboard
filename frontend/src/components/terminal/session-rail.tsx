@@ -192,9 +192,7 @@ export function SessionRail({
             items={items}
             activeId={activeId}
             collapsed={Boolean(collapsed[folder.name])}
-            onToggle={() =>
-              setCollapsed((c) => ({ ...c, [folder.name]: !c[folder.name] }))
-            }
+            onToggle={() => setCollapsed((c) => ({ ...c, [folder.name]: !c[folder.name] }))}
             onSelect={onSelect}
             onRename={onRename}
             onTogglePinned={onTogglePinned}
@@ -502,17 +500,21 @@ function SessionRow({
         setWindowOver(false)
         const payload = readDrop(event, "window")
         endDrag()
-        if (payload?.kind === "window" && session.tmuxName && payload.session !== session.tmuxName) {
+        if (
+          payload?.kind === "window" &&
+          session.tmuxName &&
+          payload.session !== session.tmuxName
+        ) {
           onMoveWindow(payload.session, payload.index, session.tmuxName)
         }
       }}
       className={cn(
         "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-colors",
-        !active && !windowOver && "border-transparent",
+        !active && !windowOver && "border-hairline bg-[var(--control)]",
         !active && !colour && "hover:border-hairline hover:bg-[var(--row-hover)]",
         !active && colour && "hover:brightness-110",
         active && "shadow-xs",
-        active && !colour && !windowOver && "raised bg-card",
+        active && !colour && !windowOver && "raised border-primary/45 bg-primary/12",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
       // The selected row is lifted into a card — the design system's own

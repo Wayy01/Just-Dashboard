@@ -61,7 +61,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CommandComposer, CommandStarters } from "@/components/terminal/command-composer"
 import { ShortcutsDialog } from "@/components/terminal/shortcuts-dialog"
 import {
   Dialog,
@@ -230,6 +229,7 @@ function resolveTerminalTheme(mode: "dark" | "light"): XtermTheme {
  *  the difference — which is the point, since Ctrl+C has to interrupt rather
  *  than be delivered as text. */
 const CONTROL_KEYS = [
+  { label: "Tab", hint: "Autocomplete command or path", bytes: "\t" },
   { label: "Ctrl+C", hint: "Interrupt what is running", bytes: "\u0003" },
   { label: "Ctrl+D", hint: "End of input — logs a shell out", bytes: "\u0004" },
   { label: "Ctrl+Z", hint: "Suspend to the background", bytes: "\u001a" },
@@ -259,11 +259,7 @@ export function XtermPane({
   onToggleFullscreen,
   fullscreenActive,
   terminalSessionId,
-  workbench = false,
-  contextLabel = "Shell",
 }: {
-  workbench?: boolean
-  contextLabel?: string
   path: string
   query?: Query
   className?: string
@@ -314,10 +310,6 @@ export function XtermPane({
   /** Enables session-scoped image paste/drop on the real terminal page only. */
   terminalSessionId?: string
 }) {
-  const [draft, setDraft] = useState("")
-  const [showStarters, setShowStarters] = useState(true)
-  const [directMode, setDirectMode] = useState(false)
-  const composerRef = useRef<HTMLTextAreaElement>(null)
   const frameRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<"connecting" | "open" | "closed">("connecting")
@@ -348,6 +340,8 @@ export function XtermPane({
   // a button offering to return a terminal that had never moved. The wheel
   // only *asks* now, and `#{pane_in_mode}` coming back over the socket is what
   // puts the button on screen.
+  const [scroll, setScroll] = useState({ offset: 0, history: 0, height: 0 })
+  const draggingScroll = useRef(false)
   const [scrolledBack, setScrolledBack] = useState(false)
   const scrolledBackRef = useRef(false)
   // A wheel tick has gone out and tmux has not yet said what became of it.
@@ -369,7 +363,6 @@ export function XtermPane({
   const [pendingPaste, setPendingPaste] = useState<{
     raw: string
     text: string
-    submit?: () => void
   } | null>(null)
   const [bell, setBell] = useState(false)
   const [imageDrag, setImageDrag] = useState(false)
@@ -659,8 +652,7 @@ export function XtermPane({
         setState("open")
         setError(undefined)
         sendResize()
-        if (composerRef.current?.offsetParent) composerRef.current.focus()
-        else term.focus()
+        term.focus()
         // The session may have been left scrolled back by whoever was here
         // before — copy mode outlives the socket the way everything else in a
         // tmux session does — and a pane that is in a mode reads as a pane
@@ -694,6 +686,12 @@ export function XtermPane({
               if (!active) wheeledRef.current = false
               scrolledBackRef.current = active
               setScrolledBack(active)
+              if (!draggingScroll.current)
+                setScroll({
+                  offset: Math.max(0, Number(msg.data?.offset) || 0),
+                  history: Math.max(0, Number(msg.data?.history) || 0),
+                  height: Math.max(0, Number(msg.data?.height) || 0),
+                })
             }
           } catch {
             term.write(event.data)
@@ -705,6 +703,7 @@ export function XtermPane({
         // timeout.
         term.write(new Uint8Array(event.data as ArrayBuffer), () => {
           replaying = false
+          scheduleCopySync()
         })
       }
       socket.onclose = () => {
@@ -741,7 +740,6 @@ export function XtermPane({
       }
       inputRef.current = insertInput
 
-      disposables.push(term.onKey(() => setShowStarters(false)))
       disposables.push(
         term.onData((data) => {
           if (socket.readyState !== WebSocket.OPEN) return
@@ -831,14 +829,14 @@ export function XtermPane({
       // moves the history only when the program in the pane has *not* asked
       // for the mouse; scrolling down leaves copy mode only once it reaches
       // the very bottom, which the browser cannot see either. So each gesture
-      // ends in one question — trailing-edge, once the wheel settles, rather
-      // than one a frame — and the `copy-mode` frame carrying
+      // updates one throttled query, including during a continuous scroll — and the `copy-mode` frame carrying
       // `#{pane_in_mode}` is the answer that drives the affordance.
       let syncTimer: ReturnType<typeof setTimeout> | undefined
       const scheduleCopySync = () => {
         if (!copyModeRef.current) return
-        clearTimeout(syncTimer)
+        if (syncTimer) return
         syncTimer = setTimeout(() => {
+          syncTimer = undefined
           if (socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({ type: "sync-copy" }))
           }
@@ -848,6 +846,7 @@ export function XtermPane({
       const onWheel = (event: WheelEvent) => {
         if (event.ctrlKey) {
           event.preventDefault()
+          event.stopPropagation()
           const step = event.deltaY > 0 ? -1 : 1
           setTerminalSettings({
             fontSize: Math.min(FONT_MAX, Math.max(FONT_MIN, settingsRef.current.fontSize + step)),
@@ -1130,24 +1129,6 @@ export function XtermPane({
     termRef.current?.focus()
   }, [])
 
-  const submitDraft = () => {
-    if (!draft.trim() || state !== "open") return
-    // A draft is editable text, never a vehicle for pasted terminal escape codes.
-    if (/[\x00-\x08\x0b-\x1f\x7f]/.test(draft)) {
-      notify.error("Remove control characters from the command before sending it")
-      return
-    }
-    const submit = () => {
-      if (inputRef.current?.(draft.replace(/\n/g, "\r") + "\r")) {
-        setDraft("")
-        setShowStarters(false)
-      } else notify.error("The terminal is not ready; your draft has been kept")
-    }
-    if (draft.includes("\n") && settings.confirmMultilinePaste) {
-      setPendingPaste({ raw: draft, text: draft, submit })
-    } else submit()
-  }
-
   return (
     <div
       ref={frameRef}
@@ -1156,34 +1137,11 @@ export function XtermPane({
         // In fullscreen the pane is the whole screen, so the rounded corners
         // and border would draw a frame around nothing.
         fullscreen && "rounded-none border-0",
-        workbench && "terminal-workbench",
+        copyMode && "terminal-tmux",
         className,
       )}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hairline bg-surface-header px-3 py-2">
-        {workbench && (
-          <div className="mr-3 flex items-center rounded-lg border border-hairline p-0.5">
-            <Button
-              size="xs"
-              variant={!directMode ? "secondary" : "ghost"}
-              aria-pressed={!directMode}
-              onClick={() => setDirectMode(false)}
-            >
-              Workspace
-            </Button>
-            <Button
-              size="xs"
-              variant={directMode ? "secondary" : "ghost"}
-              aria-pressed={directMode}
-              onClick={() => {
-                setDirectMode(true)
-                termRef.current?.focus()
-              }}
-            >
-              Focus
-            </Button>
-          </div>
-        )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {subtitle ?? path}
           {shellTitle && (
@@ -1289,16 +1247,6 @@ export function XtermPane({
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
-                {workbench && (
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      setDirectMode(false)
-                      setShowStarters(true)
-                    }}
-                  >
-                    Command starters
-                  </DropdownMenuItem>
-                )}
                 <DropdownMenuItem onSelect={() => setShortcuts(true)}>
                   <Command className="size-4" /> Keyboard shortcuts
                 </DropdownMenuItem>
@@ -1361,40 +1309,11 @@ export function XtermPane({
         </p>
       )}
 
-      {workbench && !directMode && showStarters && (
-        <CommandStarters
-          onClose={() => setShowStarters(false)}
-          onPick={(command) => {
-            setDraft(command)
-            composerRef.current?.focus()
-          }}
-        />
-      )}
-      {workbench && !directMode && (
-        <div className="flex shrink-0 items-center gap-2 px-5 py-2 text-[10px] text-muted-foreground">
-          <span className="h-px flex-1 bg-hairline" />
-          <button
-            type="button"
-            onClick={() => termRef.current?.focus()}
-            className="hover:text-foreground"
-          >
-            Live terminal · click to type directly
-          </button>
-          <span className="h-px flex-1 bg-hairline" />
-        </div>
-      )}
-      <div
-        className={cn(
-          "relative min-h-0 min-w-0 flex-1 overflow-hidden",
-          workbench &&
-            !directMode &&
-            "mx-3 mb-3 rounded-xl border border-hairline bg-background sm:mx-4",
-        )}
-      >
+      <div className="relative isolate min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           ref={hostRef}
           className={cn(
-            "absolute inset-2 overflow-hidden transition-colors duration-150 motion-reduce:transition-none",
+            "absolute inset-3 z-0 overflow-hidden transition-colors duration-150 motion-reduce:transition-none",
             bell && "bg-warning/25",
           )}
           style={bell ? undefined : { backgroundColor: "var(--background)" }}
@@ -1411,6 +1330,42 @@ export function XtermPane({
             }
           }}
         />
+        {copyMode && scroll.history > 0 && (
+          <input
+            type="range"
+            aria-label="Terminal scrollback"
+            aria-valuetext={
+              scroll.offset ? `${scroll.offset} lines above live output` : "Live output"
+            }
+            min={0}
+            max={scroll.history}
+            step={1}
+            value={scroll.history - Math.min(scroll.offset, scroll.history)}
+            className="terminal-history absolute top-3 right-0.5 bottom-3 z-20 w-3 cursor-pointer"
+            onPointerDown={() => {
+              draggingScroll.current = true
+            }}
+            onChange={(event) => {
+              const offset = scroll.history - Number(event.target.value)
+              setScroll((value) => ({ ...value, offset }))
+              if (!draggingScroll.current && socketRef.current?.readyState === WebSocket.OPEN)
+                socketRef.current.send(JSON.stringify({ type: "scroll-to", offset }))
+            }}
+            onPointerUp={(event) => {
+              draggingScroll.current = false
+              if (socketRef.current?.readyState === WebSocket.OPEN)
+                socketRef.current.send(
+                  JSON.stringify({
+                    type: "scroll-to",
+                    offset: scroll.history - Number(event.currentTarget.value),
+                  }),
+                )
+            }}
+            onPointerCancel={() => {
+              draggingScroll.current = false
+            }}
+          />
+        )}
         {imageDrag && (
           <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-primary bg-background/90 text-xs font-medium text-primary shadow-sm">
             Drop image to upload and paste its path
@@ -1420,7 +1375,7 @@ export function XtermPane({
           <Button
             size="xs"
             variant="secondary"
-            className="absolute right-4 bottom-4 shadow-md"
+            className="absolute right-7 bottom-4 z-20 pointer-events-auto shadow-md"
             onClick={() => {
               // Two scrollbacks can be behind this: the emulator's, when
               // there is no tmux, and tmux's own. Ending both is what "the
@@ -1450,44 +1405,30 @@ export function XtermPane({
       {/* The control keys, as buttons. Ctrl+C is unremarkable on a keyboard and
           impossible on a phone, and this panel is reached from a phone more
           often than its author would like. */}
-      {workbench && !directMode && (
-        <CommandComposer
-          draft={draft}
-          onDraft={setDraft}
-          onSubmit={submitDraft}
-          onFocusTerminal={() => termRef.current?.focus()}
-          connected={state === "open"}
-          contextLabel={contextLabel}
-          inputRef={composerRef}
-        />
-      )}
-      {(!workbench || directMode) && (
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
-          <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
-          {CONTROL_KEYS.map((key) => (
-            <Tooltip key={key.label}>
-              <TooltipTrigger asChild>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                  onClick={() => send(key.bytes)}
-                >
-                  {key.label}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{key.hint}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-      )}
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-hairline bg-surface-header px-3 py-1.5">
+        <span className="mr-2 hidden text-[11px] text-muted-foreground sm:inline">Keys</span>
+        {CONTROL_KEYS.map((key) => (
+          <Tooltip key={key.label}>
+            <TooltipTrigger asChild>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="h-7 shrink-0 rounded-md border border-hairline px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                onClick={() => send(key.bytes)}
+              >
+                {key.label}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{key.hint}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
 
       <PasteConfirmation
         paste={pendingPaste}
         onCancel={() => setPendingPaste(null)}
         onConfirm={() => {
-          if (pendingPaste?.submit) pendingPaste.submit()
-          else if (pendingPaste) send(pendingPaste.raw)
+          if (pendingPaste) send(pendingPaste.raw)
           setPendingPaste(null)
         }}
       />

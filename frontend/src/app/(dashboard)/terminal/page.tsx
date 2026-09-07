@@ -852,8 +852,6 @@ export default function TerminalPage() {
               key={active}
               path={`/terminal/${active}/attach`}
               terminalSessionId={active}
-              workbench
-              contextLabel={activeWindow?.name ?? "Shell"}
               // The prompt inside already says where you are; the header says
               // who, which is the fact a root-equivalent shell should never
               // make you go and check.
