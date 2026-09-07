@@ -1,0 +1,76 @@
+[
+  {
+    "name": "git_acquire_success",
+    "owner": "git",
+    "boundary": "hostexec.CommandInDir",
+    "workingDir": "/srv/just-dashboard-managed/worktrees/42",
+    "argv": ["git", "fetch", "--prune", "origin", "refs/heads/main"],
+    "events": [
+      {"stream": "stderr", "text": "From https://example.invalid/acme/web\n"}
+    ],
+    "outcome": "passed",
+    "evidence": {"revision": "0123456789abcdef0123456789abcdef01234567"}
+  },
+  {
+    "name": "docker_build_failure",
+    "owner": "docker",
+    "boundary": "hostexec.CommandInDir",
+    "workingDir": "/srv/just-dashboard-managed/worktrees/42",
+    "argv": ["docker", "buildx", "build", "--progress=plain", "--file", "Dockerfile", "."],
+    "events": [
+      {"stream": "stdout", "text": "#1 loading build definition\n"},
+      {"stream": "stderr", "text": "executor failed running [/bin/sh -c test]: exit code: 1\n"}
+    ],
+    "outcome": "failed",
+    "evidence": {"exitCode": 1, "liveRuntimeChanged": false}
+  },
+  {
+    "name": "compose_activate_success",
+    "owner": "docker",
+    "boundary": "hostexec.CommandInDir",
+    "workingDir": "/srv/acme-stack",
+    "argv": ["docker", "compose", "--file", "compose.yml", "up", "--detach", "--remove-orphans"],
+    "events": [
+      {"stream": "stderr", "text": "Container acme-web-1 Started\n"}
+    ],
+    "outcome": "passed",
+    "evidence": {"runtimeId": "container:fixture-acme-web-1"}
+  },
+  {
+    "name": "proxy_cutover_success",
+    "owner": "proxy",
+    "boundary": "proxysvc.ApplySite",
+    "workingDir": "",
+    "argv": [],
+    "events": [
+      {"stream": "evidence", "text": "configuration parsed, validated, applied and re-read\n"}
+    ],
+    "outcome": "passed",
+    "evidence": {"site": "app.example.invalid", "target": "127.0.0.1:49152"}
+  },
+  {
+    "name": "http_readiness_delayed_success",
+    "owner": "http_check",
+    "boundary": "net/http.Client",
+    "workingDir": "",
+    "argv": [],
+    "events": [
+      {"stream": "evidence", "text": "attempt 1: 503 after 12ms\n"},
+      {"stream": "evidence", "text": "attempt 2: 200 after 9ms\n"}
+    ],
+    "outcome": "passed",
+    "evidence": {"attempts": 2, "status": 200}
+  },
+  {
+    "name": "tcp_readiness_timeout",
+    "owner": "tcp_check",
+    "boundary": "net.Dialer",
+    "workingDir": "",
+    "argv": [],
+    "events": [
+      {"stream": "evidence", "text": "dial tcp 127.0.0.1:25565: connection refused\n"}
+    ],
+    "outcome": "failed",
+    "evidence": {"attempts": 3, "timeoutMs": 5000}
+  }
+]

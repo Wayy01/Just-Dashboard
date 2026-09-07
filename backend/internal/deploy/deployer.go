@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -131,17 +132,17 @@ func (d *Deployer) execute(ctx context.Context, projectID int64, trigger, actor,
 	return d.store.Run(ctx, runID)
 }
 
-func (d *Deployer) pipeline(ctx context.Context, p *Project, targetCommit string, logBuf *bytes.Buffer) (string, error) {
+func (d *Deployer) pipeline(ctx context.Context, p *Project, targetCommit string, logBuf io.Writer) (string, error) {
 	if _, err := os.Stat(filepath.Join(p.RepoPath, ".git")); err != nil {
 		return "", fmt.Errorf("%s is not a git repository", p.RepoPath)
 	}
 
 	fmt.Fprintf(logBuf, "$ git fetch --prune origin\n")
 	if out, err := d.git(ctx, p.RepoPath, "fetch", "--prune", "origin"); err != nil {
-		logBuf.WriteString(out)
+		_, _ = io.WriteString(logBuf, out)
 		return "", err
 	} else {
-		logBuf.WriteString(out)
+		_, _ = io.WriteString(logBuf, out)
 	}
 
 	// A hard reset is deliberate: the working tree of a deploy target is
@@ -153,7 +154,7 @@ func (d *Deployer) pipeline(ctx context.Context, p *Project, targetCommit string
 	}
 	fmt.Fprintf(logBuf, "$ git reset --hard %s\n", ref)
 	out, err := d.git(ctx, p.RepoPath, "reset", "--hard", ref)
-	logBuf.WriteString(out)
+	_, _ = io.WriteString(logBuf, out)
 	if err != nil {
 		return "", err
 	}
@@ -207,8 +208,7 @@ func (d *Deployer) pipeline(ctx context.Context, p *Project, targetCommit string
 func (d *Deployer) git(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
+	cmd := hostexec.CommandInDir(ctx, dir, "git", args...)
 	// Any credential prompt would hang the deployment forever; failing fast
 	// with a clear git error is far better than a stuck run.
 	cmd.Env = append(os.Environ(),
@@ -224,23 +224,22 @@ func (d *Deployer) git(ctx context.Context, dir string, args ...string) (string,
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	err := cmd.Run()
+	_, err := hostexec.RunGroup(ctx, cmd, 5*time.Second)
 	if err != nil {
 		return buf.String(), fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(buf.String()))
 	}
 	return buf.String(), nil
 }
 
-func (d *Deployer) compose(ctx context.Context, p *Project, env map[string]string, logBuf *bytes.Buffer) error {
+func (d *Deployer) compose(ctx context.Context, p *Project, env map[string]string, logBuf io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	cmd := hostexec.CommandInDir(ctx, p.RepoPath, "docker", "compose",
 		"-f", p.ComposeFile, "up", "-d", "--build", "--remove-orphans")
-	cmd.Dir = p.RepoPath
 	cmd.Env = append(mergeEnv(env), "COMPOSE_PROGRESS=plain", "DOCKER_CLI_HINTS=false")
 	cmd.Stdout = logBuf
 	cmd.Stderr = logBuf
-	if err := cmd.Run(); err != nil {
+	if _, err := hostexec.RunGroup(ctx, cmd, 5*time.Second); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
 	return nil
@@ -250,7 +249,7 @@ func (d *Deployer) compose(ctx context.Context, p *Project, env map[string]strin
 // intentionally: these are pipelines the operator wrote for their own project
 // ("bun install && bun run build"), and they are stored by an admin, not
 // supplied per request.
-func (d *Deployer) shell(ctx context.Context, p *Project, command string, env map[string]string, logBuf *bytes.Buffer) error {
+func (d *Deployer) shell(ctx context.Context, p *Project, command string, env map[string]string, logBuf io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
@@ -258,7 +257,8 @@ func (d *Deployer) shell(ctx context.Context, p *Project, command string, env ma
 	cmd.Env = mergeEnv(env)
 	cmd.Stdout = logBuf
 	cmd.Stderr = logBuf
-	return cmd.Run()
+	_, err := hostexec.RunGroup(ctx, cmd, 5*time.Second)
+	return err
 }
 
 // mergeEnv builds the environment for a deploy child process.

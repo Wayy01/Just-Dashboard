@@ -1,10 +1,5 @@
 export type Capability =
-  | "read"
-  | "service.control"
-  | "file.write"
-  | "terminal"
-  | "destructive"
-  | "system.admin"
+  "read" | "service.control" | "file.write" | "terminal" | "destructive" | "system.admin"
 
 export type Role = "admin" | "limited" | "readonly"
 
@@ -1171,14 +1166,7 @@ export type Listener = {
 }
 
 export type DbDriver =
-  | "postgres"
-  | "mysql"
-  | "sqlite"
-  | "sqlserver"
-  | "clickhouse"
-  | "oracle"
-  | "mongodb"
-  | "redis"
+  "postgres" | "mysql" | "sqlite" | "sqlserver" | "clickhouse" | "oracle" | "mongodb" | "redis"
 
 /**
  * What one engine can do, as the server reports it.
@@ -1642,6 +1630,7 @@ export type BackupRun = {
 export type DeployProject = {
   id: number
   name: string
+  profile: WorkloadProfile
   repoPath: string
   branch: string
   composeFile: string
@@ -1650,12 +1639,464 @@ export type DeployProject = {
   hookId: string
   enabled: boolean
   createdAt: string
+  updatedAt: string
+  archivedAt?: string
   hookUrl?: string
   currentSha?: string
   currentRef?: string
   dirty?: boolean
   lastRun?: DeployRun
   envVarCount: number
+}
+
+export type WorkloadProfile =
+  "web" | "static" | "worker" | "image" | "compose" | "service" | "game" | "imported"
+
+export type DeploymentSourceKind = "git" | "local" | "image" | "compose" | "blueprint" | "import"
+
+export type DeploymentSourceMode =
+  | "git_url"
+  | "connected_repository"
+  | "local_checkout"
+  | "image_reference"
+  | "compose_paste"
+  | "compose_upload"
+  | "compose_git"
+  | "compose_local"
+  | "blueprint"
+  | "existing_checkout"
+  | "existing_container"
+  | "existing_stack"
+
+export type DeploymentRunState =
+  | "requested"
+  | "validating"
+  | "queued"
+  | "preparing"
+  | "running"
+  | "verifying"
+  | "activating"
+  | "failed_activation"
+  | "restoring_previous"
+  | "cancelling"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "rolled_back"
+  | "superseded"
+
+export type DeploymentStepState =
+  | "pending"
+  | "blocked"
+  | "running"
+  | "passed"
+  | "warning"
+  | "failed"
+  | "skipped"
+  | "cancelled"
+  | "unavailable"
+
+export type DeploymentEngineRun = {
+  id: number
+  projectId: number
+  environmentId: number
+  state: DeploymentRunState
+  operation: string
+  trigger: string
+  actor: string
+  requestedAt: string
+  queuedAt?: string
+  claimedAt?: string
+  heartbeatAt?: string
+  endedAt?: string
+  cancelRequested: boolean
+  supersededBy?: number
+  retryOfRunId?: number
+  planRevision: number
+  releaseId?: number
+  candidateReleaseId?: number
+  terminalCode?: string
+  terminalReason?: string
+  priority: number
+  slotClass: "light" | "heavy"
+  metadata: Record<string, unknown>
+}
+
+export type DeploymentStep = {
+  id: number
+  runId: number
+  key: string
+  ordinal: number
+  state: DeploymentStepState
+  attempt: number
+  timeoutSeconds: number
+  startedAt?: string
+  endedAt?: string
+  evidence: Record<string, unknown>
+  errorCode?: string
+  errorMessage?: string
+  lastSeq: number
+}
+
+export type DeploymentRunSnapshot = {
+  run: DeploymentEngineRun
+  steps: DeploymentStep[]
+}
+
+export type DeploymentRunEvent = {
+  seq: number
+  type: string
+  runId: number
+  stepId?: number
+  ts: string
+  data: Record<string, unknown>
+}
+
+export type DeploymentSummary = {
+  id: number
+  name: string
+  profile: WorkloadProfile
+  environmentId: number
+  environmentName: string
+  environmentKind: "production" | "staging" | "preview"
+  desiredRevision: number
+  liveReleaseId?: number
+  livePlanRevision?: number
+  strategy: "blue_green" | "stop_first"
+  expectedDowntime: boolean
+  sourceKind: DeploymentSourceKind
+  buildMethod: DeploymentBuildMethod
+  sourceRef?: string
+  sourceRevision?: string
+  endpoint?: string
+  internalPort?: number
+  hostPort?: number
+  health: string
+  pendingChanges: boolean
+  lastRun?: DeploymentEngineRun
+  activeRun?: DeploymentEngineRun
+  updatedAt: string
+}
+
+export type DeploymentRelease = {
+  id: number
+  projectId: number
+  environmentId: number
+  number: number
+  runId: number
+  predecessorReleaseId?: number
+  state: "candidate" | "live" | "retained"
+  planRevision: number
+  sourceRevision?: string
+  imageDigest?: string
+  configDigest: string
+  variablesDigest: string
+  strategy: "blue_green" | "stop_first"
+  expectedDowntime: boolean
+  createdAt: string
+  activatedAt?: string
+  retiredAt?: string
+  pinned: boolean
+}
+
+export type DeploymentActiveWork = {
+  run: DeploymentEngineRun
+  projectName: string
+  environment: string
+  currentStep?: string
+  currentStatus?: DeploymentStepState
+  queuePosition?: number
+}
+
+export type DeploymentFleet = {
+  deployments: DeploymentSummary[]
+  activeWork: DeploymentActiveWork[]
+  slots: {
+    heavyUsed: number
+    heavyCapacity: number
+    lightUsed: number
+    lightCapacity: number
+  }
+}
+
+export type DeploymentComposeDocument = { path: string; content: string; order: number }
+
+export type DeploymentDraftSource = {
+  kind: DeploymentSourceKind
+  mode: DeploymentSourceMode
+  url?: string
+  provider?: string
+  providerBaseUrl?: string
+  repository?: string
+  ref?: string
+  credentialId?: number
+  localPath?: string
+  subdirectory?: string
+  managedInPlace?: boolean
+  includeSubmodules?: boolean
+  includeLfs?: boolean
+  image?: string
+  platform?: string
+  composeFiles?: DeploymentComposeDocument[]
+  resourceId?: string
+  blueprintId?: string
+  blueprintVersion?: string
+}
+
+export type DeploymentDetectionCandidate = {
+  id: string
+  name: string
+  root: string
+  profile: WorkloadProfile
+  buildMethod: DeploymentBuildMethod
+  confidence: "high" | "medium" | "low"
+  framework?: string
+  recipe?: "node" | "go" | "python"
+  buildCommand?: string
+  startCommand?: string
+  outputDirectory?: string
+  port?: number
+  evidence: { path: string; reason: string }[]
+  needsDecision: string[]
+}
+
+export type DeploymentDetection = {
+  source: {
+    kind: DeploymentSourceKind
+    remote?: string
+    repository?: string
+    ref?: string
+    revision?: string
+    digest?: string
+    os?: string
+    architecture?: string
+    platforms?: string[]
+    localPath?: string
+    dirty?: boolean
+    composeFiles?: string[]
+    services?: string[]
+  }
+  candidates: DeploymentDetectionCandidate[]
+  compose?: {
+    files: string[]
+    services: {
+      name: string
+      image?: string
+      buildContext?: string
+      buildDockerfile?: string
+      ports: string[]
+      mounts: string[]
+      advanced: string[]
+    }[]
+    variables: string[]
+    warnings: string[]
+    unsupported: string[]
+    preview: string
+    digest: string
+  }
+  selectedId?: string
+  scannedFiles: number
+  scannedBytes: number
+  truncated: boolean
+  truncatedReason?: string
+  unavailable?: string
+  gitRequirements: { submodules: boolean; lfs: boolean }
+}
+
+export type DeploymentBuildMethod =
+  "recipe" | "dockerfile" | "static" | "image" | "compose" | "none" | "legacy_compose"
+
+export type DeploymentOwnership = "managed" | "linked" | "observed"
+
+export type DeploymentConfiguration = {
+  build: {
+    method: DeploymentBuildMethod
+    recipe?: "node" | "go" | "python"
+    rootDirectory?: string
+    dockerfile?: string
+    buildCommand?: string
+    startCommand?: string
+    outputDirectory?: string
+    targetPlatform?: string
+    noCache?: boolean
+    secrets?: { variable: string; step: "install" | "build" }[]
+    releaseTasks?: {
+      name: string
+      command: string
+      workingDirectory?: string
+      timeoutSeconds: number
+      env: string[]
+    }[]
+  }
+  runtime: {
+    image?: string
+    command?: string[]
+    internalPort?: number
+    hostPort?: number
+    bindAddress?: string
+    strategy: "blue_green" | "stop_first"
+    privileged?: boolean
+    hostNetwork?: boolean
+    capabilities?: string[]
+    devices?: string[]
+    mounts?: {
+      source: string
+      target: string
+      readOnly?: boolean
+      ownership: DeploymentOwnership
+    }[]
+  }
+  variables: {
+    name: string
+    sensitivity: "plain" | "secret"
+    scopes: string[]
+    required?: boolean
+    reference?: string
+  }[]
+  dependencies: {
+    kind: string
+    ownership: DeploymentOwnership
+    resourceKind: string
+    resourceId?: string
+    config?: Record<string, unknown>
+  }[]
+  checks: {
+    name: string
+    kind: string
+    phase: "readiness" | "smoke"
+    required: boolean
+    config?: Record<string, unknown>
+  }[]
+  domains: { hostname: string; https: boolean; ownership: "managed" | "linked" }[]
+  autoDeploy?: boolean
+}
+
+export type DeploymentVariable = {
+  name: string
+  revision: number
+  sensitivity: "plain" | "secret"
+  scopes: ("build" | "runtime" | "release_task")[]
+  masked: string
+  valueDigest: string
+  reference?: { kind: string; target: string }
+  pending: boolean
+  createdBy: string
+  createdAt: string
+  environmentId: number
+  desiredRevision: number
+}
+
+export type DeploymentPendingChange = {
+  kind: string
+  name: string
+  change: "added" | "changed" | "removed"
+  beforeDigest?: string
+  afterDigest?: string
+}
+
+export type DeploymentPendingState = {
+  pending: boolean
+  desiredRevision: number
+  liveReleaseId?: number
+  livePlanRevision?: number
+  changes: DeploymentPendingChange[]
+}
+
+export type DeploymentEnvironmentConfiguration = Omit<
+  DeploymentConfiguration,
+  "variables" | "autoDeploy"
+> & {
+  revision: number
+  variables: DeploymentVariable[]
+  pending: DeploymentPendingState
+}
+
+export type DeploymentRemovalTarget = {
+  id: string
+  kind: string
+  resourceId: string
+  displayName: string
+  owner: string
+  ownership: DeploymentOwnership
+  data: boolean
+  requiresAdmin: boolean
+  confirmationType: "ordinary" | "typed"
+  confirmationPhrase?: string
+  deepLink?: string
+  workingDirectory?: string
+}
+
+export type DeploymentRemovalPlan = {
+  deploymentId: number
+  archived: boolean
+  targets: DeploymentRemovalTarget[]
+  digest: string
+  generatedAt: string
+}
+
+export type DeploymentRemovalExecution = {
+  deploymentId: number
+  removed: DeploymentRemovalTarget[]
+  remaining: DeploymentRemovalTarget[]
+}
+
+export type DeploymentBackupGateEvidence = {
+  jobId: number
+  runId?: number
+  status: string
+  startedAt?: string
+  endedAt?: string
+  fresh: boolean
+  restoreTested: boolean
+  detail?: string
+}
+
+export type DeploymentPreflightFinding = {
+  code: string
+  severity: "pass" | "decision" | "warning" | "blocked" | "unavailable"
+  title: string
+  measured?: string
+  means?: string
+  action?: string
+  owner?: string
+  fieldId?: string
+  deepLink?: string
+}
+
+export type DeploymentDraft = {
+  id: string
+  ownerUsername: string
+  currentStep: "intent" | "source" | "detection" | "configuration" | "preflight"
+  revision: number
+  data: {
+    intent?: { name: string; profile: WorkloadProfile }
+    source?: DeploymentDraftSource
+    detection?: DeploymentDetection
+    configuration?: DeploymentConfiguration
+  }
+  findings: DeploymentPreflightFinding[]
+  planPreview: string
+  committedProjectId?: number
+  updatedAt: string
+  expiresAt: string
+}
+
+export type DeploymentPreflight = {
+  revision: number
+  findings: DeploymentPreflightFinding[]
+  expectedDowntime: boolean
+  preview: string
+  digest: string
+  plan: {
+    actions: {
+      ordinal: number
+      phase: string
+      owner: string
+      action: string
+      arguments?: string[]
+      changesState: boolean
+    }[]
+  }
 }
 
 export type DeployRun = {

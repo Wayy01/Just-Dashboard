@@ -509,31 +509,27 @@ function SessionRow({
         }
       }}
       className={cn(
-        "group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-colors",
+        "raised group relative flex min-w-0 items-center gap-1.5 rounded-lg border py-1.5 pr-1 pl-2 transition-[color,background-color,border-color,filter]",
         !active && !windowOver && "border-hairline bg-[var(--control)]",
-        !active && !colour && "hover:border-hairline hover:bg-[var(--row-hover)]",
+        !active && !colour && "hover:bg-[var(--control-hover)]",
         !active && colour && "hover:brightness-110",
-        active && "shadow-xs",
-        active && !colour && !windowOver && "raised border-primary/45 bg-primary/12",
+        active && !colour && !windowOver && "border-primary/35 bg-primary/10",
         windowOver && "border-dashed border-primary bg-primary/10",
       )}
-      // The selected row is lifted into a card — the design system's own
-      // sheen: a border, a hairline gradient off the top edge, a soft shadow.
-      // A flat fill on its own read as a grey wash in the light theme, since
-      // the app's ink *is* grey there. A coloured session keeps its hue: the
-      // border and a gentle top-to-bottom tint carry the same "raised" reading
-      // in the tag colour.
+      // Sessions are durable workspaces, so every row uses the design system's
+      // compact card surface. Selection is a tint rather than a second layer
+      // of elevation; coloured sessions keep the same surface and carry their
+      // identity through a quiet tag mix and the status dot.
       style={{
         ...tagStyle(colour),
-        ...(active && colour
+        ...(colour
           ? {
-              backgroundImage:
-                "linear-gradient(180deg, color-mix(in oklab, var(--tag) 22%, var(--card)), color-mix(in oklab, var(--tag) 13%, var(--card)) 60%)",
-              borderColor: "color-mix(in oklab, var(--tag) 45%, transparent)",
+              backgroundColor: `color-mix(in oklab, var(--tag) ${active ? "15%" : "7%"}, var(--control))`,
+              borderColor: `color-mix(in oklab, var(--tag) ${
+                active ? "38%" : "20%"
+              }, var(--border))`,
             }
-          : !active && colour
-            ? { backgroundColor: "color-mix(in oklab, var(--tag) 11%, var(--card))" }
-            : undefined),
+          : undefined),
       }}
     >
       <button

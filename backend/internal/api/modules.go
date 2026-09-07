@@ -54,12 +54,18 @@ type moduleSet struct {
 	// jobs runs the operations that take longer than a request should:
 	// certbot, package upgrades, sshd applies. They outlive the request that
 	// started them and are watched by id rather than by the socket.
-	jobs         *jobs.Manager
-	backupStore  *backups.Store
-	backupRunner *backups.Runner
-	backupSched  *backups.Scheduler
-	deployStore  *deploy.Store
-	deployer     *deploy.Deployer
+	jobs            *jobs.Manager
+	backupStore     *backups.Store
+	backupRunner    *backups.Runner
+	backupSched     *backups.Scheduler
+	deployStore     *deploy.Store
+	deployer        *deploy.Deployer
+	deployRuns      *deploy.OrchestrationStore
+	deployEngine    *deploy.Engine
+	deployPlanning  *deploy.PlanningStore
+	deploySources   *deploy.HostSourceAnalyzer
+	deployPreflight *deploy.HostPreflightObserver
+	deployArtifacts *deploy.ArtifactBuilder
 }
 
 func (s *Server) initModules() {
@@ -121,6 +127,52 @@ func (s *Server) initModules() {
 
 	s.modules.deployStore = deploy.NewStore(s.Store, s.Sealer, s.Cfg.DeployRoots)
 	s.modules.deployer = deploy.NewDeployer(s.modules.deployStore, s.Log)
+	s.modules.deployRuns = deploy.NewOrchestrationStore(s.Store)
+	s.modules.deployPlanning = deploy.NewPlanningStore(s.Store, s.Sealer, s.Cfg.DeployRoots)
+	s.modules.deploySources = deploy.NewHostSourceAnalyzer(
+		s.Cfg.DeployRoots,
+		s.Cfg.ComposeRoots,
+		filepath.Join(s.Cfg.DataDir, "deployment-detection"),
+		s.modules.docker,
+		s.modules.deployPlanning,
+	)
+	s.modules.deployPreflight = deploy.NewHostPreflightObserver(
+		s.Cfg.DeployRoots,
+		s.Cfg.DataDir,
+		s.modules.docker,
+		s.modules.proxy,
+	).WithFirewall(s.modules.netsec).WithDependencies(newDeploymentDependencyObserver(
+		s.Store, s.modules.backupStore, s.modules.docker,
+	))
+	artifactBackend := deploy.NewDockerArtifactBackend(s.modules.docker)
+	s.modules.deployArtifacts = deploy.NewArtifactBuilder(artifactBackend)
+	normalizedExecutor := deploy.NewNormalizedStepExecutor(
+		s.modules.deployRuns,
+		s.modules.deployPlanning,
+		s.modules.deploySources,
+		s.modules.deployArtifacts,
+		deploy.NewDockerRuntimeOwner(s.modules.docker),
+		deploy.NewCheckRunner(s.modules.docker),
+		s.modules.proxy,
+		filepath.Join(s.Cfg.DataDir, "deployment-workspaces"),
+	).WithPreflightObserver(s.modules.deployPreflight).
+		WithBackupGate(newDeploymentBackupGate(s.modules.backupStore, s.modules.backupRunner))
+	s.modules.deployEngine = deploy.NewEngine(
+		s.modules.deployRuns,
+		deploy.NewDeploymentStepExecutor(
+			deploy.NewLegacyStepExecutor(s.modules.deployer),
+			normalizedExecutor,
+		),
+		deploy.NewDeploymentReconciler(s.modules.deployRuns),
+		deploy.EngineConfig{
+			Budget: deploy.QueueBudget{
+				Heavy: s.Cfg.DeployHeavySlots,
+				Light: s.Cfg.DeployLightSlots,
+			},
+			LeaseTTL: s.Cfg.DeployLeaseTTL,
+		},
+		s.Log,
+	)
 }
 
 // listSiblings is how internal/selfupdate sees this host's containers.

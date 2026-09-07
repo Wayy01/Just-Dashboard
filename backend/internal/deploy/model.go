@@ -9,24 +9,28 @@ package deploy
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Wayy01/Just-Dashboard/backend/internal/files"
 )
 
 type Project struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	RepoPath    string    `json:"repoPath"`
-	Branch      string    `json:"branch"`
-	ComposeFile string    `json:"composeFile"`
-	PreCommand  string    `json:"preCommand,omitempty"`
-	PostCommand string    `json:"postCommand,omitempty"`
-	HookID      string    `json:"hookId"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID          int64           `json:"id"`
+	Name        string          `json:"name"`
+	Profile     WorkloadProfile `json:"profile"`
+	RepoPath    string          `json:"repoPath"`
+	Branch      string          `json:"branch"`
+	ComposeFile string          `json:"composeFile"`
+	PreCommand  string          `json:"preCommand,omitempty"`
+	PostCommand string          `json:"postCommand,omitempty"`
+	HookID      string          `json:"hookId"`
+	Enabled     bool            `json:"enabled"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+	ArchivedAt  *time.Time      `json:"archivedAt,omitempty"`
 
 	// HookURL is assembled for display; the secret itself is only ever shown
 	// once, at creation time.
@@ -86,17 +90,19 @@ var (
 // setting that was supposed to bound it went unread. Every other place the
 // dashboard takes a host path from a client — files, git, compose, logs — is
 // bounded by a configured root, and this is now one of them.
-func (p *Project) Validate(roots []string) error {
+func (p *Project) Validate(paths *files.Service) error {
 	if !projectNameRe.MatchString(p.Name) {
 		return fmt.Errorf("name must start with a letter or digit and contain only letters, digits, dots, dashes and underscores")
 	}
 	if !strings.HasPrefix(p.RepoPath, "/") {
 		return fmt.Errorf("repoPath must be an absolute path")
 	}
-	p.RepoPath = filepath.Clean(p.RepoPath)
-	if !withinRoots(p.RepoPath, roots) {
-		return fmt.Errorf("repoPath must be inside one of the deploy roots (%s)", strings.Join(roots, ", "))
+	resolved, err := paths.Resolve(p.RepoPath)
+	if err != nil {
+		return fmt.Errorf("repoPath must be inside one of the deploy roots (%s): %w",
+			strings.Join(paths.Roots(), ", "), err)
 	}
+	p.RepoPath = resolved
 	if p.Branch == "" {
 		p.Branch = "main"
 	}
@@ -106,33 +112,14 @@ func (p *Project) Validate(roots []string) error {
 	if p.ComposeFile == "" {
 		p.ComposeFile = "docker-compose.yml"
 	}
-	if strings.Contains(p.ComposeFile, "..") || strings.HasPrefix(p.ComposeFile, "/") {
+	p.ComposeFile = filepath.Clean(p.ComposeFile)
+	if filepath.IsAbs(p.ComposeFile) || p.ComposeFile == ".." || strings.HasPrefix(p.ComposeFile, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("composeFile must be a path relative to the repository")
 	}
+	if _, err := paths.Resolve(filepath.Join(p.RepoPath, p.ComposeFile)); err != nil {
+		return fmt.Errorf("composeFile resolves outside the deploy roots: %w", err)
+	}
 	return nil
-}
-
-func withinRoots(path string, roots []string) bool {
-	// An empty root list means the operator was never given the setting; the
-	// only safe reading is "nothing is permitted", but that would break an
-	// install on upgrade, so it is treated as unconfigured and permissive.
-	// config.Load always supplies a default, so this is the zero-value path.
-	if len(roots) == 0 {
-		return true
-	}
-	resolved := path
-	if r, err := filepath.EvalSymlinks(path); err == nil {
-		resolved = r
-	}
-	for _, root := range roots {
-		root = filepath.Clean(root)
-		for _, candidate := range []string{path, resolved} {
-			if root == "/" || candidate == root || strings.HasPrefix(candidate, root+string(os.PathSeparator)) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func ValidateEnvKey(key string) error {

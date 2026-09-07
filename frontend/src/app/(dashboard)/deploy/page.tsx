@@ -1,37 +1,35 @@
 "use client"
 
-import { useState } from "react"
-import {
-  ClockRewind,
-  CloudUpload,
-  Copy,
-  Eye,
-  EyeOff,
-  GitBranch,
-  Key,
-  Plus,
-  RotateCounterClockwise,
-  Trash,
-} from "@/components/icons"
+import { useMemo, useState } from "react"
+import Link from "next/link"
+import { ArrowRight, Clock, CloudUpload, Filter, Plus, StopCircle } from "@/components/icons"
+import { get, post } from "@/lib/api"
+import { relativeTime } from "@/lib/format"
 import { notify } from "@/lib/toast"
-import { del, get, post, put } from "@/lib/api"
-import { relativeTime, shortSha, timestamp } from "@/lib/format"
-import type { DeployCommit, DeployProject, DeployRun, EnvVar } from "@/lib/types"
-import { useViewState } from "@/lib/view-state"
+import type { DeploymentActiveWork, DeploymentFleet, DeploymentSummary } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
 import { useAuth } from "@/hooks/use-auth"
-import { useConfirm } from "@/components/confirm-dialog"
-import { Detail, DetailList, Page, PageHeader } from "@/components/page"
-import { Panel, PanelBody, PanelFooter, PanelHeader, Well } from "@/components/panel"
-import { SidePanel } from "@/components/side-panel"
-import { EmptyState, ErrorState, LoadingPanel, LoadingRows, Notice } from "@/components/state"
-import { Status } from "@/components/status-dot"
+import { Page, PageHeader, SearchInput } from "@/components/page"
+import { Panel, PanelBody, PanelHeader, PanelToolbar } from "@/components/panel"
+import { EmptyState, ErrorState, LoadingPanel } from "@/components/state"
+import {
+  DeploymentStatus,
+  HealthStatus,
+  humanize,
+  reachableAt,
+  releaseLabel,
+} from "@/components/deploy/deployment-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -40,32 +38,48 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
 
 export default function DeployPage() {
   const { can } = useAuth()
-  const { confirm, dialog } = useConfirm()
-  const [detailFor, setDetailFor] = useState<DeployProject | null>(null)
-  const { data, error, loading, refresh } = usePoll(
-    (signal) => get<DeployProject[]>("/deploy/", undefined, signal),
-    10000,
+  const fleet = usePoll(
+    (signal) => get<DeploymentFleet>("/deploy/", { view: "fleet" }, signal),
+    5000,
   )
+  const [query, setQuery] = useState("")
+  const [profile, setProfile] = useState("all")
+  const [state, setState] = useState("all")
+  const [environment, setEnvironment] = useState("all")
+  const [pendingOnly, setPendingOnly] = useState(false)
 
-  const deploy = async (project: DeployProject) => {
+  const deployments = useMemo(() => {
+    const search = query.trim().toLowerCase()
+    return (fleet.data?.deployments ?? []).filter((deployment) => {
+      if (
+        search &&
+        !`${deployment.name} ${deployment.endpoint ?? ""} ${deployment.sourceRef ?? ""}`
+          .toLowerCase()
+          .includes(search)
+      )
+        return false
+      if (profile !== "all" && deployment.profile !== profile) return false
+      if (environment !== "all" && deployment.environmentKind !== environment) return false
+      if (state === "active" && !deployment.activeRun) return false
+      if (state === "failed" && deployment.lastRun?.state !== "failed") return false
+      if (state === "not-observed" && deployment.health !== "unavailable") return false
+      if (pendingOnly && !deployment.pendingChanges) return false
+      return true
+    })
+  }, [environment, fleet.data?.deployments, pendingOnly, profile, query, state])
+
+  const cancel = async (work: DeploymentActiveWork) => {
     try {
-      await post(`/deploy/${project.id}/run`)
-      notify.success(`Deploying ${project.name}`, { description: "Watch progress in the history." })
-      refresh()
-    } catch (err) {
-      notify.error("Could not start deployment", err)
+      await post(`/deploy/${work.run.projectId}/runs/${work.run.id}/cancel`, {})
+      notify.success(`Cancelling ${work.projectName}`, {
+        description: "The run page will show cleanup progress.",
+      })
+      fleet.refresh()
+    } catch (error) {
+      notify.error("Could not cancel deployment", error)
     }
   }
 
@@ -74,615 +88,351 @@ export default function DeployPage() {
       <PageHeader
         eyebrow="Operations"
         title="Deployments"
-        description="Git pull plus container rebuild, triggered by hand or by a signed webhook"
-        actions={can("system.admin") && <ProjectDialog onDone={refresh} />}
+        description="See what is changing now, what is live, and what needs your attention."
+        actions={
+          can("system.admin") && (
+            <Button size="sm" asChild>
+              <Link href="/deploy/new">
+                <Plus className="size-4" />
+                Deploy something
+              </Link>
+            </Button>
+          )
+        }
       />
 
-      {loading && <LoadingPanel />}
-      {error && <ErrorState error={error} />}
-      {data?.length === 0 && (
-        <EmptyState
-          icon={CloudUpload}
-          title="No projects configured"
-          description="Point a project at a git checkout with a compose file, then deploy it from here or from CI."
+      {fleet.loading && !fleet.data && <LoadingPanel rows={5} />}
+      {fleet.error && !fleet.data && (
+        <div className="space-y-3">
+          <ErrorState error={fleet.error} />
+          <Button variant="outline" size="sm" onClick={fleet.refresh}>
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {fleet.data && fleet.data.activeWork.length > 0 && (
+        <ActiveWorkStrip
+          work={fleet.data.activeWork}
+          slots={fleet.data.slots}
+          canCancel={can("service.control")}
+          onCancel={cancel}
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
-        {data?.map((project) => (
-          <Panel key={project.id}>
-            <PanelHeader
-              icon={CloudUpload}
-              title={project.name}
-              description={project.repoPath}
-              actions={
-                <Badge variant={project.enabled ? "success" : "secondary"} className="font-normal">
-                  {project.enabled ? "hook live" : "hook off"}
-                </Badge>
-              }
+      {fleet.data && (
+        <Panel>
+          <PanelHeader
+            icon={CloudUpload}
+            title="Deployment fleet"
+            description={`${fleet.data.deployments.length} ${fleet.data.deployments.length === 1 ? "deployment" : "deployments"} on this server`}
+          />
+          <PanelToolbar>
+            <SearchInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search deployments"
+              aria-label="Search deployments"
+              containerClassName="sm:w-64"
             />
-            <PanelBody>
-              <DetailList>
-                <Detail label="Branch">
-                  <span className="flex items-center gap-1 font-mono">
-                    <GitBranch className="size-3" />
-                    {project.branch}
-                  </span>
-                </Detail>
-                <Detail label="At commit">
-                  <span className="font-mono">
-                    {shortSha(project.currentSha)}
-                    {project.dirty && (
-                      <Badge variant="destructive" className="ml-1 text-[10px] font-normal">
-                        dirty
-                      </Badge>
-                    )}
-                  </span>
-                </Detail>
-                <Detail label="Env vars">{project.envVarCount}</Detail>
-                <Detail label="Last deploy">
-                  {project.lastRun ? (
-                    <span className="flex items-center gap-1.5">
-                      <Status state={project.lastRun.status} />
-                      {relativeTime(project.lastRun.startedAt)}
-                    </span>
-                  ) : (
-                    "never"
-                  )}
-                </Detail>
-              </DetailList>
-            </PanelBody>
-            <PanelFooter>
-              <Button size="sm" variant="outline" onClick={() => setDetailFor(project)}>
-                <ClockRewind className="size-3.5" />
-                History
+            <Select value={state} onValueChange={setState}>
+              <SelectTrigger size="sm" className="w-[9.5rem]" aria-label="Filter by status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="active">Active work</SelectItem>
+                <SelectItem value="failed">Failed</SelectItem>
+                <SelectItem value="not-observed">Not observed</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={profile} onValueChange={setProfile}>
+              <SelectTrigger size="sm" className="w-[9.5rem]" aria-label="Filter by type">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                {(
+                  [
+                    "web",
+                    "static",
+                    "worker",
+                    "image",
+                    "compose",
+                    "service",
+                    "game",
+                    "imported",
+                  ] as const
+                ).map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {humanize(value)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={environment} onValueChange={setEnvironment}>
+              <SelectTrigger size="sm" className="w-[9.5rem]" aria-label="Filter by environment">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All environments</SelectItem>
+                <SelectItem value="production">Production</SelectItem>
+                <SelectItem value="staging">Staging</SelectItem>
+                <SelectItem value="preview">Preview</SelectItem>
+              </SelectContent>
+            </Select>
+            <Label className="flex min-h-8 items-center gap-2 rounded-md px-1.5 text-xs">
+              <Checkbox
+                checked={pendingOnly}
+                onCheckedChange={(checked) => setPendingOnly(checked === true)}
+              />
+              Pending only
+            </Label>
+            {(query ||
+              profile !== "all" ||
+              state !== "all" ||
+              environment !== "all" ||
+              pendingOnly) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setQuery("")
+                  setProfile("all")
+                  setState("all")
+                  setEnvironment("all")
+                  setPendingOnly(false)
+                }}
+              >
+                <Filter className="size-3.5" />
+                Clear
               </Button>
-              {can("service.control") && (
-                <Button size="sm" onClick={() => deploy(project)}>
-                  <CloudUpload className="size-3.5" />
-                  Deploy
-                </Button>
-              )}
-              {can("system.admin") && (
-                <>
-                  <HookDialog project={project} />
-                  <span className="flex-1" />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive"
-                    onClick={() =>
-                      confirm({
-                        title: "Delete project",
-                        confirmLabel: "Delete",
-                        description: (
-                          <p>
-                            Removes <b>{project.name}</b> and its webhook. The checkout on disk and
-                            its running containers are left alone.
-                          </p>
-                        ),
-                        action: async (c) => {
-                          await del(`/deploy/${project.id}`, { confirm: c })
-                          refresh()
-                        },
-                      })
-                    }
-                  >
-                    <Trash className="size-3.5" />
-                  </Button>
-                </>
-              )}
-            </PanelFooter>
-          </Panel>
-        ))}
-      </div>
-
-      <ProjectSheet
-        project={detailFor}
-        onOpenChange={(o) => !o && setDetailFor(null)}
-        onChanged={refresh}
-      />
-      {dialog}
+            )}
+          </PanelToolbar>
+          <PanelBody flush>
+            {deployments.length === 0 ? (
+              <EmptyState
+                icon={CloudUpload}
+                title={
+                  fleet.data.deployments.length === 0
+                    ? "Nothing is deployed yet"
+                    : "No deployments match"
+                }
+                description={
+                  fleet.data.deployments.length === 0
+                    ? "Start with a repository, image, Compose stack, game server, or existing workload."
+                    : "Change or clear the filters to see the rest of the fleet."
+                }
+                action={
+                  fleet.data.deployments.length === 0 && can("system.admin") ? (
+                    <Button size="sm" asChild>
+                      <Link href="/deploy/new">Deploy something</Link>
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <>
+                <FleetTable deployments={deployments} />
+                <FleetCards deployments={deployments} />
+              </>
+            )}
+          </PanelBody>
+        </Panel>
+      )}
     </Page>
   )
 }
 
-function HookDialog({ project }: { project: DeployProject }) {
-  const [secret, setSecret] = useState<string | null>(null)
-  const url =
-    typeof window !== "undefined"
-      ? `${window.location.origin}${project.hookUrl}`
-      : (project.hookUrl ?? "")
-
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline">
-          <Key className="size-3.5" />
-          Webhook
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Webhook for {project.name}</DialogTitle>
-          <DialogDescription>
-            POST here to deploy. Requests must carry an HMAC-SHA256 signature of the raw body in
-            X-Hub-Signature-256, which is the format GitHub sends by default.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>URL</Label>
-            <div className="flex gap-2">
-              <Input readOnly value={url} className="font-mono text-xs" />
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard.writeText(url)
-                  notify.success("Copied")
-                }}
-              >
-                <Copy className="size-4" />
-              </Button>
-            </div>
-          </div>
-          {secret ? (
-            <Notice tone="warning" icon={Key} title="New secret — copy it now">
-              <code className="font-mono text-xs break-all">{secret}</code>
-            </Notice>
-          ) : (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              The existing secret is stored encrypted and cannot be shown again. Rotating issues a
-              new one and immediately invalidates the old.
-            </p>
-          )}
-        </div>
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              try {
-                const res = await post<{ secret: string }>(`/deploy/${project.id}/rotate-secret`)
-                setSecret(res.secret)
-              } catch (err) {
-                notify.error("Could not rotate", err)
-              }
-            }}
-          >
-            Rotate secret
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ProjectSheet({
-  project,
-  onOpenChange,
-  onChanged,
+function ActiveWorkStrip({
+  work,
+  slots,
+  canCancel,
+  onCancel,
 }: {
-  project: DeployProject | null
-  onOpenChange: (open: boolean) => void
-  onChanged: () => void
+  work: DeploymentActiveWork[]
+  slots: DeploymentFleet["slots"]
+  canCancel: boolean
+  onCancel: (work: DeploymentActiveWork) => void
 }) {
-  const [tab, setTab] = useViewState("deploy.project.tab", "runs")
-  const [logFor, setLogFor] = useState<DeployRun | null>(null)
-
   return (
-    <SidePanel
-      open={project !== null}
-      onOpenChange={onOpenChange}
-      icon={CloudUpload}
-      title={project?.name ?? "Project"}
-      description={project?.repoPath}
-    >
-      {project && (
-        <Tabs value={tab} onValueChange={setTab} className="min-w-0 gap-3">
-          <TabsList>
-            <TabsTrigger value="runs">Runs</TabsTrigger>
-            <TabsTrigger value="rollback">Rollback</TabsTrigger>
-            <TabsTrigger value="env">Environment</TabsTrigger>
-          </TabsList>
-          <TabsContent value="runs" className="min-w-0 space-y-3">
-            <RunsTable project={project} onSelect={setLogFor} />
-            {logFor && (
-              <div className="space-y-1.5">
-                <p className="eyebrow">
-                  Log · {shortSha(logFor.fromCommit)} → {shortSha(logFor.toCommit)}
-                </p>
-                <Well className="max-h-96 whitespace-pre-wrap">
-                  {logFor.log || "No output recorded."}
-                </Well>
-              </div>
-            )}
-          </TabsContent>
-          <TabsContent value="rollback" className="min-w-0">
-            <RollbackTab project={project} onDone={onChanged} />
-          </TabsContent>
-          <TabsContent value="env" className="min-w-0">
-            <EnvTab project={project} onChanged={onChanged} />
-          </TabsContent>
-        </Tabs>
-      )}
-    </SidePanel>
-  )
-}
-
-function RunsTable({
-  project,
-  onSelect,
-}: {
-  project: DeployProject
-  onSelect: (run: DeployRun) => void
-}) {
-  const { data, loading } = usePoll(
-    (signal) =>
-      get<{ runs: DeployRun[]; running: boolean }>(`/deploy/${project.id}/runs`, undefined, signal),
-    5000,
-    [project.id],
-  )
-  if (loading) return <LoadingRows />
-  if (!data?.runs.length) return <EmptyState icon={ClockRewind} title="No deployments yet" />
-
-  return (
-    <Panel>
+    <Panel aria-labelledby="active-work-title">
+      <PanelHeader
+        icon={Clock}
+        title={<span id="active-work-title">Active work</span>}
+        description={`${work.filter((item) => item.run.state !== "queued").length} active · ${work.filter((item) => item.run.state === "queued").length} queued`}
+        actions={
+          <span className="numeric text-[11px] text-muted-foreground">
+            Build slots {slots.heavyUsed}/{slots.heavyCapacity} · control slots {slots.lightUsed}/
+            {slots.lightCapacity}
+          </span>
+        }
+      />
       <PanelBody flush>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Started</TableHead>
-              <TableHead>Trigger</TableHead>
-              <TableHead className="w-full">Commit</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-px" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.runs.map((run) => (
-              <TableRow key={run.id}>
-                <TableCell className="text-xs">
-                  <div>{timestamp(run.startedAt)}</div>
-                  <p className="text-[11px] text-muted-foreground">{run.duration ?? "running"}</p>
-                </TableCell>
-                <TableCell className="text-xs">
-                  {run.trigger}
-                  {run.actor && <p className="text-[11px] text-muted-foreground">{run.actor}</p>}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {shortSha(run.fromCommit)} → {shortSha(run.toCommit)}
-                </TableCell>
-                <TableCell>
-                  <Status state={run.status} />
-                </TableCell>
-                <TableCell>
-                  <Button size="xs" variant="ghost" onClick={() => onSelect(run)}>
-                    Log
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ul className="divide-y divide-hairline" aria-live="polite" aria-atomic="true">
+          {work.map((item) => (
+            <li
+              key={item.run.id}
+              className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5"
+            >
+              <div className="min-w-40 flex-1">
+                <Link
+                  href={`/deploy/${item.run.projectId}/runs/${item.run.id}`}
+                  className="text-[13px] font-medium hover:underline"
+                >
+                  {item.projectName}
+                </Link>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {item.environment} ·{" "}
+                  {item.currentStep ? humanize(item.currentStep) : "Waiting for next step"}
+                </p>
+              </div>
+              <DeploymentStatus state={item.run.state} />
+              <span className="numeric text-[11px] text-muted-foreground">
+                {item.queuePosition
+                  ? `Queue ${item.queuePosition}`
+                  : relativeTime(item.run.claimedAt ?? item.run.requestedAt)}
+              </span>
+              <Button variant="outline" size="xs" asChild>
+                <Link href={`/deploy/${item.run.projectId}/runs/${item.run.id}`}>View</Link>
+              </Button>
+              {canCancel && !item.run.cancelRequested && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="text-destructive"
+                  onClick={() => onCancel(item)}
+                >
+                  <StopCircle className="size-3" />
+                  Cancel
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
       </PanelBody>
     </Panel>
   )
 }
 
-function RollbackTab({ project, onDone }: { project: DeployProject; onDone: () => void }) {
-  const { can } = useAuth()
-  const { confirm, dialog } = useConfirm()
-  const { data, error, loading } = usePoll(
-    (signal) => get<DeployCommit[]>(`/deploy/${project.id}/commits`, { limit: 25 }, signal),
-    0,
-    [project.id],
-  )
-
-  if (loading) return <LoadingRows />
-  if (error) return <ErrorState error={error} />
-
+function FleetTable({ deployments }: { deployments: DeploymentSummary[] }) {
   return (
-    <>
-      <div className="space-y-2">
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Rolling back re-runs the same pipeline against an older commit, so it is exercised by
-          exactly the code path that deploys.
-        </p>
-        {data?.map((commit) => (
-          <div
-            key={commit.sha}
-            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-hairline p-3"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-[13px]">{commit.subject}</p>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                {commit.short} · {commit.author} · {relativeTime(commit.date)}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {commit.sha === project.currentSha ? (
-                <Badge variant="success" className="font-normal">
-                  current
-                </Badge>
-              ) : (
-                can("destructive") && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      confirm({
-                        title: "Roll back",
-                        confirmLabel: "Roll back",
-                        description: (
-                          <>
-                            <p>
-                              <b>{project.name}</b> is reset to {commit.short} and rebuilt. Whatever
-                              is serving now is replaced.
-                            </p>
-                            <p className="text-xs text-muted-foreground">{commit.subject}</p>
-                          </>
-                        ),
-                        action: async (c) => {
-                          await post(
-                            `/deploy/${project.id}/rollback`,
-                            { commit: commit.sha },
-                            { confirm: c },
-                          )
-                          onDone()
-                        },
-                      })
-                    }
-                  >
-                    <RotateCounterClockwise className="size-3.5" />
-                    Roll back
-                  </Button>
-                )
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-      {dialog}
-    </>
-  )
-}
-
-function EnvTab({ project, onChanged }: { project: DeployProject; onChanged: () => void }) {
-  const { can } = useAuth()
-  const [revealed, setRevealed] = useState<EnvVar[] | null>(null)
-  const [key, setKey] = useState("")
-  const [value, setValue] = useState("")
-  const { data, loading, refresh } = usePoll(
-    (signal) => get<EnvVar[]>(`/deploy/${project.id}/env`, undefined, signal),
-    0,
-    [project.id],
-  )
-
-  const vars = revealed ?? data ?? []
-
-  const save = async () => {
-    try {
-      await put(`/deploy/${project.id}/env`, { key, value })
-      notify.success(`${key} saved`)
-      setKey("")
-      setValue("")
-      setRevealed(null)
-      refresh()
-      onChanged()
-    } catch (err) {
-      notify.error("Could not save", err)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <Notice icon={Key} title="Encrypted at rest">
-        These are written into the project&apos;s .env at deploy time. Revealing them is a separate
-        action that is recorded in the audit log.
-      </Notice>
-
-      {loading && <LoadingRows />}
-
-      <div className="space-y-1">
-        {vars.map((v) => (
-          <div
-            key={v.key}
-            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-hairline px-3 py-2"
-          >
-            <span className="truncate font-mono text-xs">{v.key}</span>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="truncate font-mono text-xs text-muted-foreground">
-                {v.value ?? v.masked}
-              </span>
-              {can("system.admin") && (
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`Delete ${v.key}`}
-                  className="text-destructive"
-                  onClick={async () => {
-                    await del(`/deploy/${project.id}/env/${encodeURIComponent(v.key)}`)
-                    setRevealed(null)
-                    refresh()
-                    onChanged()
-                  }}
-                >
-                  <Trash />
+    <div className="hidden xl:block">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Deployment</TableHead>
+            <TableHead>Environment</TableHead>
+            <TableHead>Live release</TableHead>
+            <TableHead>Reachable at</TableHead>
+            <TableHead>Runtime health</TableHead>
+            <TableHead>Pressure</TableHead>
+            <TableHead>Last deployment</TableHead>
+            <TableHead>Changes</TableHead>
+            <TableHead>
+              <span className="sr-only">Open</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {deployments.map((deployment) => (
+            <TableRow key={deployment.id}>
+              <TableCell>
+                <Link href={`/deploy/${deployment.id}`} className="block min-w-0 hover:underline">
+                  <span className="block truncate text-[13px] font-medium">{deployment.name}</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {humanize(deployment.profile)}
+                  </span>
+                </Link>
+              </TableCell>
+              <TableCell className="text-xs">{deployment.environmentName}</TableCell>
+              <TableCell className="max-w-40 font-mono text-xs" title={deployment.sourceRevision}>
+                {releaseLabel(deployment)}
+              </TableCell>
+              <TableCell
+                className="max-w-48 truncate font-mono text-xs"
+                title={deployment.endpoint}
+              >
+                {reachableAt(deployment)}
+              </TableCell>
+              <TableCell>
+                <HealthStatus health={deployment.health} />
+              </TableCell>
+              <TableCell className="text-xs text-muted-foreground">Not attributed</TableCell>
+              <TableCell>
+                {deployment.lastRun ? (
+                  <DeploymentStatus state={deployment.lastRun.state} />
+                ) : (
+                  <span className="text-xs text-muted-foreground">Never</span>
+                )}
+              </TableCell>
+              <TableCell>
+                {deployment.pendingChanges ? (
+                  <Badge variant="warning">Pending deployment</Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Live</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <Button variant="ghost" size="icon-sm" asChild>
+                  <Link href={`/deploy/${deployment.id}`} aria-label={`Open ${deployment.name}`}>
+                    <ArrowRight className="size-4" />
+                  </Link>
                 </Button>
-              )}
-            </div>
-          </div>
-        ))}
-        {vars.length === 0 && !loading && (
-          <p className="text-[13px] text-muted-foreground">No variables set.</p>
-        )}
-      </div>
-
-      {can("system.admin") && (
-        <div className="space-y-3">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={async () => {
-              if (revealed) {
-                setRevealed(null)
-                return
-              }
-              try {
-                setRevealed(await get<EnvVar[]>(`/deploy/${project.id}/env/reveal`))
-              } catch (err) {
-                notify.error("Could not reveal", err)
-              }
-            }}
-          >
-            {revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            {revealed ? "Hide values" : "Reveal values"}
-          </Button>
-
-          <div className="flex flex-wrap gap-2 border-t border-hairline pt-4">
-            <Input
-              value={key}
-              onChange={(e) => setKey(e.target.value.toUpperCase())}
-              placeholder="DATABASE_URL"
-              className="w-52 font-mono text-xs"
-            />
-            <Input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="value"
-              className="min-w-40 flex-1 font-mono text-xs"
-              type="password"
-            />
-            <Button onClick={save} disabled={!key}>
-              Set
-            </Button>
-          </div>
-        </div>
-      )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   )
 }
 
-function ProjectDialog({ onDone }: { onDone: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [repoPath, setRepoPath] = useState("")
-  const [branch, setBranch] = useState("main")
-  const [composeFile, setComposeFile] = useState("docker-compose.yml")
-  const [preCommand, setPreCommand] = useState("")
-  const [postCommand, setPostCommand] = useState("")
-  const [enabled, setEnabled] = useState(true)
-  const [secret, setSecret] = useState<string | null>(null)
-
-  const create = async () => {
-    try {
-      const res = await post<{ secret: string }>("/deploy/", {
-        name,
-        repoPath,
-        branch,
-        composeFile,
-        preCommand,
-        postCommand,
-        enabled,
-      })
-      setSecret(res.secret)
-      onDone()
-    } catch (err) {
-      notify.error("Could not create project", err)
-    }
-  }
-
+function FleetCards({ deployments }: { deployments: DeploymentSummary[] }) {
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o)
-        if (!o) setSecret(null)
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button size="sm">
-          <Plus className="size-4" />
-          New project
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New deploy project</DialogTitle>
-        </DialogHeader>
-
-        {secret ? (
-          <Notice tone="warning" icon={Key} title="Webhook secret — shown once">
-            <code className="font-mono text-xs break-all">{secret}</code>
-          </Notice>
-        ) : (
-          <div className="grid gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="p-name">Name</Label>
-              <Input id="p-name" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="p-path">Repository path</Label>
-              <Input
-                id="p-path"
-                value={repoPath}
-                onChange={(e) => setRepoPath(e.target.value)}
-                className="font-mono text-[13px]"
-                placeholder="/srv/my-app"
-              />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="p-branch">Branch</Label>
-                <Input id="p-branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
+    <ul className="grid gap-px bg-hairline xl:hidden">
+      {deployments.map((deployment) => (
+        <li key={deployment.id} className="min-w-0 bg-card">
+          <Link
+            href={`/deploy/${deployment.id}`}
+            className="flex min-h-40 min-w-0 flex-col gap-3 p-4 hover:bg-[var(--row-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-medium">{deployment.name}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {humanize(deployment.profile)} · {deployment.environmentName}
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="p-compose">Compose file</Label>
-                <Input
-                  id="p-compose"
-                  value={composeFile}
-                  onChange={(e) => setComposeFile(e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
+              {deployment.pendingChanges && <Badge variant="warning">Pending</Badge>}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="p-pre">Pre-deploy command</Label>
-              <Input
-                id="p-pre"
-                value={preCommand}
-                onChange={(e) => setPreCommand(e.target.value)}
-                className="font-mono text-xs"
-                placeholder="bun install && bun run build"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="p-post">Post-deploy command</Label>
-              <Input
-                id="p-post"
-                value={postCommand}
-                onChange={(e) => setPostCommand(e.target.value)}
-                className="font-mono text-xs"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-[13px]">
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
-              Accept webhook deployments
-            </label>
-          </div>
-        )}
-
-        <DialogFooter>
-          {secret ? (
-            <Button onClick={() => setOpen(false)}>Done</Button>
-          ) : (
-            <Button onClick={create} disabled={!name || !repoPath}>
-              Create
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+              <dt className="text-muted-foreground">Release</dt>
+              <dd className="truncate text-right font-mono" title={deployment.sourceRevision}>
+                {releaseLabel(deployment)}
+              </dd>
+              <dt className="text-muted-foreground">Reachable at</dt>
+              <dd className="truncate text-right font-mono" title={deployment.endpoint}>
+                {reachableAt(deployment)}
+              </dd>
+              <dt className="text-muted-foreground">Health</dt>
+              <dd className="justify-self-end">
+                <HealthStatus health={deployment.health} />
+              </dd>
+              <dt className="text-muted-foreground">Pressure</dt>
+              <dd className="justify-self-end text-muted-foreground">Not attributed</dd>
+              <dt className="text-muted-foreground">Last deploy</dt>
+              <dd className="justify-self-end">
+                {deployment.lastRun ? (
+                  <DeploymentStatus state={deployment.lastRun.state} />
+                ) : (
+                  "Never"
+                )}
+              </dd>
+            </dl>
+          </Link>
+        </li>
+      ))}
+    </ul>
   )
 }

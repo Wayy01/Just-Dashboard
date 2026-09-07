@@ -438,14 +438,21 @@ export function XtermPane({
     // xterm touches `window` at import time, so it is loaded in the effect
     // rather than at module scope where the server render would break.
     ;(async () => {
-      const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon }, { WebglAddon }] =
-        await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-          import("@xterm/addon-web-links"),
-          import("@xterm/addon-search"),
-          import("@xterm/addon-webgl"),
-        ])
+      const [
+        { Terminal },
+        { FitAddon },
+        { WebLinksAddon },
+        { SearchAddon },
+        { WebglAddon },
+        { CanvasAddon },
+      ] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+        import("@xterm/addon-web-links"),
+        import("@xterm/addon-search"),
+        import("@xterm/addon-webgl"),
+        import("@xterm/addon-canvas"),
+      ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
 
@@ -455,6 +462,11 @@ export function XtermPane({
         fontSize: s.fontSize,
         lineHeight: s.lineHeight,
         letterSpacing: s.letterSpacing,
+        // Prompt corners, tmux separators and terminal TUIs are structure,
+        // not ordinary font glyphs. Drawing them to the full cell keeps a
+        // vertical rule continuous even when the chosen font or line height
+        // would leave space around the character.
+        customGlyphs: true,
         cursorStyle: s.cursorStyle,
         cursorBlink: s.cursorBlink,
         // A cursor that goes hollow when the pane loses focus is the cheapest
@@ -524,31 +536,48 @@ export function XtermPane({
       // The WebGL renderer, loaded once the pane has its real size. xterm's
       // core ships only the DOM renderer, which draws box-drawing and block
       // characters from the font — and most system monospace fonts space those
-      // wrong, so tmux's pane borders came through with gaps and any TUI that
-      // paints with ▀▄█ (htop's meters, a banner) rendered broken while plain
-      // text was fine. The WebGL renderer draws those glyphs itself from a
-      // vector atlas, so they line up regardless of the font.
+      // wrong, so prompt corners and tmux pane borders come through as stray
+      // underscores and interrupted side rules. Both accelerated renderers
+      // draw those glyphs to the full cell instead. Canvas is the deliberate
+      // fallback when WebGL is unavailable or loses its context; silently
+      // falling all the way back to DOM is the broken-edge pattern this is
+      // here to prevent.
       //
       // It tracks dirty rows rather than repainting everything, and misses the
       // wholesale change when an app switches to the alternate screen — the
       // first row of a full-screen TUI (Claude Code, vim, less) came through
       // blank. `onBufferChange` forces the full repaint that the switch needs.
       // On GPU context loss the addon disposes itself and xterm falls straight
-      // back to the DOM renderer.
+      // onto the canvas renderer.
       const disposables: IDisposable[] = []
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => webgl.dispose())
-        term.loadAddon(webgl)
-        disposables.push(term.buffer.onBufferChange(() => term.refresh(0, term.rows - 1)))
+      const fitAndRefresh = () => {
         requestAnimationFrame(() => {
           if (disposed) return
           fit.fit()
           term.refresh(0, term.rows - 1)
         })
+      }
+      const loadCanvasRenderer = () => {
+        if (disposed) return
+        try {
+          term.loadAddon(new CanvasAddon())
+          fitAndRefresh()
+        } catch {
+          // The DOM renderer is xterm's final safety net. It keeps the shell
+          // usable even on a browser that supports neither renderer addon.
+        }
+      }
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => {
+          webgl.dispose()
+          loadCanvasRenderer()
+        })
+        term.loadAddon(webgl)
+        disposables.push(term.buffer.onBufferChange(() => term.refresh(0, term.rows - 1)))
+        fitAndRefresh()
       } catch {
-        // No WebGL in this browser — the DOM renderer is the fallback and needs
-        // nothing done.
+        loadCanvasRenderer()
       }
 
       disposables.push(

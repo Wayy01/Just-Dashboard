@@ -22,7 +22,9 @@ go run ./cmd/server                  # needs JD_MASTER_KEY and a writable JD_DAT
 
 # frontend/
 bun install && bun dev               # :3000, proxies /api to 127.0.0.1:8080
-bun run lint && bun run build        # the whole frontend gate; there is no test suite
+bun run lint && bun run build
+bun run test:browser:install         # once per machine/cache: release Chromium
+bun run test:browser                 # Playwright Chromium journey gate
 
 # whole stack
 sudo ./install.sh                    # interactive first install; re-runnable, keeps .env
@@ -31,7 +33,7 @@ docker compose logs backend | grep "bootstrap admin"   # generated password, pri
 scripts/release.sh 0.6               # cut a release — see "Cutting a release"
 ```
 
-CONTRIBUTING requires `go build ./...` and `bun run build` to pass before a PR.
+CONTRIBUTING requires the backend build, frontend build, and browser journey gate to pass before a PR.
 
 **Backend testing.** 22 packages carry tests, all fast and hermetic — `go test ./...` is reasonable on
 every change. Two families skip rather than fail when the thing they drive is absent:
@@ -52,6 +54,21 @@ product *claims* — `dockerx/diagnose_test.go`, `netsec/posture_test.go`, `prox
 nginx rendering **including the parse back** — `proxysvc/sites_test.go`, since anything the renderer
 emits and the parser cannot read is a field silently dropped on the next save.
 
+Deployment foundation checks can be isolated while iterating:
+
+```bash
+go test ./internal/store -run TestOpenMigratesPopulated066DeploymentsIdempotently -count=1
+go test ./internal/deploy -run 'Test(RunTransitionMatrix|StepTransitionMatrix|C0AdapterTranscripts)' -count=1
+go test ./internal/hostexec ./internal/config -count=1
+```
+
+The C4 builder matrix is hermetic by default. On a release host with Docker,
+Buildx and network access, run its opt-in OCI/layer boundary as well:
+
+```bash
+JD_DEPLOY_LIVE=1 go test ./internal/deploy -run TestLiveC4ArtifactAdapters -count=1 -v
+```
+
 **Frontend notes.** bun only (`bun.lock`); never add `package-lock.json` or `yarn.lock`. Next's dev
 rewrite proxies HTTP but **not** WebSocket upgrades, so socket-backed pages in dev need
 `NEXT_PUBLIC_WS_BASE=http://localhost:8080` plus `JD_ALLOWED_ORIGINS=http://localhost:3000` on the
@@ -60,6 +77,13 @@ production, `http` under `JD_DEV`); each cross-origin exception must be a comple
 allowlist. `bun dev`/`bun run build` run `scripts/sync-monaco.mjs` first; invoking `next` directly skips
 it and leaves every editor spinning. `go.mod` declares `go 1.25.0` — check `go version` before blaming
 the code on a network-restricted machine.
+
+**Browser testing.** Playwright tests live in `frontend/tests/browser`; `playwright.config.ts` starts a
+local frontend unless `JD_BROWSER_BASE_URL` points at an already-running disposable stack. Chromium is
+the required gate. Set `JD_BROWSER_PROJECTS=all` for the opt-in Firefox/WebKit evidence run. Deployment
+journeys use the real API, SQLite queue, and a uniquely labelled Docker fixture namespace; provider and
+DNS boundaries may be stubbed, but the orchestration path may not. Traces/screenshots are retained only
+on failure under ignored `test-results`/`playwright-report` directories.
 
 ## Architecture
 
@@ -150,7 +174,8 @@ only bound.
 
 - `Command` runs a binary locally when present, else via `nsenter --target 1`. `CommandOnHost` *always*
   crosses (for tools like `who` that exist in the image but would report on the container).
-  `CommandOnHostInDir` exists because nsenter resets the working directory, silently discarding `cmd.Dir`.
+  `CommandInDir` and `CommandOnHostInDir` pass `--wd` to nsenter because crossing namespaces silently
+  discards `cmd.Dir`.
 - `AsOwner(cmd)` drops to the UID/GID owning `cmd.Dir`, so a `git pull` does not leave root-owned files.
 - Argv is passed through unchanged and **never** through a shell. Keep it that way (invariant 6).
 
@@ -185,8 +210,11 @@ State is SQLite in `JD_DATA_DIR`, schema as one `CREATE TABLE IF NOT EXISTS` blo
 `internal/store/store.go` with no migration tool (invariant 8). The file is still named `vpsd.db`
 through the rename: moving it would strand every existing install's accounts, audit log and secrets.
 Tables: `users`, `recovery_codes`, `sessions`, `api_tokens`, `audit_log`, `db_connections`,
-`backup_jobs`/`backup_runs`, `deploy_projects`/`deploy_env`/`deploy_runs`, `watched_domains`, a
-`settings` key/value table, and three metrics tables.
+`backup_jobs`/`backup_runs`, the legacy-compatible `deploy_projects`/`deploy_env`/`deploy_runs` plus the
+normalized deployment environment/plan/release/step/event/dependency/automation tables, `watched_domains`,
+a `settings` key/value table, and three metrics tables. `migrateLegacyDeployments` maps each populated
+0.6.6 project transactionally and idempotently while preserving ids, ciphertext, hooks, logs, and the old
+columns; `internal/store/testdata/0.6.6.sql` is the executable upgrade contract.
 
 `internal/audit` writes `audit_log` **and** mirrors every entry to the process log, so a trail survives
 the database being tampered with. An `Entry` records who (user, role, `Actor` = session or token), from
@@ -963,10 +991,123 @@ done by hand, and the UI refuses to fold it away.
   backend can read what the old one was doing. `Installer.Reconcile` at boot: alive → leave it; gone with
   the version moved → it worked (this process running is the proof); gone with the version unchanged → it
   stopped.
-- It **fast-forwards, never resets** — unlike `internal/deploy`, this is the operator's own checkout and an
+- It **fast-forwards, never resets** — unlike a managed deployment checkout, this is the operator's own
+  checkout and an
   edited compose file is normal, so a local change survives unless it genuinely collides. And it **waits
   for the health URL to answer** before calling itself finished, since `compose up -d` returns as soon as
   containers start and a backend that starts then dies looks identical from there.
+
+### Deployments
+
+The 0.6.7 deployment contract is frozen in `docs/plans/0.6.7-deployments/09-frozen-contracts.md` and its
+ADRs. `internal/deploy` owns desired deployment configuration, immutable releases, persistent runs,
+steps, queue leases, sequenced events, triggers and cross-feature relationships. It orchestrates narrow
+interfaces from Docker, Git, Proxy, Backups, Metrics, Logs, Files and Terminal; those packages remain the
+only renderer/executor/validation authority for their feature.
+
+- A run and its full step list commit before an enqueue answers `202`. Environments serialize work;
+  random claim tokens and expiring leases fence stale workers. Restart recovery uses stored step evidence
+  plus owning-feature evidence and never guesses that a non-idempotent side effect is safe to repeat.
+- Worker capacity defaults to one heavy and two light slots and is bounded by
+  `JD_DEPLOY_HEAVY_SLOTS` / `JD_DEPLOY_LIGHT_SLOTS` (1..8). Claims expire after
+  `JD_DEPLOY_LEASE_TTL` (30s by default, 5s..5m); these are boot-time settings, not mutable project data.
+- The only activation strategies are `blue_green` for an eligible proxy-owned stateless HTTP service and
+  `stop_first` for Compose, fixed-port, game and exclusive-storage workloads. A failed candidate cannot
+  replace the live release; ambiguous cutover evidence restores or stops for operator recovery.
+- Events commit before publish and are monotonically sequenced per run. Reconnect resumes after a sequence;
+  compacted history begins with a `resync` snapshot, and a slow subscriber is disconnected rather than
+  allowed to stall execution.
+- `deploy_projects.id` remains the deployment identity. The additive normalized schema and compatibility
+  migration retain legacy route/hook/env/history behavior while the persistent engine and UI replace it.
+- Deployment-selected paths use a dedicated `files.Service` scoped to `JD_DEPLOY_ROOTS`; Git, Docker,
+  Compose and builder argv use `hostexec.CommandInDir`. The sole shell boundary remains an immutable,
+  admin-authored stored release task (including migrated pre/post commands) with a resolved working
+  directory and explicit scoped environment.
+- Creation is a revisioned, owner-scoped server draft. Remote Git inspection resolves an exact ref into a
+  private dashboard-owned bare mirror and detached temporary worktree; it never clones into or resets an
+  operator checkout. Registry inspection resolves a digest without pulling. Planning-time Compose
+  validation uses private temporary files, an explicit empty env file and inert placeholders for detected
+  variable names, so the backend environment and a checkout `.env` cannot influence the result.
+- Deployment preflight depends on a read-only observer: filesystem/proc capacity, listener inventory,
+  Docker/Compose availability, proxy inventory and bounded DNS lookups. It cannot build, pull, start,
+  stop, write proxy/firewall configuration, modify a checkout or enqueue a backup. The persisted exact
+  plan excludes raw observed import material and accepts only typed secret references.
+- Normalized build execution uses the project-owned versioned recipe set or an explicit Dockerfile,
+  static, immutable-image, or Compose adapter. Reviewed base tags are resolved before rendering and every
+  generated `FROM` is digest-pinned. Build secrets are BuildKit environment-backed secret mounts and
+  never argv/build args; custom Dockerfiles with requested secrets or obvious embedded credentials fail
+  closed because their layer history cannot be guaranteed.
+- Enqueue atomically freezes exact variable revision ids plus canonical dependency/check JSON. The header
+  exists for an empty set, digests are checked before variable decryption, and retry copies the original
+  snapshots instead of observing later rotations. Release runtime snapshots store the actual secret-free
+  JSON bytes and verified digest, not a pointer back to mutable desired configuration.
+- Release tasks are named, bounded shell gates over the immutable source workspace. Only variables
+  explicitly declared with `release_task` scope enter their environment; output is exact-value and
+  credential-pattern redacted before persistence. Interrupted tasks stop for operator review because
+  their side effects cannot be inferred safely.
+- Artifact retention keeps the live release, five prior successful rollback releases, candidates, pins,
+  retain-until windows, recent failed diagnostics, shared physical digests, and every environment under
+  an active deployment lease. Cleanup reports the reason for every retained row and removes a mutable
+  Docker tag only after inspection proves it still names the recorded config/digest.
+- Runtime activation consumes only an immutable release snapshot. Direct containers use the recorded
+  config digest (or repository plus manifest digest); Compose uses an explicit stable project, the exact
+  source file list, and a generated `0600` override that pins every service image with `pull_policy:
+  never`. Compose interpolation receives only the frozen runtime scope through a temporary `0600` env
+  file which is deleted on every exit path.
+- HTTP, TCP, Docker-health, command and public-route checks have closed configuration, per-attempt
+  timeouts and bounded retries. Persisted evidence contains status/state/error codes and a digest of
+  bounded command output, never response bodies, command output, URL credentials/queries or runtime
+  variable values. Disabled, unavailable, warning, passed and failed remain distinct outcomes.
+- Blue/green is limited to stateless proxy-owned HTTP candidates without fixed ports, host networking or
+  writable mounts; dynamic candidate ports are loopback-leased. Fixed-port, Compose, game and exclusive
+  writable-storage plans are honest `stop_first` deployments and advertise expected downtime. A route
+  moves only after required readiness/smoke checks pass.
+- Deployment-owned nginx cutover is serialized and snapshots the prior bytes, mode and exact symlink
+  target. Apply/reload/verification failure restores, reloads and verifies that exact snapshot before a
+  run may report recovery. The snapshot content is held only for compensation; persisted activation
+  evidence carries its digest, not the configuration bytes.
+- Stop uses the configured signal and a bounded grace period before Docker escalation; predecessor drain
+  and activation/cancellation compensation use bounded contexts detached from request cancellation. A
+  stop-first failure restarts the predecessor from its exact immutable runtime spec. Cancellation between
+  persisted steps removes an uncommitted candidate, or finishes predecessor retirement after a committed
+  cutover, and records sequenced cleanup evidence.
+- Deploy and force-build resolve the current desired revision (force-build disables cache); redeploy and
+  rollback clone only available immutable artifacts and traverse the same checks/cutover path; restart
+  stops and starts the existing live runtime without creating a release. Rollback uses the destructive
+  capability and ordinary confirmation, not a typed phrase.
+- Normalized configuration edits are desired state only. Saving runtime/domain/dependency settings or a
+  variable clones the source/build/runtime rows into the next complete revision and never moves the live
+  release pointer. Pending state compares that desired revision with the live release's exact plan and
+  frozen variable/dependency/check snapshots, by names and digests only; a run clears only the revision it
+  actually applied, so a change saved after enqueue stays pending.
+- Deployment variables are encrypted, immutable revisions with an exact closed scope set (`build`,
+  `runtime`, `release_task`). Lists use a fixed mask; reveal is a separate session-only admin read with an
+  explicit audit entry. Bulk dotenv parsing is bounded and inert. Full typed references are parsed into a
+  closed kind/target model; missing variable references and cycles fail before commit, secret leaves stay
+  masked, and enqueue freezes exact variable revision ids so retries cannot observe a later variable
+  rotation. Execution resolves external credential/database/domain/Compose-service references only through
+  their owning stores; missing or ambiguous targets fail closed instead of reaching a workload as literal
+  reference text. Run-scoped domain and Compose references use the frozen run plan/dependency snapshots.
+- Domains, persistent storage, backup jobs and database entries remain resources of Proxy, Docker,
+  Backups and Databases. Deployments store typed ownership links and use read-only owner observations for
+  domain conflicts, DNS, existing certificate pairs, ports, public binds, firewall policy and dependency
+  availability. A deploy re-runs those host observations from its frozen configuration in `analyze_plan`
+  before build or backup work; only its exact managed proxy site and exact live Docker runtime may be
+  treated as reusable ownership. HTTPS activation resolves an already-issued certificate/key pair through
+  Proxy and fails closed if it no longer exists; deployment activation never invents certificate paths or
+  performs issuance itself.
+- A configured backup dependency executes as a step before candidate start. The Backups adapter verifies
+  coverage, success, freshness and any required restore-test evidence and returns only bounded evidence;
+  a required failure terminates the run before a release/runtime or live-pointer change. Restore evidence
+  is explicitly unavailable until the Backups owner persists it, never inferred from artifact existence.
+- Import adoption is a dedicated, session-only admin commit that re-runs the read-only preview and requires
+  exact acknowledgement of unsupported observations. It records the external resource as observed and
+  does not start, stop, reset or claim it. Archiving only disables deployment triggers and visibility; it
+  never removes runtime or data. A separate destructive route first returns a digest-bound, managed-only
+  target list; data targets require their exact resource name and every removal is delegated to its owning
+  feature and audited. Linked and observed targets never enter that plan.
+- Closed vocabularies, route capabilities/confirmations/audit actions, retention limits and error codes
+  are contracts. Change one only with an ADR plus migration and exhaustive transition/route tests.
 
 ### Deployment topology
 
@@ -1053,9 +1194,10 @@ gradient `.card-sheen` on panels, three lines on buttons) made one claim in two 
 Two deliberate exceptions:
 
 - **The nav stays flat.** The lift works by making one thing stand out from what is behind it, which stops
-  meaning anything when forty-nine rows claim it at once; a nav is a *list*, and what should stand out is
-  the item you are on, which the active item's solid primary fill does. What survived the experiment is
-  the spacing: `SidebarMenu`/`SidebarMenuSub` at `gap-2`.
+  meaning anything when forty-nine rows claim it at once; a nav is a *list*. The current destination uses
+  the sidebar accent fill and medium label weight at both navigation depths, keeping location visible
+  without an inverted primary pill competing with the page. What survived the experiment is the spacing:
+  `SidebarMenu`/`SidebarMenuSub` at `gap-2`.
 - **Ghost and link buttons stay flat**, and so do inputs and textareas. Ghost is 142 of ~400 buttons — the
   quiet action at the end of a table row — and giving it a face turns every row into a strip of controls
   competing with its own data. A page where fields and buttons are equally raised has no hierarchy left.
@@ -1177,7 +1319,10 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   corners and exposes no way to style it, so `dnd.ts` builds an off-screen chip in the theme's tokens,
   hands it to `setDragImage` and removes it next frame.
 - `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
-  toggles: sessions on the left and Files/Git on the right. There is no working-directory title bar.
+  toggles: sessions on the left and Files/Git on the right. The tabs share one quiet recessed rail;
+  inactive windows stay flat inside it and only the active window takes the shared `raised` surface, so
+  the strip reads as one workspace control instead of a row of outlined buttons. There is no
+  working-directory title bar.
   Window menus retain split, layout, rename and colour actions; active tabs scroll into view.
   Every tab has a visible close button. Closing the last window closes its session through the session
   endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
@@ -1249,6 +1394,12 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
 - `allowProposedApi` is on because the search addon's match count and highlight-all use xterm's decoration
   API, which is not frozen; without it `findNext` throws and the counter reads "none" over a scrollback
   full of matches.
+- **Box drawing never falls through to the DOM renderer when canvas is available.** WebGL remains the
+  fast path, but its absence or a lost GPU context loads `@xterm/addon-canvas`; both render xterm's custom
+  glyphs to the full cell. The DOM renderer delegates box corners and vertical rules to the selected font,
+  where line height and font metrics turn prompt branches, tmux separators and TUI frames into stray
+  underscores or interrupted side rules. DOM remains the last usability fallback only when the browser can
+  support neither accelerated renderer.
 - **Clicking inside a pane focuses it, and the arithmetic is the only way it can** — tmux composes every
   pane into one screen before the PTY sees a byte, so the browser has one terminal and no element to hang a
   handler on. `Panes` carries `pane_left/top/right/bottom`, `XtermPane` reports the clicked cell (the grid
