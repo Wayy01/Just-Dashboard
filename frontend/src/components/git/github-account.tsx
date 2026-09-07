@@ -43,8 +43,8 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 /**
- * GitHub's own mark, because lucide dropped its brand icons and a generic
- * padlock beside the word "GitHub" reads as a different product.
+ * GitHub's own brand mark, drawn inline — no icon set ships brand logos, and
+ * a generic glyph beside the word "GitHub" reads as a different product.
  */
 export function GitHubMark({ className }: { className?: string }) {
   return (

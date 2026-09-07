@@ -555,7 +555,9 @@ disagree about order; every path is resolved before storing.
 
 Frontend `components/files/`: `file-icon.tsx` is the vocabulary (~200 extensions, the files with none —
 Dockerfile, authorized_keys, lockfiles — and the folders whose name says more than "folder") mapped to
-eight **categories** rather than languages, in the terminal rail's `--tag-*` hues. `file-actions.tsx` is
+eight **categories** rather than languages, in the terminal rail's `--tag-*` hues, drawn from Material
+Design Icons (`@mdi/js`); every other glyph in the product comes from the Heroicons vocabulary in
+`components/icons.tsx`. `file-actions.tsx` is
 the one menu both the row and the tile use, or an action ends up in one view only. Two layout rules are
 easy to undo: **the panel body does not scroll** (a sticky table header sticks to its nearest scrolling
 ancestor, and the header rode away with the rows), and **the rail's tree waits for `/files/places`**
@@ -1064,7 +1066,8 @@ colour, the version as small muted text beside it. No mark, no tile, no straplin
 rendering of the product's name, so sidebar, sign-in and splash agree and a rename is one file. `LogoMark`
 is the single letter the collapsed rail falls back to.
 
-`components/ui/*` is generated shadcn/ui (new-york, zinc, lucide, 35 primitives) — compose rather than
+`components/ui/*` is generated shadcn/ui (new-york, zinc, 35 primitives) with its icons rewired to
+the Heroicons vocabulary in `components/icons.tsx` — compose rather than
 edit. Feature pieces live in `components/<feature>/`: `database/`, `docker/`, `files/`, `git/`, `logs/`,
 `metrics/`, `packages/`, `procs/`, `proxy/`, `security/`, `terminal/`, `update/`.
 

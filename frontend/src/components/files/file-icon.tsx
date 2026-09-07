@@ -1,44 +1,123 @@
 "use client"
 
+import { forwardRef, type Ref } from "react"
 import {
-  AcronymCsv,
-  AcronymGif,
-  AcronymJpg,
-  AcronymJson,
-  AcronymMarkdown,
-  AcronymSvg,
-  Archive,
-  BlendMode,
-  Box,
-  Code,
-  CodeBracket,
-  Cpu,
-  Database,
-  File,
-  FileText,
-  FileZip,
-  FolderClosed,
-  FolderMinus,
-  FolderOpen,
-  GitBranch,
-  Globe,
-  Home,
-  Image,
-  Key,
-  Link,
-  LockClosed,
-  Logs,
-  Music,
-  Puzzle,
-  Servers,
-  SettingsGear,
-  Terminal,
-  TextFormat,
-  Video,
-  type Icon,
-} from "@/components/icons"
+  mdiApplicationBrackets,
+  mdiArchive,
+  mdiBookOpenPageVariant,
+  mdiCodeBraces,
+  mdiCodeJson,
+  mdiConsoleLine,
+  mdiDatabase,
+  mdiDocker,
+  mdiFileCog,
+  mdiFileCode,
+  mdiFileDelimited,
+  mdiFileDocument,
+  mdiFileExcelBox,
+  mdiFileGifBox,
+  mdiFileImage,
+  mdiFileJpgBox,
+  mdiFileKey,
+  mdiFileLock,
+  mdiFileMusic,
+  mdiFileOutline,
+  mdiFilePdfBox,
+  mdiFilePngBox,
+  mdiFilePowerpointBox,
+  mdiFileVideo,
+  mdiFileWordBox,
+  mdiFileXmlBox,
+  mdiFolder,
+  mdiFolderCog,
+  mdiFolderHome,
+  mdiFolderKey,
+  mdiFolderMinus,
+  mdiFolderNetwork,
+  mdiFolderOpen,
+  mdiFolderSync,
+  mdiFormatFont,
+  mdiGit,
+  mdiHammerWrench,
+  mdiLanguageCss3,
+  mdiLanguageHtml5,
+  mdiLanguageMarkdown,
+  mdiLicense,
+  mdiPackageVariantClosed,
+  mdiSvg,
+  mdiTextBox,
+} from "@mdi/js"
+import { Link, type Icon, type IconProps } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { FileEntry } from "@/lib/types"
+
+/**
+ * One file glyph out of one MDI path.
+ *
+ * `@mdi/js` ships raw path data, not components, so this file wraps the paths
+ * it needs in the same `Icon` shape the rest of the product uses: a 24-grid
+ * glyph painting `currentColor`, defaulting to 16 unless a `size-*` class says
+ * otherwise (CSS beats the width/height attributes below, so rows sizing with
+ * `size-full` are untouched).
+ */
+function mdi(path: string, name: string): Icon {
+  function MdiGlyph({ size = 16, title, ...props }: IconProps, ref: Ref<SVGSVGElement>) {
+    return (
+      <svg ref={ref} viewBox="0 0 24 24" fill="currentColor" width={size} height={size} {...props}>
+        {title ? <title>{title}</title> : null}
+        <path d={path} />
+      </svg>
+    )
+  }
+  const Forwarded = forwardRef<SVGSVGElement, Omit<IconProps, "ref">>(MdiGlyph)
+  Forwarded.displayName = name
+  return Forwarded
+}
+
+const MdiCode = mdi(mdiFileCode, "MdiCode")
+const MdiHtml = mdi(mdiLanguageHtml5, "MdiHtml")
+const MdiXml = mdi(mdiFileXmlBox, "MdiXml")
+const MdiCss = mdi(mdiLanguageCss3, "MdiCss")
+const MdiBraces = mdi(mdiCodeBraces, "MdiBraces")
+const MdiJson = mdi(mdiCodeJson, "MdiJson")
+const MdiDelimited = mdi(mdiFileDelimited, "MdiDelimited")
+const MdiExcel = mdi(mdiFileExcelBox, "MdiExcel")
+const MdiDatabase = mdi(mdiDatabase, "MdiDatabase")
+const MdiDocument = mdi(mdiFileDocument, "MdiDocument")
+const MdiPdf = mdi(mdiFilePdfBox, "MdiPdf")
+const MdiWord = mdi(mdiFileWordBox, "MdiWord")
+const MdiSlides = mdi(mdiFilePowerpointBox, "MdiSlides")
+const MdiMarkdown = mdi(mdiLanguageMarkdown, "MdiMarkdown")
+const MdiImage = mdi(mdiFileImage, "MdiImage")
+const MdiPng = mdi(mdiFilePngBox, "MdiPng")
+const MdiJpg = mdi(mdiFileJpgBox, "MdiJpg")
+const MdiGif = mdi(mdiFileGifBox, "MdiGif")
+const MdiSvg = mdi(mdiSvg, "MdiSvg")
+const MdiVideo = mdi(mdiFileVideo, "MdiVideo")
+const MdiAudio = mdi(mdiFileMusic, "MdiAudio")
+const MdiArchive = mdi(mdiArchive, "MdiArchive")
+const MdiConsole = mdi(mdiConsoleLine, "MdiConsole")
+const MdiCog = mdi(mdiFileCog, "MdiCog")
+const MdiKeyFile = mdi(mdiFileKey, "MdiKeyFile")
+const MdiBinary = mdi(mdiApplicationBrackets, "MdiBinary")
+const MdiFont = mdi(mdiFormatFont, "MdiFont")
+const MdiLog = mdi(mdiTextBox, "MdiLog")
+const MdiPackage = mdi(mdiPackageVariantClosed, "MdiPackage")
+const MdiDocker = mdi(mdiDocker, "MdiDocker")
+const MdiPlain = mdi(mdiFileOutline, "MdiPlain")
+const MdiLock = mdi(mdiFileLock, "MdiLock")
+const MdiMake = mdi(mdiHammerWrench, "MdiMake")
+const MdiReadme = mdi(mdiBookOpenPageVariant, "MdiReadme")
+const MdiLicence = mdi(mdiLicense, "MdiLicence")
+const MdiGit = mdi(mdiGit, "MdiGit")
+const MdiFolder = mdi(mdiFolder, "MdiFolder")
+const MdiFolderOpen = mdi(mdiFolderOpen, "MdiFolderOpen")
+const MdiFolderMinus = mdi(mdiFolderMinus, "MdiFolderMinus")
+const MdiFolderHome = mdi(mdiFolderHome, "MdiFolderHome")
+const MdiFolderCog = mdi(mdiFolderCog, "MdiFolderCog")
+const MdiFolderKey = mdi(mdiFolderKey, "MdiFolderKey")
+const MdiFolderNetwork = mdi(mdiFolderNetwork, "MdiFolderNetwork")
+const MdiFolderSync = mdi(mdiFolderSync, "MdiFolderSync")
 
 /**
  * What a file *is*, drawn.
@@ -62,20 +141,18 @@ import type { FileEntry } from "@/lib/types"
  * amber, media is pink, keys and certificates are green because they are the
  * ones you must not paste into a chat window.
  *
- * **The acronym badges are the one exception, and they do not break that
- * rule — they sidestep it.** Geist draws a small lettered plate for a handful
- * of formats (`JSON`, `CSV`, `MD`, `SVG`, `JPG`, `GIF`), and a badge that
- * spells the extension is the opposite of a legend: there is nothing to
- * memorise, it says what it is. They keep their category's hue, so the colour
- * system is untouched and a `.csv` is still the green of tabular data. The
- * language-branded plates in the same family — the solid `TS` and `JS` — are
- * deliberately *not* used: they are filled where every other glyph here is an
- * outline, so in a directory of source files they shout over their neighbours
- * and undo the even rhythm the categories exist to produce. Source is `Code`
- * in code blue, whatever language it is written in.
+ * **The glyphs are Material Design Icons' file family, and that is what lets
+ * the mapping be both categorical and literal.** A general UI set has no `JSON`
+ * or `JPG` to draw; MDI's file boxes spell the format on the sheet (`PDF`,
+ * `XLS`, `JPG`, `GIF`), so a badge that says what it is needs nothing
+ * memorised. They keep their category's hue, so the colour system is untouched
+ * and a `.csv` is still the green of tabular data. Source stays one glyph in
+ * code blue whatever language it is written in — per-language logos would be a
+ * second legend on top of the categories.
  *
- * The glyphs are Geist and drawn on a 16px grid, which is the size a row
- * renders them at — see `components/icons.tsx`.
+ * The symlink corner badge is the one glyph here that is not MDI: it is the
+ * product's own `Link` from the Heroicons vocabulary in `components/icons.tsx`,
+ * because it marks a filesystem relation rather than a file type.
  */
 export type FileTone =
   | "slate"
@@ -95,31 +172,37 @@ export type FileKind = {
   label: string
 }
 
-const CODE: FileKind = { icon: Code, tone: "blue", label: "Source code" }
-const MARKUP: FileKind = { icon: Globe, tone: "violet", label: "Markup" }
-const STYLE: FileKind = { icon: BlendMode, tone: "violet", label: "Stylesheet" }
-const DATA: FileKind = { icon: CodeBracket, tone: "amber", label: "Structured data" }
-const JSON_: FileKind = { icon: AcronymJson, tone: "amber", label: "JSON" }
-const SHEET: FileKind = { icon: AcronymCsv, tone: "green", label: "Tabular data" }
-const SQL: FileKind = { icon: Database, tone: "amber", label: "SQL" }
-const DOC: FileKind = { icon: FileText, tone: "slate", label: "Document" }
-const MARKDOWN: FileKind = { icon: AcronymMarkdown, tone: "slate", label: "Markdown" }
-const IMAGE: FileKind = { icon: Image, tone: "pink", label: "Image" }
-const SVG: FileKind = { icon: AcronymSvg, tone: "pink", label: "Vector image" }
-const JPEG: FileKind = { icon: AcronymJpg, tone: "pink", label: "Image" }
-const GIF: FileKind = { icon: AcronymGif, tone: "pink", label: "Animation" }
-const VIDEO: FileKind = { icon: Video, tone: "violet", label: "Video" }
-const AUDIO: FileKind = { icon: Music, tone: "cyan", label: "Audio" }
-const ARCHIVE: FileKind = { icon: FileZip, tone: "amber", label: "Archive" }
-const SHELL: FileKind = { icon: Terminal, tone: "green", label: "Shell script" }
-const CONFIG: FileKind = { icon: SettingsGear, tone: "cyan", label: "Configuration" }
-const SECRET: FileKind = { icon: Key, tone: "green", label: "Key or certificate" }
-const BINARY: FileKind = { icon: Cpu, tone: "red", label: "Binary" }
-const FONT: FileKind = { icon: TextFormat, tone: "violet", label: "Font" }
-const LOG: FileKind = { icon: Logs, tone: "amber", label: "Log" }
-const PACKAGE: FileKind = { icon: Puzzle, tone: "red", label: "Package" }
-const DOCKER: FileKind = { icon: Box, tone: "blue", label: "Container build" }
-const PLAIN: FileKind = { icon: File, tone: "slate", label: "File" }
+const CODE: FileKind = { icon: MdiCode, tone: "blue", label: "Source code" }
+const HTML: FileKind = { icon: MdiHtml, tone: "violet", label: "Markup" }
+const XML: FileKind = { icon: MdiXml, tone: "violet", label: "Markup" }
+const STYLE: FileKind = { icon: MdiCss, tone: "violet", label: "Stylesheet" }
+const DATA: FileKind = { icon: MdiBraces, tone: "amber", label: "Structured data" }
+const JSON_: FileKind = { icon: MdiJson, tone: "amber", label: "JSON" }
+const SHEET: FileKind = { icon: MdiDelimited, tone: "green", label: "Tabular data" }
+const XLS: FileKind = { icon: MdiExcel, tone: "green", label: "Spreadsheet" }
+const SQL: FileKind = { icon: MdiDatabase, tone: "amber", label: "SQL" }
+const DOC: FileKind = { icon: MdiDocument, tone: "slate", label: "Document" }
+const PDF: FileKind = { icon: MdiPdf, tone: "slate", label: "PDF" }
+const WORD: FileKind = { icon: MdiWord, tone: "slate", label: "Word document" }
+const SLIDES: FileKind = { icon: MdiSlides, tone: "slate", label: "Presentation" }
+const MARKDOWN: FileKind = { icon: MdiMarkdown, tone: "slate", label: "Markdown" }
+const IMAGE: FileKind = { icon: MdiImage, tone: "pink", label: "Image" }
+const PNG: FileKind = { icon: MdiPng, tone: "pink", label: "Image" }
+const SVG: FileKind = { icon: MdiSvg, tone: "pink", label: "Vector image" }
+const JPEG: FileKind = { icon: MdiJpg, tone: "pink", label: "Image" }
+const GIF: FileKind = { icon: MdiGif, tone: "pink", label: "Animation" }
+const VIDEO: FileKind = { icon: MdiVideo, tone: "violet", label: "Video" }
+const AUDIO: FileKind = { icon: MdiAudio, tone: "cyan", label: "Audio" }
+const ARCHIVE: FileKind = { icon: MdiArchive, tone: "amber", label: "Archive" }
+const SHELL: FileKind = { icon: MdiConsole, tone: "green", label: "Shell script" }
+const CONFIG: FileKind = { icon: MdiCog, tone: "cyan", label: "Configuration" }
+const SECRET: FileKind = { icon: MdiKeyFile, tone: "green", label: "Key or certificate" }
+const BINARY: FileKind = { icon: MdiBinary, tone: "red", label: "Binary" }
+const FONT: FileKind = { icon: MdiFont, tone: "violet", label: "Font" }
+const LOG: FileKind = { icon: MdiLog, tone: "amber", label: "Log" }
+const PACKAGE: FileKind = { icon: MdiPackage, tone: "red", label: "Package" }
+const DOCKER: FileKind = { icon: MdiDocker, tone: "blue", label: "Container build" }
+const PLAIN: FileKind = { icon: MdiPlain, tone: "slate", label: "File" }
 
 const BY_EXTENSION: Record<string, FileKind> = {
   // Code
@@ -131,18 +214,19 @@ const BY_EXTENSION: Record<string, FileKind> = {
   // Shell and automation
   sh: SHELL, bash: SHELL, zsh: SHELL, fish: SHELL, ps1: SHELL, bat: SHELL, cmd: SHELL,
   // Markup and style
-  html: MARKUP, htm: MARKUP, xml: MARKUP, svg: SVG,
+  html: HTML, htm: HTML, xml: XML, svg: SVG,
   css: STYLE, scss: STYLE, sass: STYLE, less: STYLE,
   // Data
   json: JSON_, jsonc: JSON_, json5: JSON_, yaml: DATA, yml: DATA, toml: DATA,
   proto: DATA, graphql: DATA, gql: DATA, ndjson: JSON_,
-  csv: SHEET, tsv: SHEET, xlsx: SHEET, xls: SHEET, ods: SHEET,
+  csv: SHEET, tsv: SHEET, ods: SHEET, xlsx: XLS, xls: XLS,
   sql: SQL, db: SQL, sqlite: SQL, sqlite3: SQL, dump: SQL,
   // Documents
-  md: MARKDOWN, mdx: MARKDOWN, txt: DOC, rst: DOC, adoc: DOC, pdf: DOC, doc: DOC, docx: DOC,
+  md: MARKDOWN, mdx: MARKDOWN, txt: DOC, rst: DOC, adoc: DOC,
+  pdf: PDF, doc: WORD, docx: WORD, ppt: SLIDES, pptx: SLIDES, odp: SLIDES,
   log: LOG,
   // Media
-  png: IMAGE, jpg: JPEG, jpeg: JPEG, gif: GIF, webp: IMAGE, avif: IMAGE,
+  png: PNG, jpg: JPEG, jpeg: JPEG, gif: GIF, webp: IMAGE, avif: IMAGE,
   bmp: IMAGE, ico: IMAGE, tiff: IMAGE, heic: IMAGE, psd: IMAGE,
   mp4: VIDEO, webm: VIDEO, mkv: VIDEO, mov: VIDEO, avi: VIDEO, ogv: VIDEO,
   mp3: AUDIO, wav: AUDIO, flac: AUDIO, ogg: AUDIO, m4a: AUDIO, aac: AUDIO,
@@ -172,33 +256,33 @@ const BY_NAME: Record<string, FileKind> = {
   "compose.yml": DOCKER,
   "compose.yaml": DOCKER,
   ".dockerignore": DOCKER,
-  makefile: { icon: SettingsGear, tone: "cyan", label: "Makefile" },
-  gnumakefile: { icon: SettingsGear, tone: "cyan", label: "Makefile" },
+  makefile: { icon: MdiMake, tone: "cyan", label: "Makefile" },
+  gnumakefile: { icon: MdiMake, tone: "cyan", label: "Makefile" },
   caddyfile: CONFIG,
   vagrantfile: CONFIG,
   procfile: CONFIG,
   gemfile: CODE,
   rakefile: CODE,
-  "package.json": { icon: Puzzle, tone: "red", label: "npm manifest" },
-  "package-lock.json": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "bun.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "bun.lockb": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "yarn.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "pnpm-lock.yaml": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "go.sum": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "cargo.lock": { icon: LockClosed, tone: "slate", label: "Lockfile" },
-  "go.mod": { icon: Puzzle, tone: "cyan", label: "Go module" },
-  "cargo.toml": { icon: Puzzle, tone: "red", label: "Cargo manifest" },
-  "requirements.txt": { icon: Puzzle, tone: "blue", label: "Python requirements" },
-  license: { icon: FileText, tone: "slate", label: "Licence" },
-  "license.md": { icon: FileText, tone: "slate", label: "Licence" },
-  readme: { icon: FileText, tone: "cyan", label: "Readme" },
-  "readme.md": { icon: AcronymMarkdown, tone: "cyan", label: "Readme" },
+  "package.json": { icon: MdiPackage, tone: "red", label: "npm manifest" },
+  "package-lock.json": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "bun.lock": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "bun.lockb": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "yarn.lock": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "pnpm-lock.yaml": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "go.sum": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "cargo.lock": { icon: MdiLock, tone: "slate", label: "Lockfile" },
+  "go.mod": { icon: MdiPackage, tone: "cyan", label: "Go module" },
+  "cargo.toml": { icon: MdiPackage, tone: "red", label: "Cargo manifest" },
+  "requirements.txt": { icon: MdiPackage, tone: "blue", label: "Python requirements" },
+  license: { icon: MdiLicence, tone: "slate", label: "Licence" },
+  "license.md": { icon: MdiLicence, tone: "slate", label: "Licence" },
+  readme: { icon: MdiReadme, tone: "cyan", label: "Readme" },
+  "readme.md": { icon: MdiMarkdown, tone: "cyan", label: "Readme" },
   changelog: DOC,
   "changelog.md": MARKDOWN,
-  ".gitignore": { icon: GitBranch, tone: "slate", label: "git exclusions" },
+  ".gitignore": { icon: MdiGit, tone: "slate", label: "git exclusions" },
   ".gitconfig": CONFIG,
-  ".env": { icon: Key, tone: "amber", label: "Environment file" },
+  ".env": { icon: MdiKeyFile, tone: "amber", label: "Environment file" },
   ".bashrc": SHELL,
   ".zshrc": SHELL,
   ".profile": SHELL,
@@ -206,8 +290,8 @@ const BY_NAME: Record<string, FileKind> = {
   ".editorconfig": CONFIG,
   authorized_keys: SECRET,
   known_hosts: SECRET,
-  passwd: { icon: Key, tone: "red", label: "Account database" },
-  shadow: { icon: Key, tone: "red", label: "Password hashes" },
+  passwd: { icon: MdiKeyFile, tone: "red", label: "Account database" },
+  shadow: { icon: MdiKeyFile, tone: "red", label: "Password hashes" },
   fstab: CONFIG,
   hosts: CONFIG,
   crontab: CONFIG,
@@ -216,31 +300,31 @@ const BY_NAME: Record<string, FileKind> = {
 /**
  * Folders whose name says more than "folder" does.
  *
- * The build and dependency directories take `FolderMinus` rather than a
+ * The build and dependency directories take the minus folder rather than a
  * folder-with-a-gear: what they have in common is not that they are
  * configured, it is that nothing in them is yours to edit, and a folder with
  * a minus in it says "walk past this one" at a glance.
  */
 const FOLDERS_BY_NAME: Record<string, FileKind> = {
-  ".git": { icon: GitBranch, tone: "amber", label: "git repository" },
-  node_modules: { icon: FolderMinus, tone: "slate", label: "Installed packages" },
-  vendor: { icon: FolderMinus, tone: "slate", label: "Vendored dependencies" },
-  ".next": { icon: FolderMinus, tone: "slate", label: "Build output" },
-  dist: { icon: FolderMinus, tone: "slate", label: "Build output" },
-  build: { icon: FolderMinus, tone: "slate", label: "Build output" },
-  target: { icon: FolderMinus, tone: "slate", label: "Build output" },
-  etc: { icon: SettingsGear, tone: "cyan", label: "Configuration" },
-  home: { icon: Home, tone: "primary", label: "Home directories" },
-  root: { icon: Home, tone: "primary", label: "root's home" },
-  var: { icon: Servers, tone: "amber", label: "Variable data" },
-  log: { icon: Logs, tone: "amber", label: "Logs" },
-  logs: { icon: Logs, tone: "amber", label: "Logs" },
-  www: { icon: Globe, tone: "violet", label: "Web root" },
-  public: { icon: Globe, tone: "violet", label: "Public assets" },
-  ssl: { icon: Key, tone: "green", label: "Certificates" },
-  ssh: { icon: Key, tone: "green", label: "SSH configuration" },
-  ".ssh": { icon: Key, tone: "green", label: "SSH keys" },
-  backups: { icon: Archive, tone: "amber", label: "Backups" },
+  ".git": { icon: MdiGit, tone: "amber", label: "git repository" },
+  node_modules: { icon: MdiFolderMinus, tone: "slate", label: "Installed packages" },
+  vendor: { icon: MdiFolderMinus, tone: "slate", label: "Vendored dependencies" },
+  ".next": { icon: MdiFolderMinus, tone: "slate", label: "Build output" },
+  dist: { icon: MdiFolderMinus, tone: "slate", label: "Build output" },
+  build: { icon: MdiFolderMinus, tone: "slate", label: "Build output" },
+  target: { icon: MdiFolderMinus, tone: "slate", label: "Build output" },
+  etc: { icon: MdiFolderCog, tone: "cyan", label: "Configuration" },
+  home: { icon: MdiFolderHome, tone: "primary", label: "Home directories" },
+  root: { icon: MdiFolderHome, tone: "primary", label: "root's home" },
+  var: { icon: MdiFolder, tone: "amber", label: "Variable data" },
+  log: { icon: MdiFolder, tone: "amber", label: "Logs" },
+  logs: { icon: MdiFolder, tone: "amber", label: "Logs" },
+  www: { icon: MdiFolderNetwork, tone: "violet", label: "Web root" },
+  public: { icon: MdiFolderNetwork, tone: "violet", label: "Public assets" },
+  ssl: { icon: MdiFolderKey, tone: "green", label: "Certificates" },
+  ssh: { icon: MdiFolderKey, tone: "green", label: "SSH configuration" },
+  ".ssh": { icon: MdiFolderKey, tone: "green", label: "SSH keys" },
+  backups: { icon: MdiFolderSync, tone: "amber", label: "Backups" },
 }
 
 const TONE_VAR: Record<FileTone, string> = {
@@ -266,7 +350,7 @@ const TONE_VAR: Record<FileTone, string> = {
 export function fileKind(name: string, isDir = false): FileKind {
   const lower = name.toLowerCase()
   if (isDir) {
-    return FOLDERS_BY_NAME[lower] ?? { icon: FolderClosed, tone: "primary", label: "Folder" }
+    return FOLDERS_BY_NAME[lower] ?? { icon: MdiFolder, tone: "primary", label: "Folder" }
   }
   if (BY_NAME[lower]) return BY_NAME[lower]
 
@@ -316,9 +400,9 @@ export function toneColour(tone: FileTone): string {
  * file. That worked on a stroked set, whose paths carry no fill of their own
  * and so inherit one; every path in this set paints itself `currentColor`, so
  * the class is now a no-op that only looks like it does something. It is gone,
- * and nothing replaces it — `FolderClosed` and `FolderOpen` are already a
- * different silhouette from every file glyph, which is the distinction the
- * tint was standing in for.
+ * and nothing replaces it — the MDI folder is already a different silhouette
+ * from every file glyph, which is the distinction the tint was standing in
+ * for.
  */
 export function FileIcon({
   entry,
@@ -333,7 +417,7 @@ export function FileIcon({
   badgeClassName?: string
 }) {
   const kind = kindOfEntry(entry)
-  const Glyph = entry.isDir && open ? FolderOpen : kind.icon
+  const Glyph = entry.isDir && open ? MdiFolderOpen : kind.icon
   return (
     <span className={cn("relative inline-flex shrink-0", className)}>
       <Glyph
