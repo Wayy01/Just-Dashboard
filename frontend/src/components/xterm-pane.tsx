@@ -432,17 +432,30 @@ export function XtermPane({
         { FitAddon },
         { WebLinksAddon },
         { SearchAddon },
+        { Unicode11Addon },
       ] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
         import("@xterm/addon-search"),
+        import("@xterm/addon-unicode11"),
       ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
 
       const s = settingsRef.current
       const term = new Terminal({
+        // Keep cell metrics deterministic. Browser defaults can resolve to a
+        // proportional fallback for symbols even when ordinary ASCII looks
+        // monospace, which leaves a TUI's logical cursor and painted glyphs
+        // disagreeing. xterm clips fallbacks to the cell; customGlyphs draws
+        // box and block structure to the complete cell boundary.
+        fontFamily:
+          'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Liberation Mono", Menlo, Monaco, Consolas, monospace',
+        fontSize: 14,
+        lineHeight: 1,
+        letterSpacing: 0,
+        customGlyphs: true,
         // `convertEol` is deliberately **off**, and turning it back on breaks
         // the terminal in a way that takes a day to trace.
         //
@@ -489,6 +502,9 @@ export function XtermPane({
       term.loadAddon(fit)
       term.loadAddon(search)
       term.loadAddon(new WebLinksAddon())
+      term.loadAddon(new Unicode11Addon())
+      term.unicode.activeVersion = "11"
+      host.dataset.terminalUnicode = term.unicode.activeVersion
       term.open(host)
       // A plain drag selects, the way it does in every other application.
       //
@@ -501,9 +517,35 @@ export function XtermPane({
       // both said nothing was selected, because as far as the browser was
       // concerned nothing was.
       forcePointerToSelect(term)
-      fit.fit()
+
+      // Use xterm's normal renderer. WebGL previously caused stale/blank rows
+      // around alternate-screen changes, and the available Canvas addon uses
+      // xterm 5 internals and throws while an xterm 6 terminal is disposed.
+      // Correct reconnect/tab teardown is more important than GPU throughput.
+
+      const fitTerminal = () => {
+        if (host.clientWidth <= 0 || host.clientHeight <= 0) return false
+        fit.fit()
+        return term.rows > 0 && term.cols > 0
+      }
+      fitTerminal()
 
       const disposables: IDisposable[] = []
+
+      // The size the server was last told. Both xterm's resize event and the
+      // host observer converge here, so a fit cannot emit the same control
+      // message twice.
+      let sent = { rows: 0, cols: 0 }
+      const terminalDebug = window.localStorage.getItem("jd.terminal.debug") === "1"
+      const syncPtySize = (socket: WebSocket) => {
+        if (socket.readyState !== WebSocket.OPEN || term.rows <= 0 || term.cols <= 0) return
+        if (term.rows === sent.rows && term.cols === sent.cols) return
+        sent = { rows: term.rows, cols: term.cols }
+        host.dataset.terminalRows = String(term.rows)
+        host.dataset.terminalCols = String(term.cols)
+        socket.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }))
+        if (terminalDebug) console.debug(`frontend terminal = ${term.rows}x${term.cols}`)
+      }
 
       disposables.push(
         search.onDidChangeResults((r) =>
@@ -547,11 +589,9 @@ export function XtermPane({
       // fit that nobody forwarded is a full-screen app painting for the wrong
       // window — a blank or garbled first row.
       disposables.push(
-        term.onResize(({ rows, cols }) => {
+        term.onResize(() => {
           const socket = socketRef.current
-          if (socket?.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: "resize", rows, cols }))
-          }
+          if (socket) syncPtySize(socket)
         }),
       )
 
@@ -570,11 +610,6 @@ export function XtermPane({
       // for the length of the replay, which is the only window in which they
       // can only be about the past.
       let replaying = false
-
-      // The size the server was last told. A resize is sent when this stops
-      // being true and not otherwise: the observer fires for every frame of a
-      // drag, and most of those frames are the same number of cells.
-      let sent = { rows: 0, cols: 0 }
 
       /**
        * Tell the PTY how big the screen is — **immediately**, never on a
@@ -595,17 +630,15 @@ export function XtermPane({
        * tmux handles a dragged window all day — lag is.
        */
       const sendResize = () => {
-        fit.fit()
-        if (socket.readyState !== WebSocket.OPEN) return
-        if (term.rows === sent.rows && term.cols === sent.cols) return
-        sent = { rows: term.rows, cols: term.cols }
-        socket.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }))
+        if (!fitTerminal()) return
+        syncPtySize(socket)
       }
 
       socket.onopen = () => {
         setState("open")
         setError(undefined)
         sendResize()
+        if (terminalDebug) console.debug("terminal WebSocket connected")
         term.focus()
         // The session may have been left scrolled back by whoever was here
         // before — copy mode outlives the socket the way everything else in a
@@ -662,6 +695,7 @@ export function XtermPane({
       }
       socket.onclose = () => {
         setState("closed")
+        if (terminalDebug) console.debug("terminal WebSocket disconnected")
         term.writeln("\r\n\x1b[90m— disconnected —\x1b[0m")
         onExit?.()
       }
@@ -688,7 +722,7 @@ export function XtermPane({
       const insertInput = (data: string) => {
         if (socket.readyState !== WebSocket.OPEN || replaying) return false
         leaveCopyMode()
-        socket.send(data)
+        sendTerminalInput(socket, data)
         term.focus()
         return true
       }
@@ -720,7 +754,7 @@ export function XtermPane({
             setPendingPaste({ raw: data, text: readablePaste(data) })
             return
           }
-          socket.send(data)
+          sendTerminalInput(socket, data)
         }),
       )
 
@@ -822,11 +856,26 @@ export function XtermPane({
       }
       host.addEventListener("mousedown", onMouseDownCapture, { capture: true })
 
-      const observer = new ResizeObserver(sendResize)
+      let resizeFrame = 0
+      const scheduleResize = () => {
+        if (resizeFrame) return
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0
+          sendResize()
+        })
+      }
+      const observer = new ResizeObserver(scheduleResize)
       observer.observe(host)
+      const onVisibility = () => {
+        if (document.visibilityState === "visible") scheduleResize()
+      }
+      document.addEventListener("visibilitychange", onVisibility)
+      void document.fonts?.ready.then(scheduleResize)
 
       cleanup = () => {
         observer.disconnect()
+        cancelAnimationFrame(resizeFrame)
+        document.removeEventListener("visibilitychange", onVisibility)
         clearTimeout(syncTimer)
         host.removeEventListener("wheel", onWheel, { capture: true })
         host.removeEventListener("mousedown", onMouseDownCapture, { capture: true })
@@ -1050,7 +1099,7 @@ export function XtermPane({
       notify.error("Not connected")
       return
     }
-    socket.send(data)
+    sendTerminalInput(socket, data)
     termRef.current?.focus()
   }, [])
 
@@ -1743,13 +1792,20 @@ async function requestPaste(
       ask({ raw: text, text: readablePaste(text) })
       return
     }
-    socket.send(text)
+    sendTerminalInput(socket, text)
   } catch {
     notify.error(
       "The browser refused clipboard access",
       "Ctrl+V pastes into the shell directly if the page has no permission.",
     )
   }
+}
+
+const terminalEncoder = new TextEncoder()
+
+/** Keyboard and paste data use binary frames just like PTY output. */
+function sendTerminalInput(socket: WebSocket, data: string) {
+  socket.send(terminalEncoder.encode(data))
 }
 
 /**

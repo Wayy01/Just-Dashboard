@@ -179,8 +179,33 @@ func (s *Session) Resize(rows, cols uint16) (changed bool, err error) {
 		return false, nil
 	}
 	changed = s.Rows != rows || s.Cols != cols
+	if !changed {
+		return false, nil
+	}
+	if err := pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols}); err != nil {
+		return false, err
+	}
 	s.Rows, s.Cols = rows, cols
-	return changed, pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols})
+	return true, nil
+}
+
+// SynchronizeSize unconditionally applies the browser's authoritative size.
+// Resize can skip a duplicate during a drag, but reconnect is a boundary at
+// which the cached fields must not be trusted more than the kernel PTY.
+func (s *Session) SynchronizeSize(rows, cols uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrNotFound
+	}
+	if rows == 0 || cols == 0 {
+		return nil
+	}
+	if err := pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols}); err != nil {
+		return err
+	}
+	s.Rows, s.Cols = rows, cols
+	return nil
 }
 
 // maxPending bounds how far behind one attached browser may fall before it is

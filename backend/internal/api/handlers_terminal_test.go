@@ -27,6 +27,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/term"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 )
 
 // These drive the real handlers against a real tmux, because the bug they
@@ -121,6 +122,9 @@ func terminalServer(t *testing.T) (*Server, http.Handler) {
 // tmux takes its socket directory from TMUX_TMPDIR, and every `tmux` this
 // package runs is a child of this process, so setting it here is enough.
 func TestMain(m *testing.M) {
+	// A parent tmux session wins over TMUX_TMPDIR and would attach these tests
+	// to the developer's server (or a socket their account cannot access).
+	os.Unsetenv("TMUX")
 	dir, err := os.MkdirTemp("", "jdtmux")
 	if err == nil {
 		// Short, because a unix socket path has about a hundred characters to
@@ -211,6 +215,59 @@ func (c apiCall) create(title, folder string) workspace {
 		c.t.Fatal(err)
 	}
 	return created
+}
+
+func TestTerminalSizeQuery(t *testing.T) {
+	for _, tt := range []struct {
+		query      string
+		rows, cols uint16
+		ok         bool
+	}{
+		{query: "?rows=43&cols=156", rows: 43, cols: 156, ok: true},
+		{query: "?rows=0&cols=156"},
+		{query: "?rows=43"},
+		{query: "?rows=-1&cols=80"},
+		{query: "?rows=43&cols=999999"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/terminal/id/attach"+tt.query, nil)
+		rows, cols, ok := terminalSizeQuery(r)
+		if rows != tt.rows || cols != tt.cols || ok != tt.ok {
+			t.Errorf("terminalSizeQuery(%q) = %d, %d, %v; want %d, %d, %v", tt.query, rows, cols, ok, tt.rows, tt.cols, tt.ok)
+		}
+	}
+}
+
+func TestTerminalAttachSynchronizesPTYBeforeRawIO(t *testing.T) {
+	_, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.create("geometry", "")
+
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") +
+		"/terminal/" + created.ID + "/attach?rows=43&cols=156"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("stty size\r")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var output []byte
+	for !bytes.Contains(output, []byte("43 156")) {
+		kind, chunk, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("reading PTY output: %v; output %q", err, output)
+		}
+		if kind != websocket.BinaryMessage {
+			continue
+		}
+		output = append(output, chunk...)
+	}
 }
 
 // The reported bug, end to end.

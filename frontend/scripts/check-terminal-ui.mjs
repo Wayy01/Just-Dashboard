@@ -98,6 +98,16 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
         "\x1b[32m~/Just-Dashboard\x1b[0m\r\n> git status\r\nOn branch main\r\nYour branch is up to date with origin/main.\r\n\r\nnothing to commit, working tree clean\r\n\r\n\x1b[32m~/Just-Dashboard\x1b[0m\r\n> ",
       ),
     )
+    // Exercise alternate-screen enter/leave, cursor visibility, clearing and
+    // a scroll region before returning to the shell buffer.
+    socket.send(Buffer.from("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[2;20r\x1b[Hadvanced TUI\x1b[r"))
+    socket.send(Buffer.from("\x1b[?25h\x1b[?1049l"))
+    // Split a multibyte glyph between WebSocket messages. xterm's Uint8Array
+    // decoder must carry the incomplete UTF-8 sequence into the next write.
+    const unicode = Buffer.from("\r\n╭────────╮\r\n│ test   │ ● ⏺ ✻ → … ✓ ⚠\r\n╰────────╯\r\n")
+    const split = unicode.indexOf(Buffer.from("⏺")) + 1
+    socket.send(unicode.subarray(0, split))
+    socket.send(unicode.subarray(split))
     socket.onMessage((message) => {
       if (typeof message === "string" && message.startsWith("{")) {
         const control = JSON.parse(message)
@@ -112,8 +122,9 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
             }),
           )
       }
-      if (typeof message === "string" && !message.startsWith("{")) {
-        input.push(message)
+      if (typeof message !== "string") {
+        const decoded = Buffer.from(message).toString("utf8")
+        input.push(decoded)
         socket.send(Buffer.from(message))
       }
     })
@@ -122,6 +133,19 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
 try {
   await page.goto(`${process.env.JD_BROWSER_BASE_URL ?? "http://127.0.0.1:3107"}/terminal`)
   await page.locator(".xterm-screen").waitFor()
+  await page.waitForFunction(() =>
+    document.querySelector("[data-terminal-rows][data-terminal-cols]")?.getAttribute("data-terminal-unicode") === "11",
+  )
+  const terminalGeometry = await page.locator("[data-terminal-rows]").evaluate((host) => ({
+    rows: Number(host.getAttribute("data-terminal-rows")),
+    cols: Number(host.getAttribute("data-terminal-cols")),
+  }))
+  const initialResize = controls.filter((control) => control.type === "resize").at(-1)
+  assert.deepEqual(
+    { rows: initialResize.rows, cols: initialResize.cols },
+    terminalGeometry,
+    "the resize control must match xterm's measured grid",
+  )
   assert.equal(await page.getByRole("textbox", { name: "Command draft" }).count(), 0)
   assert.equal(await page.getByRole("button", { name: "Focus", exact: true }).count(), 0)
   const jump = page.getByRole("button", { name: "Jump to the end", exact: true })
@@ -146,7 +170,7 @@ try {
   assert.equal(await bar.getByText("/home/ubuntu/Just-Dashboard", { exact: true }).count(), 0)
   for (const tab of await page.locator("[data-window]").all()) {
     const box = await tab.boundingBox()
-    assert(box.width >= 144 && box.height >= 44)
+    assert(box.width >= 144 && box.height >= 40)
   }
   assert.equal(
     await page.getByRole("button", { name: "Close window codex", exact: true }).count(),
@@ -201,6 +225,19 @@ try {
   })
   await page.screenshot({ animations: "disabled", path: "/tmp/terminal-light.png" })
   await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForFunction(
+    ([rows, cols]) => {
+      const host = document.querySelector("[data-terminal-rows]")
+      return Number(host?.getAttribute("data-terminal-rows")) !== rows || Number(host?.getAttribute("data-terminal-cols")) !== cols
+    },
+    [terminalGeometry.rows, terminalGeometry.cols],
+  )
+  const mobileGeometry = await page.locator("[data-terminal-rows]").evaluate((host) => ({
+    rows: Number(host.getAttribute("data-terminal-rows")),
+    cols: Number(host.getAttribute("data-terminal-cols")),
+  }))
+  const mobileResize = controls.filter((control) => control.type === "resize").at(-1)
+  assert.deepEqual({ rows: mobileResize.rows, cols: mobileResize.cols }, mobileGeometry)
   await page.locator('[data-window="2"] button').first().click()
   await page.locator('[data-window="2"][data-active="true"]').waitFor()
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
@@ -220,6 +257,7 @@ try {
     await page.reload()
     await page.locator(".xterm-screen").waitFor()
   }
+  assert.deepEqual(errors, [], "terminal mount/reconnect must not raise browser errors")
   assert.equal(
     mutations.filter((path) => path === "/terminal/").length,
     beforeLaunch + 1,

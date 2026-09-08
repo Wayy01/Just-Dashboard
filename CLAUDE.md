@@ -727,6 +727,16 @@ settings. `status off` (the page draws that information above the pane, and gree
 `mouse on` — without it the wheel does something actively *wrong*, since tmux holds the alternate screen
 and xterm turns a wheel tick there into a cursor key, so scrolling up walked backwards through history.
 
+The create and reattach requests carry a provisional size because the emulator does not exist yet. The
+attach WebSocket carries xterm's measured `rows`/`cols` in its query and the handler applies that size to
+the PTY **before subscribing or replaying output**; every later `ResizeObserver` fit sends only a changed
+cell size. This ordering is what makes a resumed alternate-screen program receive SIGWINCH and repaint
+for the browser before the browser consumes its screen. Reconnect uses `SynchronizeSize` to reapply the
+size even when the cached fields agree; ordinary resize frames are de-duplicated. The recorded size changes
+only after `pty.Setsize` succeeds. Terminal capability variables replace inherited entries rather than being
+appended — duplicate names are legal in `execve`, and appending could leave an inherited `TERM=dumb` as
+the value libc returns.
+
 **What tmux does with a tick is not the browser's to guess.** tmux's root binding enters copy mode only
 when the program has *not* asked for the mouse; every full-screen TUI has, and there nothing scrolls — so
 a "Jump to the end" button drawn from the browser's optimism offered to return a terminal that never
@@ -1357,8 +1367,9 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   the theme would stop being the same label. What *is* computed is everything drawn from it — row tint and
   edge rule are `color-mix` against the surface, so one lightness holds on a near-black card and a
   near-white one.
-- `lib/terminal-settings.ts` keeps font, cursor, scrollback and behaviour in localStorage — on the screen,
-  not the account, for the reason the theme is.
+- `lib/terminal-settings.ts` keeps scrollback and behaviour in localStorage — on the screen, not the
+  account, for the reason the theme is. Font metrics are deliberately fixed: user-selectable line height,
+  spacing and fonts made the emulator grid cease to be a stable terminal grid.
 - `lib/terminal-keymap.ts` is every shortcut, all rebindable. A chord must get past the browser, the page
   and the shell, and no default annoys nobody — tmux settled that with a prefix key half the world
   rebinds. Ctrl+Alt is the default family (neither browser nor shell wants it); Ctrl+Shift is the
@@ -1404,12 +1415,16 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
 - `allowProposedApi` is on because the search addon's match count and highlight-all use xterm's decoration
   API, which is not frozen; without it `findNext` throws and the counter reads "none" over a scrollback
   full of matches.
-- **Box drawing never falls through to the DOM renderer when canvas is available.** WebGL remains the
-  fast path, but its absence or a lost GPU context loads `@xterm/addon-canvas`; both render xterm's custom
-  glyphs to the full cell. The DOM renderer delegates box corners and vertical rules to the selected font,
-  where line height and font metrics turn prompt branches, tmux separators and TUI frames into stray
-  underscores or interrupted side rules. DOM remains the last usability fallback only when the browser can
-  support neither accelerated renderer.
+- **The normal renderer is deliberate; WebGL is not loaded.** WebGL previously left stale or blank rows
+  around alternate-screen changes and context loss, where speed is worth less than a correct screen. The
+  available Canvas addon targets xterm 5 internals and throws when an xterm 6 terminal is disposed, so it
+  is not a safe fallback. Font metrics are a fixed monospace stack with unit line height and zero letter
+  spacing, and xterm's custom glyphs stay enabled. `@xterm/addon-unicode11` is active so the emulator's
+  cursor arithmetic agrees with the Unicode-width rules used by modern TUIs.
+- **PTY output and input are binary WebSocket frames.** JSON text frames are controls only. Raw PTY chunks
+  go straight to `terminal.write(Uint8Array)` (whose streaming decoder preserves a UTF-8 character split
+  across chunks); keyboard and paste strings are encoded once with `TextEncoder`. The backend neither
+  decodes nor rewrites terminal bytes.
 - **Clicking inside a pane focuses it, and the arithmetic is the only way it can** — tmux composes every
   pane into one screen before the PTY sees a byte, so the browser has one terminal and no element to hang a
   handler on. `Panes` carries `pane_left/top/right/bottom`, `XtermPane` reports the clicked cell (the grid

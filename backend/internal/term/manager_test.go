@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
+
+	"github.com/creack/pty"
 )
 
 // TestMain gives this package's tests a tmux server of their own.
@@ -71,5 +74,61 @@ func TestRingBufferKeepsMostRecentBytes(t *testing.T) {
 	r.Write([]byte("0123456789"))
 	if got := string(r.Bytes()); got != "23456789" {
 		t.Fatalf("Bytes() = %q, want %q", got, "23456789")
+	}
+}
+
+func TestResizeUpdatesKernelAndReportedSize(t *testing.T) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+
+	sess := &Session{Rows: 24, Cols: 80, pty: ptmx}
+	changed, err := sess.Resize(43, 156)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("Resize reported no change")
+	}
+	rows, cols := sess.Size()
+	if rows != 43 || cols != 156 {
+		t.Fatalf("session size = %dx%d, want 43x156", rows, cols)
+	}
+	winsize, err := pty.GetsizeFull(ptmx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winsize.Rows != 43 || winsize.Cols != 156 {
+		t.Fatalf("kernel PTY size = %dx%d, want 43x156", winsize.Rows, winsize.Cols)
+	}
+	if err := sess.SynchronizeSize(51, 173); err != nil {
+		t.Fatal(err)
+	}
+	winsize, err = pty.GetsizeFull(ptmx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winsize.Rows != 51 || winsize.Cols != 173 {
+		t.Fatalf("synchronized kernel PTY size = %dx%d, want 51x173", winsize.Rows, winsize.Cols)
+	}
+
+	changed, err = sess.Resize(51, 173)
+	if err != nil || changed {
+		t.Fatalf("duplicate resize = changed %v, err %v; want no-op", changed, err)
+	}
+}
+
+func TestTerminalEnvReplacesInheritedCapabilities(t *testing.T) {
+	got := terminalEnv([]string{
+		"PATH=/usr/bin", "TERM=dumb", "COLORTERM=", "JD_SESSION=old", "LANG=C.UTF-8",
+	}, "new")
+	want := []string{
+		"PATH=/usr/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "COLORTERM=truecolor", "JD_SESSION=new",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("terminalEnv() = %#v, want %#v", got, want)
 	}
 }

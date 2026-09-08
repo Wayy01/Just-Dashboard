@@ -191,11 +191,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// A login resets the environment anyway; these are the two variables that
 	// survive it and that the terminal on the other end depends on to render
 	// colour and cursor keys correctly.
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm-256color",
-		"COLORTERM=truecolor",
-		"JD_SESSION="+id,
-	)
+	cmd.Env = terminalEnv(os.Environ(), id)
 
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: opts.Rows, Cols: opts.Cols})
 	if err != nil {
@@ -672,7 +668,7 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	// being picked up rather than by being recreated. Both are idempotent.
 	m.rememberOptions(tmuxName, option{"status", "off"}, option{"mouse", "on"})
 	cmd := hostexec.CommandOnHost(context.Background(), "tmux", "attach-session", "-t", tmuxName)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = terminalEnv(os.Environ(), id)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
 		return nil, err
@@ -686,6 +682,27 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	m.mu.Unlock()
 	go sess.readLoop(func() { m.remove(id) })
 	return sess, nil
+}
+
+// terminalEnv replaces terminal capability variables rather than appending
+// duplicates. execve permits duplicate names and many libc implementations
+// return the first one, so append(os.Environ(), "TERM=...") can leave a
+// service manager's TERM=dumb in force inside the shell.
+func terminalEnv(base []string, sessionID string) []string {
+	env := make([]string, 0, len(base)+3)
+	for _, entry := range base {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "TERM", "COLORTERM", "JD_SESSION":
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env,
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+		"JD_SESSION="+sessionID,
+	)
 }
 
 // reap closes sessions nobody is attached to and that have seen no output for

@@ -289,6 +289,10 @@ func (s *Server) handleTerminalCreate(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapTermError(err)
 	}
+	if s.Log != nil {
+		rows, cols := sess.Size()
+		s.Log.Debug("terminal PTY created", "session", sess.ID, "rows", rows, "cols", cols)
+	}
 	// The account is the part of this record that matters later: "a shell was
 	// opened" and "a shell was opened as root" are different events.
 	httpx.SetAudit(r, "terminal.create", sess.ID,
@@ -318,6 +322,10 @@ func (s *Server) handleTerminalReattach(w http.ResponseWriter, r *http.Request) 
 	sess, err := s.modules.term.Reattach(r.Context(), req.TmuxName, p.Username(), req.Rows, req.Cols)
 	if err != nil {
 		return mapTermError(err)
+	}
+	if s.Log != nil {
+		rows, cols := sess.Size()
+		s.Log.Debug("terminal PTY reattached", "session", sess.ID, "rows", rows, "cols", cols)
 	}
 	httpx.SetAudit(r, "terminal.reattach", req.TmuxName, map[string]any{"sessionId": sess.ID})
 	httpx.JSON(w, http.StatusOK, map[string]any{
@@ -355,6 +363,20 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 	ctx, cancel := contextWithCancel(r)
 	defer cancel()
 	go conn.Keepalive(ctx)
+
+	// xterm puts its measured geometry on the handshake. Apply it before
+	// subscribing or replaying a single byte, so a resumed full-screen app
+	// redraws for the browser's real grid rather than the provisional size the
+	// HTTP create/reattach request used before the emulator existed.
+	if rows, cols, ok := terminalSizeQuery(r); ok {
+		if err := sess.SynchronizeSize(rows, cols); err != nil {
+			conn.SendError("could not resize terminal")
+			return nil
+		}
+		if s.Log != nil {
+			s.Log.Debug("terminal PTY synchronized", "session", id, "rows", rows, "cols", cols)
+		}
+	}
 
 	snapshot, subID, out, err := sess.Subscribe()
 	if err != nil {
@@ -415,7 +437,15 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 			if json.Unmarshal(data, &ctrl) == nil {
 				switch ctrl.Type {
 				case "resize":
-					if changed, _ := sess.Resize(ctrl.Rows, ctrl.Cols); changed && sess.TmuxName != "" {
+					changed, resizeErr := sess.Resize(ctrl.Rows, ctrl.Cols)
+					if resizeErr != nil {
+						_ = conn.SendError("could not resize terminal")
+						continue
+					}
+					if changed && s.Log != nil {
+						s.Log.Debug("terminal PTY resized", "session", id, "rows", ctrl.Rows, "cols", ctrl.Cols)
+					}
+					if changed && sess.TmuxName != "" {
 						name := sess.TmuxName
 						if redraw != nil {
 							redraw.Stop()
@@ -463,6 +493,15 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 	}
 	s.recordAudit(r, "terminal.detach", id, map[string]any{"attached": sess.Attached()})
 	return nil
+}
+
+func terminalSizeQuery(r *http.Request) (rows, cols uint16, ok bool) {
+	parsedRows, errRows := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
+	parsedCols, errCols := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
+	if errRows != nil || errCols != nil || parsedRows == 0 || parsedCols == 0 {
+		return 0, 0, false
+	}
+	return uint16(parsedRows), uint16(parsedCols), true
 }
 
 // gorilla's TextMessage constant, kept local so handlers do not need to import
