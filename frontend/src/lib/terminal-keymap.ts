@@ -44,9 +44,6 @@ export type ShortcutAction =
   | "terminal.paste"
   | "terminal.clear"
   | "terminal.fullscreen"
-  | "terminal.fontIn"
-  | "terminal.fontOut"
-  | "terminal.fontReset"
   | "terminal.shortcuts"
   | "workspace.rail"
   | "workspace.tools"
@@ -118,9 +115,6 @@ export const SHORTCUTS: ShortcutSpec[] = [
   { action: "terminal.search", scope: "terminal", group: "Terminal", label: "Search the scrollback", chord: "Ctrl+Shift+KeyF" },
   { action: "terminal.clear", scope: "terminal", group: "Terminal", label: "Clear the screen", chord: "Ctrl+Shift+KeyK" },
   { action: "terminal.fullscreen", scope: "terminal", group: "Terminal", label: "Fullscreen", chord: "Ctrl+Alt+KeyF" },
-  { action: "terminal.fontIn", scope: "terminal", group: "Terminal", label: "Larger text", chord: "Ctrl+Shift+Equal" },
-  { action: "terminal.fontOut", scope: "terminal", group: "Terminal", label: "Smaller text", chord: "Ctrl+Shift+Minus" },
-  { action: "terminal.fontReset", scope: "terminal", group: "Terminal", label: "Reset the text size", chord: "Ctrl+Shift+Digit0" },
   { action: "terminal.shortcuts", scope: "terminal", group: "Terminal", label: "Show the shortcuts", chord: "Ctrl+Alt+Slash" },
 ]
 

@@ -3,10 +3,6 @@ import { headers } from "next/headers"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/hooks/use-auth"
 import { themeBootstrapScript } from "@/lib/themes"
-import "@fontsource/cascadia-code/400.css"
-import "@fontsource/fira-code/400.css"
-import "@fontsource/ibm-plex-mono/400.css"
-import "@fontsource/jetbrains-mono/400.css"
 import "./globals.css"
 
 export const metadata: Metadata = {

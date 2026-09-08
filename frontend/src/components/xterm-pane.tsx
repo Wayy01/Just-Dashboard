@@ -16,9 +16,7 @@ import {
   FullscreenClose,
   Lightning,
   MagnifyingGlass,
-  Minus,
   MoreHorizontal,
-  Plus,
   RotateClockwise,
   SettingsSliders,
   SlashForward,
@@ -39,12 +37,6 @@ import {
   uploadTerminalImage,
 } from "@/lib/terminal-upload"
 import {
-  FONT_MAX,
-  FONT_MIN,
-  LETTER_SPACING_MAX,
-  LETTER_SPACING_MIN,
-  TERMINAL_FONTS,
-  resetTerminalSettings,
   setTerminalSettings,
   terminalSettings,
   useSnippets,
@@ -55,13 +47,6 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -447,36 +432,17 @@ export function XtermPane({
         { FitAddon },
         { WebLinksAddon },
         { SearchAddon },
-        { WebglAddon },
-        { CanvasAddon },
       ] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
         import("@xterm/addon-search"),
-        import("@xterm/addon-webgl"),
-        import("@xterm/addon-canvas"),
       ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
 
       const s = settingsRef.current
       const term = new Terminal({
-        fontFamily: s.fontFamily,
-        fontSize: s.fontSize,
-        lineHeight: s.lineHeight,
-        letterSpacing: s.letterSpacing,
-        // Prompt corners, tmux separators and terminal TUIs are structure,
-        // not ordinary font glyphs. Drawing them to the full cell keeps a
-        // vertical rule continuous even when the chosen font or line height
-        // would leave space around the character.
-        customGlyphs: true,
-        cursorStyle: s.cursorStyle,
-        cursorBlink: s.cursorBlink,
-        // A cursor that goes hollow when the pane loses focus is the cheapest
-        // possible answer to "am I about to type into the terminal or into the
-        // page", which on a dashboard full of inputs is a real question.
-        cursorInactiveStyle: "outline",
         // `convertEol` is deliberately **off**, and turning it back on breaks
         // the terminal in a way that takes a day to trace.
         //
@@ -537,52 +503,7 @@ export function XtermPane({
       forcePointerToSelect(term)
       fit.fit()
 
-      // The WebGL renderer, loaded once the pane has its real size. xterm's
-      // core ships only the DOM renderer, which draws box-drawing and block
-      // characters from the font — and most system monospace fonts space those
-      // wrong, so prompt corners and tmux pane borders come through as stray
-      // underscores and interrupted side rules. Both accelerated renderers
-      // draw those glyphs to the full cell instead. Canvas is the deliberate
-      // fallback when WebGL is unavailable or loses its context; silently
-      // falling all the way back to DOM is the broken-edge pattern this is
-      // here to prevent.
-      //
-      // It tracks dirty rows rather than repainting everything, and misses the
-      // wholesale change when an app switches to the alternate screen — the
-      // first row of a full-screen TUI (Claude Code, vim, less) came through
-      // blank. `onBufferChange` forces the full repaint that the switch needs.
-      // On GPU context loss the addon disposes itself and xterm falls straight
-      // onto the canvas renderer.
       const disposables: IDisposable[] = []
-      const fitAndRefresh = () => {
-        requestAnimationFrame(() => {
-          if (disposed) return
-          fit.fit()
-          term.refresh(0, term.rows - 1)
-        })
-      }
-      const loadCanvasRenderer = () => {
-        if (disposed) return
-        try {
-          term.loadAddon(new CanvasAddon())
-          fitAndRefresh()
-        } catch {
-          // The DOM renderer is xterm's final safety net. It keeps the shell
-          // usable even on a browser that supports neither renderer addon.
-        }
-      }
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => {
-          webgl.dispose()
-          loadCanvasRenderer()
-        })
-        term.loadAddon(webgl)
-        disposables.push(term.buffer.onBufferChange(() => term.refresh(0, term.rows - 1)))
-        fitAndRefresh()
-      } catch {
-        loadCanvasRenderer()
-      }
 
       disposables.push(
         search.onDidChangeResults((r) =>
@@ -621,7 +542,7 @@ export function XtermPane({
       )
       // The geometry itself is what the PTY has to be told about, so the send
       // hangs off the change rather than off each caller that might cause one
-      // (a fit after the WebGL load, a container resize, a font change). An
+      // (a container resize or a fit after mounting). An
       // Ink-based TUI redraws entirely from the size it was last given, so a
       // fit that nobody forwarded is a full-screen app painting for the wrong
       // window — a blank or garbled first row.
@@ -836,15 +757,6 @@ export function XtermPane({
             if (onToggleFullscreenRef.current) onToggleFullscreenRef.current()
             else void fullscreenRef.current?.()
             break
-          case "terminal.fontIn":
-            setTerminalSettings({ fontSize: Math.min(FONT_MAX, settingsRef.current.fontSize + 1) })
-            break
-          case "terminal.fontOut":
-            setTerminalSettings({ fontSize: Math.max(FONT_MIN, settingsRef.current.fontSize - 1) })
-            break
-          case "terminal.fontReset":
-            setTerminalSettings({ fontSize: 13 })
-            break
           case "terminal.shortcuts":
             setShortcuts(true)
             break
@@ -852,12 +764,6 @@ export function XtermPane({
         return false
       })
 
-      // Ctrl+scroll is the zoom gesture every browser and every terminal
-      // agrees on. Without `passive: false` the browser has already started
-      // zooming the whole page by the time the handler runs, and without
-      // `capture` it never runs at all: xterm binds its own wheel handler to
-      // the viewport *inside* this element and stops the event there, so a
-      // listener on the host only sees the ticks xterm did not want.
       // What the wheel did is tmux's to say, in both directions. Scrolling up
       // moves the history only when the program in the pane has *not* asked
       // for the mouse; scrolling down leaves copy mode only once it reaches
@@ -877,15 +783,6 @@ export function XtermPane({
       }
 
       const onWheel = (event: WheelEvent) => {
-        if (event.ctrlKey) {
-          event.preventDefault()
-          event.stopPropagation()
-          const step = event.deltaY > 0 ? -1 : 1
-          setTerminalSettings({
-            fontSize: Math.min(FONT_MAX, Math.max(FONT_MIN, settingsRef.current.fontSize + step)),
-          })
-          return
-        }
         // The tick itself is xterm's to forward — it goes out as a mouse
         // report and tmux decides what it means. This only notes that one
         // went, so the next keystroke can cancel a mode that may now be on,
@@ -1078,12 +975,6 @@ export function XtermPane({
   useEffect(() => {
     const term = termRef.current
     if (!term) return
-    term.options.fontSize = settings.fontSize
-    term.options.fontFamily = settings.fontFamily
-    term.options.lineHeight = settings.lineHeight
-    term.options.letterSpacing = settings.letterSpacing
-    term.options.cursorStyle = settings.cursorStyle
-    term.options.cursorBlink = settings.cursorBlink
     term.options.scrollback = settings.scrollback
     fitRef.current?.fit()
     if (term.rows > 0) term.refresh(0, term.rows - 1)
@@ -1597,105 +1488,9 @@ function SettingsMenu() {
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>Font, cursor, scrollback and behaviour</TooltipContent>
+        <TooltipContent>Terminal behaviour</TooltipContent>
       </Tooltip>
       <PopoverContent align="end" className="w-72 space-y-3 text-xs">
-        <p className="eyebrow">Appearance</p>
-        <div className="flex items-center justify-between">
-          <span>Text size</span>
-          <div className="flex items-center rounded-md border border-hairline">
-            <PaneButton
-              label="Smaller text"
-              onClick={() =>
-                setTerminalSettings({ fontSize: Math.max(FONT_MIN, settings.fontSize - 1) })
-              }
-            >
-              <Minus className="size-3.5" />
-            </PaneButton>
-            <span className="numeric px-1 text-[10px] text-muted-foreground">
-              {settings.fontSize}
-            </span>
-            <PaneButton
-              label="Larger text"
-              onClick={() =>
-                setTerminalSettings({ fontSize: Math.min(FONT_MAX, settings.fontSize + 1) })
-              }
-            >
-              <Plus className="size-3.5" />
-            </PaneButton>
-          </div>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <span>Font</span>
-          <Select
-            value={settings.fontFamily}
-            onValueChange={(fontFamily) => setTerminalSettings({ fontFamily })}
-          >
-            <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="Font family">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {TERMINAL_FONTS.map((font) => (
-                <SelectItem key={font.id} value={font.id}>
-                  <span style={{ fontFamily: font.id }}>{font.label}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <span>Cursor</span>
-          <Select
-            value={settings.cursorStyle}
-            onValueChange={(cursorStyle) =>
-              setTerminalSettings({ cursorStyle: cursorStyle as "block" | "underline" | "bar" })
-            }
-          >
-            <SelectTrigger size="sm" className="w-28" aria-label="Cursor style">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectItem value="block">Block</SelectItem>
-              <SelectItem value="underline">Underline</SelectItem>
-              <SelectItem value="bar">Bar</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <span>Line height</span>
-            <span className="numeric text-muted-foreground">{settings.lineHeight.toFixed(2)}</span>
-          </div>
-          <Slider
-            aria-label="Line height"
-            min={1}
-            max={2}
-            step={0.05}
-            value={[settings.lineHeight]}
-            onValueChange={([v]) => setTerminalSettings({ lineHeight: v })}
-          />
-        </div>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <span>Letter spacing</span>
-            <span className="numeric text-muted-foreground">
-              {settings.letterSpacing.toFixed(1)} px
-            </span>
-          </div>
-          <Slider
-            aria-label="Letter spacing"
-            min={LETTER_SPACING_MIN}
-            max={LETTER_SPACING_MAX}
-            step={0.1}
-            value={[settings.letterSpacing]}
-            onValueChange={([v]) => setTerminalSettings({ letterSpacing: v })}
-          />
-        </div>
-        <SettingSwitch
-          label="Blinking cursor"
-          checked={settings.cursorBlink}
-          onChange={(cursorBlink) => setTerminalSettings({ cursorBlink })}
-        />
 
         <p className="eyebrow pt-1">Behaviour</p>
         <SettingSwitch
@@ -1741,20 +1536,6 @@ function SettingsMenu() {
             value={[settings.scrollback]}
             onValueChange={([v]) => setTerminalSettings({ scrollback: v })}
           />
-        </div>
-        <div className="flex items-center justify-between gap-3 border-t border-hairline pt-3">
-          <span className="text-[10px] text-muted-foreground">
-            Restore the reliable default cursor and font settings.
-          </span>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            className="shrink-0"
-            onClick={resetTerminalSettings}
-          >
-            Reset
-          </Button>
         </div>
       </PopoverContent>
     </Popover>

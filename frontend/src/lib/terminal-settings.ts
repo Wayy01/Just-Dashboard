@@ -3,25 +3,12 @@
 import { useSyncExternalStore } from "react"
 
 /**
- * How the terminal looks and behaves, kept in the browser.
- *
- * On the screen and not on the account, for the same reason the theme is: a
- * font size is a property of the display you are sitting at, and an operator
- * who turns it up on a laptop has not asked for 18px on the wall-mounted
- * dashboard. It is also why this is localStorage rather than the settings
- * table — the server has no business holding it, and a round trip to change a
- * font size would be absurd.
+ * Terminal behavior kept in the browser.
  *
  * One store rather than per-pane state so that every terminal on the page
  * agrees, including the one that mounts after the setting was changed.
  */
 export type TerminalSettings = {
-  fontSize: number
-  fontFamily: string
-  lineHeight: number
-  letterSpacing: number
-  cursorStyle: "block" | "underline" | "bar"
-  cursorBlink: boolean
   scrollback: number
   /** Selecting text copies it, the way a native Linux terminal does. */
   copyOnSelect: boolean
@@ -42,27 +29,7 @@ export type TerminalSettings = {
   notifyOnBell: boolean
 }
 
-export const TERMINAL_FONTS = [
-  { id: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', label: "System monospace" },
-  { id: '"JetBrains Mono", monospace', label: "JetBrains Mono" },
-  { id: '"Fira Code", monospace', label: "Fira Code" },
-  { id: '"Cascadia Code", monospace', label: "Cascadia Code" },
-  { id: '"IBM Plex Mono", monospace', label: "IBM Plex Mono" },
-  { id: "monospace", label: "Browser default" },
-] as const
-
-export const FONT_MIN = 8
-export const FONT_MAX = 28
-export const LETTER_SPACING_MIN = -1
-export const LETTER_SPACING_MAX = 3
-
 const DEFAULTS: TerminalSettings = {
-  fontSize: 13,
-  fontFamily: TERMINAL_FONTS[0].id,
-  lineHeight: 1.2,
-  letterSpacing: 0,
-  cursorStyle: "block",
-  cursorBlink: true,
   // Deep enough to hold the output of a real build or a long tail. The buffer
   // is the reason "scroll up and read what scrolled past" works at all, and a
   // shallow one is indistinguishable from a broken pager.
@@ -89,11 +56,6 @@ function booleanOrDefault(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback
 }
 
-function fontOrDefault(value: unknown): TerminalSettings["fontFamily"] {
-  const match = TERMINAL_FONTS.find((font) => font.id === value)
-  return match?.id ?? DEFAULTS.fontFamily
-}
-
 function load(): TerminalSettings {
   if (loaded || typeof window === "undefined") return current
   loaded = true
@@ -102,22 +64,6 @@ function load(): TerminalSettings {
     if (raw) {
       const stored = JSON.parse(raw) as Partial<TerminalSettings>
       current = {
-        fontSize: numberOrDefault(stored.fontSize, DEFAULTS.fontSize, FONT_MIN, FONT_MAX),
-        fontFamily: fontOrDefault(stored.fontFamily),
-        lineHeight: numberOrDefault(stored.lineHeight, DEFAULTS.lineHeight, 1, 2),
-        letterSpacing: numberOrDefault(
-          stored.letterSpacing,
-          DEFAULTS.letterSpacing,
-          LETTER_SPACING_MIN,
-          LETTER_SPACING_MAX,
-        ),
-        cursorStyle:
-          stored.cursorStyle === "block" ||
-          stored.cursorStyle === "underline" ||
-          stored.cursorStyle === "bar"
-            ? stored.cursorStyle
-            : DEFAULTS.cursorStyle,
-        cursorBlink: booleanOrDefault(stored.cursorBlink, DEFAULTS.cursorBlink),
         scrollback: numberOrDefault(stored.scrollback, DEFAULTS.scrollback, 1000, 200000),
         copyOnSelect: booleanOrDefault(stored.copyOnSelect, DEFAULTS.copyOnSelect),
         confirmMultilinePaste: booleanOrDefault(
@@ -146,16 +92,6 @@ export function setTerminalSettings(patch: Partial<TerminalSettings>) {
   } catch {
     // Private browsing, or storage that is full. The setting still applies for
     // this session, which is better than refusing to change it.
-  }
-  for (const listener of listeners) listener()
-}
-
-export function resetTerminalSettings() {
-  current = { ...DEFAULTS }
-  try {
-    window.localStorage.removeItem(KEY)
-  } catch {
-    // Nothing to do; `current` is already the defaults.
   }
   for (const listener of listeners) listener()
 }
