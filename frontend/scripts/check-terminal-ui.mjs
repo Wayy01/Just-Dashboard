@@ -94,7 +94,7 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
   if (socket.url().includes("/attach")) {
     socket.send(
       Buffer.from(
-        "\x1b[32m~/Just-Dashboard\x1b[0m\r\n❯ git status\r\nOn branch main\r\nYour branch is up to date with origin/main.\r\n\r\nnothing to commit, working tree clean\r\n\r\n\x1b[32m~/Just-Dashboard\x1b[0m\r\n❯ ",
+        "\x1b[32m~/Just-Dashboard\x1b[0m\r\n> git status\r\nOn branch main\r\nYour branch is up to date with origin/main.\r\n\r\nnothing to commit, working tree clean\r\n\r\n\x1b[32m~/Just-Dashboard\x1b[0m\r\n> ",
       ),
     )
     socket.onMessage((message) => {

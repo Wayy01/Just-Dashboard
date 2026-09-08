@@ -42,6 +42,7 @@ import {
   FONT_MAX,
   FONT_MIN,
   TERMINAL_FONTS,
+  resetTerminalSettings,
   setTerminalSettings,
   terminalSettings,
   useSnippets,
@@ -1712,6 +1713,20 @@ function SettingsMenu() {
             value={[settings.scrollback]}
             onValueChange={([v]) => setTerminalSettings({ scrollback: v })}
           />
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-hairline pt-3">
+          <span className="text-[10px] text-muted-foreground">
+            Restore the reliable default cursor and font settings.
+          </span>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            className="shrink-0"
+            onClick={resetTerminalSettings}
+          >
+            Reset
+          </Button>
         </div>
       </PopoverContent>
     </Popover>

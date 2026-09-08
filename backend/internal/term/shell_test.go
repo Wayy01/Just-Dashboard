@@ -41,7 +41,7 @@ func TestBundledShellPromptAndCompletion(t *testing.T) {
 				t.Fatalf("startup: %v: %s", err, out)
 			}
 			got := string(out)
-			if !strings.Contains(got, "loaded:yes") || !strings.Contains(got, "❯") {
+			if !strings.Contains(got, "loaded:yes") || !strings.Contains(got, ">") {
 				t.Fatalf("profile/prompt missing: %s", got)
 			}
 			completion := "menu-complete"
@@ -140,7 +140,7 @@ func TestNativePromptCompletesInTmux(t *testing.T) {
 					time.Sleep(25 * time.Millisecond)
 				}
 			}
-			waitText("❯")
+			waitText(">")
 			if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", sess.TmuxName, "cat autocomplete-fi", "Tab").CombinedOutput(); err != nil {
 				t.Fatalf("Tab: %v %s", err, out)
 			}

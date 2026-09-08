@@ -82,7 +82,21 @@ function load(): TerminalSettings {
   loaded = true
   try {
     const raw = window.localStorage.getItem(KEY)
-    if (raw) current = { ...DEFAULTS, ...(JSON.parse(raw) as Partial<TerminalSettings>) }
+    if (raw) {
+      const stored = JSON.parse(raw) as Partial<TerminalSettings>
+      const cursorStyle = stored.cursorStyle
+      current = {
+        ...DEFAULTS,
+        ...stored,
+        // localStorage is user-editable and survives deployments. Keep a
+        // malformed or legacy cursor value from reaching xterm, where it can
+        // be mistaken for a literal underscore in the shell input.
+        cursorStyle:
+          cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"
+            ? cursorStyle
+            : DEFAULTS.cursorStyle,
+      }
+    }
   } catch {
     // A corrupt or unreadable store is not worth surfacing: the defaults are
     // a working terminal, which is what the operator came for.
