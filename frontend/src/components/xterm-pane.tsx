@@ -41,6 +41,8 @@ import {
 import {
   FONT_MAX,
   FONT_MIN,
+  LETTER_SPACING_MAX,
+  LETTER_SPACING_MIN,
   TERMINAL_FONTS,
   resetTerminalSettings,
   setTerminalSettings,
@@ -53,6 +55,13 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,12 +104,6 @@ const NEUTRAL_INK: Record<"dark" | "light", { black: number; brightBlack: number
     light: { black: 86, brightBlack: 56, white: 44 },
   }
 
-/** cyan has no near-200° token in the palette, so it is the one hardcoded hue. */
-const TERMINAL_CYAN: Record<"dark" | "light", string> = {
-  dark: "#4cc4cc",
-  light: "#0e7490",
-}
-
 /**
  * The last resort when a canvas 2D context is unavailable (a headless or
  * locked-down browser). The runtime resolver below is what actually runs.
@@ -117,7 +120,7 @@ const TERMINAL_FALLBACK: Record<"dark" | "light", XtermTheme> = {
     yellow: "#d9a441",
     blue: "#5b7fdb",
     magenta: "#8e6fd6",
-    cyan: TERMINAL_CYAN.dark,
+    cyan: "#5ec9c3",
     white: "#c2c2c6",
     brightBlack: "#6b6b6b",
     brightWhite: "#fafafa",
@@ -133,7 +136,7 @@ const TERMINAL_FALLBACK: Record<"dark" | "light", XtermTheme> = {
     yellow: "#9a6b1f",
     blue: "#2f52c4",
     magenta: "#6b46c1",
-    cyan: TERMINAL_CYAN.light,
+    cyan: "#0e7490",
     white: "#8a8a8a",
     brightBlack: "#6b6b6b",
     brightWhite: "#0a0a0a",
@@ -146,8 +149,8 @@ const TERMINAL_FALLBACK: Record<"dark" | "light", XtermTheme> = {
  * probe borrows each token the way any element would — `color: var(--x)` — and
  * its resolved computed colour is normalised through a canvas, which accepts
  * every form `getComputedStyle` returns and hands back `#rrggbb`. The result
- * tracks the active theme in both modes with only cyan hard-coded: the
- * background is the app's, the accents are the chart colours the rest of the
+ * tracks the active theme in both modes: the background and foreground are the
+ * app's surfaces, the accents are the status and chart colours the rest of the
  * UI uses, and the neutral ramp is mixed from foreground and background so it
  * stays legible whichever mode is on.
  */
@@ -190,13 +193,13 @@ function resolveTerminalTheme(mode: "dark" | "light"): XtermTheme {
   const fb = TERMINAL_FALLBACK[mode]
   const n = NEUTRAL_INK[mode]
   const fg = token("--foreground", fb.foreground!)
-  const bg = token("--background", fb.background!)
+  const bg = token("--surface-sunken", token("--background", fb.background!))
   const red = token("--destructive", fb.red!)
   const green = token("--success", fb.green!)
   const yellow = token("--warning", fb.yellow!)
   const blue = token("--chart-1", fb.blue!)
   const magenta = token("--chart-4", fb.magenta!)
-  const cyan = TERMINAL_CYAN[mode]
+  const cyan = token("--chart-5", fb.cyan!)
 
   const theme = {
     background: bg,
@@ -1083,6 +1086,7 @@ export function XtermPane({
     term.options.cursorBlink = settings.cursorBlink
     term.options.scrollback = settings.scrollback
     fitRef.current?.fit()
+    if (term.rows > 0) term.refresh(0, term.rows - 1)
     const socket = socketRef.current
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "resize", rows: term.rows, cols: term.cols }))
@@ -1621,47 +1625,70 @@ function SettingsMenu() {
             </PaneButton>
           </div>
         </div>
-        <label className="flex items-center justify-between gap-2">
-          Font
-          <select
+        <div className="flex items-center justify-between gap-2">
+          <span>Font</span>
+          <Select
             value={settings.fontFamily}
-            onChange={(e) => setTerminalSettings({ fontFamily: e.target.value })}
-            className="h-7 min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 text-xs"
+            onValueChange={(fontFamily) => setTerminalSettings({ fontFamily })}
           >
-            {TERMINAL_FONTS.map((font) => (
-              <option key={font.id} value={font.id}>
-                {font.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center justify-between gap-2">
-          Cursor
-          <select
+            <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="Font family">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {TERMINAL_FONTS.map((font) => (
+                <SelectItem key={font.id} value={font.id}>
+                  <span style={{ fontFamily: font.id }}>{font.label}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span>Cursor</span>
+          <Select
             value={settings.cursorStyle}
-            onChange={(e) =>
-              setTerminalSettings({
-                cursorStyle: e.target.value as "block" | "underline" | "bar",
-              })
+            onValueChange={(cursorStyle) =>
+              setTerminalSettings({ cursorStyle: cursorStyle as "block" | "underline" | "bar" })
             }
-            className="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs"
           >
-            <option value="block">Block</option>
-            <option value="underline">Underline</option>
-            <option value="bar">Bar</option>
-          </select>
-        </label>
+            <SelectTrigger size="sm" className="w-28" aria-label="Cursor style">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="block">Block</SelectItem>
+              <SelectItem value="underline">Underline</SelectItem>
+              <SelectItem value="bar">Bar</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <span>Line height</span>
             <span className="numeric text-muted-foreground">{settings.lineHeight.toFixed(2)}</span>
           </div>
           <Slider
+            aria-label="Line height"
             min={1}
             max={2}
             step={0.05}
             value={[settings.lineHeight]}
             onValueChange={([v]) => setTerminalSettings({ lineHeight: v })}
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span>Letter spacing</span>
+            <span className="numeric text-muted-foreground">
+              {settings.letterSpacing.toFixed(1)} px
+            </span>
+          </div>
+          <Slider
+            aria-label="Letter spacing"
+            min={LETTER_SPACING_MIN}
+            max={LETTER_SPACING_MAX}
+            step={0.1}
+            value={[settings.letterSpacing]}
+            onValueChange={([v]) => setTerminalSettings({ letterSpacing: v })}
           />
         </div>
         <SettingSwitch
@@ -1707,6 +1734,7 @@ function SettingsMenu() {
             </span>
           </div>
           <Slider
+            aria-label="Terminal scrollback"
             min={1000}
             max={200000}
             step={1000}
@@ -1750,7 +1778,12 @@ function SettingSwitch({
         <span className="block">{label}</span>
         {hint && <span className="block text-[10px] text-muted-foreground">{hint}</span>}
       </span>
-      <Switch checked={checked} onCheckedChange={onChange} className="mt-0.5 shrink-0" />
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onChange}
+        className="mt-0.5 shrink-0"
+      />
     </div>
   )
 }

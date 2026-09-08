@@ -44,15 +44,17 @@ export type TerminalSettings = {
 
 export const TERMINAL_FONTS = [
   { id: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', label: "System monospace" },
-  { id: '"JetBrains Mono", ui-monospace, monospace', label: "JetBrains Mono" },
-  { id: '"Fira Code", ui-monospace, monospace', label: "Fira Code" },
-  { id: '"Cascadia Code", ui-monospace, monospace', label: "Cascadia Code" },
-  { id: '"IBM Plex Mono", ui-monospace, monospace', label: "IBM Plex Mono" },
+  { id: '"JetBrains Mono", monospace', label: "JetBrains Mono" },
+  { id: '"Fira Code", monospace', label: "Fira Code" },
+  { id: '"Cascadia Code", monospace', label: "Cascadia Code" },
+  { id: '"IBM Plex Mono", monospace', label: "IBM Plex Mono" },
   { id: "monospace", label: "Browser default" },
 ] as const
 
 export const FONT_MIN = 8
 export const FONT_MAX = 28
+export const LETTER_SPACING_MIN = -1
+export const LETTER_SPACING_MAX = 3
 
 const DEFAULTS: TerminalSettings = {
   fontSize: 13,
@@ -77,6 +79,21 @@ let current: TerminalSettings = DEFAULTS
 let loaded = false
 const listeners = new Set<() => void>()
 
+function numberOrDefault(value: unknown, fallback: number, min: number, max: number) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback
+}
+
+function fontOrDefault(value: unknown): TerminalSettings["fontFamily"] {
+  const match = TERMINAL_FONTS.find((font) => font.id === value)
+  return match?.id ?? DEFAULTS.fontFamily
+}
+
 function load(): TerminalSettings {
   if (loaded || typeof window === "undefined") return current
   loaded = true
@@ -84,17 +101,31 @@ function load(): TerminalSettings {
     const raw = window.localStorage.getItem(KEY)
     if (raw) {
       const stored = JSON.parse(raw) as Partial<TerminalSettings>
-      const cursorStyle = stored.cursorStyle
       current = {
-        ...DEFAULTS,
-        ...stored,
-        // localStorage is user-editable and survives deployments. Keep a
-        // malformed or legacy cursor value from reaching xterm, where it can
-        // be mistaken for a literal underscore in the shell input.
+        fontSize: numberOrDefault(stored.fontSize, DEFAULTS.fontSize, FONT_MIN, FONT_MAX),
+        fontFamily: fontOrDefault(stored.fontFamily),
+        lineHeight: numberOrDefault(stored.lineHeight, DEFAULTS.lineHeight, 1, 2),
+        letterSpacing: numberOrDefault(
+          stored.letterSpacing,
+          DEFAULTS.letterSpacing,
+          LETTER_SPACING_MIN,
+          LETTER_SPACING_MAX,
+        ),
         cursorStyle:
-          cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"
-            ? cursorStyle
+          stored.cursorStyle === "block" ||
+          stored.cursorStyle === "underline" ||
+          stored.cursorStyle === "bar"
+            ? stored.cursorStyle
             : DEFAULTS.cursorStyle,
+        cursorBlink: booleanOrDefault(stored.cursorBlink, DEFAULTS.cursorBlink),
+        scrollback: numberOrDefault(stored.scrollback, DEFAULTS.scrollback, 1000, 200000),
+        copyOnSelect: booleanOrDefault(stored.copyOnSelect, DEFAULTS.copyOnSelect),
+        confirmMultilinePaste: booleanOrDefault(
+          stored.confirmMultilinePaste,
+          DEFAULTS.confirmMultilinePaste,
+        ),
+        visualBell: booleanOrDefault(stored.visualBell, DEFAULTS.visualBell),
+        notifyOnBell: booleanOrDefault(stored.notifyOnBell, DEFAULTS.notifyOnBell),
       }
     }
   } catch {
