@@ -314,6 +314,9 @@ func VerifyProvider(provider string, headers http.Header, body []byte, secret st
 		return ProviderEvent{}, ErrWrongEvent
 	}
 	result := ProviderEvent{DeliveryID: delivery, Event: event}
+	if !validProviderEvent(provider, event) {
+		return ProviderEvent{}, ErrWrongEvent
+	}
 	if provider == "github" || provider == "gitea" {
 		result.Repository = nestedString(raw, "repository", "full_name")
 		result.Ref = stringValue(raw["ref"])
@@ -335,7 +338,7 @@ func VerifyProvider(provider string, headers http.Header, body []byte, secret st
 		if attrs, ok := raw["object_attributes"].(map[string]any); ok {
 			result.PreviewNumber = intValue(attrs["iid"])
 			result.PreviewRef = stringValue(attrs["source_branch"])
-			result.Revision = stringValue(attrs["last_commit"])
+			result.Revision = nestedString(attrs, "last_commit", "id")
 			state := stringValue(attrs["state"])
 			result.PreviewClosed = state == "closed" || state == "merged"
 		}
@@ -358,6 +361,11 @@ func VerifyProvider(provider string, headers http.Header, body []byte, secret st
 		}
 	}
 	return result, nil
+}
+
+func validProviderEvent(provider, event string) bool {
+	allowed := map[string]map[string]bool{"github": {"push": true, "pull_request": true}, "gitea": {"push": true, "pull_request": true}, "gitlab": {"Push Hook": true, "Merge Request Hook": true}, "bitbucket": {"repo:push": true, "pullrequest:created": true, "pullrequest:updated": true, "pullrequest:fulfilled": true, "pullrequest:rejected": true}}
+	return allowed[provider][event]
 }
 
 func verifyHMAC(body []byte, secret, signature string) bool {
@@ -725,6 +733,62 @@ func (s *AutomationStore) CreateSchedule(ctx context.Context, projectID, environ
 	}
 	return nil, ErrTriggerNotFound
 }
+func (s *AutomationStore) UpdateSchedule(ctx context.Context, projectID, environmentID, scheduleID int64, in ScheduleWrite) (*Schedule, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" || len(in.Name) > 100 {
+		return nil, fmt.Errorf("schedule name is required")
+	}
+	if in.Timezone == "" {
+		in.Timezone = "UTC"
+	}
+	next, err := NextCron(in.Expression, in.Timezone, s.now())
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Steps) == 0 {
+		return nil, fmt.Errorf("schedule needs at least one action")
+	}
+	for _, step := range in.Steps {
+		if !validScheduleAction(step.Action) || !json.Valid(step.Config) {
+			return nil, fmt.Errorf("invalid scheduled action %q", step.Action)
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Unix()
+	result, err := tx.ExecContext(ctx, `UPDATE deploy_schedules SET name=?,expression=?,timezone=?,enabled=?,next_run_at=?,updated_at=? WHERE id=? AND environment_id=? AND environment_id IN (SELECT id FROM deploy_environments WHERE project_id=? AND archived_at=0)`, in.Name, in.Expression, in.Timezone, boolInt(in.Enabled), next.Unix(), now, scheduleID, environmentID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return nil, ErrTriggerNotFound
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM deploy_schedule_steps WHERE schedule_id=?`, scheduleID); err != nil {
+		return nil, err
+	}
+	for i, step := range in.Steps {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO deploy_schedule_steps(schedule_id,ordinal,action,config_json,required) VALUES(?,?,?,?,?)`, scheduleID, i, step.Action, string(step.Config), boolInt(step.Required)); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	list, err := s.ListSchedules(ctx, projectID, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if list[i].ID == scheduleID {
+			return &list[i], nil
+		}
+	}
+	return nil, ErrTriggerNotFound
+}
 func (s *AutomationStore) DeleteSchedule(ctx context.Context, projectID, environmentID, scheduleID int64) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM deploy_schedules WHERE id=? AND environment_id=? AND environment_id IN (SELECT id FROM deploy_environments WHERE project_id=?)`, scheduleID, environmentID, projectID)
 	if err != nil {
@@ -787,10 +851,34 @@ func (s *AutomationStore) EnsurePreview(ctx context.Context, t *Trigger, event P
 	err = tx.QueryRowContext(ctx, `SELECT p.id,p.trigger_id,p.provider_ref,p.environment_id,e.slug,p.state,p.updated_at FROM deploy_preview_refs p JOIN deploy_environments e ON e.id=p.environment_id WHERE p.trigger_id=? AND p.provider_ref=?`, t.ID, ref).Scan(&existing.ID, &existing.TriggerID, &existing.ProviderRef, &existing.EnvironmentID, &existing.EnvironmentSlug, &existing.State, &updated)
 	if err == nil {
 		existing.UpdatedAt = time.Unix(updated, 0).UTC()
+		if existing.State == "closed" {
+			return nil, false, ErrWrongEvent
+		}
 		if event.PreviewClosed {
 			now := s.now().UTC().Unix()
 			_, err = tx.ExecContext(ctx, `UPDATE deploy_preview_refs SET state='closed',updated_at=? WHERE id=?`, now, existing.ID)
 			existing.State = "closed"
+		} else {
+			var revision int
+			if err = tx.QueryRowContext(ctx, `SELECT desired_revision FROM deploy_environments WHERE id=? AND kind='preview' AND archived_at=0`, existing.EnvironmentID).Scan(&revision); err == nil {
+				next := revision + 1
+				for _, table := range []string{"deploy_build_plans", "deploy_runtime_plans"} {
+					columns := map[string]string{"deploy_sources": "kind,config_json,credential_id,identity_json,digest,created_at", "deploy_build_plans": "method,config_json,evidence_json,preview,digest,created_at", "deploy_runtime_plans": "config_json,preview,digest,created_at"}[table]
+					_, err = tx.ExecContext(ctx, `INSERT INTO `+table+`(environment_id,revision,`+columns+`) SELECT ?,?,`+columns+` FROM `+table+` WHERE environment_id=? AND revision=?`, existing.EnvironmentID, next, existing.EnvironmentID, revision)
+					if err != nil {
+						break
+					}
+				}
+				if err == nil {
+					err = createPreviewSourceTx(ctx, tx, existing.EnvironmentID, revision, existing.EnvironmentID, next, event)
+				}
+				if err == nil {
+					_, err = tx.ExecContext(ctx, `UPDATE deploy_environments SET desired_revision=?,updated_at=? WHERE id=?`, next, s.now().UTC().Unix(), existing.EnvironmentID)
+				}
+			}
+		}
+		if err != nil {
+			return nil, false, err
 		}
 		if err = tx.Commit(); err != nil {
 			return nil, false, err
@@ -827,11 +915,14 @@ func (s *AutomationStore) EnsurePreview(ctx context.Context, t *Trigger, event P
 		return nil, false, err
 	}
 	envID, _ := res.LastInsertId()
-	for _, table := range []string{"deploy_sources", "deploy_build_plans", "deploy_runtime_plans"} {
+	for _, table := range []string{"deploy_build_plans", "deploy_runtime_plans"} {
 		columns := map[string]string{"deploy_sources": "revision,kind,config_json,credential_id,identity_json,digest,created_at", "deploy_build_plans": "revision,method,config_json,evidence_json,preview,digest,created_at", "deploy_runtime_plans": "revision,config_json,preview,digest,created_at"}[table]
 		if _, err = tx.ExecContext(ctx, `INSERT INTO `+table+`(environment_id,`+columns+`) SELECT ?,`+columns+` FROM `+table+` WHERE environment_id=? AND revision=?`, envID, t.EnvironmentID, desired); err != nil {
 			return nil, false, err
 		}
+	}
+	if err = createPreviewSourceTx(ctx, tx, t.EnvironmentID, desired, envID, desired, event); err != nil {
+		return nil, false, err
 	}
 	// Secret values are inherited as ciphertext revisions, never opened during
 	// preview creation. Managed production resources are deliberately not
@@ -865,6 +956,29 @@ func (s *AutomationStore) EnsurePreview(ctx context.Context, t *Trigger, event P
 		return nil, false, err
 	}
 	return &PreviewRef{ID: previewID, TriggerID: t.ID, ProviderRef: ref, EnvironmentID: envID, EnvironmentSlug: slug, State: "open", UpdatedAt: time.Unix(now, 0).UTC()}, true, nil
+}
+
+func createPreviewSourceTx(ctx context.Context, tx *sql.Tx, sourceEnvironmentID int64, sourceRevision int, targetEnvironmentID int64, targetRevision int, event ProviderEvent) error {
+	var kind, configText, identityText string
+	var credentialID, createdAt int64
+	if err := tx.QueryRowContext(ctx, `SELECT kind,config_json,credential_id,identity_json,created_at FROM deploy_sources WHERE environment_id=? AND revision=?`, sourceEnvironmentID, sourceRevision).Scan(&kind, &configText, &credentialID, &identityText, &createdAt); err != nil {
+		return err
+	}
+	var config, identity map[string]any
+	if json.Unmarshal([]byte(configText), &config) != nil || json.Unmarshal([]byte(identityText), &identity) != nil {
+		return fmt.Errorf("%w: malformed preview source", ErrInvalidPlan)
+	}
+	if event.PreviewRef != "" {
+		config["ref"] = event.PreviewRef
+	}
+	identity["ref"] = event.PreviewRef
+	identity["revision"] = event.Revision
+	identity["previewNumber"] = event.PreviewNumber
+	configJSON, _ := json.Marshal(config)
+	identityJSON, _ := json.Marshal(identity)
+	digest := sha256.Sum256(append(append([]byte(nil), configJSON...), identityJSON...))
+	_, err := tx.ExecContext(ctx, `INSERT INTO deploy_sources(environment_id,revision,kind,config_json,credential_id,identity_json,digest,created_at) VALUES(?,?,?,?,?,?,?,?)`, targetEnvironmentID, targetRevision, kind, string(configJSON), credentialID, string(identityJSON), hex.EncodeToString(digest[:]), createdAt)
+	return err
 }
 
 func (s *AutomationStore) ArchiveClosedPreview(ctx context.Context, previewID int64) error {
@@ -978,6 +1092,48 @@ type NotificationWrite struct {
 	Events  []string          `json:"events"`
 	Enabled bool              `json:"enabled"`
 }
+type NotificationDelivery struct {
+	ID            int64      `json:"id"`
+	ChannelID     int64      `json:"channelId"`
+	RunID         int64      `json:"runId,omitempty"`
+	Event         string     `json:"event"`
+	Attempt       int        `json:"attempt"`
+	Status        string     `json:"status"`
+	ResponseClass string     `json:"responseClass"`
+	NextAttemptAt *time.Time `json:"nextAttemptAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+}
+
+func (s *AutomationStore) NotificationDeliveries(ctx context.Context, channelID int64, limit int) ([]NotificationDelivery, error) {
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,channel_id,run_id,event,attempt,status,response_class,next_attempt_at,created_at,completed_at FROM deploy_notification_deliveries WHERE channel_id=? ORDER BY id DESC LIMIT ?`, channelID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NotificationDelivery{}
+	for rows.Next() {
+		var d NotificationDelivery
+		var next, created, completed int64
+		if err := rows.Scan(&d.ID, &d.ChannelID, &d.RunID, &d.Event, &d.Attempt, &d.Status, &d.ResponseClass, &next, &created, &completed); err != nil {
+			return nil, err
+		}
+		d.CreatedAt = time.Unix(created, 0).UTC()
+		if next > 0 {
+			x := time.Unix(next, 0).UTC()
+			d.NextAttemptAt = &x
+		}
+		if completed > 0 {
+			x := time.Unix(completed, 0).UTC()
+			d.CompletedAt = &x
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
 
 func (s *AutomationStore) ListNotificationChannels(ctx context.Context) ([]NotificationChannel, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,url,events,enabled,created_at,updated_at FROM deploy_notification_channels ORDER BY name`)
@@ -1047,6 +1203,53 @@ func (s *AutomationStore) CreateNotificationChannel(ctx context.Context, in Noti
 		}
 	}
 	return nil, "", ErrTriggerNotFound
+}
+func (s *AutomationStore) UpdateNotificationChannel(ctx context.Context, id int64, in NotificationWrite) (*NotificationChannel, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	in.URL = strings.TrimSpace(in.URL)
+	if in.Name == "" || len(in.Name) > 100 {
+		return nil, fmt.Errorf("channel name is required")
+	}
+	if !strings.HasPrefix(in.URL, "https://") && !strings.HasPrefix(in.URL, "http://") {
+		return nil, fmt.Errorf("notification URL must use http or https")
+	}
+	headers, err := json.Marshal(in.Headers)
+	if err != nil {
+		return nil, err
+	}
+	sealedHeaders, err := s.sealer.Seal(string(headers))
+	if err != nil {
+		return nil, err
+	}
+	events, _ := json.Marshal(in.Events)
+	now := s.now().UTC().Unix()
+	result, err := s.db.ExecContext(ctx, `UPDATE deploy_notification_channels SET name=?,url=?,headers_enc=?,events=?,enabled=?,updated_at=? WHERE id=?`, in.Name, in.URL, sealedHeaders, string(events), boolInt(in.Enabled), now, id)
+	if err != nil {
+		return nil, err
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return nil, ErrTriggerNotFound
+	}
+	if in.Secret != "" {
+		sealedSecret, sealErr := s.sealer.Seal(in.Secret)
+		if sealErr != nil {
+			return nil, sealErr
+		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE deploy_notification_channels SET secret_enc=?,updated_at=? WHERE id=?`, sealedSecret, now, id); err != nil {
+			return nil, err
+		}
+	}
+	channels, err := s.ListNotificationChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range channels {
+		if channels[i].ID == id {
+			return &channels[i], nil
+		}
+	}
+	return nil, ErrTriggerNotFound
 }
 func (s *AutomationStore) DeleteNotificationChannel(ctx context.Context, id int64) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM deploy_notification_channels WHERE id=?`, id)

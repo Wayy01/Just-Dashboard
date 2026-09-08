@@ -93,6 +93,36 @@ func (s *Service) RestoreDeploymentRoute(ctx context.Context, snapshot Deploymen
 	return s.restoreDeploymentRouteLocked(ctx, snapshot)
 }
 
+// RemoveDeploymentRoute uses the same snapshot/reload recovery boundary as a
+// cutover. It is intentionally name-scoped so preview cleanup cannot select
+// or remove a route owned by another feature.
+func (s *Service) RemoveDeploymentRoute(ctx context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, err := s.snapshotDeploymentRouteLocked(name)
+	if err != nil {
+		return err
+	}
+	if !snapshot.Existed && !snapshot.LinkExisted {
+		return nil
+	}
+	empty := snapshot
+	empty.Existed = false
+	empty.LinkExisted = false
+	empty.Content = ""
+	empty.ContentDigest = routeDigest("")
+	if err = s.restoreDeploymentRouteLocked(ctx, empty); err != nil {
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		recoveryErr := s.restoreDeploymentRouteLocked(recoveryCtx, snapshot)
+		cancel()
+		if recoveryErr != nil {
+			return fmt.Errorf("%w: remove: %v; restore: %v", ErrRouteRecovery, err, recoveryErr)
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Service) VerifyDeploymentRoute(_ context.Context, route DeploymentRoute) error {
 	content, err := RenderNginx(deploymentSiteSpec(route))
 	if err != nil {

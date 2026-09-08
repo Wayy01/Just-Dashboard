@@ -727,6 +727,53 @@ func (e *NormalizedStepExecutor) retirePrevious(
 	})}
 }
 
+func (e *NormalizedStepExecutor) removePreview(ctx context.Context, execution StepExecution) StepResult {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 11*time.Minute)
+	defer cancel()
+	removeRoute := func() error {
+		if remover, ok := e.proxy.(interface {
+			RemoveDeploymentRoute(context.Context, string) error
+		}); ok {
+			return remover.RemoveDeploymentRoute(cleanupCtx, fmt.Sprintf("just-dashboard-env-%d.conf", execution.Run.EnvironmentID))
+		}
+		return nil
+	}
+	live, err := e.store.LiveRelease(cleanupCtx, execution.Run.EnvironmentID)
+	if errors.Is(err, ErrArtifactMissing) {
+		if err := removeRoute(); err != nil {
+			return normalizedStepFailure(err)
+		}
+		return StepResult{State: StepSkipped, Evidence: mustJSON(map[string]any{"reason": "preview had no live release", "routeRemoved": true})}
+	}
+	if err != nil {
+		return normalizedStepFailure(err)
+	}
+	_, snapshot, err := e.releaseSnapshot(cleanupCtx, live.Release.ID)
+	if err != nil {
+		return normalizedStepFailure(err)
+	}
+	runtime, err := e.store.RuntimeForRelease(cleanupCtx, live.Release.ID)
+	if err != nil {
+		return normalizedStepFailure(err)
+	}
+	variables, err := e.runtimeVariablesForRelease(cleanupCtx, live.Release.ID, *runtime)
+	if err != nil {
+		return normalizedStepFailure(err)
+	}
+	stopped, err := e.runtime.Stop(cleanupCtx, *runtime, snapshot.Plan, variables, true,
+		func(line BuildLog) error { return stepLog(execution, line.Stream, line.Text) })
+	if err != nil {
+		return runtimeStepFailure(err, "preview_cleanup_failed", "the preview runtime could not be removed", nil)
+	}
+	if err = removeRoute(); err != nil {
+		return normalizedStepFailure(err)
+	}
+	if err = e.store.CompletePreviewRemoval(cleanupCtx, execution.Run.ID, execution.ClaimToken, live.Release.ID); err != nil {
+		return normalizedStepFailure(err)
+	}
+	return StepResult{State: StepPassed, Evidence: mustJSON(map[string]any{"releaseId": live.Release.ID, "runtimeId": runtime.RuntimeID, "stop": stopped, "routeRemoved": true})}
+}
+
 func (e *NormalizedStepExecutor) recordRelease(ctx context.Context, execution StepExecution) StepResult {
 	var release *ReleaseWithArtifacts
 	var err error

@@ -182,6 +182,9 @@ func (e *NormalizedStepExecutor) Execute(ctx context.Context, execution StepExec
 	case StepActivate:
 		return e.activate(ctx, execution, plan)
 	case StepRetirePrevious:
+		if execution.Run.Operation == OperationPreviewRemove {
+			return e.removePreview(ctx, execution)
+		}
 		return e.retirePrevious(ctx, execution, plan)
 	case StepRecordRelease:
 		return e.recordRelease(ctx, execution)
@@ -196,11 +199,26 @@ func (e *NormalizedStepExecutor) Execute(ctx context.Context, execution StepExec
 }
 
 func (e *NormalizedStepExecutor) notify(ctx context.Context, execution StepExecution) StepResult {
+	var schedule struct {
+		Marker bool   `json:"scheduleMarker"`
+		Status string `json:"chainStatus"`
+	}
+	_ = json.Unmarshal(execution.Run.Metadata, &schedule)
+	terminalState := string(RunSucceeded)
+	if schedule.Marker && schedule.Status == "failed" {
+		terminalState = string(RunFailed)
+	}
 	if e.notifications == nil {
+		if schedule.Marker && schedule.Status == "failed" {
+			return StepResult{State: StepFailed, ErrorCode: "schedule_chain_failed", ErrorMessage: "a required scheduled action failed", Evidence: mustJSON(map[string]any{"reason": "no notification service configured"})}
+		}
 		return StepResult{State: StepSkipped, Evidence: mustJSON(map[string]any{"reason": "no notification service configured"})}
 	}
 	channels, err := e.notifications.ListNotificationChannels(ctx)
 	if err != nil {
+		if schedule.Marker && schedule.Status == "failed" {
+			return StepResult{State: StepFailed, ErrorCode: "schedule_chain_failed", ErrorMessage: "a required scheduled action failed", Evidence: mustJSON(map[string]any{"delivered": 0, "failed": 1, "reason": "notification channels unavailable"})}
+		}
 		return StepResult{State: StepWarning, Evidence: mustJSON(map[string]any{"delivered": 0, "failed": 1, "reason": "notification channels unavailable"})}
 	}
 	delivered, failed := 0, 0
@@ -208,7 +226,7 @@ func (e *NormalizedStepExecutor) notify(ctx context.Context, execution StepExecu
 		if !channel.Enabled || !notificationEventSelected(channel.Events, "run.finished") {
 			continue
 		}
-		err := e.notifications.DeliverNotification(ctx, nil, channel.ID, NotificationEnvelope{Event: "run.finished", RunID: execution.Run.ID, ProjectID: execution.Run.ProjectID, EnvironmentID: execution.Run.EnvironmentID, State: string(RunSucceeded), SentAt: time.Now().UTC()})
+		err := e.notifications.DeliverNotification(ctx, nil, channel.ID, NotificationEnvelope{Event: "run.finished", RunID: execution.Run.ID, ProjectID: execution.Run.ProjectID, EnvironmentID: execution.Run.EnvironmentID, State: terminalState, SentAt: time.Now().UTC()})
 		if err != nil {
 			failed++
 		} else {
@@ -221,6 +239,9 @@ func (e *NormalizedStepExecutor) notify(ctx context.Context, execution StepExecu
 	}
 	if failed > 0 {
 		state = StepWarning
+	}
+	if schedule.Marker && schedule.Status == "failed" {
+		return StepResult{State: StepFailed, ErrorCode: "schedule_chain_failed", ErrorMessage: "a required scheduled action failed", Evidence: mustJSON(map[string]any{"delivered": delivered, "failed": failed})}
 	}
 	return StepResult{State: state, Evidence: mustJSON(map[string]any{"delivered": delivered, "failed": failed})}
 }

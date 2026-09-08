@@ -42,8 +42,10 @@ func (s *Server) mountDeployRoutes(r chi.Router) {
 		r.Method(http.MethodGet, "/{id}/environments/{env}/configuration", s.handle(s.handleDeploymentConfiguration))
 		r.Method(http.MethodGet, "/{id}/environments/{env}/triggers", s.handle(s.handleDeploymentTriggers))
 		r.Method(http.MethodGet, "/{id}/environments/{env}/schedules", s.handle(s.handleDeploymentSchedules))
+		r.Method(http.MethodGet, "/{id}/environments/{env}/schedules/{schedule}/runs", s.handle(s.handleDeploymentScheduleRuns))
 		r.Method(http.MethodGet, "/{id}/previews", s.handle(s.handleDeploymentPreviews))
 		r.Method(http.MethodGet, "/notifications", s.handle(s.handleDeploymentNotifications))
+		r.Method(http.MethodGet, "/notifications/{channel}/deliveries", s.handle(s.handleDeploymentNotificationDeliveries))
 
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.RequireCapability(auth.CapServiceControl))
@@ -70,11 +72,15 @@ func (s *Server) mountDeployRoutes(r chi.Router) {
 				r.Method(http.MethodPost, "/{id}/removal-plan", s.handle(s.handleDeploymentRemovalPlan))
 				r.Method(http.MethodPost, "/{id}/environments/{env}/triggers", s.handle(s.handleDeploymentTriggerCreate))
 				r.Method(http.MethodPut, "/{id}/environments/{env}/triggers/{trigger}", s.handle(s.handleDeploymentTriggerUpdate))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/triggers/{trigger}/test", s.handle(s.handleDeploymentTriggerTest))
 				r.Method(http.MethodDelete, "/{id}/environments/{env}/triggers/{trigger}", s.handle(s.handleDeploymentTriggerDelete))
 				r.Method(http.MethodPost, "/{id}/environments/{env}/watch-paths/simulate", s.handle(s.handleDeploymentWatchPathSimulate))
 				r.Method(http.MethodPost, "/{id}/environments/{env}/schedules", s.handle(s.handleDeploymentScheduleCreate))
+				r.Method(http.MethodPost, "/{id}/environments/{env}/schedules/test", s.handle(s.handleDeploymentScheduleTest))
+				r.Method(http.MethodPut, "/{id}/environments/{env}/schedules/{schedule}", s.handle(s.handleDeploymentScheduleUpdate))
 				r.Method(http.MethodDelete, "/{id}/environments/{env}/schedules/{schedule}", s.handle(s.handleDeploymentScheduleDelete))
 				r.Method(http.MethodPost, "/notifications", s.handle(s.handleDeploymentNotificationCreate))
+				r.Method(http.MethodPut, "/notifications/{channel}", s.handle(s.handleDeploymentNotificationUpdate))
 				r.Method(http.MethodPost, "/notifications/{channel}/test", s.handle(s.handleDeploymentNotificationTest))
 				r.Method(http.MethodDelete, "/notifications/{channel}", s.handle(s.handleDeploymentNotificationDelete))
 			})
@@ -507,6 +513,20 @@ func (s *Server) enqueueNormalizedDeployment(
 	trigger deploy.TriggerKind,
 	actor, idempotencyKey string,
 ) (*deploy.EngineRun, error) {
+	return s.enqueueNormalizedDeploymentWithMetadata(ctx, project, environmentID, operation,
+		targetReleaseID, trigger, actor, idempotencyKey, nil)
+}
+
+func (s *Server) enqueueNormalizedDeploymentWithMetadata(
+	ctx context.Context,
+	project *deploy.Project,
+	environmentID int64,
+	operation deploy.Operation,
+	targetReleaseID int64,
+	trigger deploy.TriggerKind,
+	actor, idempotencyKey string,
+	extraMetadata map[string]any,
+) (*deploy.EngineRun, error) {
 	target, err := s.modules.deployRuns.EnvironmentExecutionTarget(ctx, project.ID, environmentID)
 	if err != nil {
 		return nil, err
@@ -553,9 +573,13 @@ func (s *Server) enqueueNormalizedDeployment(
 		planRevision = selected.Release.PlanRevision
 		variableSnapshotRunID = selected.Release.RunID
 	}
-	metadata, err := json.Marshal(map[string]any{
+	metadataValues := map[string]any{
 		"compatibility": false, "targetReleaseId": targetReleaseID, "changedPaths": []string{},
-	})
+	}
+	for key, value := range extraMetadata {
+		metadataValues[key] = value
+	}
+	metadata, err := json.Marshal(metadataValues)
 	if err != nil {
 		return nil, err
 	}
@@ -577,6 +601,10 @@ func (s *Server) enqueueNormalizedDeployment(
 		slot = deploy.SlotLight
 	case deploy.OperationPreviewRemove:
 		steps = []deploy.StepKey{deploy.StepRetirePrevious, deploy.StepNotify}
+		slot = deploy.SlotLight
+	}
+	if marker, _ := extraMetadata["scheduleMarker"].(bool); marker {
+		steps = []deploy.StepKey{deploy.StepNotify}
 		slot = deploy.SlotLight
 	}
 	if operation == deploy.OperationRollback {

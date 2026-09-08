@@ -1106,6 +1106,16 @@ only renderer/executor/validation authority for their feature.
   never removes runtime or data. A separate destructive route first returns a digest-bound, managed-only
   target list; data targets require their exact resource name and every removal is delegated to its owning
   feature and audited. Linked and observed targets never enter that plan.
+- Automation provider hooks verify each provider's exact raw-body signature before parsing and then fence
+  event, repository, ref and delivery identity. The delivery row is reserved before preview or queue side
+  effects, while legacy HMAC and scoped generic hooks retain their existing contracts. Watch paths apply
+  only to webhook delivery; manual and rollback runs are never filtered.
+- The scheduler advances a persisted next-run claim atomically and executes a bounded, ordered action
+  chain. Chain history stores only action/status/error-code/duration evidence. Preview environments clone
+  immutable desired configuration and sealed variables, inherit only linked/observed dependencies, and own
+  only their generated route/runtime; PR close retires those exact preview resources before archival.
+  Outbound notifications sign the exact JSON body, keep headers and signing keys sealed, discard response
+  bodies, and can warn but never change an otherwise successful deployment outcome.
 - Closed vocabularies, route capabilities/confirmations/audit actions, retention limits and error codes
   are contracts. Change one only with an ADR plus migration and exhaustive transition/route tests.
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,6 +91,23 @@ func (s *Server) handleDeploymentTriggerDelete(w http.ResponseWriter, r *http.Re
 	httpx.NoContent(w)
 	return nil
 }
+func (s *Server) handleDeploymentTriggerTest(w http.ResponseWriter, r *http.Request) error {
+	projectID, environmentID, err := deploymentEnvironmentIDs(r)
+	if err != nil {
+		return err
+	}
+	triggerID, err := automationParam(r, "trigger")
+	if err != nil {
+		return err
+	}
+	item, _, err := s.modules.deployAutomation.TriggerByID(r.Context(), projectID, triggerID)
+	if err != nil || item.EnvironmentID != environmentID {
+		return mapAutomationError(deploy.ErrTriggerNotFound)
+	}
+	httpx.SetAudit(r, "deploy.trigger.test", item.Name, map[string]any{"kind": item.Kind, "provider": item.Provider})
+	httpx.JSON(w, http.StatusOK, map[string]any{"valid": true, "enabled": item.Enabled, "provider": item.Provider})
+	return nil
+}
 
 type watchSimulationRequest struct {
 	ChangedPaths []string `json:"changedPaths"`
@@ -141,6 +159,47 @@ func (s *Server) handleDeploymentScheduleCreate(w http.ResponseWriter, r *http.R
 	httpx.JSON(w, http.StatusCreated, item)
 	return nil
 }
+func (s *Server) handleDeploymentScheduleUpdate(w http.ResponseWriter, r *http.Request) error {
+	projectID, environmentID, err := deploymentEnvironmentIDs(r)
+	if err != nil {
+		return err
+	}
+	scheduleID, err := automationParam(r, "schedule")
+	if err != nil {
+		return err
+	}
+	var req deploy.ScheduleWrite
+	if err = httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	item, err := s.modules.deployAutomation.UpdateSchedule(r.Context(), projectID, environmentID, scheduleID, req)
+	if err != nil {
+		return mapAutomationError(err)
+	}
+	httpx.SetAudit(r, "deploy.schedule.update", item.Name, map[string]any{"expression": item.Expression, "timezone": item.Timezone})
+	httpx.JSON(w, http.StatusOK, item)
+	return nil
+}
+func (s *Server) handleDeploymentScheduleTest(w http.ResponseWriter, r *http.Request) error {
+	if _, _, err := deploymentEnvironmentIDs(r); err != nil {
+		return err
+	}
+	var req deploy.ScheduleWrite
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	next, err := deploy.NextCron(req.Expression, timezone, time.Now().UTC())
+	if err != nil {
+		return mapAutomationError(err)
+	}
+	httpx.SetAudit(r, "deploy.schedule.test", req.Name, map[string]any{"expression": req.Expression, "timezone": timezone})
+	httpx.JSON(w, http.StatusOK, map[string]any{"nextRunAt": next})
+	return nil
+}
 func (s *Server) handleDeploymentScheduleDelete(w http.ResponseWriter, r *http.Request) error {
 	projectID, environmentID, err := deploymentEnvironmentIDs(r)
 	if err != nil {
@@ -155,6 +214,34 @@ func (s *Server) handleDeploymentScheduleDelete(w http.ResponseWriter, r *http.R
 	}
 	httpx.SetAudit(r, "deploy.schedule.delete", fmt.Sprint(scheduleID), nil)
 	httpx.NoContent(w)
+	return nil
+}
+func (s *Server) handleDeploymentScheduleRuns(w http.ResponseWriter, r *http.Request) error {
+	projectID, environmentID, err := deploymentEnvironmentIDs(r)
+	if err != nil {
+		return err
+	}
+	scheduleID, err := automationParam(r, "schedule")
+	if err != nil {
+		return err
+	}
+	runs, err := s.modules.deployRuns.ProjectRuns(r.Context(), projectID, 200)
+	if err != nil {
+		return mapDeployError(err)
+	}
+	filtered := make([]deploy.EngineRun, 0)
+	for _, run := range runs {
+		if run.EnvironmentID != environmentID {
+			continue
+		}
+		var metadata struct {
+			ScheduleID int64 `json:"scheduleId"`
+		}
+		if json.Unmarshal(run.Metadata, &metadata) == nil && metadata.ScheduleID == scheduleID {
+			filtered = append(filtered, run)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"runs": filtered})
 	return nil
 }
 
@@ -179,6 +266,18 @@ func (s *Server) handleDeploymentNotifications(w http.ResponseWriter, r *http.Re
 	httpx.JSON(w, http.StatusOK, items)
 	return nil
 }
+func (s *Server) handleDeploymentNotificationDeliveries(w http.ResponseWriter, r *http.Request) error {
+	id, err := automationParam(r, "channel")
+	if err != nil {
+		return err
+	}
+	items, err := s.modules.deployAutomation.NotificationDeliveries(r.Context(), id, 50)
+	if err != nil {
+		return httpx.Internal(err)
+	}
+	httpx.JSON(w, http.StatusOK, items)
+	return nil
+}
 func (s *Server) handleDeploymentNotificationCreate(w http.ResponseWriter, r *http.Request) error {
 	var req deploy.NotificationWrite
 	if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -190,6 +289,23 @@ func (s *Server) handleDeploymentNotificationCreate(w http.ResponseWriter, r *ht
 	}
 	httpx.SetAudit(r, "deploy.notification.create", channel.Name, map[string]any{"events": channel.Events})
 	httpx.JSON(w, http.StatusCreated, map[string]any{"channel": channel, "secret": secret})
+	return nil
+}
+func (s *Server) handleDeploymentNotificationUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := automationParam(r, "channel")
+	if err != nil {
+		return err
+	}
+	var req deploy.NotificationWrite
+	if err = httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	channel, err := s.modules.deployAutomation.UpdateNotificationChannel(r.Context(), id, req)
+	if err != nil {
+		return mapAutomationError(err)
+	}
+	httpx.SetAudit(r, "deploy.notification.update", channel.Name, map[string]any{"events": channel.Events})
+	httpx.JSON(w, http.StatusOK, channel)
 	return nil
 }
 func (s *Server) handleDeploymentNotificationTest(w http.ResponseWriter, r *http.Request) error {
@@ -389,11 +505,101 @@ func (s *Server) dispatchDeploymentSchedule(ctx context.Context, item deploy.Sch
 	if err != nil {
 		return err
 	}
-	// The immutable scheduled_action run is the chain history. Its configuration
-	// remains on the schedule step rows; the deployment executor performs the
-	// release path and the run's notify step reports the terminal outcome.
-	_, err = s.enqueueNormalizedDeployment(ctx, project, item.Schedule.EnvironmentID,
-		deploy.OperationScheduled, 0, deploy.TriggerSchedule, "scheduler",
-		fmt.Sprintf("schedule:%d:%d", item.Schedule.ID, item.DueAt.Unix()))
-	return err
+	type chainEvidence struct {
+		Ordinal    int    `json:"ordinal"`
+		Action     string `json:"action"`
+		Status     string `json:"status"`
+		Code       string `json:"code,omitempty"`
+		DurationMS int64  `json:"durationMs"`
+	}
+	evidence := make([]chainEvidence, 0, len(item.Schedule.Steps))
+	chainFailed := false
+	for ordinal, step := range item.Schedule.Steps {
+		started := time.Now()
+		status, code := "passed", ""
+		stepCtx, cancel := context.WithTimeout(ctx, scheduleStepTimeout(step.Config))
+		switch step.Action {
+		case "deploy", "restart":
+			operation := deploy.OperationDeploy
+			if step.Action == "restart" {
+				operation = deploy.OperationRestart
+			}
+			run, runErr := s.enqueueNormalizedDeploymentWithMetadata(stepCtx, project, item.Schedule.EnvironmentID, operation, 0, deploy.TriggerSchedule, fmt.Sprintf("scheduler:%d", item.Schedule.ID), fmt.Sprintf("schedule:%d:%d:%d", item.Schedule.ID, item.DueAt.Unix(), ordinal), map[string]any{"scheduleId": item.Schedule.ID, "scheduleName": item.Schedule.Name, "scheduleDueAt": item.DueAt, "chainOrdinal": ordinal, "chainAction": step.Action})
+			if runErr == nil {
+				runErr = s.waitForScheduledRun(stepCtx, run.ID)
+			}
+			if runErr != nil {
+				status, code = "failed", "deployment_failed"
+			}
+		case "backup":
+			var config struct {
+				JobID int64 `json:"jobId"`
+			}
+			if json.Unmarshal(step.Config, &config) != nil || config.JobID <= 0 {
+				status, code = "failed", "invalid_plan"
+			} else if _, runErr := s.modules.backupRunner.Execute(stepCtx, config.JobID, "deployment_schedule"); runErr != nil {
+				status, code = "failed", "backup_failed"
+			}
+		case "container_command":
+			var config struct {
+				ContainerID string   `json:"containerId"`
+				Argv        []string `json:"argv"`
+			}
+			if json.Unmarshal(step.Config, &config) != nil || strings.TrimSpace(config.ContainerID) == "" || len(config.Argv) == 0 {
+				status, code = "failed", "invalid_plan"
+			} else if _, _, runErr := s.modules.docker.ExecCheck(stepCtx, config.ContainerID, config.Argv, scheduleStepTimeout(step.Config)); runErr != nil {
+				status, code = "failed", "container_command_failed"
+			}
+		case "game_command":
+			status, code = "unavailable", "game_console_unavailable"
+		default:
+			status, code = "failed", "invalid_plan"
+		}
+		cancel()
+		evidence = append(evidence, chainEvidence{Ordinal: ordinal, Action: step.Action, Status: status, Code: code, DurationMS: time.Since(started).Milliseconds()})
+		if status != "passed" && step.Required {
+			chainFailed = true
+			break
+		}
+	}
+	_, markerErr := s.enqueueNormalizedDeploymentWithMetadata(ctx, project, item.Schedule.EnvironmentID, deploy.OperationScheduled, 0, deploy.TriggerSchedule, fmt.Sprintf("scheduler:%d", item.Schedule.ID), fmt.Sprintf("schedule:%d:%d:summary", item.Schedule.ID, item.DueAt.Unix()), map[string]any{"scheduleId": item.Schedule.ID, "scheduleName": item.Schedule.Name, "scheduleDueAt": item.DueAt, "scheduleMarker": true, "chainStatus": map[bool]string{true: "failed", false: "succeeded"}[chainFailed], "chain": evidence})
+	return markerErr
+}
+
+func scheduleStepTimeout(raw json.RawMessage) time.Duration {
+	var value struct {
+		TimeoutSeconds int `json:"timeoutSeconds"`
+	}
+	_ = json.Unmarshal(raw, &value)
+	if value.TimeoutSeconds <= 0 {
+		value.TimeoutSeconds = 3600
+	}
+	if value.TimeoutSeconds > 43200 {
+		value.TimeoutSeconds = 43200
+	}
+	return time.Duration(value.TimeoutSeconds) * time.Second
+}
+func (s *Server) waitForScheduledRun(ctx context.Context, runID int64) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		run, err := s.modules.deployRuns.Run(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if run.State.Terminal() {
+			if run.State == deploy.RunSucceeded || run.State == deploy.RunRolledBack {
+				return nil
+			}
+			return fmt.Errorf("scheduled deployment ended in %s", run.State)
+		}
+		select {
+		case <-ctx.Done():
+			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = s.modules.deployEngine.Cancel(cancelCtx, runID)
+			cancel()
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }

@@ -155,6 +155,21 @@ func TestPreviewLifecycleIsIsolatedFromProduction(t *testing.T) {
 	if variables != 1 || managed != 0 || linked != 1 {
 		t.Fatalf("preview inheritance variables=%d managed=%d linked=%d", variables, managed, linked)
 	}
+	updated, createdAgain, err := f.automation.EnsurePreview(context.Background(), &created.Trigger, ProviderEvent{PreviewNumber: 42, PreviewRef: "feature", Revision: "def"})
+	if err != nil || createdAgain || updated.EnvironmentID != opened.EnvironmentID {
+		t.Fatalf("update=%+v created=%v err=%v", updated, createdAgain, err)
+	}
+	var desired int
+	var identity string
+	if err = f.store.DB.QueryRow(`SELECT desired_revision FROM deploy_environments WHERE id=?`, opened.EnvironmentID).Scan(&desired); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.DB.QueryRow(`SELECT identity_json FROM deploy_sources WHERE environment_id=? AND revision=?`, opened.EnvironmentID, desired).Scan(&identity); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 2 || !strings.Contains(identity, `"revision":"def"`) {
+		t.Fatalf("updated preview revision=%d identity=%s", desired, identity)
+	}
 	if _, _, err = f.automation.EnsurePreview(context.Background(), &created.Trigger, ProviderEvent{PreviewNumber: 43}); !errors.Is(err, ErrPreviewQuota) {
 		t.Fatalf("quota error=%v", err)
 	}
@@ -262,5 +277,24 @@ func TestSignedNotificationPersistsOnlyResponseClass(t *testing.T) {
 	var leaks int
 	if err = f.store.DB.QueryRow(`SELECT COUNT(*) FROM deploy_notification_deliveries WHERE response_class LIKE '%' || ? || '%'`, secret).Scan(&leaks); err != nil || leaks != 0 {
 		t.Fatalf("response secret persisted: count=%d err=%v", leaks, err)
+	}
+}
+
+func TestNotificationFailureCannotChangeReleaseOutcome(t *testing.T) {
+	f := newAutomationFixture(t)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
+	defer remote.Close()
+	_, _, err := f.automation.CreateNotificationChannel(context.Background(), NotificationWrite{Name: "failing", URL: remote.URL, Events: []string{"run.finished"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &NormalizedStepExecutor{notifications: f.automation}
+	result := executor.notify(context.Background(), StepExecution{Run: EngineRun{ID: 8, ProjectID: f.projectID, EnvironmentID: f.environmentID, Metadata: json.RawMessage(`{}`)}})
+	if result.State != StepWarning {
+		t.Fatalf("notification failure state=%s", result.State)
+	}
+	failedChain := executor.notify(context.Background(), StepExecution{Run: EngineRun{ID: 9, ProjectID: f.projectID, EnvironmentID: f.environmentID, Metadata: json.RawMessage(`{"scheduleMarker":true,"chainStatus":"failed"}`)}})
+	if failedChain.State != StepFailed || failedChain.ErrorCode != "schedule_chain_failed" {
+		t.Fatalf("failed schedule marker=%+v", failedChain)
 	}
 }

@@ -121,6 +121,9 @@ async function mockDashboard(page: Page, options: { normalized?: boolean } = {})
   const actions: string[] = []
   let configurationRevision = 3
   let configurationPending = true
+  let automationTriggers: Record<string, unknown>[] = []
+  let automationSchedules: Record<string, unknown>[] = []
+  let notificationChannels: Record<string, unknown>[] = []
   let scopedVariables = [
     {
       name: "API_TOKEN",
@@ -264,6 +267,29 @@ async function mockDashboard(page: Page, options: { normalized?: boolean } = {})
       body = { run: liveRun(), steps }
     } else if (path === "/deploy/7/environments/12/configuration" && method === "GET") {
       body = configurationBody()
+    } else if (path === "/deploy/7/environments/12/triggers" && method === "GET") {
+      body = automationTriggers
+    } else if (path === "/deploy/7/environments/12/triggers" && method === "POST") {
+      const input = request.postDataJSON() as Record<string, unknown>
+      const trigger = { id: 31, projectId: 7, environmentId: 12, hookId: "provider-hook", lastStatus: "", ...input }
+      automationTriggers = [trigger]
+      body = { trigger, secret: "one-time-provider-secret" }
+    } else if (path === "/deploy/7/environments/12/schedules" && method === "GET") {
+      body = automationSchedules
+    } else if (path === "/deploy/7/environments/12/schedules" && method === "POST") {
+      const input = request.postDataJSON() as Record<string, unknown>
+      const schedule = { id: 41, projectId: 7, environmentId: 12, nextRunAt: "2026-09-08T03:00:00Z", ...input }
+      automationSchedules = [schedule]
+      body = schedule
+    } else if (path === "/deploy/7/previews") {
+      body = [{ id: 51, triggerId: 31, providerRef: "42", environmentId: 52, environmentSlug: "pr-42", state: "open", updatedAt: now }]
+    } else if (path === "/deploy/notifications" && method === "GET") {
+      body = notificationChannels
+    } else if (path === "/deploy/notifications" && method === "POST") {
+      const input = request.postDataJSON() as Record<string, unknown>
+      const channel = { id: 61, ...input }
+      notificationChannels = [channel]
+      body = { channel, secret: "one-time-notification-secret" }
     } else if (path === "/deploy/7/environments/12/configuration" && method === "PUT") {
       const requestBody = request.postDataJSON() as typeof normalizedConfiguration
       normalizedConfiguration = {
@@ -794,6 +820,34 @@ test("normalized configuration joins keep secrets masked and saved changes pendi
   )
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" })
   await expect(page.getByRole("heading", { name: "Runtime configuration" })).toBeVisible()
+})
+
+test("automation workspace creates provider, schedule, preview and signed notification policy", async ({ page }) => {
+  await mockDashboard(page, { normalized: true })
+  await page.setViewportSize({ width: 375, height: 900 })
+  await page.goto("/deploy/7?tab=automations")
+  await expect(page.getByRole("heading", { name: "Source automations" })).toBeVisible()
+  await expect(page.getByText("pr-42", { exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "Add automation" }).click()
+  await page.getByLabel("Repository").fill("acme/api")
+  await page.getByLabel("Watched paths").fill("services/api/**")
+  await page.getByRole("button", { name: "Create automation" }).click()
+  await expect(page.getByText("one-time-provider-secret", { exact: true })).toBeVisible()
+  await expect(page.getByText(/acme\/api/)).toBeVisible()
+
+  await page.getByRole("button", { name: "Add", exact: true }).click()
+  await page.getByLabel("Cron expression").fill("30 2 * * *")
+  await page.getByLabel("IANA timezone").fill("America/New_York")
+  await page.getByRole("button", { name: "Create schedule" }).click()
+  await expect(page.getByText(/America\/New_York/)).toBeVisible()
+
+  await page.getByRole("button", { name: "Add channel" }).click()
+  await page.getByLabel("HTTPS endpoint").fill("https://hooks.example.test/deploy")
+  await page.getByRole("button", { name: "Create channel" }).click()
+  await expect(page.getByText("one-time-notification-secret", { exact: true })).toBeVisible()
+  await expect(page.getByRole("paragraph").filter({ hasText: "https://hooks.example.test/deploy" })).toBeVisible()
+  await expect(page.locator("main")).not.toHaveCSS("overflow-x", "scroll")
 })
 
 test("run page renders persisted release evidence and keyboard-selectable transcript steps", async ({

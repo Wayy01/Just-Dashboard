@@ -111,17 +111,17 @@ Legend: `[ ]` not started, `[~]` in progress (use only on the active branch), `[
 
 ## C7 — Automation and previews
 
-- [ ] GitHub provider event integration implemented. Evidence: —
-- [ ] GitLab/Bitbucket/Gitea/generic verifier matrix implemented. Evidence: —
-- [ ] Legacy and scoped generic hooks/API implemented. Evidence: —
-- [ ] Watch paths and simulator implemented. Evidence: —
-- [ ] Scheduled actions and chain history implemented. Evidence: —
-- [ ] PR preview create/update/cleanup implemented. Evidence: —
-- [ ] Signed outbound webhook notifications implemented. Evidence: —
-- [ ] Replay/wrong-source/burst/idempotency tests pass. Evidence: —
-- [ ] Preview lifecycle isolation test passes. Evidence: —
-- [ ] Schedule timezone/DST tests pass. Evidence: —
-- [ ] C7 gate passed. Evidence: —
+- [x] GitHub provider event integration implemented. Evidence: provider verifier and signed route tests; `17-c7-review.md`
+- [x] GitLab/Bitbucket/Gitea/generic verifier matrix implemented. Evidence: provider fixture matrix; `17-c7-review.md`
+- [x] Legacy and scoped generic hooks/API implemented. Evidence: scoped HMAC and API idempotency route tests
+- [x] Watch paths and simulator implemented. Evidence: matcher fixtures and signed-in simulator route
+- [x] Scheduled actions and chain history implemented. Evidence: scheduler claim, required-chain and run-history tests
+- [x] PR preview create/update/cleanup implemented. Evidence: immutable preview lifecycle and exact route-removal tests
+- [x] Signed outbound webhook notifications implemented. Evidence: signature, bounded history and failure-isolation tests
+- [x] Replay/wrong-source/burst/idempotency tests pass. Evidence: provider fence, queue supersession and API retry tests
+- [x] Preview lifecycle isolation test passes. Evidence: preview inheritance/rotation/close and named proxy-route tests
+- [x] Schedule timezone/DST tests pass. Evidence: `TestNextCronDSTAndInvalid`
+- [x] C7 gate passed. Evidence: `17-c7-review.md`; backend build/vet/race, frontend type/lint/build and 12 browser journeys
 
 ## C8 — Operations and diagnosis
 
