@@ -118,7 +118,7 @@ export function SessionRail({
     <aside
       aria-label="Terminal sessions"
       className={cn(
-        "flex min-h-0 w-full shrink-0 flex-col overflow-hidden rounded-xl border bg-card lg:w-72",
+        "flex min-h-0 w-full shrink-0 flex-col overflow-hidden rounded-xl border bg-card",
         className,
       )}
     >
