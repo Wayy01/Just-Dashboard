@@ -248,8 +248,20 @@
      interactive surface in the app is built on. Computed a step off `--muted`
      instead, the relationship the previous palette used, so the blue stays
      where the theme actually wants it seen: the focus ring, the charts, the
-     one deliberate highlight — not the hover state of every button. */
-  --accent: color-mix(in oklab, var(--muted) 82%, var(--foreground) 18%);
+     one deliberate highlight — not the hover state of every button.
+
+     How far off `--muted` is the whole question, because this token is both
+     the hover wash and the selected fill: the active session in the terminal
+     rail, the pressed panel toggles, a highlighted command row. At 18% it
+     landed a third of the way from the card to white on dark mode — a pale
+     slab that read as a separate surface pasted onto the panel rather than as
+     one row of it being picked out, and the mirror of it in light mode was the
+     grey slab `--menu-hover` was carved out to escape. 8% is the step the
+     sidebar's own selected fill already takes from the sidebar (0.13 → 0.22),
+     so "this one is chosen" is the same size of move in the nav and in a
+     panel, and it stays clear of `--row-hover` and `--menu-hover` underneath
+     it, which is what keeps hover and selected distinguishable. */
+  --accent: color-mix(in oklab, var(--muted) 92%, var(--foreground) 8%);
   --accent-foreground: var(--foreground);
 
   /* The hover/selected wash for the surfaces where `--accent` was too heavy —
