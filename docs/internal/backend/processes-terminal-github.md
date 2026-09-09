@@ -43,6 +43,16 @@ not enough, since su walks straight back out. `loginArgv(shell, keepCWD)` moves 
 shell: `su -s <shell> <user> -- -l` switches user without `-l`, and the `-l` after `--` reaches the shell
 and still reads the profile. The other half is `hostexec.CommandOnHostInDir`.
 
+**A requested directory is validated on the host, never with `os.Stat`.** The dashboard process sees the
+container's filesystem, in which only `/home`, `/opt`, `/srv`, `/root`, `/etc` and a few others are the
+host's, while the shell starts in the host's mount namespace. A local stat was wrong in both directions:
+a host-only path such as `/var/www` was reported as missing and the new window silently fell back to
+home, and a container-only path such as `/usr/lib/postgresql` passed and then made `nsenter` fail, killing
+the new PTY on arrival. `hostDir` runs `test -d` through `hostexec.CommandOnHost`, which crosses when
+containerised and runs locally otherwise. A new window inherits the directory of the window the operator
+was looking at, falling back to the workspace's first window and then home; because every step is
+validated, a stale directory can only send the new window home, never kill it.
+
 **Session organisation is intentionally lightweight.** `GET /terminal/` groups live `Session` values by
 `WorkspaceID`; naming, folder membership and pinning are copied across the workspace's windows in memory.
 Folders remain the dashboard's ordered record (`handlers_terminal_folders.go`, settings key

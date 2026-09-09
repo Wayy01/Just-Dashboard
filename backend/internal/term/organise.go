@@ -329,9 +329,9 @@ func (m *Manager) NewWindow(ctx context.Context, tmuxName, name, cwd string) err
 	// is currently in, rather than to tmux's default of wherever the session
 	// began, is what every tabbed terminal does: a new tab opens beside the
 	// one you were looking at, not back at the start.
-	dir := hostDir(cwd)
+	dir := hostDir(ctx, cwd)
 	if dir == "" {
-		dir = hostDir(tmuxPanePath(tmuxName))
+		dir = hostDir(ctx, tmuxPanePath(tmuxName))
 	}
 	if dir != "" {
 		args = append(args, "-c", dir)

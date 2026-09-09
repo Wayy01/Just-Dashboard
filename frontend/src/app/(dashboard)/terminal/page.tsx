@@ -158,20 +158,18 @@ export default function TerminalPage() {
   const setMeta = (id: string, next: Record<string, unknown>) =>
     act(() => patch(`/terminal/${encodeURIComponent(id)}`, next), "Could not update that session")
 
+  // Closing a shell asks nothing first, for the same reason the API route
+  // carries no typed phrase: it is an everyday act, and a dialog in front of
+  // an everyday act stops being read and starts being dismissed. Deleting a
+  // folder below still asks, because nobody does that a dozen times a day.
   const closeSession = (session: TerminalWorkspace) =>
-    confirm({
-      title: `Close ${session.title}?`,
-      description: "Every window and program in this session will end.",
-      confirmLabel: "Close session",
-      action: async () => {
-        await del(`/terminal/${encodeURIComponent(session.id)}`)
-        if (active === session.id) {
-          setPicked(null)
-          setPickedWindow(null)
-        }
-        await refresh()
-      },
-    })
+    act(async () => {
+      await del(`/terminal/${encodeURIComponent(session.id)}`)
+      if (active === session.id) {
+        setPicked(null)
+        setPickedWindow(null)
+      }
+    }, "Could not close that session")
 
   const deleteFolder = (folder: TerminalFolder) =>
     confirm({
@@ -181,12 +179,28 @@ export default function TerminalPage() {
       action: () => del(`/terminal/folders/${encodeURIComponent(folder.name)}`).then(refresh),
     })
 
+  // A new window opens beside the one you were looking at, so it starts where
+  // that shell currently is. The polled list carries a cwd up to five seconds
+  // old, which is exactly long enough to miss the `cd` that prompted the new
+  // window, so the live value is read first and the polled one is the
+  // fallback. Both are only a request: the backend validates the directory on
+  // the host and drops back to home if it has since gone.
   const openWindow = async () => {
     if (!active) return
+    let cwd = activeWindow?.cwd
+    if (activeWindow) {
+      try {
+        cwd = (await get<{ cwd: string }>(`/terminal/${encodeURIComponent(activeWindow.id)}/cwd`))
+          .cwd
+      } catch {
+        // Tmux sessions and shells whose directory cannot be read answer with
+        // an error here; the polled value, or nothing, still opens a window.
+      }
+    }
     try {
       const created = await post<{ id: string }>(
         `/terminal/${encodeURIComponent(active)}/windows`,
-        {},
+        { cwd },
       )
       await windows.refresh()
       await refresh()
@@ -207,24 +221,20 @@ export default function TerminalPage() {
   }
   const closeWindow = (id: string) => {
     if (!active || !activeSession) return
+    // The last window is the session, so closing it closes the session.
     if (windowList.length === 1) {
-      closeSession(activeSession)
+      void closeSession(activeSession)
       return
     }
-    const window = windowList.find((item) => item.id === id)
-    confirm({
-      title: `Close ${window?.name ?? "window"}?`,
-      description: "The program running in this window will end.",
-      confirmLabel: "Close window",
-      action: async () => {
+    void act(
+      async () => {
         await del(`/terminal/${encodeURIComponent(active)}/windows/${encodeURIComponent(id)}`)
         if (activeWindow?.id === id)
           setPickedWindow(windowList.find((item) => item.id !== id)?.id ?? null)
-        await windows.refresh()
-        await refresh()
       },
-      onDone: () => focusPaneRef.current?.(),
-    })
+      "Could not close that window",
+      true,
+    ).then(() => focusPaneRef.current?.())
   }
 
   const toggleImmersive = useCallback(() => {

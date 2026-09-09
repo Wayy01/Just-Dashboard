@@ -1,18 +1,11 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Cross, MoreHorizontal, Pencil, Plus, TerminalWindow } from "@/components/icons"
+import { Cross, Pencil, Plus, TerminalWindow } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import type { TerminalWindow as Window } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { IconAction } from "@/components/icon-action"
 
 /** Compact direct-PTY windows for the terminal title bar. */
@@ -120,7 +113,7 @@ function WindowTab({
       onDrop={onDrop}
       onDragEnd={onDragEnd}
       className={cn(
-        "group flex h-8 min-w-28 max-w-48 shrink-0 items-center rounded-md border px-1.5 transition-colors",
+        "flex h-8 min-w-28 max-w-48 shrink-0 items-center rounded-md border px-1.5 transition-colors",
         active
           ? "border-hairline bg-[var(--control)] text-foreground"
           : "border-transparent text-muted-foreground hover:bg-row-hover hover:text-foreground",
@@ -137,6 +130,18 @@ function WindowTab({
         <TerminalWindow className="size-3 shrink-0" />
         <span className="truncate text-xs font-medium">{window.name}</span>
       </button>
+      {/* Rename and close sit on the tab itself. A menu holding two items that
+          a browser tab exposes directly is a click of ceremony in front of the
+          two things anyone does to a tab. */}
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label={`Rename window ${window.name}`}
+        className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+        onClick={onRename}
+      >
+        <Pencil className="size-3" />
+      </Button>
       <Button
         size="icon-sm"
         variant="ghost"
@@ -146,27 +151,6 @@ function WindowTab({
       >
         <Cross className="size-3" />
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`More for window ${window.name}`}
-            className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-          >
-            <MoreHorizontal />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-44">
-          <DropdownMenuItem className="gap-2 text-xs" onSelect={onRename}>
-            <Pencil className="size-3.5" /> Rename window
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" className="gap-2 text-xs" onSelect={onClose}>
-            <Cross className="size-3.5" /> Close window
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }

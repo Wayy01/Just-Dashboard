@@ -164,7 +164,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	// Where the session should start. Empty unless the caller asked for one
 	// and it is a real directory on the host, so everything below can treat a
 	// non-empty value as settled.
-	startDir := hostDir(opts.CWD)
+	startDir := hostDir(ctx, opts.CWD)
 	cmdDir := ""
 
 	// What ssh would have run: become the account and exec its login shell.
@@ -295,17 +295,26 @@ func tmuxNewSessionArgv(name, startDir string, login []string) []string {
 	return append(argv, login...)
 }
 
-// hostDir accepts a requested working directory only if it is one. The host's
-// real /home, /opt, /srv and /etc are bind-mounted here under their own names,
-// so this stat asks about the same directory the session will land in.
-func hostDir(dir string) string {
-	if dir == "" {
+// hostDir accepts a requested working directory only if it is one on the
+// host, where the shell will actually run. The check has to cross into the
+// host's mount namespace: this process sees the container's filesystem, in
+// which only /home, /opt, /srv, /root, /etc and a handful of other paths are
+// the host's. A plain os.Stat here answered about the wrong machine in both
+// directions — a shell sitting in /var/www or /tmp (host paths the image does
+// not carry) was reported as nowhere and the new window fell back to home,
+// while a container-only path such as /usr/lib/postgresql passed and then
+// made nsenter fail, killing the new PTY on arrival.
+func hostDir(ctx context.Context, dir string) string {
+	if dir == "" || strings.ContainsRune(dir, 0) {
 		return ""
 	}
-	if st, err := os.Stat(dir); err == nil && st.IsDir() {
-		return dir
+	// `test -d` follows symlinks and fails for deleted (" (deleted)") and
+	// missing paths alike. CommandOnHost runs it on the host when containerised
+	// and locally otherwise, so both deployments ask the right filesystem.
+	if err := hostexec.CommandOnHost(ctx, "test", "-d", dir).Run(); err != nil {
+		return ""
 	}
-	return ""
+	return dir
 }
 
 // defaultTitle names a session the operator did not name.
@@ -381,9 +390,14 @@ func (m *Manager) Workspace(id string) []*Session {
 	return out
 }
 
-// NewWindow opens another independent PTY inside a direct dashboard session.
+// NewDirectWindow opens another independent PTY inside a direct dashboard session.
 // It intentionally does not use tmux: windows are organisation in the UI,
 // while each child remains a native PTY with its own terminal negotiation.
+//
+// The directory falls back down the chain — the caller's (the active
+// window's) directory first, then the workspace's first window as it stands,
+// then home — and every step is validated on the host, so a stale directory
+// can only move the new window home, never kill it on arrival.
 func (m *Manager) NewDirectWindow(ctx context.Context, workspaceID, name, cwd string, rows, cols uint16) (*Session, error) {
 	windows := m.Workspace(workspaceID)
 	if len(windows) == 0 {
@@ -391,7 +405,7 @@ func (m *Manager) NewDirectWindow(ctx context.Context, workspaceID, name, cwd st
 	}
 	root := windows[0]
 	meta := root.Meta()
-	if cwd == "" {
+	if hostDir(ctx, cwd) == "" {
 		cwd = root.CWD()
 	}
 	created, err := m.Create(ctx, CreateOptions{

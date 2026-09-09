@@ -337,13 +337,25 @@ function SessionRow({
           </span>
         </span>
       </button>
+      {/* Closing is the one thing done often enough to earn its own control,
+          so it sits on the card rather than two clicks into the menu. The
+          menu keeps what is done rarely: rename, pin, refile. */}
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label={`Close ${session.title}`}
+        className="size-6 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+        onClick={() => onClose(session)}
+      >
+        <Cross className="size-3.5" />
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             size="icon-sm"
             variant="ghost"
             aria-label={`More for ${session.title}`}
-            className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+            className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
           >
             <MoreHorizontal />
           </Button>
@@ -375,14 +387,6 @@ function SessionRow({
               ))}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            className="gap-2 text-xs"
-            onSelect={() => onClose(session)}
-          >
-            <Cross className="size-3.5" /> Close session
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
