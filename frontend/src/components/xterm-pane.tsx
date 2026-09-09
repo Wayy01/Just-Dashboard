@@ -433,12 +433,14 @@ export function XtermPane({
         { WebLinksAddon },
         { SearchAddon },
         { Unicode11Addon },
+        { WebglAddon },
       ] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
         import("@xterm/addon-search"),
         import("@xterm/addon-unicode11"),
+        import("@xterm/addon-webgl"),
       ])
       await import("@xterm/xterm/css/xterm.css")
       if (disposed) return
@@ -518,10 +520,45 @@ export function XtermPane({
       // concerned nothing was.
       forcePointerToSelect(term)
 
-      // Use xterm's normal renderer. WebGL previously caused stale/blank rows
-      // around alternate-screen changes, and the available Canvas addon uses
-      // xterm 5 internals and throws while an xterm 6 terminal is disposed.
-      // Correct reconnect/tab teardown is more important than GPU throughput.
+      const disposables: IDisposable[] = []
+
+      // xterm 6's default DOM renderer deliberately does not implement custom
+      // glyphs. That leaves box-drawing and block-element characters to font
+      // fallback, where their edges do not fill the cell and TUI borders/logo
+      // art develop visible gaps. The matching WebGL addon renders those
+      // structural characters itself. Keep DOM as a context-loss fallback and
+      // as an explicit diagnostic A/B override.
+      host.dataset.terminalRenderer = "dom"
+      if (window.localStorage.getItem("jd.terminal.renderer") !== "dom") {
+        try {
+          const webgl = new WebglAddon()
+          disposables.push(
+            webgl.onContextLoss(() => {
+              webgl.dispose()
+              host.dataset.terminalRenderer = "dom"
+              window.requestAnimationFrame(() => {
+                if (!disposed && term.rows > 0) term.refresh(0, term.rows - 1)
+              })
+            }),
+          )
+          term.loadAddon(webgl)
+          host.dataset.terminalRenderer = "webgl"
+
+          // Alternate-buffer switches replace the complete rendered surface.
+          // Force one coherent frame so an atlas update cannot leave rows from
+          // the former buffer stale or blank.
+          disposables.push(
+            term.buffer.onBufferChange(() => {
+              window.requestAnimationFrame(() => {
+                if (!disposed && term.rows > 0) term.refresh(0, term.rows - 1)
+              })
+            }),
+          )
+        } catch {
+          // Software-only browsers remain usable through xterm's DOM renderer.
+          host.dataset.terminalRenderer = "dom"
+        }
+      }
 
       const fitTerminal = () => {
         if (host.clientWidth <= 0 || host.clientHeight <= 0) return false
@@ -529,8 +566,6 @@ export function XtermPane({
         return term.rows > 0 && term.cols > 0
       }
       fitTerminal()
-
-      const disposables: IDisposable[] = []
 
       // The size the server was last told. Both xterm's resize event and the
       // host observer converge here, so a fit cannot emit the same control

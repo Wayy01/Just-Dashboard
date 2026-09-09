@@ -30,6 +30,12 @@ await page.addInitScript(() => {
     JSON.stringify({ "terminal.rail": false, "terminal.tools": false, "shell.sidebar": false }),
   )
 })
+if (process.env.JD_TERMINAL_RENDERER) {
+  await page.addInitScript((renderer) => {
+    localStorage.setItem("jd.terminal.renderer", renderer)
+  }, process.env.JD_TERMINAL_RENDERER)
+}
+
 await page.route("**/api/v1/**", async (route) => {
   const path = new URL(route.request().url()).pathname.replace("/api/v1", "")
   let data = {}
@@ -106,7 +112,9 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
     socket.send(Buffer.from("\x1b[?25h\x1b[?1049l"))
     // Split a multibyte glyph between WebSocket messages. xterm's Uint8Array
     // decoder must carry the incomplete UTF-8 sequence into the next write.
-    const unicode = Buffer.from("\r\n╭────────╮\r\n│ test   │ ● ⏺ ✻ → … ✓ ⚠\r\n╰────────╯\r\n")
+    const unicode = Buffer.from(
+      "\r\n╭────────╮  ▄▀█ █▀▄ ▌▐\r\n│ test   │  █▄█ █▄▀ ▐▌  ● ⏺ ✻ → … ✓ ⚠\r\n╰────────╯  ▀ ▀ ▀ ▀ ▀▀\r\n",
+    )
     const split = unicode.indexOf(Buffer.from("⏺")) + 1
     socket.send(unicode.subarray(0, split))
     socket.send(unicode.subarray(split))
@@ -142,6 +150,12 @@ try {
     rows: Number(host.getAttribute("data-terminal-rows")),
     cols: Number(host.getAttribute("data-terminal-cols")),
   }))
+  assert.equal(
+    await page.locator("[data-terminal-renderer]").getAttribute("data-terminal-renderer"),
+    process.env.JD_TERMINAL_RENDERER === "dom" ? "dom" : "webgl",
+    "the requested xterm renderer must actually be active",
+  )
+
   const initialResize = controls.filter((control) => control.type === "resize").at(-1)
   assert.deepEqual(
     { rows: initialResize.rows, cols: initialResize.cols },

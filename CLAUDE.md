@@ -1427,12 +1427,16 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
 - `allowProposedApi` is on because the search addon's match count and highlight-all use xterm's decoration
   API, which is not frozen; without it `findNext` throws and the counter reads "none" over a scrollback
   full of matches.
-- **The normal renderer is deliberate; WebGL is not loaded.** WebGL previously left stale or blank rows
-  around alternate-screen changes and context loss, where speed is worth less than a correct screen. The
-  available Canvas addon targets xterm 5 internals and throws when an xterm 6 terminal is disposed, so it
-  is not a safe fallback. Font metrics are a fixed monospace stack with unit line height and zero letter
-  spacing, and xterm's custom glyphs stay enabled. `@xterm/addon-unicode11` is active so the emulator's
-  cursor arithmetic agrees with the Unicode-width rules used by modern TUIs.
+- **The xterm-6-matched WebGL renderer is the default.** xterm 6's DOM renderer explicitly omits custom
+  glyph support, so enabling `customGlyphs` there still leaves box-drawing and block-element characters
+  to browser font fallback; that produced disconnected Codex borders and gaps in Claude's block artwork.
+  `@xterm/addon-webgl` 0.19 matches xterm 6.0 and paints those structural glyphs to the full cell. Every
+  alternate-buffer change schedules a complete refresh to prevent the stale/blank rows seen in the old
+  WebGL integration, and context loss disposes WebGL and refreshes the DOM fallback. Setting
+  `jd.terminal.renderer=dom` in local storage is the diagnostic A/B override. The Canvas addon remains
+  absent because its stable release targets xterm 5 internals. Font metrics remain fixed at unit line
+  height and zero letter spacing; `@xterm/addon-unicode11` keeps cursor arithmetic aligned with the
+  Unicode-width rules used by modern TUIs.
 - **PTY output and input are binary WebSocket frames.** JSON text frames are controls only. Raw PTY chunks
   go straight to `terminal.write(Uint8Array)` (whose streaming decoder preserves a UTF-8 character split
   across chunks); keyboard and paste strings are encoded once with `TextEncoder`. The backend neither
