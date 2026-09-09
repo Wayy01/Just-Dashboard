@@ -73,7 +73,6 @@ function mdi(path: string, name: string): Icon {
   Forwarded.displayName = name
   return Forwarded
 }
-
 const MdiCode = mdi(mdiFileCode, "MdiCode")
 const MdiHtml = mdi(mdiLanguageHtml5, "MdiHtml")
 const MdiXml = mdi(mdiFileXmlBox, "MdiXml")
@@ -129,7 +128,7 @@ const MdiFolderSync = mdi(mdiFolderSync, "MdiFolderSync")
  * icon that says nothing is worse than no icon: it costs the same space and
  * trains you to ignore the column.
  *
- * The colours are the terminal rail's `--tag-*` tokens rather than anything
+ * The colours are the shared semantic `--tag-*` tokens rather than anything
  * computed from the palette, for the same reason they are there: a category
  * is a label, and a label whose hue changes with the theme stops being the
  * same label. They are fixed hues that hold up on a near-black card and a

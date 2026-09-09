@@ -17,10 +17,9 @@ let closedWindows = 0
 let closedSessions = 0
 page.on("pageerror", (error) => errors.push(error.message))
 let windows = ["codex", "server logs", "shell"].map((name, index) => ({
+  id: `window-${index}`,
   index,
   name,
-  active: index === 0,
-  panes: 1,
   cwd: "/home/ubuntu/Just-Dashboard",
 }))
 await page.addInitScript(() => {
@@ -43,16 +42,16 @@ await page.route("**/api/v1/**", async (route) => {
   if (path === "/terminal/" && route.request().method() === "POST") {
     creates.push(route.request().postDataJSON())
     sessionPresent = true
-    return route.fulfill({ json: { id: "preview" } })
+    return route.fulfill({ json: { id: "preview", windowId: windows[0].id } })
   }
   if (path === "/terminal/preview" && route.request().method() === "DELETE") {
     sessionPresent = false
     closedSessions++
   }
-  if (/\/windows\/\d+$/.test(path) && route.request().method() === "DELETE") {
+  if (/\/windows\/[^/]+$/.test(path) && route.request().method() === "DELETE") {
     closedWindows++
-    windows = windows.filter((win) => win.index !== Number(path.split("/").at(-1)))
-    windows = windows.map((win, i) => ({ ...win, active: i === 0 }))
+    windows = windows.filter((win) => win.id !== path.split("/").at(-1))
+    windows = windows.map((win, index) => ({ ...win, index }))
   }
   if (path === "/system/metrics")
     return route.fulfill({
@@ -69,18 +68,15 @@ await page.route("**/api/v1/**", async (route) => {
   else if (path === "/terminal/")
     data = {
       enabled: true,
-      tmux: true,
       login: { user: "ubuntu", home: "/home/ubuntu", shell: "/bin/bash" },
       folders: [],
       sessions: sessionPresent
         ? [
             {
               id: "preview",
-              tmuxName: "preview",
               title: "Workspace",
               user: "ubuntu",
               live: true,
-              persisted: true,
               windows: windows.length,
               cwd: "/home/ubuntu/Just-Dashboard",
               createdAt: new Date().toISOString(),
@@ -88,14 +84,21 @@ await page.route("**/api/v1/**", async (route) => {
           ]
         : [],
     }
-  else if (path.endsWith("/windows")) data = windows
-  else if (/\/windows\/\d+$/.test(path) && route.request().method() === "PATCH") {
-    const index = Number(path.split("/").at(-1))
+  else if (path.endsWith("/windows") && route.request().method() === "POST") {
+    const created = {
+      id: `window-${windows.length}`,
+      index: windows.length,
+      name: "shell",
+      cwd: "/home/ubuntu/Just-Dashboard",
+    }
+    windows.push(created)
+    return route.fulfill({ status: 201, json: created })
+  } else if (path.endsWith("/windows")) data = windows
+  else if (/\/windows\/[^/]+$/.test(path) && route.request().method() === "PATCH") {
+    const id = path.split("/").at(-1)
     const body = route.request().postDataJSON()
-    if (body.select) windows = windows.map((w) => ({ ...w, active: w.index === index }))
-    if (body.name) windows = windows.map((w) => (w.index === index ? { ...w, name: body.name } : w))
-  } else if (path.endsWith("/panes")) data = []
-  else if (path === "/git/detect") data = { found: false }
+    if (body.name) windows = windows.map((w) => (w.id === id ? { ...w, name: body.name } : w))
+  } else if (path === "/git/detect") data = { found: false }
   else if (path === "/files/list") data = { entries: [], path: "/home/ubuntu/Just-Dashboard" }
   await route.fulfill({ json: data })
 })
@@ -143,8 +146,11 @@ await page.routeWebSocket("**/api/v1/**", (socket) => {
 try {
   await page.goto(`${process.env.JD_BROWSER_BASE_URL ?? "http://127.0.0.1:3107"}/terminal`)
   await page.locator(".xterm-screen").waitFor()
-  await page.waitForFunction(() =>
-    document.querySelector("[data-terminal-rows][data-terminal-cols]")?.getAttribute("data-terminal-unicode") === "11",
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("[data-terminal-rows][data-terminal-cols]")
+        ?.getAttribute("data-terminal-unicode") === "11",
   )
   const terminalGeometry = await page.locator("[data-terminal-rows]").evaluate((host) => ({
     rows: Number(host.getAttribute("data-terminal-rows")),
@@ -163,71 +169,73 @@ try {
     "the resize control must match xterm's measured grid",
   )
   await page.getByRole("button", { name: "Show the sessions rail", exact: true }).click()
-  await page.getByRole("button", { name: "New session", exact: true }).click()
-  assert.equal(await page.getByRole("menuitem", { name: /Direct PTY/ }).count(), 1)
-  assert.equal(await page.getByRole("menuitem", { name: /Persistent session/ }).count(), 1)
   const directCreated = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname.endsWith("/api/v1/terminal/") &&
       response.request().method() === "POST",
   )
-  await page.getByRole("menuitem", { name: /Direct PTY/ }).click()
+  await page.getByRole("button", { name: "New session", exact: true }).click()
   await directCreated
-  assert.equal(creates.at(-1).persist, false, "Direct PTY must bypass tmux in the create request")
+  assert.equal("persist" in creates.at(-1), false, "session creation must always use a direct PTY")
+  assert.equal(await page.getByText("Persistent session", { exact: true }).count(), 0)
   await page.getByRole("button", { name: "Hide the sessions rail", exact: true }).click()
   assert.equal(await page.getByRole("textbox", { name: "Command draft" }).count(), 0)
   assert.equal(await page.getByRole("button", { name: "Focus", exact: true }).count(), 0)
-  const jump = page.getByRole("button", { name: "Jump to the end", exact: true })
-  await jump.click()
-  assert(
-    controls.some((c) => c.type === "exit-copy"),
-    "jump must reach the socket",
-  )
-  await jump.waitFor({ state: "hidden" })
-  const scrollbar = page.getByRole("slider", { name: "Terminal scrollback" })
-  await scrollbar.focus()
-  await scrollbar.press("Home")
-  await jump.waitFor()
-  assert(controls.some((c) => c.type === "scroll-to" && c.offset === 100))
-  await jump.click()
+  assert.equal(await page.getByRole("slider", { name: "Terminal scrollback" }).count(), 0)
   await page.locator(".xterm-helper-textarea").press("a")
   await page.locator(".xterm-helper-textarea").press("Tab")
   assert(input.includes("a"), "native typing must reach the shell")
   assert(input.includes("\t"), "Tab must reach native shell completion")
-  const bar = page.locator('[aria-label="Terminal workspace"]')
-  assert.equal(await bar.locator(":scope > button").count(), 2)
-  assert.equal(await bar.getByText("/home/ubuntu/Just-Dashboard", { exact: true }).count(), 0)
+  assert.equal(await page.locator('[aria-label="Terminal workspace"]').count(), 0)
+  assert.equal(await page.getByText("/home/ubuntu/Just-Dashboard", { exact: true }).count(), 0)
   for (const tab of await page.locator("[data-window]").all()) {
     const box = await tab.boundingBox()
-    assert(box.width >= 144 && box.height >= 40)
+    assert(box.width >= 112 && box.height >= 32)
   }
   assert.equal(
     await page.getByRole("button", { name: "Close window codex", exact: true }).count(),
     1,
   )
   await page.getByRole("button", { name: "server logs", exact: true }).click()
-  await page.locator('[data-window="1"][data-active="true"]').waitFor()
+  await page.locator('[data-window="window-1"][data-active="true"]').waitFor()
   await page.getByRole("button", { name: "More for window server logs" }).click()
   await page.getByRole("menuitem", { name: "Rename window", exact: true }).click()
-  const rename = page.getByRole("textbox", { name: "Window name" })
+  const rename = page.locator('[aria-label="Terminal windows"] input')
   await rename.fill("build output")
   await rename.press("Enter")
   await page.getByRole("button", { name: "build output", exact: true }).waitFor()
-  await page.getByRole("button", { name: "More for window codex" }).click()
-  await page.getByRole("menuitem", { name: "Split side by side", exact: true }).click()
-  await page.waitForFunction(() => !document.querySelector("[role=menu]"))
-  assert(mutations.includes("/terminal/persistent/preview/windows/0/panes"))
+  assert.equal(await page.getByText("Split side by side", { exact: true }).count(), 0)
   await page.getByRole("button", { name: "Terminal settings", exact: true }).click()
   const settingsPanel = page.locator('[data-slot="popover-content"]')
-  assert.equal(await settingsPanel.getByRole("combobox", { name: "Font family", exact: true }).count(), 0)
-  assert.equal(await settingsPanel.getByRole("combobox", { name: "Cursor style", exact: true }).count(), 0)
-  assert.equal(await settingsPanel.getByRole("slider", { name: "Line height", exact: true }).count(), 0)
-  assert.equal(await settingsPanel.getByRole("slider", { name: "Letter spacing", exact: true }).count(), 0)
-  assert.equal(await settingsPanel.getByRole("switch", { name: "Blinking cursor", exact: true }).count(), 0)
-  assert.equal(await settingsPanel.getByRole("button", { name: "Larger text", exact: true }).count(), 0)
+  assert.equal(
+    await settingsPanel.getByRole("combobox", { name: "Font family", exact: true }).count(),
+    0,
+  )
+  assert.equal(
+    await settingsPanel.getByRole("combobox", { name: "Cursor style", exact: true }).count(),
+    0,
+  )
+  assert.equal(
+    await settingsPanel.getByRole("slider", { name: "Line height", exact: true }).count(),
+    0,
+  )
+  assert.equal(
+    await settingsPanel.getByRole("slider", { name: "Letter spacing", exact: true }).count(),
+    0,
+  )
+  assert.equal(
+    await settingsPanel.getByRole("switch", { name: "Blinking cursor", exact: true }).count(),
+    0,
+  )
+  assert.equal(
+    await settingsPanel.getByRole("button", { name: "Larger text", exact: true }).count(),
+    0,
+  )
   assert.equal(await settingsPanel.getByRole("button", { name: "Reset", exact: true }).count(), 0)
   await settingsPanel.getByRole("switch", { name: "Confirm multi-line paste", exact: true }).click()
-  const savedSettings = await page.evaluate(() => JSON.parse(localStorage.getItem("jd.terminal.settings")))
+  const savedSettings = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("jd.terminal.settings")),
+  )
   assert.equal(savedSettings.confirmMultilinePaste, false)
   assert.equal("fontFamily" in savedSettings, false)
   assert.equal("cursorStyle" in savedSettings, false)
@@ -257,7 +265,10 @@ try {
   await page.waitForFunction(
     ([rows, cols]) => {
       const host = document.querySelector("[data-terminal-rows]")
-      return Number(host?.getAttribute("data-terminal-rows")) !== rows || Number(host?.getAttribute("data-terminal-cols")) !== cols
+      return (
+        Number(host?.getAttribute("data-terminal-rows")) !== rows ||
+        Number(host?.getAttribute("data-terminal-cols")) !== cols
+      )
     },
     [terminalGeometry.rows, terminalGeometry.cols],
   )
@@ -267,8 +278,8 @@ try {
   }))
   const mobileResize = controls.filter((control) => control.type === "resize").at(-1)
   assert.deepEqual({ rows: mobileResize.rows, cols: mobileResize.cols }, mobileGeometry)
-  await page.locator('[data-window="2"] button').first().click()
-  await page.locator('[data-window="2"][data-active="true"]').waitFor()
+  await page.locator('[data-window="window-2"] button').first().click()
+  await page.locator('[data-window="window-2"][data-active="true"]').waitFor()
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
   await page.screenshot({ animations: "disabled", path: "/tmp/terminal-mobile.png" })
   const screen = await page.locator(".xterm-screen").boundingBox()
@@ -321,7 +332,7 @@ try {
   )
   assert.deepEqual(errors, [])
   console.log(
-    "PASS: direct/persistent creation, native typing and Tab, clickable jump, scroll seeking, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
+    "PASS: direct PTY creation, native typing and Tab, compact window actions and close, integrated title bar, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
   )
 } finally {
   await browser.close()

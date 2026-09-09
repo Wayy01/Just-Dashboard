@@ -42,9 +42,9 @@ every change. Two families skip rather than fail when the thing they drive is ab
   from an env var defaulting to a local instance. Re-run with `-count=1` or the cache serves yesterday's
   skips. These are the tests that matter for dbx: a catalogue query naming a column the server does not
   have is string-matched identically by a unit test, and only a real engine rejects it.
-- **`term` and the terminal half of `api`** drive the machine's real tmux — the bugs they exist to catch
-  live in the gap between this process and that one, and a fake tmux would pass every one. Both take a
-  private tmux server in `TestMain` (`TMUX_TMPDIR`) so a run never touches the operator's sessions.
+- **`term` and the terminal half of `api`** drive real PTYs. Direct-session tests isolate clipboard
+  storage and never touch an operator shell; the remaining legacy tmux tests inside `term` take a private
+  server in that package's `TestMain` (`TMUX_TMPDIR`).
 
 Extend these when you touch the matching surface: security — `httpx/confirm_test.go`,
 `api/routes_test.go`, `api/docker_spec_test.go`, `files/files_test.go`, `safepath/safepath_test.go`,
@@ -583,7 +583,7 @@ disagree about order; every path is resolved before storing.
 
 Frontend `components/files/`: `file-icon.tsx` is the vocabulary (~200 extensions, the files with none —
 Dockerfile, authorized_keys, lockfiles — and the folders whose name says more than "folder") mapped to
-eight **categories** rather than languages, in the terminal rail's `--tag-*` hues, drawn from Material
+eight **categories** rather than languages, in the shared semantic `--tag-*` hues, drawn from Material
 Design Icons (`@mdi/js`); every other glyph in the product comes from the Heroicons vocabulary in
 `components/icons.tsx`. `file-actions.tsx` is
 the one menu both the row and the tile use, or an action ends up in one view only. Two layout rules are
@@ -673,78 +673,34 @@ a failed detection.
 
 ### The terminal
 
-`internal/term` runs the PTYs. Three properties are load-bearing:
+`internal/term` runs direct PTYs. Three properties are load-bearing:
 
-**A session outlives everything but being closed.** With tmux the shell runs inside `tmux new-session`,
-so closing the tab, leaving the page and restarting the dashboard all leave it running; only `Kill` ends
-one, behind a typed confirmation. The reaper *detaches* an idle persisted session after `idleDetach` to
-give back the PTY and the slot — it never kills one. Without tmux there is no third option, so there the
-reaper kills, which is why the page says which world it is in.
+**Every window is a direct PTY.** There is no persistent-session choice and no pane/split layer. A
+dashboard session is an in-memory workspace grouping independent PTYs as windows; each window therefore
+keeps native terminal capability negotiation and ends with the dashboard process. Closing a session ends
+all of its windows, while closing one window leaves its siblings running.
 
 **`su -l` cannot open a shell in a chosen directory**, because login *is* chdir-to-home; tmux's `-c` is
 not enough, since su walks straight back out. `loginArgv(shell, keepCWD)` moves the chdir off su onto the
 shell: `su -s <shell> <user> -- -l` switches user without `-l`, and the `-l` after `--` reaches the shell
 and still reads the profile. The other half is `hostexec.CommandOnHostInDir`.
 
-**tmux is the store for everything the operator chose** — title, folder, favourite flag as user options
-(`@jd_title`, `@jd_folder`, `@jd_fav`), not in this process and not in SQLite. The property that keeps
-the work keeps its name, with nothing to migrate on restart. Two listing details are not optional: tmux
-**escapes non-printable bytes** in format output (a 0x1f separator returns as the four characters `\037`
-and every line parses as one field, so `fieldSep` is printable), and **the path is always the last
-field**, read with `SplitN`, since a directory may contain the separator.
+**Session organisation is intentionally lightweight.** `GET /terminal/` groups live `Session` values by
+`WorkspaceID`; naming, folder membership and pinning are copied across the workspace's windows in memory.
+Folders remain the dashboard's ordered record (`handlers_terminal_folders.go`, settings key
+`terminal.folders`), while membership stays on each workspace. There is no session/window colour model.
+Renaming a folder moves every matching workspace in one request. Window routes use opaque PTY ids and
+support create, rename, reorder and close; selecting a window is client state and reconnects the emulator
+to that window's socket.
 
-- `GET /terminal/` returns one list of *workspaces*, not live sessions plus detached names — the same
-  thing in two states (`live` = this process holds a PTY). Reconciling two lists in the browser made an
-  idle session appear to vanish and reappear elsewhere.
-- **The listing answers from memory for a live session and from tmux for the rest.** `tmux new-session` is
-  handed to a PTY and the `set-option` filing it away lands up to half a second later — inside the window
-  where the page refreshes after the POST — so a shell opened into a folder appeared under "Other" and
-  jumped later. `Session` shadows the four values, seeded by `Create`, read back by `Reattach`, written by
-  `SetMeta`. **Anything acting on "every session in this folder" must use `Manager.AllMeta`**, or it
-  silently skips the newest one. `SetMeta` writes memory first and retries tmux in the background rather
-  than failing — filing away the session you just opened is the commonest thing anybody does.
-- **Folders are the dashboard's record, not tmux's** (`handlers_terminal_folders.go`, `settings` key
-  `terminal.folders`): a folder exists because sessions name it, which stopped being enough once it had an
-  order, a colour and the ability to be empty. Membership stays on the sessions and the two are reconciled
-  on read — a folder named by a session but missing from the record is still shown, because a session must
-  never become unreachable by losing its group. Renaming moves every session **in one request**.
-- **Colour is inherited**: a session takes its folder's, a window takes its session's. Colouring eight
-  sessions by hand is work nobody does twice, and a group whose members are individually grey is not a
-  group. `term.Colours` is closed because the value goes into a tmux format and back out.
-- **Windows and panes.** `organise.go` — naming, colouring, reordering (`MoveWindow` as adjacent swaps,
-  since tmux has no insert), `MoveWindowToSession` (checks ownership of *both*). The listing carries
-  `window_bell_flag`, `window_activity_flag`, `window_zoomed_flag`: tmux has tracked them all along and
-  they are the only answer to "which of these tabs did something while I was looking at another".
-  `panes.go` adds split/select/zoom/kill/layout and `synchronize-panes`, reported in the listing because
-  it is the setting that turns a typo into the same typo on four servers. Killing the last pane in a
-  window is refused, as is the last window in a session — tmux would take the parent with it.
-- `SendKeys` keeps literal text and named keys as separate fields, because `send-keys` decides by parsing
-  what it is given and a stored one-liner containing "Enter" would become a keypress. Key names are closed.
-
-Two tmux options are set per session **at creation and on reattach**, so an older build's session is
-fixed by being picked up. Per session, so the operator's own tmux and anything over SSH keep their
-settings. `status off` (the page draws that information above the pane, and green-on-green costs a line);
-`mouse on` — without it the wheel does something actively *wrong*, since tmux holds the alternate screen
-and xterm turns a wheel tick there into a cursor key, so scrolling up walked backwards through history.
-
-The create and reattach requests carry a provisional size because the emulator does not exist yet. The
+The create request carries a provisional size because the emulator does not exist yet. The
 attach WebSocket carries xterm's measured `rows`/`cols` in its query. The handler subscribes first, then
-applies that size: `TIOCSWINSZ` may produce a tmux/application redraw synchronously, and subscribing after
+applies that size: `TIOCSWINSZ` may produce an application redraw synchronously, and subscribing after
 it would lose the first bytes of the only screen a new browser needs. Every later `ResizeObserver` fit
 sends only a changed cell size. Reconnect uses `SynchronizeSize` to reapply the size even when the cached
 fields agree; ordinary resize frames are de-duplicated. The recorded size changes only after `pty.Setsize`
 succeeds. Terminal capability variables replace inherited entries rather than being appended — duplicate
 names are legal in `execve`, and appending could leave an inherited `TERM=dumb` as the value libc returns.
-
-**What tmux does with a tick is not the browser's to guess.** tmux's root binding enters copy mode only
-when the program has *not* asked for the mouse; every full-screen TUI has, and there nothing scrolls — so
-a "Jump to the end" button drawn from the browser's optimism offered to return a terminal that never
-moved. A tick now only *asks*: `sync-copy` goes out once the gesture settles, and `#{pane_in_mode}` coming
-back is the only thing that shows the button. The keystroke path stays optimistic because copy mode eats
-the key that would leave it, and a cancel sent to a pane not in a mode prints "not in a mode" and writes
-nothing. Both frames are gated behind the pane's `copyMode` prop, **off by default**: the same component
-drives `docker exec`, whose handler writes every non-resize frame into the container's stdin — so the
-question would type `{"type":"sync-copy"}` at somebody's prompt.
 
 ### GitHub sign-in
 
@@ -1323,28 +1279,19 @@ feature; the installed table caps at 400 rendered rows with the count said plain
 
 ### The terminal panel
 
-`components/terminal/` is the rail, strips and tags; `components/xterm-pane.tsx` is the emulator. The
+`components/terminal/` is the session rail and window strip; `components/xterm-pane.tsx` is the emulator. The
 split matters — the pane is reused by the compose runner and knows nothing about sessions.
 
-- `session-rail.tsx` is the workspace tree. Four things carry the hierarchy, because the first version drew
-  a folder and a session as the same row and put it in the data and nowhere on screen: a folder header is
-  **chrome** (panel-header tint, icon in a tinted tile, uppercase label) while a session is content;
-  children indent behind a rule in the folder's colour; colour is inherited; everything is draggable.
-  Pinning sorts a session to the top *of its folder* — the earlier separate group made a starred session
-  vanish from the folder it had been filed in.
-- `dnd.ts` holds the in-flight payload **outside React** (`dragover` fires at pointer rate across the rail,
-  and the browser will not let its handler read the payload — only MIME types). **The drag image is drawn
-  by hand**: the browser's snapshot composites a transparent row onto an opaque white rectangle with hard
-  corners and exposes no way to style it, so `dnd.ts` builds an off-screen chip in the theme's tokens,
-  hands it to `setDragImage` and removes it next frame.
-- `window-strip.tsx` places roomy, horizontally scrolling window tabs between exactly two workspace
-  toggles: sessions on the left and Files/Git on the right. The tabs share one quiet recessed rail;
-  inactive windows stay flat inside it and only the active window takes the shared `raised` surface, so
-  the strip reads as one workspace control instead of a row of outlined buttons. There is no
-  working-directory title bar.
-  Window menus retain split, layout, rename and colour actions; active tabs scroll into view.
+- `session-rail.tsx` uses the same framed card, tinted header and hairlines as the Files/Git panel. Folder
+  headers are plain disclosure rows: chevron and explanatory name only, with no folder icon, count,
+  nested container or empty invitation. Sessions use neutral design-system states rather than assigned
+  colours. Pinning still sorts a session to the top of its folder.
+- `window-strip.tsx` places compact, horizontally scrolling direct-PTY tabs between exactly two workspace
+  toggles: sessions on the left and Files/Git on the right. The strip is embedded in the emulator's own
+  title bar; there is no separate workspace bar or working-directory/shell title.
+  Window menus retain rename and close only; there are no split, layout or colour actions.
   Every tab has a visible close button. Closing the last window closes its session through the session
-  endpoint (tmux refuses a last-window delete); both paths explain the consequence in a confirmation.
+  endpoint; both paths explain the consequence in a confirmation.
   The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
   folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
   Input stays in the shell: there is no separate composer or Workspace/Focus mode. Bundled Bash and
@@ -1353,26 +1300,17 @@ split matters — the pane is reused by the compose runner and knows nothing abo
   `term.SetupShell` atomically installs readable scripts in the process-owned shared terminal root's
   `.shell` directory, rejecting symlink or foreign-owned directories. A constant login bootstrap passes
   shell and startup paths as positional arguments; unsupported shells retain their ordinary startup.
-  Existing running shells are not modified. Reattached sessions receive the updated default command
-  for future windows and splits.
-  A custom scrollbar uses tmux's actual history position, with throttled updates while scrolling and
-  after output. Its seek control and Jump to the end sit above the emulator's mouse layer. Other
-  emulator consumers keep their normal scrollbar and receive no tmux-specific controls.
+  Existing running shells are not modified.
   The terminal host is absolutely inset into its output region so its own rows cannot grow its parent.
-  `PaneBar` labels each pane with the command running in it:
-  "pane 2" says nothing, `pg_dump` says which half of the screen not to close.
-- `tags.tsx` is the colour vocabulary. `--tag-*` lives in `globals.css` and is the one deliberate exception
-  to "compute it from the palette": a tag is a label the operator applied, and one that changed hue with
-  the theme would stop being the same label. What *is* computed is everything drawn from it — row tint and
-  edge rule are `color-mix` against the surface, so one lightness holds on a near-black card and a
-  near-white one.
+- `ResizeHandle` is an invisible eight-pixel hit target over each panel's own border. The border is the
+  visual affordance, so the layout draws no extra divider. Arrow keys and double-click reset remain the
+  non-drag alternatives.
 - `lib/terminal-settings.ts` keeps scrollback and behaviour in localStorage — on the screen, not the
   account, for the reason the theme is. Font metrics are deliberately fixed: user-selectable line height,
   spacing and fonts made the emulator grid cease to be a stable terminal grid.
 - `lib/terminal-keymap.ts` is every shortcut, all rebindable. A chord must get past the browser, the page
-  and the shell, and no default annoys nobody — tmux settled that with a prefix key half the world
-  rebinds. Ctrl+Alt is the default family (neither browser nor shell wants it); Ctrl+Shift is the
-  emulator's own. Matching is on `event.code`, the **physical** key, so a binding recorded on QWERTY
+  and the shell, and no default suits everybody. Ctrl+Alt is the default family (neither browser nor shell
+  wants it); Ctrl+Shift is the emulator's own. Matching is on `event.code`, the **physical** key, so a binding recorded on QWERTY
   survives a Romanian layout. Actions carry a **scope** — `navigation` is the page's (it alone knows the
   sessions), `terminal` is the pane's (the compose runner needs copy/paste/search with no session at all)
   — and that split is what stops one keydown being handled twice. `shortcuts-dialog.tsx` is both cheatsheet
@@ -1380,22 +1318,10 @@ split matters — the pane is reused by the compose runner and knows nothing abo
 
 In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
 
-- **The New-session menu exposes both terminal paths.** Persistent sessions run through tmux and keep
-  windows, panes and detach/reattach. Direct PTYs omit the multiplexer for applications whose terminal
-  capability queries are not tmux-safe; they end when closed and therefore cannot be named, filed or
-  resumed. The backend already treats `persist: false` as a real PTY rather than an emulation mode. Keep
-  tmux-only copy-mode controls disabled for that direct path.
-- **Truecolor must be set on the tmux session, not only its client.** `COLORTERM` is not in tmux's default
-  `update-environment` list, so setting it on the outer PTY process does not put it in panes owned by an
-  already-running server. `new-session -e COLORTERM=truecolor` installs it before the first login starts;
-  reattach also repairs the session environment so later windows and restarted TUIs inherit it.
-- **`forcePointerToSelect` takes the pointer back from tmux's mouse mode.** xterm gates mouse-report
-  forwarding on one predicate (`shouldForceSelection`, asked by both its selection service and its
-  forwarding, so answering once keeps them agreeing) and the pane inverts it: the drag belongs to the page
-  unless **Alt** is held, left as the way through for vim, htop, less. The wheel is bound separately and
-  does not consult it, so scrolling still belongs to tmux. Without this, a drag selected into tmux's copy
-  buffer — which tmux clears on mouse-up, so text highlighted and unhighlighted inside one gesture and
-  `getSelection()` stayed empty, which is why Copy reported nothing selected.
+- **New session always opens a direct PTY.** A session is still nameable, pinnable and fileable because
+  those properties belong to its in-memory workspace. New window creates a sibling direct PTY and the
+  browser switches windows by connecting the emulator to that window's opaque id. There is no persistent
+  option, detach/reattach path or pane model in the terminal API.
 - **`clipboardKey`**: Ctrl+C copies **only when something is selected** and clears the selection as it
   goes, so the interrupt is never more than one keypress away. Ctrl+V returns false *without*
   `preventDefault`, so xterm leaves the key alone instead of sending ^V and the browser's own paste runs —
@@ -1407,17 +1333,15 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   the live session, verifies the declared MIME against the bytes, and chooses the destination under
   `/tmp/just-dashboard/<session-id>` itself. Only the returned absolute path goes through the existing
   terminal socket, with no Enter. The backend container bind-mounts that temporary root at the same path
-  on the host; session directories are removed when their PTY truly ends and old files expire after seven
-  days, while a persistent tmux detach keeps them available.
+  on the host; session directories are removed when their PTY ends and old files expire after seven days.
 - **Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every line but
   the last immediately, and Ctrl+V, the context menu and the X11 middle click all arrive as one `onData`
   call — guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. That handler must call
   `preventDefault`: returning false from `attachCustomKeyEventHandler` stops xterm, not the browser, so
   without it the confirmation opened *and* the native paste went through.
-- **Raw PTY history is never replayed into a fresh tmux terminal.** A bounded byte suffix is not a screen
-  snapshot: it can begin halfway through CSI or after alternate-screen, cursor, origin and scroll-region
-  modes were established. The handler subscribes before resizing and asks tmux to repaint from tmux's
-  current screen model. Direct PTYs have no independent model and retain best-effort shell-history replay.
+- **Direct PTY reconnect uses best-effort shell-history replay.** A direct PTY has no independent screen
+  model, so the handler subscribes before resizing and then sends its bounded output suffix. The replay
+  protocol below prevents terminal capability replies from being typed into the current prompt.
 - **Replies are suppressed while direct-PTY scrollback is replayed.** `CSI c` and friends are the shell asking the
   terminal a question, and xterm answers down the channel a keystroke uses — so replaying a buffer
   containing one typed `1;2c0;276` at whatever prompt exists now and left a column of "command not found".
@@ -1441,39 +1365,27 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   go straight to `terminal.write(Uint8Array)` (whose streaming decoder preserves a UTF-8 character split
   across chunks); keyboard and paste strings are encoded once with `TextEncoder`. The backend neither
   decodes nor rewrites terminal bytes.
-- **Clicking inside a pane focuses it, and the arithmetic is the only way it can** — tmux composes every
-  pane into one screen before the PTY sees a byte, so the browser has one terminal and no element to hang a
-  handler on. `Panes` carries `pane_left/top/right/bottom`, `XtermPane` reports the clicked cell (the grid
-  is uniform, and xterm publishes no pixel-to-cell mapping), the page finds the containing rectangle. Two
-  details make it fire: it is a **native listener in the capture phase**, not a React `onMouseDown` (with
-  tmux's mouse mode on, xterm's own `.xterm` handler calls `stopPropagation()` on exactly the clicks
-  `forcePointerToSelect` hands back, and React binds at the root container — so a bubbling handler was
-  never called and the pane bar was the only way to move focus); and the **focused pane's rectangle is
-  tested first**, ending there, which is the cheap answer for the common case and the correct one for a
-  zoomed window, where tmux resizes the zoomed pane to the whole window and leaves hidden panes' old
-  rectangles where they were.
 - **The navigation listener runs in the capture phase and must not skip the terminal.** Bubbling lands after
   xterm has forwarded the keystroke, so Ctrl+Alt+→ would switch the window *and* type an escape sequence.
   The usual "ignore keys while a text field has focus" guard needs an exception for `.xterm`, since xterm
   receives keystrokes through a hidden `.xterm-helper-textarea` — the plain form disables every shortcut
   exactly when the terminal has focus.
-- **Shortcuts fire only where the shell has the keyboard.** These chords move sessions, close windows and
-  kill panes; anywhere-in-the-workspace was too wide and closed a tmux window while the operator clicked
-  around the file tree. The target must be inside `.xterm`, or nothing focused at all (`document.body` on a
+- **Shortcuts fire only where the shell has the keyboard.** These chords move sessions and close windows;
+  anywhere-in-the-workspace was too wide and could close a window while the operator clicked around the
+  file tree. The target must be inside `.xterm`, or nothing focused at all (`document.body` on a
   fresh load, which is the difference between "new session" having a shortcut and not). Any open dialog
   vetoes the lot, because focus sits on the body while one closes. The other half: **every switch hands the
-  keyboard back** — the strips and pane bar are buttons and keep the focus they were given, so `XtermPane`
-  takes a `focusRef` and the page calls it *before* the request (the switch is a round trip to tmux, the
-  focus is not).
+  keyboard back** — window tabs are buttons and keep the focus they were given, so `XtermPane` takes a
+  `focusRef` and the page calls it as the active socket changes.
 
 **Shell-here links are consumed once.** The page removes `cwd` and `folder` from the current history
 entry before creating the session, preserving other query parameters and the hash. A refresh cannot
 replay a launch or recreate a closed session; a later explicit Shell here link can still launch anew.
 
-**The page has no header.** A terminal is the one screen whose content *is* the viewport, and a title band
-plus a notice cost about a fifth of the pane on a laptop. The breadcrumb says where you are, "New session"
-sits in the rail beside "New folder", and which account a shell runs as is on the pane's own header. The
-one banner that stays is a missing login account — a broken feature rather than information.
+**The page has no separate header or workspace bar.** A terminal is the one screen whose content *is* the
+viewport. "New session" sits in the rail beside "New folder"; the emulator title bar contains the two
+panel toggles and window tabs, with no shell, user or working-directory title. The one banner that stays
+is a missing login account — a broken feature rather than information.
 
 ### Data and theming
 

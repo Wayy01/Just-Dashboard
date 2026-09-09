@@ -240,6 +240,7 @@ export function XtermPane({
   className,
   onExit,
   subtitle,
+  headerContent,
   cwd,
   onOpenFiles,
   onCellClick,
@@ -255,6 +256,8 @@ export function XtermPane({
   onExit?: () => void
   /** Shown in the pane header instead of the socket path — e.g. who you are. */
   subtitle?: React.ReactNode
+  /** Session/window controls embedded in the terminal title bar. */
+  headerContent?: React.ReactNode
   /** Where the shell currently is, for the actions that act on that directory. */
   cwd?: string
   onOpenFiles?: (path: string) => void
@@ -1150,15 +1153,19 @@ export function XtermPane({
         className,
       )}
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hairline bg-surface-header px-3 py-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {subtitle ?? path}
-          {shellTitle && (
-            <span className="ml-2 rounded bg-muted px-1 py-px text-[10px] text-foreground">
-              {shellTitle}
-            </span>
-          )}
-        </span>
+      <div className="flex shrink-0 items-center gap-1 border-b border-hairline bg-surface-header px-2 py-1.5">
+        {headerContent ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">{headerContent}</div>
+        ) : (
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+            {subtitle ?? path}
+            {shellTitle && (
+              <span className="ml-2 rounded bg-muted px-1 py-px text-[10px] text-foreground">
+                {shellTitle}
+              </span>
+            )}
+          </span>
+        )}
 
         {searching ? (
           <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -1575,7 +1582,6 @@ function SettingsMenu() {
         <TooltipContent>Terminal behaviour</TooltipContent>
       </Tooltip>
       <PopoverContent align="end" className="w-72 space-y-3 text-xs">
-
         <p className="eyebrow pt-1">Behaviour</p>
         <SettingSwitch
           label="Copy on select"

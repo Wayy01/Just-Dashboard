@@ -661,15 +661,6 @@
   background-color: transparent !important;
 }
 
-/* xterm reverts the pointer to an arrow whenever the program in the pane has
- * asked for mouse reporting, on the assumption that a drag belongs to that
- * program. Under tmux it never does here — the pane forces the pointer back to
- * the page so a plain drag selects — so the I-beam is the truthful cursor and
- * the arrow was the one thing on screen still claiming otherwise. */
-.xterm.enable-mouse-events {
-  cursor: text;
-}
-
 /* The ground behind a picture with an alpha channel.
  *
  * A transparent PNG drawn on a card is indistinguishable from one with a
@@ -694,14 +685,6 @@
     -8px 0;
 }
 
-/* tmux owns history for persistent sessions. Hide the unrelated emulator
-   scrollbar, while leaving its wheel handler available to interactive apps. */
-.terminal-tmux .xterm .xterm-scrollable-element > .scrollbar {
-  display: none !important;
-}
-.terminal-tmux .xterm-viewport {
-  scrollbar-width: none;
-}
 .terminal-history {
   writing-mode: vertical-lr;
   direction: ltr;

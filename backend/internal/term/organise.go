@@ -87,14 +87,23 @@ var ErrNoPersistence = errors.New("this session is not tmux-backed, so it has no
 // naming a session is that the name is still there tomorrow, and a name held
 // only in this process lasts until the next restart.
 func (m *Manager) SetMeta(ctx context.Context, tmuxName string, meta SessionMeta) error {
-	if !m.useTmux || tmuxName == "" {
-		return ErrNoPersistence
-	}
 	clean := SessionMeta{
 		Title:     sanitiseField(meta.Title),
 		Folder:    sanitiseField(meta.Folder),
 		Favourite: meta.Favourite,
 		Colour:    normaliseColour(meta.Colour),
+	}
+	// Direct sessions live only as long as this process, so their organisation
+	// belongs in the same in-memory workspace. Apply it to every window so the
+	// metadata survives closing whichever PTY happened to be first.
+	if windows := m.Workspace(tmuxName); len(windows) > 0 {
+		for _, sess := range windows {
+			sess.setMeta(clean)
+		}
+		return nil
+	}
+	if !m.useTmux || tmuxName == "" {
+		return ErrNoPersistence
 	}
 
 	// The live session first, so the change shows on the very next listing
@@ -149,27 +158,15 @@ func (m *Manager) SetMeta(ctx context.Context, tmuxName string, meta SessionMeta
 	return errors.New("could not store that on the tmux session")
 }
 
-// AllMeta is what every session this dashboard knows about is called and
-// where it is filed, keyed by tmux name.
-//
-// It reconciles the two records the same way the listing does — a session this
-// process is holding answers from memory, anything else from tmux — because a
-// caller acting on "every session in this folder" has to see the one that was
-// opened into it half a second ago. Reading tmux alone is how renaming a
-// folder quietly left the newest session behind in the old one.
-func (m *Manager) AllMeta(ctx context.Context) map[string]SessionMeta {
+// WorkspaceMeta returns one metadata record per live direct-PTY workspace.
+func (m *Manager) WorkspaceMeta() map[string]SessionMeta {
 	out := map[string]SessionMeta{}
 	for _, sess := range m.List() {
 		if sess.TmuxName != "" {
-			out[sess.TmuxName] = sess.Meta()
-		}
-	}
-	for _, t := range m.TmuxSessions(ctx) {
-		if _, held := out[t.Name]; held {
 			continue
 		}
-		out[t.Name] = SessionMeta{
-			Title: t.Title, Folder: t.Folder, Favourite: t.Favourite, Colour: t.Colour,
+		if _, exists := out[sess.WorkspaceID]; !exists {
+			out[sess.WorkspaceID] = sess.Meta()
 		}
 	}
 	return out
@@ -186,6 +183,9 @@ func (m *Manager) AllMeta(ctx context.Context) map[string]SessionMeta {
 // the other three — a client that sends a colour and omits the title should
 // not silently erase the title.
 func (m *Manager) Meta(ctx context.Context, tmuxName string) (SessionMeta, error) {
+	if windows := m.Workspace(tmuxName); len(windows) > 0 {
+		return windows[0].Meta(), nil
+	}
 	if !m.useTmux || tmuxName == "" {
 		return SessionMeta{}, ErrNoPersistence
 	}

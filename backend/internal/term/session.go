@@ -26,23 +26,24 @@ var (
 	ErrDisabled = errors.New("the web terminal is disabled in this dashboard's configuration")
 	ErrNotFound = errors.New("terminal session not found")
 	ErrTooMany  = errors.New("too many terminal sessions are already open")
-	// Twelve was a guess made when a session was a thing you opened and
-	// closed. They are now kept — named, grouped, running for weeks — so the
-	// cap has to be a number of *workspaces* rather than of visits, and the
-	// cost of an idle one is a PTY and a goroutine.
+	// The limit counts PTY windows, because each direct window owns a process,
+	// file descriptor and reader goroutine even when no browser is attached.
 	maxSessions  = 32
 	scrollbackKB = 128
 )
 
-// Session is one PTY. Output is fanned out to every attached client and also
-// kept in a bounded buffer. The buffer is useful as best-effort shell history
-// for a direct PTY, but it is deliberately never treated as a terminal
-// snapshot for tmux-backed sessions; tmux owns that screen state and redraws it
-// for a new browser subscriber.
+// Session is one PTY. Output is fanned out to every attached client and kept
+// in a bounded buffer as best-effort shell history for reconnecting a browser.
 type Session struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Shell string `json:"shell"`
+	ID string `json:"id"`
+	// WorkspaceID groups direct PTYs into the session/window model exposed by
+	// the dashboard. Direct mode deliberately has no multiplexer: every window
+	// is its own real PTY and closing the dashboard ends it.
+	WorkspaceID string `json:"workspaceId"`
+	WindowName  string `json:"windowName"`
+	WindowOrder int    `json:"windowOrder"`
+	Title       string `json:"title"`
+	Shell       string `json:"shell"`
 	// User is the host account the shell runs as, which is the answer to
 	// "whoami" without having to open the session and ask.
 	User      string    `json:"user"`
@@ -57,15 +58,8 @@ type Session struct {
 	// case where /proc cannot answer.
 	CWDHint string `json:"-"`
 
-	// Folder, Favourite and Colour shadow the tmux user options that hold
-	// them. tmux remains the store — it is what makes them survive a restart
-	// — but it cannot answer for a session it has only just been asked to
-	// create: `tmux new-session` has been handed to a PTY and the set-option
-	// that follows may lose the race by half a second. During that window a
-	// listing read straight from tmux reports a session with no folder, so a
-	// shell opened *into* a folder appeared under "Other" and jumped into
-	// place on some later poll. The copy here is written before the request
-	// returns, which is what makes the answer immediate and stable.
+	// Workspace metadata is copied to every direct window so listing any live
+	// member reconstructs the same session row.
 	folder    string
 	favourite bool
 	colour    string

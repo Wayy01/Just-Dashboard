@@ -9,11 +9,9 @@ import { useSyncExternalStore } from "react"
  * A web terminal is the one place where a fixed shortcut is guaranteed to be
  * wrong for somebody. The chord has to get past three layers before it means
  * anything: the browser, which owns Ctrl+T and Ctrl+W outright; the page; and
- * the shell inside the pane, which owns Ctrl+C, Ctrl+D and every Alt chord a
- * reader might use for word motion. tmux solved this with a prefix key nobody
- * agrees on either — `C-b` for some, `C-a` for the ex-screen half of the world
- * — which is exactly the point: there is no default that does not annoy
- * someone, so the defaults here are a starting position rather than a claim.
+ * the shell, which owns Ctrl+C, Ctrl+D and every Alt chord a reader might use
+ * for word motion. There is no default that does not annoy someone, so the
+ * defaults here are a starting position rather than a claim.
  *
  * Ctrl+Alt is the default family because it is the one combination neither the
  * browser nor a shell has a use for. Ctrl+Shift is the emulator's own, which is
@@ -33,12 +31,6 @@ export type ShortcutAction =
   | "window.new"
   | "window.close"
   | `window.${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-  | "pane.next"
-  | "pane.prev"
-  | "pane.zoom"
-  | "pane.splitRight"
-  | "pane.splitDown"
-  | "pane.close"
   | "terminal.search"
   | "terminal.copy"
   | "terminal.paste"
@@ -93,14 +85,6 @@ export const SHORTCUTS: ShortcutSpec[] = [
     label: `Window ${n}`,
     chord: `Ctrl+Shift+Digit${n}`,
   })),
-
-  // Panes.
-  { action: "pane.next", scope: "navigation", group: "Panes", label: "Next pane", chord: "Ctrl+Alt+KeyO" },
-  { action: "pane.prev", scope: "navigation", group: "Panes", label: "Previous pane", chord: "Ctrl+Alt+KeyP" },
-  { action: "pane.zoom", scope: "navigation", group: "Panes", label: "Zoom the pane", chord: "Ctrl+Alt+KeyZ" },
-  { action: "pane.splitRight", scope: "navigation", group: "Panes", label: "Split side by side", chord: "Ctrl+Alt+Backslash" },
-  { action: "pane.splitDown", scope: "navigation", group: "Panes", label: "Split top and bottom", chord: "Ctrl+Alt+Minus" },
-  { action: "pane.close", scope: "navigation", group: "Panes", label: "Close the pane", chord: "Ctrl+Alt+KeyX" },
 
   // The workspace panels. Both are one chord that shows and hides, rather than
   // a pair: a panel you cannot see is the only reason to press either, so two
@@ -217,10 +201,10 @@ export function chordOf(event: KeyboardEvent): string | null {
 /**
  * Whether a chord is safe to hand to the page at all.
  *
- * An unmodified key is what the shell is for: binding `k` to "next pane" would
+ * An unmodified key is what the shell is for: binding `k` to "next window" would
  * make the terminal unusable, and the operator would have no way back because
  * the settings dialog needs typing too. Ctrl alone is nearly as bad — Ctrl+C,
- * Ctrl+D, Ctrl+Z and Ctrl+L all belong to the process in the pane.
+ * Ctrl+D, Ctrl+Z and Ctrl+L all belong to the process in the terminal.
  */
 export function chordIsUsable(chord: string): { ok: boolean; why?: string } {
   const parts = chord.split("+")
@@ -239,7 +223,6 @@ export function chordIsUsable(chord: string): { ok: boolean; why?: string } {
   }
   return { ok: true }
 }
-
 const KEY_LABELS: Record<string, string> = {
   ArrowUp: "↑",
   ArrowDown: "↓",

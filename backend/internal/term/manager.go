@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"slices"
 	"sort"
@@ -96,6 +97,10 @@ type CreateOptions struct {
 	// inherits the folder's colour, which is what makes a group readable as a
 	// group rather than as four rows that happen to be adjacent.
 	Colour string
+	// WorkspaceID is empty for the first window. Additional direct-PTY
+	// windows reuse the first window's workspace id.
+	WorkspaceID string
+	WindowName  string
 }
 
 // Create spawns a session. When tmux is present and persistence is requested
@@ -135,7 +140,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	sess := &Session{
 		ID:          id,
-		Title:       m.defaultTitle(ctx, opts.Title),
+		WorkspaceID: opts.WorkspaceID,
+		WindowName:  sanitiseField(opts.WindowName),
+		Title:       m.defaultTitle(opts.Title),
 		Shell:       shell,
 		User:        m.account.Name,
 		CreatedAt:   time.Now().UTC(),
@@ -148,7 +155,12 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		folder:      sanitiseField(opts.Folder),
 		colour:      normaliseColour(opts.Colour),
 	}
-
+	if sess.WorkspaceID == "" {
+		sess.WorkspaceID = id
+	}
+	if sess.WindowName == "" {
+		sess.WindowName = "shell"
+	}
 	// Where the session should start. Empty unless the caller asked for one
 	// and it is a real directory on the host, so everything below can treat a
 	// non-empty value as settled.
@@ -207,6 +219,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	}
 
 	m.mu.Lock()
+	for _, existing := range m.sessions {
+		if existing.WorkspaceID == sess.WorkspaceID && existing.WindowOrder >= sess.WindowOrder {
+			sess.WindowOrder = existing.WindowOrder + 1
+		}
+	}
 	m.sessions[id] = sess
 	m.mu.Unlock()
 
@@ -299,7 +316,7 @@ func hostDir(dir string) string {
 // knows about — live sessions and the ones only tmux is holding — so closing
 // "shell 2" and opening another gives back "shell 2" rather than counting
 // forever upward.
-func (m *Manager) defaultTitle(ctx context.Context, t string) string {
+func (m *Manager) defaultTitle(t string) string {
 	if t != "" {
 		if len(t) > 64 {
 			return t[:64]
@@ -308,7 +325,7 @@ func (m *Manager) defaultTitle(ctx context.Context, t string) string {
 	}
 	const base = "shell"
 	taken := map[string]bool{}
-	for _, meta := range m.AllMeta(ctx) {
+	for _, meta := range m.WorkspaceMeta() {
 		taken[meta.Title] = true
 	}
 	if !taken[base] {
@@ -342,6 +359,137 @@ func (m *Manager) List() []*Session {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out
+}
+
+// Workspace returns every direct PTY window in one dashboard session. The
+// workspace id is stable even when its first window is later closed.
+func (m *Manager) Workspace(id string) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := []*Session{}
+	for _, sess := range m.sessions {
+		if sess.TmuxName == "" && (sess.WorkspaceID == id || sess.ID == id) {
+			out = append(out, sess)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].WindowOrder == out[j].WindowOrder {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].WindowOrder < out[j].WindowOrder
+	})
+	return out
+}
+
+// NewWindow opens another independent PTY inside a direct dashboard session.
+// It intentionally does not use tmux: windows are organisation in the UI,
+// while each child remains a native PTY with its own terminal negotiation.
+func (m *Manager) NewDirectWindow(ctx context.Context, workspaceID, name, cwd string, rows, cols uint16) (*Session, error) {
+	windows := m.Workspace(workspaceID)
+	if len(windows) == 0 {
+		return nil, ErrNotFound
+	}
+	root := windows[0]
+	meta := root.Meta()
+	if cwd == "" {
+		cwd = root.CWD()
+	}
+	created, err := m.Create(ctx, CreateOptions{
+		Title: meta.Title, Owner: root.Owner, Rows: rows, Cols: cols, CWD: cwd,
+		Folder: meta.Folder, WorkspaceID: root.WorkspaceID, WindowName: name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	created.setMeta(meta)
+	return created, nil
+}
+
+// RenameDirectWindow changes only the compact tab label; the session name in
+// the rail remains the name of the whole workspace.
+func (m *Manager) RenameDirectWindow(workspaceID, windowID, name string) error {
+	name = sanitiseField(name)
+	if name == "" {
+		return errors.New("a window name is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[windowID]
+	if !ok || sess.TmuxName != "" || sess.WorkspaceID != workspaceID {
+		return ErrNotFound
+	}
+	sess.WindowName = name
+	return nil
+}
+
+// MoveDirectWindow updates the explicit display order after a tab drag.
+func (m *Manager) MoveDirectWindow(workspaceID, windowID string, position int) error {
+	windows := m.Workspace(workspaceID)
+	if position < 0 {
+		position = 0
+	}
+	if position >= len(windows) {
+		position = len(windows) - 1
+	}
+	from := -1
+	for i, sess := range windows {
+		if sess.ID == windowID {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return ErrNotFound
+	}
+	moving := windows[from]
+	windows = append(windows[:from], windows[from+1:]...)
+	windows = append(windows, nil)
+	copy(windows[position+1:], windows[position:])
+	windows[position] = moving
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, sess := range windows {
+		sess.WindowOrder = i
+	}
+	return nil
+}
+
+// KillDirectWindow closes one PTY but refuses the last: the session close
+// route owns that clearer consequence and confirmation.
+func (m *Manager) KillDirectWindow(ctx context.Context, workspaceID, windowID string) error {
+	windows := m.Workspace(workspaceID)
+	if len(windows) == 0 {
+		return ErrNotFound
+	}
+	if len(windows) == 1 {
+		return errors.New("this is the only window; close the session instead")
+	}
+	found := false
+	for _, sess := range windows {
+		if sess.ID == windowID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return m.Kill(ctx, windowID)
+}
+
+// KillWorkspace ends every window in a direct session.
+func (m *Manager) KillWorkspace(ctx context.Context, id string) error {
+	windows := m.Workspace(id)
+	if len(windows) == 0 {
+		return ErrNotFound
+	}
+	var first error
+	for _, sess := range windows {
+		if err := m.Kill(ctx, sess.ID); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 func (m *Manager) remove(id string) {

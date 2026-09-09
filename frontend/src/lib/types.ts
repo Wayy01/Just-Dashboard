@@ -2535,23 +2535,13 @@ export type Exposure = {
   recommendation?: string
 }
 
-/**
- * One terminal as the operator thinks of it: a named, filed piece of work that
- * may or may not have a PTY attached right now.
- *
- * `id` is present only while the dashboard is holding one; without it the
- * session is still running on the host and selecting it costs a reattach.
- */
+/** One named, filed in-memory workspace containing one or more direct PTYs. */
 export type TerminalWorkspace = {
-  id?: string
-  tmuxName?: string
+  id: string
   title: string
   folder?: string
   favourite: boolean
-  /** One of TAG_COLOURS, or absent for "take the folder's". */
-  colour?: string
   live: boolean
-  persisted: boolean
   cwd?: string
   windows: number
   createdAt: string
@@ -2561,47 +2551,18 @@ export type TerminalWorkspace = {
   owner?: string
 }
 
-/**
- * A folder in the rail. Unlike a session it has no tmux object of its own, so
- * the server keeps the record and reconciles it with what the sessions say.
- */
+/** A server-backed folder reconciled with live workspace membership. */
 export type TerminalFolder = {
   name: string
-  colour?: string
   collapsed?: boolean
 }
 
-/** A tmux window inside a session — a tab within a tab. */
+/** An independent direct PTY shown as a window tab inside one session. */
 export type TerminalWindow = {
+  id: string
   index: number
   name: string
-  active: boolean
-  panes: number
   cwd?: string
-  colour?: string
-  /** Flags tmux keeps: something happened here while you were elsewhere. */
-  bell: boolean
-  activity: boolean
-  zoomed: boolean
-  /** Every keystroke goes to every pane at once. */
-  synchronized: boolean
-}
-
-/** One rectangle inside a window — tmux's third level. */
-export type TerminalPane = {
-  index: number
-  active: boolean
-  width: number
-  height: number
-  pid: number
-  command?: string
-  cwd?: string
-  dead: boolean
-  /** Where the rectangle sits in the window, in cells. Right/bottom inclusive. */
-  left: number
-  top: number
-  right: number
-  bottom: number
 }
 
 // --- detected and provisioned database servers ----------------------------

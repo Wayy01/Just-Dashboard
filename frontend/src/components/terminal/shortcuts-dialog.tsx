@@ -100,7 +100,7 @@ export function ShortcutsDialog({
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
             Click a chord to rebind it. Ctrl+Alt and Ctrl+Shift are the two families neither the
-            browser nor the shell inside the pane has a use for.
+            browser nor the shell has a use for.
           </DialogDescription>
         </DialogHeader>
 
@@ -167,24 +167,17 @@ export function ShortcutsDialog({
           ))}
         </div>
 
-        {/*
-          The conventions that are not rebindable, and are exactly the things
-          somebody discovers by finding them broken. tmux owns the wheel inside
-          a pane — that is what makes it scroll history instead of walking
-          through commands — but the pointer belongs to the page, so selecting
-          and copying work as they do in any other application.
-        */}
+        {/* The familiar terminal conventions that are not rebindable. */}
         <section className="rounded-md border border-hairline bg-surface-sunken p-2.5">
           <p className="eyebrow mb-1.5">Mouse &amp; clipboard</p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
             {[
               ["Wheel", "Scroll back through the session's history"],
-              ["Click", "Focus the pane under the pointer"],
-              ["Drag", "Select, and it stays selected"],
+              ["Click", "Focus the terminal"],
+              ["Drag", "Select text"],
               ["Ctrl + C", "Copy the selection — or interrupt, when nothing is selected"],
               ["Ctrl + V", "Paste"],
               ["Middle click", "Paste"],
-              ["Alt + drag", "Give the mouse to the program in the pane (vim, htop)"],
               ["Ctrl + wheel", "Text size"],
             ].map(([keys, what]) => (
               <div key={keys} className="contents">
