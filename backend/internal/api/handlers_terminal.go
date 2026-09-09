@@ -364,10 +364,19 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 	defer cancel()
 	go conn.Keepalive(ctx)
 
-	// xterm puts its measured geometry on the handshake. Apply it before
-	// subscribing or replaying a single byte, so a resumed full-screen app
-	// redraws for the browser's real grid rather than the provisional size the
-	// HTTP create/reattach request used before the emulator existed.
+	// Subscribe before touching the PTY size. TIOCSWINSZ may make tmux and the
+	// program redraw immediately; subscribing afterwards loses those bytes and
+	// leaves the new emulator with an already-stale picture.
+	snapshot, subID, out, err := sess.Subscribe()
+	if err != nil {
+		conn.SendError(err.Error())
+		return nil
+	}
+	defer sess.Unsubscribe(subID)
+
+	// xterm puts its measured geometry on the handshake. Apply it after the
+	// subscription exists but before sending any stored bytes, so every redraw
+	// caused by the resize is queued behind a coherent starting point.
 	if rows, cols, ok := terminalSizeQuery(r); ok {
 		if err := sess.SynchronizeSize(rows, cols); err != nil {
 			conn.SendError("could not resize terminal")
@@ -378,14 +387,13 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 		}
 	}
 
-	snapshot, subID, out, err := sess.Subscribe()
-	if err != nil {
-		conn.SendError(err.Error())
-		return nil
-	}
-	defer sess.Unsubscribe(subID)
-
-	if len(snapshot) > 0 {
+	// A bounded suffix of PTY output is not a terminal snapshot. It can begin
+	// inside a CSI sequence or after alternate-screen, cursor, origin or scroll
+	// region state was established. For tmux-backed sessions tmux itself is the
+	// source of truth, so never poison a fresh emulator with that suffix. Direct
+	// sessions have no independent screen model and retain the historical
+	// best-effort replay used for ordinary shell scrollback.
+	if sess.TmuxName == "" && len(snapshot) > 0 {
 		// Announced before it is sent, because the browser has to know that
 		// what follows is a replay rather than live output.
 		//
@@ -414,6 +422,15 @@ func (s *Server) handleTerminalAttach(w http.ResponseWriter, r *http.Request) er
 		}
 		cancel()
 	}()
+
+	// The output subscriber is live before this call. tmux now reconstructs the
+	// current viewport and terminal modes from its own screen model, and every
+	// byte of that repaint reaches the fresh xterm in order.
+	if sess.TmuxName != "" {
+		if err := s.modules.term.Redraw(ctx, sess.TmuxName); err != nil && s.Log != nil {
+			s.Log.Warn("could not redraw attached tmux client", "session", id, "error", err)
+		}
+	}
 
 	// A repaint owed to the session because its size changed, held back until
 	// the size stops changing. Dragging the panel divider produces a resize a

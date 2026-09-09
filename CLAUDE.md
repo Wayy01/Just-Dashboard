@@ -728,14 +728,13 @@ settings. `status off` (the page draws that information above the pane, and gree
 and xterm turns a wheel tick there into a cursor key, so scrolling up walked backwards through history.
 
 The create and reattach requests carry a provisional size because the emulator does not exist yet. The
-attach WebSocket carries xterm's measured `rows`/`cols` in its query and the handler applies that size to
-the PTY **before subscribing or replaying output**; every later `ResizeObserver` fit sends only a changed
-cell size. This ordering is what makes a resumed alternate-screen program receive SIGWINCH and repaint
-for the browser before the browser consumes its screen. Reconnect uses `SynchronizeSize` to reapply the
-size even when the cached fields agree; ordinary resize frames are de-duplicated. The recorded size changes
-only after `pty.Setsize` succeeds. Terminal capability variables replace inherited entries rather than being
-appended — duplicate names are legal in `execve`, and appending could leave an inherited `TERM=dumb` as
-the value libc returns.
+attach WebSocket carries xterm's measured `rows`/`cols` in its query. The handler subscribes first, then
+applies that size: `TIOCSWINSZ` may produce a tmux/application redraw synchronously, and subscribing after
+it would lose the first bytes of the only screen a new browser needs. Every later `ResizeObserver` fit
+sends only a changed cell size. Reconnect uses `SynchronizeSize` to reapply the size even when the cached
+fields agree; ordinary resize frames are de-duplicated. The recorded size changes only after `pty.Setsize`
+succeeds. Terminal capability variables replace inherited entries rather than being appended — duplicate
+names are legal in `execve`, and appending could leave an inherited `TERM=dumb` as the value libc returns.
 
 **What tmux does with a tick is not the browser's to guess.** tmux's root binding enters copy mode only
 when the program has *not* asked for the mouse; every full-screen TUI has, and there nothing scrolls — so
@@ -1406,7 +1405,11 @@ In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
   call — guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. That handler must call
   `preventDefault`: returning false from `attachCustomKeyEventHandler` stops xterm, not the browser, so
   without it the confirmation opened *and* the native paste went through.
-- **Replies are suppressed while the scrollback is replayed.** `CSI c` and friends are the shell asking the
+- **Raw PTY history is never replayed into a fresh tmux terminal.** A bounded byte suffix is not a screen
+  snapshot: it can begin halfway through CSI or after alternate-screen, cursor, origin and scroll-region
+  modes were established. The handler subscribes before resizing and asks tmux to repaint from tmux's
+  current screen model. Direct PTYs have no independent model and retain best-effort shell-history replay.
+- **Replies are suppressed while direct-PTY scrollback is replayed.** `CSI c` and friends are the shell asking the
   terminal a question, and xterm answers down the channel a keystroke uses — so replaying a buffer
   containing one typed `1;2c0;276` at whatever prompt exists now and left a column of "command not found".
   The server announces the replay with a `scrollback` frame before the binary snapshot (from the browser's

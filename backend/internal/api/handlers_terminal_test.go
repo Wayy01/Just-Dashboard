@@ -217,6 +217,18 @@ func (c apiCall) create(title, folder string) workspace {
 	return created
 }
 
+func (c apiCall) createWithPersistence(title string, persist bool) workspace {
+	c.t.Helper()
+	rec := c.ok(http.MethodPost, "/terminal/", map[string]any{
+		"title": title, "persist": persist, "rows": 24, "cols": 80,
+	}, "")
+	var created workspace
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		c.t.Fatal(err)
+	}
+	return created
+}
+
 func TestTerminalSizeQuery(t *testing.T) {
 	for _, tt := range []struct {
 		query      string
@@ -267,6 +279,101 @@ func TestTerminalAttachSynchronizesPTYBeforeRawIO(t *testing.T) {
 			continue
 		}
 		output = append(output, chunk...)
+	}
+}
+
+func TestTmuxAttachDoesNotReplayRawPTYHistory(t *testing.T) {
+	s, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.createWithPersistence("tmux-redraw", true)
+	sess, err := s.modules.term.Get(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure the old path has something it would have replayed. Subscribe is
+	// only used here to inspect the bounded buffer; the real attach below gets
+	// its own atomic subscription.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, id, _, err := sess.Subscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess.Unsubscribe(id)
+		if len(snapshot) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("tmux client produced no startup output")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") +
+		"/terminal/" + created.ID + "/attach?rows=31&cols=106"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		kind, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("waiting for tmux redraw: %v", err)
+		}
+		if kind == websocket.TextMessage && bytes.Contains(payload, []byte(`"type":"scrollback"`)) {
+			t.Fatal("tmux attach replayed historical PTY protocol instead of requesting a redraw")
+		}
+		if kind == websocket.BinaryMessage && len(payload) > 0 {
+			break
+		}
+	}
+}
+
+func TestDirectPTYAttachRetainsBestEffortShellHistory(t *testing.T) {
+	s, handler := terminalServer(t)
+	api := apiCall{t, handler}
+	created := api.createWithPersistence("direct-history", false)
+	sess, err := s.modules.term.Get(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, id, _, err := sess.Subscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess.Unsubscribe(id)
+		if len(snapshot) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("direct PTY produced no startup output")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") +
+		"/terminal/" + created.ID + "/attach?rows=31&cols=106"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	kind, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != websocket.TextMessage || !bytes.Contains(payload, []byte(`"type":"scrollback"`)) {
+		t.Fatalf("first direct PTY frame = kind %d %q, want scrollback marker", kind, payload)
 	}
 }
 

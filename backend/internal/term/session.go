@@ -35,8 +35,10 @@ var (
 )
 
 // Session is one PTY. Output is fanned out to every attached client and also
-// kept in a bounded scrollback buffer, so reopening a tab restores what was on
-// screen instead of an empty terminal.
+// kept in a bounded buffer. The buffer is useful as best-effort shell history
+// for a direct PTY, but it is deliberately never treated as a terminal
+// snapshot for tmux-backed sessions; tmux owns that screen state and redraws it
+// for a new browser subscriber.
 type Session struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -126,9 +128,10 @@ func (s *Session) setMeta(meta SessionMeta) {
 	s.folder, s.favourite, s.colour = meta.Folder, meta.Favourite, meta.Colour
 }
 
-// Subscribe returns the scrollback plus a channel of subsequent output. The
-// snapshot and the subscription are taken under the same lock so no output can
-// slip between them.
+// Subscribe returns the bounded output suffix plus a channel of subsequent
+// output. The suffix and subscription are taken under the same lock so no
+// output can slip between them. Callers must not mistake the suffix for an
+// emulator snapshot: it may begin halfway through terminal protocol state.
 func (s *Session) Subscribe() (snapshot []byte, id int64, ch chan []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,8 +236,8 @@ const maxPending = 4 << 20
 // their order are preserved exactly, and the queue goes back to holding one
 // item. Only a client that is not reading at all — more than maxPending
 // buffered — is dropped, and dropped *completely*, by closing its channel.
-// That ends its socket, and the browser reconnects and is sent the scrollback,
-// which is a correct screen rather than a plausible one.
+// That ends its socket. A tmux-backed reconnect is reconstructed by tmux; a
+// direct PTY receives its bounded best-effort output history.
 //
 // The original concern was right, and is still met: a stalled browser cannot
 // wedge the PTY for anybody else. Nothing here blocks the reader.
