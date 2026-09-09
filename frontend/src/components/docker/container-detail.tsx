@@ -105,7 +105,11 @@ function ContainerDetailPanel({
   useEffect(() => {
     if (!containerId) return
     const controller = new AbortController()
-    get<ContainerDetail>(`/docker/containers/${containerId}`, undefined, controller.signal)
+    get<ContainerDetail>(
+      `/docker/containers/${encodeURIComponent(containerId)}`,
+      undefined,
+      controller.signal,
+    )
       .then(setDetail)
       .catch((err) => !controller.signal.aborted && setError(err))
     return () => controller.abort()

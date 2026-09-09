@@ -30,6 +30,7 @@ import type {
   DeploymentRelease,
   DeploymentRunSnapshot,
   DeploymentSummary,
+  DeploymentRuntimeServices,
   DeployCommit,
   DeployProject,
   EnvVar,
@@ -53,6 +54,7 @@ import {
   NormalizedVariablesTab,
 } from "@/components/deploy/deployment-configuration"
 import { DeploymentAutomation } from "@/components/deploy/deployment-automation"
+import { DeploymentRuntime } from "@/components/deploy/deployment-runtime"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -61,6 +63,7 @@ type DeploymentDetail = {
   project: DeployProject
   running: boolean
   deployment: DeploymentSummary
+  runtime?: DeploymentRuntimeServices
 }
 
 type RunsResponse = { runs: DeploymentEngineRun[]; running: boolean }
@@ -285,7 +288,12 @@ export function DeploymentWorkspace() {
       />
 
       {activeTab === "overview" && (
-        <Overview deployment={deployment} project={project} runs={runs.data?.runs ?? []} />
+        <Overview
+          deployment={deployment}
+          project={project}
+          runs={runs.data?.runs ?? []}
+          runtime={detail.data.runtime}
+        />
       )}
       {activeTab === "deployments" && (
         <DeploymentsTab
@@ -354,10 +362,12 @@ function Overview({
   deployment,
   project,
   runs,
+  runtime,
 }: {
   deployment: DeploymentSummary
   project: DeployProject
   runs: DeploymentEngineRun[]
+  runtime?: DeploymentRuntimeServices
 }) {
   const lastRun = runs[0] ?? deployment.lastRun
   return (
@@ -402,34 +412,15 @@ function Overview({
           ) : (
             <EmptyState
               icon={Warning}
-              title="No current findings"
-              description="Runtime findings begin when managed health observation is enabled."
+              title="Diagnosis not available"
+              description="Cross-feature diagnosis has not been assessed. Open the runtime in Docker to review its findings."
               className="border-0 py-6"
             />
           )}
         </PanelBody>
       </Panel>
 
-      <SummaryPanel
-        icon={Box}
-        title="Runtime"
-        rows={[
-          ["Type", humanize(deployment.profile)],
-          [
-            "Health",
-            deployment.health === "unavailable" ? "Not observed" : humanize(deployment.health),
-          ],
-          [
-            "Internal port",
-            deployment.internalPort ? `:${deployment.internalPort}` : "Not published",
-          ],
-          [
-            "Expected downtime",
-            deployment.expectedDowntime ? "Yes — stop first" : "No claim recorded",
-          ],
-        ]}
-        href={`/deploy/${deployment.id}?tab=configuration`}
-      />
+      <DeploymentRuntime runtime={runtime} />
       <SummaryPanel
         icon={GitBranch}
         title="Source & automation"

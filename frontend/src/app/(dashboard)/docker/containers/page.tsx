@@ -28,6 +28,7 @@ import type {
 } from "@/lib/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
+import { useQuerySelection } from "@/hooks/use-query-selection"
 import { useAuth } from "@/hooks/use-auth"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Page, PageHeader, RowLink, SearchInput } from "@/components/page"
@@ -59,7 +60,7 @@ export default function ContainersPage() {
   const [containers, setContainers] = useState<Container[]>([])
   const [stats, setStats] = useState<Record<string, ContainerStats>>({})
   const [socketError, setSocketError] = useState<string>()
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useQuerySelection("container")
   const [creating, setCreating] = useState<ContainerSpec | true | null>(null)
   const [filter, setFilter] = useState("")
 
@@ -250,7 +251,7 @@ export default function ContainersPage() {
           if (finding.targetId) setSelected(finding.targetId)
       }
     },
-    [health, confirm, router],
+    [health, confirm, router, setSelected],
   )
 
   const visible = useMemo(() => {

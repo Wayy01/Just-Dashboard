@@ -30,6 +30,11 @@ Three deep links are worth preserving: `/files?path=`, `/git?repo=`, `/terminal?
 read once as an initial value rather than kept in sync — the URL is where the reader arrived, not where
 they are now — and the terminal one opens a session exactly once per mount, because a shell is a process.
 
+Docker's `/docker/containers?container=` and `/docker/stacks?stack=` select the owning detail panel.
+`useQuerySelection` keeps panel selection in browser history so reload and back/forward restore it;
+closing clears only that selection parameter. Deployment runtime rows use these handoffs, including
+when a container disappears between the observation and the click: the owner panel displays its error.
+
 **Security and proxy** (`components/security/`, `components/proxy/`) follow the same rule — teaching next
 to the control, not in a banner above it. `posture-panel.tsx` turns a finding's `fix` into a button and
 maps it to the request plus the confirmation it deserves. `rule-form.tsx` is why the catalogue lives on

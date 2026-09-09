@@ -7,6 +7,7 @@ import { notify } from "@/lib/toast"
 import { get, post } from "@/lib/api"
 import type { ComposeStack } from "@/lib/types"
 import { usePoll } from "@/hooks/use-poll"
+import { useQuerySelection } from "@/hooks/use-query-selection"
 import { useAuth } from "@/hooks/use-auth"
 import { EmptyState, ErrorState, LoadingPanel, Spinner } from "@/components/state"
 import { StatusDot } from "@/components/status-dot"
@@ -39,16 +40,13 @@ import {
  */
 export function StacksTab({ confirm }: { confirm: ConfirmFn }) {
   const { can } = useAuth()
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useQuerySelection("stack")
   const [creating, setCreating] = useState(false)
 
   const { data, error, loading, refresh } = usePoll(
     (signal) => get<ComposeStack[]>("/docker/stacks/", undefined, signal),
     15000,
   )
-
-  if (loading) return <LoadingPanel rows={3} />
-  if (error) return <ErrorState error={error} />
 
   const newStack = can("file.write") && (
     <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
@@ -59,7 +57,11 @@ export function StacksTab({ confirm }: { confirm: ConfirmFn }) {
 
   return (
     <div className="space-y-4">
-      {!data?.length ? (
+      {loading ? (
+        <LoadingPanel rows={3} />
+      ) : error ? (
+        <ErrorState error={error} />
+      ) : !data?.length ? (
         <EmptyState
           icon={Layers}
           title="No compose stacks found"
@@ -202,11 +204,7 @@ function StackCard({
             </Button>
             {can("service.control") && stack.running < stack.total && (
               <Button size="sm" variant="ghost" onClick={bringUp} disabled={busy}>
-                {busy ? (
-                  <Spinner className="size-3.5" />
-                ) : (
-                  <Play className="size-3.5" />
-                )}
+                {busy ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
                 Bring up
               </Button>
             )}

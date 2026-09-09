@@ -123,7 +123,9 @@ only renderer/executor/validation authority for their feature.
   time, without command text, environment values or arbitrary labels. `liveRelease` identifies the
   persisted live release, not a current health verdict. Failed or missing Docker is `unavailable` with
   a fixed recovery hint; a successful empty inventory is `available`. Missing health inspection evidence
-  remains `unavailable`. Runtime UI/deep links and the remaining C8 summaries are still in progress.
+  remains `unavailable`. The overview renders these services with live/other-release labels and links to
+  the exact Docker container or Compose stack panel. Empty managed inventory, unavailable evidence and
+  unassessed diagnosis have distinct wording; the remaining C8 summaries are still in progress.
 - Closed vocabularies, route capabilities/confirmations/audit actions, retention limits and error codes
   are contracts. Change one only with an ADR plus migration and exhaustive transition/route tests.
 

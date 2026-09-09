@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test"
+import type { DeploymentRuntimeServices } from "../../src/lib/types"
 
 const now = "2026-09-03T12:00:00Z"
 
@@ -115,7 +116,10 @@ const steps = [
   lastSeq: Number(ordinal),
 }))
 
-async function mockDashboard(page: Page, options: { normalized?: boolean } = {}) {
+async function mockDashboard(
+  page: Page,
+  options: { normalized?: boolean; runtime?: DeploymentRuntimeServices } = {},
+) {
   let runState = run.state
   let mutationCount = 0
   const actions: string[] = []
@@ -213,6 +217,7 @@ async function mockDashboard(page: Page, options: { normalized?: boolean } = {})
       body = {
         project,
         running: false,
+        runtime: options.runtime,
         deployment: {
           ...deployment,
           buildMethod: options.normalized ? "recipe" : "legacy_compose",
@@ -271,18 +276,41 @@ async function mockDashboard(page: Page, options: { normalized?: boolean } = {})
       body = automationTriggers
     } else if (path === "/deploy/7/environments/12/triggers" && method === "POST") {
       const input = request.postDataJSON() as Record<string, unknown>
-      const trigger = { id: 31, projectId: 7, environmentId: 12, hookId: "provider-hook", lastStatus: "", ...input }
+      const trigger = {
+        id: 31,
+        projectId: 7,
+        environmentId: 12,
+        hookId: "provider-hook",
+        lastStatus: "",
+        ...input,
+      }
       automationTriggers = [trigger]
       body = { trigger, secret: "one-time-provider-secret" }
     } else if (path === "/deploy/7/environments/12/schedules" && method === "GET") {
       body = automationSchedules
     } else if (path === "/deploy/7/environments/12/schedules" && method === "POST") {
       const input = request.postDataJSON() as Record<string, unknown>
-      const schedule = { id: 41, projectId: 7, environmentId: 12, nextRunAt: "2026-09-08T03:00:00Z", ...input }
+      const schedule = {
+        id: 41,
+        projectId: 7,
+        environmentId: 12,
+        nextRunAt: "2026-09-08T03:00:00Z",
+        ...input,
+      }
       automationSchedules = [schedule]
       body = schedule
     } else if (path === "/deploy/7/previews") {
-      body = [{ id: 51, triggerId: 31, providerRef: "42", environmentId: 52, environmentSlug: "pr-42", state: "open", updatedAt: now }]
+      body = [
+        {
+          id: 51,
+          triggerId: 31,
+          providerRef: "42",
+          environmentId: 52,
+          environmentSlug: "pr-42",
+          state: "open",
+          updatedAt: now,
+        },
+      ]
     } else if (path === "/deploy/notifications" && method === "GET") {
       body = notificationChannels
     } else if (path === "/deploy/notifications" && method === "POST") {
@@ -434,6 +462,122 @@ async function mockDashboard(page: Page, options: { normalized?: boolean } = {})
     },
   }
 }
+
+test("runtime services hand off to exact Docker panels and survive history and reload", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  const runtime: DeploymentRuntimeServices = {
+    status: "available",
+    observedAt: now,
+    services: [
+      {
+        containerId: "abc123",
+        name: "web-live",
+        releaseId: 20,
+        liveRelease: true,
+        state: "running",
+        health: "healthy",
+        imageId: "sha256:abc",
+        stack: "jd-e12",
+        service: "web",
+      },
+      {
+        containerId: "def456",
+        name: "web-candidate",
+        releaseId: 21,
+        liveRelease: false,
+        state: "exited",
+        health: "unavailable",
+        imageId: "sha256:def",
+      },
+    ],
+  }
+  const dashboard = await mockDashboard(page, { normalized: true, runtime })
+  await page.route("**/api/v1/docker/**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === "/api/v1/docker/ping") return json(route, { available: true })
+    if (path === "/api/v1/docker/stacks/") return json(route, [])
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "not_found", message: `Runtime no longer exists: ${path}` },
+      }),
+    })
+  })
+  for (const width of [375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto("/deploy/7")
+    const list = page.getByRole("list", { name: "Runtime services" })
+    await expect(list.getByText("Live release", { exact: true })).toBeVisible()
+    await expect(list.getByText("Other release", { exact: true })).toBeVisible()
+    await expect(list.getByText("Health: Not observed")).toBeVisible()
+    await expect(list.getByRole("link", { name: "web-live", exact: true })).toHaveAttribute(
+      "href",
+      "/docker/containers?container=abc123",
+    )
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true)
+    if (width === 375 || width === 1440) {
+      await list.screenshot({ path: testInfo.outputPath(`runtime-${width}-dark.png`) })
+      await page.getByRole("button", { name: "Switch to light" }).click()
+      await list.screenshot({ path: testInfo.outputPath(`runtime-${width}-light.png`) })
+      await page.getByRole("button", { name: "Switch to dark" }).click()
+    }
+  }
+  const containerLink = page.getByRole("link", { name: "web-live", exact: true })
+  await containerLink.focus()
+  await expect(containerLink).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(page).toHaveURL(/\/docker\/containers\?container=abc123$/)
+  await expect(page.getByRole("dialog")).toContainText(
+    "Runtime no longer exists: /api/v1/docker/containers/abc123",
+  )
+  await page.reload()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page).toHaveURL(/\/docker\/containers$/)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await page.goBack()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.goForward()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+
+  await page.goto("/deploy/7")
+  await page.getByRole("link", { name: "Open stack jd-e12 · web" }).click()
+  await expect(page).toHaveURL(/\/docker\/stacks\?stack=jd-e12$/)
+  await expect(page.getByRole("dialog")).toContainText(
+    "Runtime no longer exists: /api/v1/docker/stacks/jd-e12",
+  )
+  await page.reload()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page).toHaveURL(/\/docker\/stacks$/)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  expect(dashboard.mutationCount()).toBe(0)
+})
+
+test("runtime evidence distinguishes unavailable Docker from an empty managed inventory", async ({
+  page,
+}) => {
+  const runtime: DeploymentRuntimeServices = {
+    status: "unavailable",
+    observedAt: now,
+    reason: "Docker cannot be reached. Open Docker to check the connection.",
+    services: [],
+  }
+  await mockDashboard(page, { normalized: true, runtime })
+  await page.goto("/deploy/7")
+  await expect(page.getByText("Runtime unavailable", { exact: true })).toBeVisible()
+  await expect(page.getByText(runtime.reason!)).toBeVisible()
+  await expect(page.getByText("No managed runtime services", { exact: true })).toHaveCount(0)
+  runtime.status = "available"
+  await page.reload()
+  await expect(page.getByText("No managed runtime services", { exact: true })).toBeVisible()
+  await expect(page.getByText("Runtime unavailable", { exact: true })).toHaveCount(0)
+})
 
 const draft = {
   id: "browser-draft",
@@ -822,7 +966,9 @@ test("normalized configuration joins keep secrets masked and saved changes pendi
   await expect(page.getByRole("heading", { name: "Runtime configuration" })).toBeVisible()
 })
 
-test("automation workspace creates provider, schedule, preview and signed notification policy", async ({ page }) => {
+test("automation workspace creates provider, schedule, preview and signed notification policy", async ({
+  page,
+}) => {
   await mockDashboard(page, { normalized: true })
   await page.setViewportSize({ width: 375, height: 900 })
   await page.goto("/deploy/7?tab=automations")
@@ -846,7 +992,9 @@ test("automation workspace creates provider, schedule, preview and signed notifi
   await page.getByLabel("HTTPS endpoint").fill("https://hooks.example.test/deploy")
   await page.getByRole("button", { name: "Create channel" }).click()
   await expect(page.getByText("one-time-notification-secret", { exact: true })).toBeVisible()
-  await expect(page.getByRole("paragraph").filter({ hasText: "https://hooks.example.test/deploy" })).toBeVisible()
+  await expect(
+    page.getByRole("paragraph").filter({ hasText: "https://hooks.example.test/deploy" }),
+  ).toBeVisible()
   await expect(page.locator("main")).not.toHaveCSS("overflow-x", "scroll")
 })
 

@@ -1752,6 +1752,26 @@ export type DeploymentRunEvent = {
   data: Record<string, unknown>
 }
 
+export type DeploymentRuntimeService = {
+  containerId: string
+  name: string
+  releaseId: number
+  liveRelease: boolean
+  state: string
+  health: string
+  imageId: string
+  stack?: string
+  service?: string
+  startedAt?: string
+}
+
+export type DeploymentRuntimeServices = {
+  status: "available" | "unavailable"
+  reason?: string
+  observedAt: string
+  services: DeploymentRuntimeService[]
+}
+
 export type DeploymentSummary = {
   id: number
   name: string

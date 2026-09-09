@@ -125,7 +125,7 @@ Legend: `[ ]` not started, `[~]` in progress (use only on the active branch), `[
 
 ## C8 — Operations and diagnosis
 
-- [~] Runtime Docker service/stack summaries and deep links implemented. Evidence: backend `runtime` detail projection in `internal/deploy/operations.go`; `TestRuntimeServicesScopeAvailabilityAndSecretFreeProjection`; `TestFilteredContainerInventoryInspectsOnlySelectedRuntime`; `TestDeploymentReadModelsExposeFleetDetailAndEngineRuns`. UI and deep links remain open.
+- [x] Runtime Docker service/stack summaries and deep links implemented. Evidence: backend `runtime` projection and `components/deploy/deployment-runtime.tsx`; `TestRuntimeServicesScopeAvailabilityAndSecretFreeProjection`; `TestFilteredContainerInventoryInspectsOnlySelectedRuntime`; `TestDeploymentReadModelsExposeFleetDetailAndEngineRuns`; browser journeys `runtime services hand off to exact Docker panels and survive history and reload` and `runtime evidence distinguishes unavailable Docker from an empty managed inventory` cover 375/768/1024/1440, light/dark, keyboard, reload/history and disappeared resources.
 - [ ] Runtime Logs and activation-window links implemented. Evidence: —
 - [ ] Metrics/release comparison implemented. Evidence: —
 - [ ] Domain/TLS/storage/backup summaries implemented. Evidence: —
