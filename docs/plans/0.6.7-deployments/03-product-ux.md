@@ -274,7 +274,7 @@ Old release a09fe11 continues receiving traffic until this passes.
 
 ## Visual direction
 
-The project design system in `CLAUDE.md`, `Page`, `Panel`, and `globals.css` remains authoritative. The
+The project design system in `docs/internal/frontend/shell-design.md`, `Page`, `Panel`, and `globals.css` remains authoritative. The
 deployment page uses the existing Geist typography, palette, raised control language, status vocabulary,
 hairlines, and `Panel` chrome.
 

@@ -1,6 +1,6 @@
 # 0.6.7 Deployments: product and delivery plan
 
-- Status: implementation in progress; C0 contracts/migration, C1 persistent engine, and C2 planning gates complete
+- Status: implementation in progress; C0 through C7 are complete, with C8 operations and diagnosis next
 - Branch: `patch/0.6.7`
 - Research snapshot: 2026-09-02
 - Scope: the deployment system for Just Dashboard's one managed Linux server

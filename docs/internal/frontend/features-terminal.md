@@ -1,0 +1,162 @@
+# Feature panels and terminal workspace
+
+## Feature panels
+
+**Docker** (`components/docker/`) is where the product's opinion about newcomers lives.
+
+- `explain.tsx` is the teaching layer — `Hint`, `Term` (a dotted underline, definition one hover away),
+  `Field`, `GLOSSARY` — written for somebody who has never run a container and phrased around the decision
+  rather than the mechanism. The rule it enforces is that **explanation is quiet**: a form that shouts
+  every caveat is as unusable as one that explains nothing.
+- `create-container.tsx`'s three entry points matter more than the form. **Paste a command** covers the
+  common case (`lib/docker-run.ts` parses leniently and returns an honest list of what it could not
+  represent). **Start from something common** is `lib/docker-templates.ts` — a dozen images almost every
+  server runs, every one bound to 127.0.0.1; a set of starting points, not an app store, which is what
+  goes stale and becomes the maintenance burden in Yacht and CasaOS. **From scratch** is for people who
+  know what they want. The Command tab shows the server-rendered `docker run` and compose, live.
+- `run-console.tsx` deliberately **does not** let `useSocket` reconnect: reconnecting re-issues the GET,
+  and re-issuing the GET runs the command again — a redeploy fired twice because a VPN blinked is not a
+  re-render. A dropped socket ends the run and says so.
+- `diagnosis-panel.tsx` renders findings collapsed by default (a list, not a wall of argument) with the
+  remedy as a button where the server named one; `ContainerFindings` filters the page's single pass.
+- `stack-detail.tsx` is a stack as the application it is: clickable ports, the compose file editable in
+  place (validated before saving — and saving is *not* deploying, which the UI says), one merged log feed
+  tagged by service, links to Files, git and a shell in the stack's directory. `container-detail.tsx` adds
+  the reachability join (published port + the proxy site pointing at it turns "running on 3000" into a
+  URL), writable-layer view, editable limits, raw inspect, Update/Duplicate/Rename. `build-dialog.tsx` is
+  where the git panel and Docker stop being two products: a repository we already pull is a build context.
+
+Three deep links are worth preserving: `/files?path=`, `/git?repo=`, `/terminal?cwd=`. The first two are
+read once as an initial value rather than kept in sync — the URL is where the reader arrived, not where
+they are now — and the terminal one opens a session exactly once per mount, because a shell is a process.
+
+**Security and proxy** (`components/security/`, `components/proxy/`) follow the same rule — teaching next
+to the control, not in a banner above it. `posture-panel.tsx` turns a finding's `fix` into a button and
+maps it to the request plus the confirmation it deserves. `rule-form.tsx` is why the catalogue lives on
+the server: picking "Redis" fills in 6379 *and* raises the warning at the moment of choosing, not in a
+report afterwards; the `ufw` line it would run is in the footer. `ssh-panel.tsx` stages every change and
+applies them together, and its dialog says to keep the session open and check a second terminal — the one
+piece of advice no error message can give afterwards. `site-form.tsx` shows the server-rendered nginx live
+beside the form (same renderer that writes the file, so the form is not a black box), with `DNSCheck`
+under the domain field because "the name does not point here yet" causes most certificate failures and
+certbot reports it as "challenge failed". `tls-report.tsx` says out loud what `unknown` means for a
+protocol row. `ConnectionsPanel` and `OffendersPanel` both offer a one-click firewall deny — the join that
+makes the pages one product, since the address the ban log keeps naming deserves a rule outliving the ban.
+
+**Packages.** `install-panel.tsx` updates as you type, which is not decoration: the reason people open a
+terminal instead of a package page is that they do not know the name (`postgresql-client`, not `psql`;
+`build-essential`, not `gcc`), and a form where you type a guess and press a button to find out you were
+wrong is a form you use once. Install is one press on the row — there was a tray, and it cost a click and
+a concept on every single-package install while protecting against an interruption a job survives anyway.
+The command each button runs is its `title`. `package-sheet.tsx`'s second tab is the whole point of the
+feature; the installed table caps at 400 rendered rows with the count said plainly underneath.
+
+## The terminal panel
+
+`components/terminal/` is the session rail and window strip; `components/xterm-pane.tsx` is the emulator. The
+split matters — the pane is reused by the compose runner and knows nothing about sessions.
+
+- `session-rail.tsx` uses the same framed card, tinted header and hairlines as the Files/Git panel. Folder
+  headers are plain disclosure rows: chevron and explanatory name only, with no folder icon, count,
+  nested container or empty invitation. Sessions use neutral design-system states rather than assigned
+  colours. Pinning still sorts a session to the top of its folder.
+- `window-strip.tsx` places compact, horizontally scrolling direct-PTY tabs between exactly two workspace
+  toggles: sessions on the left and Files/Git on the right. The strip is embedded in the emulator's own
+  title bar; there is no separate workspace bar or working-directory/shell title.
+  Window menus retain rename and close only; there are no split, layout or colour actions.
+  Every tab has a visible close button. Closing the last window closes its session through the session
+  endpoint; both paths explain the consequence in a confirmation.
+  The emulator toolbar keeps search, snippets, appearance and fullscreen visible, with copy, export,
+  folder navigation, shortcuts and clear in Terminal actions. Text size lives in Appearance.
+  Input stays in the shell: there is no separate composer or Workspace/Focus mode. Bundled Bash and
+  Zsh startup files install a compact directory/chevron prompt and native Tab completion in new windows.
+  Account profiles and interactive configuration still load; account dotfiles are never edited.
+  `term.SetupShell` atomically installs readable scripts in the process-owned shared terminal root's
+  `.shell` directory, rejecting symlink or foreign-owned directories. A constant login bootstrap passes
+  shell and startup paths as positional arguments; unsupported shells retain their ordinary startup.
+  Existing running shells are not modified.
+  The terminal host is absolutely inset into its output region so its own rows cannot grow its parent.
+- `ResizeHandle` is an invisible eight-pixel hit target over each panel's own border. The border is the
+  visual affordance, so the layout draws no extra divider. Arrow keys and double-click reset remain the
+  non-drag alternatives.
+- `lib/terminal-settings.ts` keeps scrollback and behaviour in localStorage — on the screen, not the
+  account, for the reason the theme is. Font metrics are deliberately fixed: user-selectable line height,
+  spacing and fonts made the emulator grid cease to be a stable terminal grid.
+- `lib/terminal-keymap.ts` is every shortcut, all rebindable. A chord must get past the browser, the page
+  and the shell, and no default suits everybody. Ctrl+Alt is the default family (neither browser nor shell
+  wants it); Ctrl+Shift is the emulator's own. Matching is on `event.code`, the **physical** key, so a binding recorded on QWERTY
+  survives a Romanian layout. Actions carry a **scope** — `navigation` is the page's (it alone knows the
+  sessions), `terminal` is the pane's (the compose runner needs copy/paste/search with no session at all)
+  — and that split is what stops one keydown being handled twice. `shortcuts-dialog.tsx` is both cheatsheet
+  and editor, because a read-only list is opened once and a hidden settings page never.
+
+In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
+
+- **New session always opens a direct PTY.** A session is still nameable, pinnable and fileable because
+  those properties belong to its in-memory workspace. New window creates a sibling direct PTY and the
+  browser switches windows by connecting the emulator to that window's opaque id. There is no persistent
+  option, detach/reattach path or pane model in the terminal API.
+- **`clipboardKey`**: Ctrl+C copies **only when something is selected** and clears the selection as it
+  goes, so the interrupt is never more than one keypress away. Ctrl+V returns false *without*
+  `preventDefault`, so xterm leaves the key alone instead of sending ^V and the browser's own paste runs —
+  arriving through `onData`, where the multi-line confirmation still sees it. Reading the clipboard there
+  instead needs a permission Firefox does not grant at all.
+- **Clipboard images never enter the PTY.** A capture-phase paste listener on xterm's actual host leaves
+  text-only events completely alone, but sends PNG/JPEG/WebP files to
+  `POST /terminal/{id}/clipboard`. The handler binds the upload to the authenticated dashboard owner of
+  the live session, verifies the declared MIME against the bytes, and chooses the destination under
+  `/tmp/just-dashboard/<session-id>` itself. Only the returned absolute path goes through the existing
+  terminal socket, with no Enter. The backend container bind-mounts that temporary root at the same path
+  on the host; session directories are removed when their PTY ends and old files expire after seven days.
+- **Multi-line paste is confirmed, and the guard lives in `onData`.** A pasted block runs every line but
+  the last immediately, and Ctrl+V, the context menu and the X11 middle click all arrive as one `onData`
+  call — guarding only the Ctrl+Shift+V handler guarded the one route nobody uses. That handler must call
+  `preventDefault`: returning false from `attachCustomKeyEventHandler` stops xterm, not the browser, so
+  without it the confirmation opened *and* the native paste went through.
+- **Direct PTY reconnect uses best-effort shell-history replay.** A direct PTY has no independent screen
+  model, so the handler subscribes before resizing and then sends its bounded output suffix. The replay
+  protocol below prevents terminal capability replies from being typed into the current prompt.
+- **Replies are suppressed while direct-PTY scrollback is replayed.** `CSI c` and friends are the shell asking the
+  terminal a question, and xterm answers down the channel a keystroke uses — so replaying a buffer
+  containing one typed `1;2c0;276` at whatever prompt exists now and left a column of "command not found".
+  The server announces the replay with a `scrollback` frame before the binary snapshot (from the browser's
+  side the bytes are identical either way) and the client drops its own output until xterm's write callback
+  says the replay is parsed.
+- `allowProposedApi` is on because the search addon's match count and highlight-all use xterm's decoration
+  API, which is not frozen; without it `findNext` throws and the counter reads "none" over a scrollback
+  full of matches.
+- **The xterm-6-matched WebGL renderer is the default.** xterm 6's DOM renderer explicitly omits custom
+  glyph support, so enabling `customGlyphs` there still leaves box-drawing and block-element characters
+  to browser font fallback; that produced disconnected Codex borders and gaps in Claude's block artwork.
+  `@xterm/addon-webgl` 0.19 matches xterm 6.0 and paints those structural glyphs to the full cell. Every
+  alternate-buffer change schedules a complete refresh to prevent the stale/blank rows seen in the old
+  WebGL integration, and context loss disposes WebGL and refreshes the DOM fallback. Setting
+  `jd.terminal.renderer=dom` in local storage is the diagnostic A/B override. The Canvas addon remains
+  absent because its stable release targets xterm 5 internals. Font metrics remain fixed at unit line
+  height and zero letter spacing; `@xterm/addon-unicode11` keeps cursor arithmetic aligned with the
+  Unicode-width rules used by modern TUIs.
+- **PTY output and input are binary WebSocket frames.** JSON text frames are controls only. Raw PTY chunks
+  go straight to `terminal.write(Uint8Array)` (whose streaming decoder preserves a UTF-8 character split
+  across chunks); keyboard and paste strings are encoded once with `TextEncoder`. The backend neither
+  decodes nor rewrites terminal bytes.
+- **The navigation listener runs in the capture phase and must not skip the terminal.** Bubbling lands after
+  xterm has forwarded the keystroke, so Ctrl+Alt+→ would switch the window *and* type an escape sequence.
+  The usual "ignore keys while a text field has focus" guard needs an exception for `.xterm`, since xterm
+  receives keystrokes through a hidden `.xterm-helper-textarea` — the plain form disables every shortcut
+  exactly when the terminal has focus.
+- **Shortcuts fire only where the shell has the keyboard.** These chords move sessions and close windows;
+  anywhere-in-the-workspace was too wide and could close a window while the operator clicked around the
+  file tree. The target must be inside `.xterm`, or nothing focused at all (`document.body` on a
+  fresh load, which is the difference between "new session" having a shortcut and not). Any open dialog
+  vetoes the lot, because focus sits on the body while one closes. The other half: **every switch hands the
+  keyboard back** — window tabs are buttons and keep the focus they were given, so `XtermPane` takes a
+  `focusRef` and the page calls it as the active socket changes.
+
+**Shell-here links are consumed once.** The page removes `cwd` and `folder` from the current history
+entry before creating the session, preserving other query parameters and the hash. A refresh cannot
+replay a launch or recreate a closed session; a later explicit Shell here link can still launch anew.
+
+**The page has no separate header or workspace bar.** A terminal is the one screen whose content *is* the
+viewport. "New session" sits in the rail beside "New folder"; the emulator title bar contains the two
+panel toggles and window tabs, with no shell, user or working-directory title. The one banner that stays
+is a missing login account — a broken feature rather than information.

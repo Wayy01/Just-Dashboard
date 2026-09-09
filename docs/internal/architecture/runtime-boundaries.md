@@ -1,0 +1,81 @@
+# Runtime composition and system boundaries
+
+## Server, modules, degradation
+
+`api.Server` holds config, logger, store, auth service, sealer, audit logger, authenticator, WS
+upgrader, the three limiters, and in agent mode the `agent.Identity`. `api/modules.go` (`moduleSet`)
+holds the feature backends: `sys`, `metrics`, `docker`, `dockerStats`, `dockerEvents`, `pm2`, `systemd`,
+`table`, `cron`, `logs`, `term`, `files`, `git`, `github`, `updates`, `selfUpdate`, `proxy`, `dbs`,
+`linuxUsers`, `netsec`, `jobs`, three backup pieces, and ten deployment components covering legacy
+execution, planning, sources, preflight, artifacts, orchestration, automation, and scheduling.
+
+**Every module is optional.** A host with no Docker socket, no systemd or no fail2ban serves everything
+else; affected routes return a precise "unavailable on this host" code the frontend renders as
+information (`ErrorState` in `components/state.tsx`), not an error.
+
+`Server.Start(ctx)` is separate from `New` so failing to schedule background work is reported by `main`
+rather than swallowed in construction. It starts the metrics recorder (here, not lazily — its whole
+purpose is to have been running while nobody was looking), the Docker event log, the self-update check,
+the backup scheduler, and `selfupdate.Installer.Reconcile`. `Shutdown` releases what outlives a request:
+sampler, scheduler, live PTYs, database pools, Docker client.
+
+`helpers.detachedContext` is the deliberate opposite: work that must outlive its request (a backup
+transfer, a `compose up --build`) descends from `context.Background()` and is not cancelled by shutdown
+— a deploy killed halfway is worse than one finishing into a dashboard that is gone. Its timeout is the
+only bound.
+
+## Reaching the host, and containing paths
+
+`internal/hostexec`:
+
+- `Command` runs a binary locally when present, else via `nsenter --target 1`. `CommandOnHost` *always*
+  crosses (for tools like `who` that exist in the image but would report on the container).
+  `CommandInDir` and `CommandOnHostInDir` pass `--wd` to nsenter because crossing namespaces silently
+  discards `cmd.Dir`.
+- `AsOwner(cmd)` drops to the UID/GID owning `cmd.Dir`, so a `git pull` does not leave root-owned files.
+- Argv is passed through unchanged and **never** through a shell. Keep it that way ([invariant 6](../security/invariants.md#invariants-that-must-not-regress)).
+
+`files.Resolve` is the single choke point for client-supplied paths: it checks the cleaned path *and*
+the symlink-resolved path (the parent, for files not yet existing) against `JD_FILE_ROOTS`. Every new
+filesystem entry point goes through it, including the ones that do not look like file operations —
+backup restore destinations, database dump paths, bind-mount sources, build contexts. `ResolveEntry`
+applies the same containment but returns the entry rather than its target: use it for delete, move, stat
+and chmod, which act *on* a symlink.
+
+`internal/safepath` holds the archive-unpacking rules (absolute symlink targets refused, nothing written
+through a symlink already in the destination, the final component unlinked rather than followed). Both
+`files/archive.go` and `backups/restore.go` use it; they used to carry a copy each of the same lexical
+prefix test, with the same hole. File-manager extraction additionally stops after 100,000 entries or
+8 GiB of bytes actually written, reserves at least 1 GiB of free space, serialises extraction requests,
+removes the current partial file on failure, and obeys a ten-minute request deadline — compressed
+metadata is never trusted as the quota. `internal/sysinfo` reads the host through gopsutil rather than parsing
+`/proc`, so the same path works across kernels and inside a container with `/proc` bind-mounted.
+
+## Auth, secrets, state
+
+`internal/auth` owns users, sessions, TOTP, recovery codes, API tokens. Cookie `vpsd_session` (HttpOnly,
+SameSite=Strict, Secure unless `JD_DEV`). A password alone yields a *partial* session accepted only by
+the 2FA routes (`AuthenticatePartial`); everything else answers `totp_required` /
+`totp_enrollment_required`. That is an invariant, not a deployment option: `JD_REQUIRE_2FA` is no longer
+read, and the `require2fa` status field remains `true` only for compatibility with existing frontends.
+API tokens may narrow their creator's role, never widen it, and are demoted with the account.
+`auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP seeds, connection
+strings, deploy env, backup credentials.
+
+State is SQLite in `JD_DATA_DIR`, schema as one `CREATE TABLE IF NOT EXISTS` block in
+`internal/store/store.go` with no migration tool ([invariant 8](../security/invariants.md#invariants-that-must-not-regress)). The file is still named `vpsd.db`
+through the rename: moving it would strand every existing install's accounts, audit log and secrets.
+Tables are grouped by owner: authentication and audit (`users`, `recovery_codes`, `sessions`,
+`api_tokens`, `audit_log`); databases (`db_connections`, `db_saved_queries`, `db_query_history`); backups
+(`backup_jobs`, `backup_runs`); legacy deployment compatibility (`deploy_projects`, `deploy_env`,
+`deploy_runs`); normalized deployment environments, credentials, sources, plans, releases, artifacts,
+runtimes, steps, logs, dependencies, checks, triggers, delivery records, variable and plan snapshots,
+blueprint installs, port and queue leases, removals, drafts, schedules, notifications, and previews; proxy
+watching (`watched_domains`); the general `settings` key/value table; and mount, container, and host metric
+samples. The schema block in `store.go` is the authoritative column-level reference. `migrateLegacyDeployments` maps each populated
+0.6.6 project transactionally and idempotently while preserving ids, ciphertext, hooks, logs, and the old
+columns; `internal/store/testdata/0.6.6.sql` is the executable upgrade contract.
+
+`internal/audit` writes `audit_log` **and** mirrors every entry to the process log, so a trail survives
+the database being tampered with. An `Entry` records who (user, role, `Actor` = session or token), from
+where, what (action, target, method, path), and how it went.

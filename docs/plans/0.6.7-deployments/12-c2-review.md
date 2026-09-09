@@ -77,7 +77,7 @@ go vet ./...
 go test ./... -count=1
 ```
 
-The final full backend command passed all packages. `CLAUDE.md` records the mirror/worktree,
+The final full backend command passed all packages. `docs/internal/deployments/implementation.md` records the mirror/worktree,
 planning-Compose environment, draft, and read-only preflight authorities.
 
 ## Explicit later-checkpoint work

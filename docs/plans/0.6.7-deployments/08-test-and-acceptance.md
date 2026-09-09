@@ -223,7 +223,7 @@ bun run test:browser
 ```
 
 The implementation adds named commands/scripts for migration fixture, adapter integration, live Docker,
-browser and blueprint validation suites. C0 must place those commands in `CLAUDE.md` and CONTRIBUTING so a
+browser and blueprint validation suites. C0 must place those commands in `docs/internal/overview.md` and CONTRIBUTING so a
 green release cannot mean the new suites were never run.
 
 The release evidence packet records command, commit, environment/tool versions, pass/fail/skip counts,

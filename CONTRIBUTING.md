@@ -63,7 +63,7 @@ carries no licensing question at all.
   require a typed confirmation phrase enforced server-side. A change that
   weakens any of those needs to say so explicitly in the PR description.
 - Before putting a typed confirmation on a new route, read invariant 3 in
-  CLAUDE.md. The test is frequency, not severity: everything behind
+  `docs/internal/security/invariants.md`. The test is frequency, not severity: everything behind
   `s.destructive` is dangerous, and adding a phrase to something done several
   times a sitting is what teaches operators to type phrases without reading
   them.

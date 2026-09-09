@@ -1,0 +1,74 @@
+# Git, backups, and host users
+
+## Git working copies
+
+`internal/gitx` discovers repositories at most five levels below `JD_GIT_ROOTS`, skips generated and
+hidden trees, and stops descending once it finds `.git`. `Resolve` cleans and symlink-resolves every
+repository path, checks the configured roots, and verifies either a normal `.git` directory or worktree
+file. Remote URLs are scrubbed before they are returned because credentials embedded in HTTPS remotes
+must not reach the list page.
+
+The read surface reports repository summary/status, commit history, local and remote branches, diffs, and
+a bounded topological graph whose lane layout spans branches and tags. The terminal uses `/git/detect` to
+find the checkout containing its current directory while keeping “not a repository” and “outside the
+configured roots” as honest non-error states.
+
+All Git subprocesses receive explicit argv and run as the checkout owner through `hostexec.AsOwner`, so a
+web operation does not leave root-owned files. Refs reject leading dashes, traversal-like `..`, invalid
+characters, and `.lock` suffixes; file arguments reject absolute/traversing/option-shaped values and follow
+an explicit `--`. Pull is fast-forward-only, push never forces and establishes a missing upstream, checkout
+never forces, branch deletion defaults to Git's merged-only mode, and stash includes untracked files.
+
+Route capabilities reflect recoverability: reads require `read`; fetch/pull/push/checkout/branch/stash,
+stage/unstage/commit require `service.control`; discard, reset, and branch deletion pass through
+`s.destructive`. Discard and hard reset require typed confirmation because they overwrite uncommitted work;
+branch deletion uses ordinary confirmation because Git preserves the commits in reflogs/remotes. GitHub
+authentication and pull requests are detailed in
+[`processes-terminal-github.md`](processes-terminal-github.md#github-sign-in).
+
+## Backups
+
+`internal/backups` stores job definitions and run history in SQLite. A job has source paths, exclusion
+globs, a local/S3/Backblaze-B2 destination, a five-field cron schedule, an enabled flag, and a retention
+count. Displayable target configuration is separate from access keys; credentials are sealed by
+`auth.Sealer` and never returned by the API. The target-test route checks local writability or object-store
+bucket access before the operator depends on a schedule.
+
+`Scheduler` rebuilds its in-memory robfig/cron entries from enabled jobs at start and after edits. Manual
+and scheduled runs share `Runner.Execute`; a per-job running set prevents overlap. Execution records a run,
+streams a gzip-compressed tar archive to a `0600` staging file, skips unreadable entries with transcript
+evidence, applies exclusions to both full paths and basenames, then moves locally or uploads through the
+AWS S3 multipart client. B2 uses the same client with its endpoint and path-style addressing. Run logs are
+bounded before persistence.
+
+Retention deletes the oldest successful artifacts and their run rows, but skips an artifact while archive
+listing or restore holds a read reference. Cross-device local moves fall back from rename to copy. Deleting
+a job deliberately leaves its existing artifacts alone.
+
+Archive listing is bounded and does not extract. Restore requires a successful artifact, downloads remote
+objects into private staging, refuses `/`, and is typed-confirmed with the destination. The API resolves the
+destination through `files.Resolve`; extraction uses `safepath` for every directory, regular file, and
+symlink, refusing traversal and unsafe link targets. Backup-before-deploy behavior and restore-evidence
+limits are covered in [`../deployments/implementation.md`](../deployments/implementation.md).
+
+## Host users and SSH keys
+
+`internal/linuxusers` manages local operating-system accounts, not dashboard identities. The entire
+`/system-users` route tree requires `system.admin`, including reads, because it exposes shells, groups,
+login history, lock state, and SSH-key counts. Account state is assembled from the mounted host
+`/etc/passwd`, `/etc/group`, `/etc/shadow`, `lastlog`, and each home directory's `authorized_keys`; system
+accounts are hidden by default in the UI.
+
+Usernames and group names follow a closed 32-character Unix pattern. New accounts are created with a
+locked password, so access must be added deliberately with a public key; shells must be absolute, comments
+cannot inject passwd fields, and the group picker comes from the host group database. A protected-account
+set cannot be deleted or locked. Account deletion is destructive and typed with the username, especially
+because it may remove the home directory; key removal is destructive but ordinarily confirmed.
+
+SSH public keys are parsed with `x/crypto/ssh`, reject private/multi-line input, expose SHA-256 fingerprints,
+and de-duplicate by fingerprint. `.ssh` and `authorized_keys` are repaired to owner-only `0700`/`0600`
+permissions and host ownership. Removal matches a fingerprint and atomically replaces the file, so a stale
+line number cannot remove a different key.
+
+The current host-execution implementation and its relationship to the documented invariant are recorded in
+[`../reference/verification-findings.md`](../reference/verification-findings.md).

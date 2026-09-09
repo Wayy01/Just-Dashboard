@@ -158,7 +158,7 @@ Legend: `[ ]` not started, `[~]` in progress (use only on the active branch), `[
 - [ ] Failure drill table completed. Evidence: —
 - [ ] Reference-scale performance budgets pass. Evidence: —
 - [ ] Full dark/light/responsive/accessibility review passes. Evidence: —
-- [ ] `CLAUDE.md` architecture, commands and invariants updated. Evidence: —
+- [ ] Affected `docs/internal/` architecture, command and invariant guides updated. Evidence: —
 - [ ] README/API/recovery/blueprint documentation complete. Evidence: —
 - [ ] No unresolved Critical/High findings. Evidence: —
 - [ ] C10 gate passed. Evidence: —

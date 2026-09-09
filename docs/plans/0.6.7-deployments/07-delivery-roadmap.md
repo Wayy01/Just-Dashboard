@@ -36,13 +36,13 @@ C1..C9 --> C10 hardening and failure drills --> C11 release/upgrade
 - Create recorded command transcripts/fakes for Git, Docker/Compose, proxy checks, HTTP/TCP checks and
   builder adapters before orchestration code depends on them.
 - Decide whether Playwright is added for safety-critical frontend journeys; document dependency/license
-  review and update `CLAUDE.md` if the project test workflow changes.
+  review and update `docs/internal/overview.md` if the project test workflow changes.
 - Run the builder spike (Nixpacks vs Pack vs project recipes) and record the decision; do not install all
   candidates into production.
 
 ### Gate
 
-- Architecture review proves every `CLAUDE.md` invariant still has one implementation authority.
+- Architecture review proves every `docs/internal/security/invariants.md` invariant still has one implementation authority.
 - A capability/confirmation matrix covers every proposed route and action.
 - Migration test design contains populated legacy rows, sealed variables, hooks and run history.
 - Failure-mode review covers restart during every non-idempotent step.
@@ -245,7 +245,7 @@ C1..C9 --> C10 hardening and failure drills --> C11 release/upgrade
   outage, proxy validation failure, secret redaction, log flood, slow client and cleanup race.
 - Profile fleet listing, detection, stream, retention and metrics joins at realistic scale.
 - Complete accessibility and responsive review in both themes and reduced-motion mode.
-- Update `CLAUDE.md`, README, API documentation, operator recovery docs and blueprint maintenance guide.
+- Update the affected `docs/internal/` guides, README, API documentation, operator recovery docs and blueprint maintenance guide.
 
 ### Gate
 

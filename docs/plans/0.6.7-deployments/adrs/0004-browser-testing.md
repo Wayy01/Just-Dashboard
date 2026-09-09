@@ -35,7 +35,7 @@ the release evidence command treats any required skip as failure.
 
 ## Consequences
 
-- `CLAUDE.md` and `CONTRIBUTING.md` list the browser gate separately from lint/build.
+- `docs/internal/overview.md` and `CONTRIBUTING.md` list the browser gate separately from lint/build.
 - Browser tests are slower and require a browser plus Docker for the full suite, so pure logic stays in Go
   and TypeScript-level tests rather than being moved into Playwright.
 - The release gate gains evidence for navigation/reconnect and accessibility behaviors that compilation

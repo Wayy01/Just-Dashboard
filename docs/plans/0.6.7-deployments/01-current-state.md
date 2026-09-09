@@ -111,7 +111,7 @@ Authoritative implementation locations:
    while repository invariant 6 says all client-supplied paths go through `files.Resolve`. Checkpoint 0
    must decide the migration without silently retaining two security implementations.
 2. The deployment runner uses `exec.CommandContext` directly for Git, Docker, and shell execution.
-   `CLAUDE.md` documents the shell exception but also requires host commands to go through `hostexec`.
+   `docs/internal/security/invariants.md` documents the shell exception but also requires host commands to go through `hostexec`.
    The current Git owner handling partly depends on a local command. Checkpoint 0 must document and test
    the exact host/container namespace for every new execution adapter.
 3. `internal/jobs` is in-memory, while deployment history is persistent but not live. Reuse requires a
