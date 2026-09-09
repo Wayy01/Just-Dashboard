@@ -15,7 +15,14 @@ import {
 import { cn } from "@/lib/utils"
 import { bytes } from "@/lib/format"
 import type { LogJournalUnit, LogSource } from "@/lib/types"
-import { LEVEL_HINT, LEVEL_LABEL, LOG_LEVELS, TIME_RANGES, type LogLevel } from "@/lib/log-filter"
+import {
+  LEVEL_HINT,
+  LEVEL_LABEL,
+  LOG_LEVELS,
+  TIME_RANGES,
+  logTimeInput,
+  type LogLevel,
+} from "@/lib/log-filter"
 import type { LogFilterState, LogMode, LogTimeRange } from "@/components/logs/types"
 import { Panel, PanelToolbar } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -25,7 +32,14 @@ import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import {
   Select,
   SelectContent,
@@ -193,7 +207,11 @@ export function FilterBar({
 
         {mode === "search" && (
           <Button size="sm" onClick={onSubmit} disabled={searching} className="h-8">
-            {searching ? <LoaderCircle className="size-3.5 animate-spin" /> : <MagnifyingGlass className="size-3.5" />}
+            {searching ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <MagnifyingGlass className="size-3.5" />
+            )}
             Search
           </Button>
         )}
@@ -297,7 +315,8 @@ export function FilterBar({
                   <Field label="From">
                     <Input
                       type="datetime-local"
-                      value={since}
+                      value={logTimeInput(since)}
+                      step="0.001"
                       onChange={(e) => onSinceChange(e.target.value)}
                       className="h-8 w-52 text-[13px]"
                     />
@@ -305,7 +324,8 @@ export function FilterBar({
                   <Field label="To">
                     <Input
                       type="datetime-local"
-                      value={until}
+                      value={logTimeInput(until)}
+                      step="0.001"
                       onChange={(e) => onUntilChange(e.target.value)}
                       className="h-8 w-52 text-[13px]"
                     />

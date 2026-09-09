@@ -126,6 +126,9 @@ only renderer/executor/validation authority for their feature.
   remains `unavailable`. The overview renders these services with live/other-release labels and links to
   the exact Docker container or Compose stack panel. Empty managed inventory, unavailable evidence and
   unassessed diagnosis have distinct wording; the remaining C8 summaries are still in progress.
+  Runtime rows also link to the exact container source in Logs. Logs preserves explicit time-window
+  links and refuses to substitute another source when the requested container is no longer discoverable;
+  run-specific activation-window generation remains in progress.
 - Closed vocabularies, route capabilities/confirmations/audit actions, retention limits and error codes
   are contracts. Change one only with an ADR plus migration and exhaustive transition/route tests.
 

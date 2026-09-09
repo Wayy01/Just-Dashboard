@@ -153,3 +153,10 @@ because a keystroke-triggered full scan would queue a pass over gigabytes per ch
 the scrollbar stays honest, wrapped rows keep real heights, and the browser's own find still works.
 **Pausing holds incoming lines instead of dropping them.** `histogram.tsx` is matches by level over time;
 clicking a column narrows the window to it.
+
+Logs accepts `source`, `since` and `until` URL parameters for deployment handoffs. Time bounds must be
+explicit ISO instants with a timezone; they select History and remain exact through search and reload,
+including during a repeated daylight-saving hour. The controls display browser-local time without
+replacing the original instants. Invalid/reversed link bounds require choosing a new window before any
+search. An explicitly requested source missing from discovery stays unavailable; only an unselected
+visit defaults to the first source. Rescan or choosing a source provides recovery.

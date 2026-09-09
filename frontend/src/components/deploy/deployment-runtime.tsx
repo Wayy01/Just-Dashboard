@@ -60,6 +60,12 @@ export function DeploymentRuntime({ runtime }: { runtime?: DeploymentRuntimeServ
                   Health: {service.health === "unavailable" ? "Not observed" : service.health}
                   {service.startedAt && <> · Started {relativeTime(service.startedAt)}</>}
                 </p>
+                <Link
+                  href={`/logs?${new URLSearchParams({ source: `docker:${service.containerId}` })}`}
+                  className="inline-flex min-h-9 items-center text-xs underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  Open runtime logs for {service.name || service.containerId}
+                </Link>
                 {service.stack && (
                   <Link
                     href={`/docker/stacks?${new URLSearchParams({ stack: service.stack })}`}

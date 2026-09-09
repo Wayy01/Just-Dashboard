@@ -84,6 +84,28 @@ export const TIME_RANGES: { id: LogTimeRange; label: string; minutes: number | n
   { id: "custom", label: "Custom range", minutes: null },
 ]
 
+export function readLogWindow(params: Pick<URLSearchParams, "get">) {
+  const since = params.get("since") ?? ""
+  const until = params.get("until") ?? ""
+  const valid = (value: string) =>
+    !value ||
+    (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+      Number.isFinite(Date.parse(value)))
+  const error =
+    !valid(since) || !valid(until) || (since && until && Date.parse(since) >= Date.parse(until))
+      ? "The log link has an invalid time window. Choose a new window before searching."
+      : undefined
+  return { since, until, error }
+}
+
+/** Display in local time without replacing the original instant used by search. */
+export function logTimeInput(value: string) {
+  if (!value || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return value
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return ""
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 23)
+}
+
 /**
  * Resolves the window to the pair of instants the server takes. Presets are
  * relative to *now* and are re-resolved on every search rather than pinned when

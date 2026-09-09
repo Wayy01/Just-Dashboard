@@ -126,7 +126,7 @@ Legend: `[ ]` not started, `[~]` in progress (use only on the active branch), `[
 ## C8 — Operations and diagnosis
 
 - [x] Runtime Docker service/stack summaries and deep links implemented. Evidence: backend `runtime` projection and `components/deploy/deployment-runtime.tsx`; `TestRuntimeServicesScopeAvailabilityAndSecretFreeProjection`; `TestFilteredContainerInventoryInspectsOnlySelectedRuntime`; `TestDeploymentReadModelsExposeFleetDetailAndEngineRuns`; browser journeys `runtime services hand off to exact Docker panels and survive history and reload` and `runtime evidence distinguishes unavailable Docker from an empty managed inventory` cover 375/768/1024/1440, light/dark, keyboard, reload/history and disappeared resources.
-- [ ] Runtime Logs and activation-window links implemented. Evidence: —
+- [~] Runtime Logs and activation-window links implemented. Evidence: runtime-row container source links; browser test `log links preserve exact activation windows and never substitute a missing source` verifies Logs destination, exact UTC/millisecond bounds through DST and reload, missing sources and invalid-window recovery. Run-specific activation-window generation remains open.
 - [ ] Metrics/release comparison implemented. Evidence: —
 - [ ] Domain/TLS/storage/backup summaries implemented. Evidence: —
 - [ ] Conservative cross-feature diagnosis implemented. Evidence: —

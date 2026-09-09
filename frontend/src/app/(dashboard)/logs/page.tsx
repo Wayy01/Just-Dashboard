@@ -20,7 +20,13 @@ import type {
   LogSourceIndex,
   LogStreamMeta,
 } from "@/lib/types"
-import { EMPTY_FILTER, filterQuery, isFilterActive, resolveRange } from "@/lib/log-filter"
+import {
+  EMPTY_FILTER,
+  filterQuery,
+  isFilterActive,
+  resolveRange,
+  readLogWindow,
+} from "@/lib/log-filter"
 import type { LogFilterState, LogMode, LogTimeRange } from "@/components/logs/types"
 import { useSocket, type Envelope } from "@/hooks/use-socket"
 import { usePoll } from "@/hooks/use-poll"
@@ -49,21 +55,32 @@ export default function LogsPage() {
     60000,
   )
 
-  // The URL is where the reader arrived, not where they are now: it seeds the
-  // selection once so /logs?source=docker:abc from the container page lands on
-  // the right log, and is not kept in sync afterwards.
+  // Keep exact instants from shared links; converting them to local input values
+  // before searching would lose the offset during a repeated daylight-saving hour.
+  const [initialWindow] = useState(() => readLogWindow(params))
+  const [windowError, setWindowError] = useState(initialWindow.error)
   const [picked, setPicked] = useState<string | null>(() => params.get("source"))
   const [mode, setMode] = useState<LogMode>(() =>
-    params.get("mode") === "search" ? "search" : "live",
+    params.get("mode") === "search" || initialWindow.since || initialWindow.until
+      ? "search"
+      : "live",
   )
   const [filter, setFilter] = useState<LogFilterState>(() => ({
     ...EMPTY_FILTER,
     q: params.get("q") ?? "",
   }))
-  const [unit, setUnit] = useState(() => params.get("unit") ?? "")
-  const [range, setRange] = useState<LogTimeRange>("24h")
-  const [since, setSince] = useState("")
-  const [until, setUntil] = useState("")
+  const [unit, setUnit] = useState(
+    () =>
+      params.get("unit") ??
+      (params.get("source")?.startsWith("journal:")
+        ? params.get("source")!.slice("journal:".length)
+        : ""),
+  )
+  const [range, setRange] = useState<LogTimeRange>(
+    initialWindow.since || initialWindow.until ? "custom" : "24h",
+  )
+  const [since, setSince] = useState(initialWindow.since)
+  const [until, setUntil] = useState(initialWindow.until)
   const [context, setContext] = useState(0)
   const [archives, setArchives] = useState(false)
   const [boot, setBoot] = useState(false)
@@ -74,7 +91,12 @@ export default function LogsPage() {
   // not. Derived rather than stored, so no effect has to sync it.
   const selected: LogSource | null = useMemo(() => {
     const list = sources.data?.sources ?? []
-    return list.find((s) => s.id === picked) ?? list[0] ?? null
+    if (!picked) return list[0] ?? null
+    return (
+      list.find(
+        (s) => s.id === picked || (picked.startsWith("journal:") && s.kind === "journal"),
+      ) ?? null
+    )
   }, [sources.data, picked])
 
   // The journal is one source with a thousand faces, so the unit rides on the
@@ -86,15 +108,22 @@ export default function LogsPage() {
   }, [selected, unit])
 
   useEffect(() => {
-    if (!sourceId) return
+    if (!sourceId || windowError) return
     const url = new URL(window.location.href)
     url.searchParams.set("source", sourceId)
     if (mode === "search") url.searchParams.set("mode", "search")
     else url.searchParams.delete("mode")
     if (filter.q) url.searchParams.set("q", filter.q)
     else url.searchParams.delete("q")
+    for (const [key, value] of Object.entries(
+      range === "custom" ? { since, until } : { since: "", until: "" },
+    )) {
+      if (value && Number.isFinite(Date.parse(value)))
+        url.searchParams.set(key, new Date(value).toISOString())
+      else url.searchParams.delete(key)
+    }
     window.history.replaceState(null, "", url)
-  }, [sourceId, mode, filter.q])
+  }, [sourceId, mode, filter.q, range, since, until, windowError])
 
   return (
     <Page fill>
@@ -127,7 +156,26 @@ export default function LogsPage() {
           }}
         />
 
-        {selected ? (
+        {windowError ? (
+          <EmptyState
+            icon={Logs}
+            title="Invalid log window"
+            description={windowError}
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setWindowError(undefined)
+                  setRange("24h")
+                  setSince("")
+                  setUntil("")
+                }}
+              >
+                Use last 24 hours
+              </Button>
+            }
+          />
+        ) : selected ? (
           <LogWorkspace
             key={sourceId}
             source={selected}
@@ -161,11 +209,19 @@ export default function LogsPage() {
           <EmptyState
             className="flex-1"
             icon={Logs}
-            title={sources.loading ? "Looking for logs…" : "No log sources on this host"}
+            title={
+              sources.loading
+                ? "Looking for logs…"
+                : picked
+                  ? "Requested log source unavailable"
+                  : "No log sources on this host"
+            }
             description={
               sources.loading
                 ? undefined
-                : `Nothing readable was found under ${(sources.data?.roots ?? []).join(", ") || "the configured log roots"}. Containers, PM2 processes and the journal appear here too when they are present.`
+                : picked
+                  ? `The requested source (${picked}) is not in the current inventory. It may have been removed or its owner may be unavailable. Rescan or choose another source.`
+                  : `Nothing readable was found under ${(sources.data?.roots ?? []).join(", ") || "the configured log roots"}. Containers, PM2 processes and the journal appear here too when they are present.`
             }
           />
         )}
@@ -177,7 +233,7 @@ export default function LogsPage() {
 /** datetime-local wants the browser's own clock, not an ISO string in UTC. */
 function toLocalInput(date: Date) {
   const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+  return new Date(date.getTime() - offset).toISOString().slice(0, 23)
 }
 
 type WorkspaceProps = {
@@ -327,8 +383,20 @@ function LogWorkspace(props: WorkspaceProps) {
         status={
           mode === "live" ? (
             <Status
-              state={live.state === "open" ? "running" : live.state === "connecting" ? "restarting" : "stopped"}
-              label={live.state === "open" ? "Live" : live.state === "connecting" ? "Connecting" : "Disconnected"}
+              state={
+                live.state === "open"
+                  ? "running"
+                  : live.state === "connecting"
+                    ? "restarting"
+                    : "stopped"
+              }
+              label={
+                live.state === "open"
+                  ? "Live"
+                  : live.state === "connecting"
+                    ? "Connecting"
+                    : "Disconnected"
+              }
               className="text-[11px]"
             />
           ) : (
@@ -337,11 +405,7 @@ function LogWorkspace(props: WorkspaceProps) {
         }
         actions={
           mode === "live" && live.meta?.prefill && !live.meta.prefill.complete ? (
-            <Badge
-              variant="outline"
-              className="text-[10px] font-normal"
-              title={live.meta.note}
-            >
+            <Badge variant="outline" className="text-[10px] font-normal" title={live.meta.note}>
               partial history
             </Badge>
           ) : undefined
@@ -541,11 +605,6 @@ function useHistorySearch(props: WorkspaceProps) {
     ) => {
       const p = latest.current
       const range = overrides.range ?? p.range
-      const window = resolveRange(
-        range,
-        overrides.since ?? p.since,
-        overrides.until ?? p.until,
-      )
       const id = ++seq.current
       abort.current?.abort()
       const controller = new AbortController()
@@ -553,6 +612,10 @@ function useHistorySearch(props: WorkspaceProps) {
       setLoading(true)
       setError(null)
       try {
+        const window = resolveRange(range, overrides.since ?? p.since, overrides.until ?? p.until)
+        if (window.since && window.until && Date.parse(window.since) >= Date.parse(window.until)) {
+          throw new Error("The start of the log window must be before its end.")
+        }
         const res = await get<LogSearchResult>(
           "/logs/search",
           {
@@ -583,13 +646,7 @@ function useHistorySearch(props: WorkspaceProps) {
   return { result, loading, error, run }
 }
 
-function SearchSummary({
-  result,
-  loading,
-}: {
-  result: LogSearchResult | null
-  loading: boolean
-}) {
+function SearchSummary({ result, loading }: { result: LogSearchResult | null; loading: boolean }) {
   if (loading) {
     return <span className="text-[11px] text-muted-foreground">Searching…</span>
   }
@@ -629,7 +686,8 @@ function SearchFooter({ result }: { result: LogSearchResult }) {
         files.map((file) => (
           <span key={file.path} className="numeric" title={file.path}>
             {file.name}
-            {file.archive && " (archive)"}: {file.error ?? `${file.matched.toLocaleString()} matched`}
+            {file.archive && " (archive)"}:{" "}
+            {file.error ?? `${file.matched.toLocaleString()} matched`}
           </span>
         ))}
     </div>
@@ -712,7 +770,13 @@ function SearchEmpty({
   onRun: () => void
 }) {
   if (loading) {
-    return <EmptyState icon={MagnifyingGlass} title="Searching…" description="Reading the file server-side." />
+    return (
+      <EmptyState
+        icon={MagnifyingGlass}
+        title="Searching…"
+        description="Reading the file server-side."
+      />
+    )
   }
   if (error) {
     return <ErrorState error={new Error(error)} className="max-w-lg" />
@@ -741,8 +805,7 @@ function SearchEmpty({
       action={
         hasArchives && !archives ? (
           <Button size="sm" onClick={onIncludeArchives}>
-            Include the {source.archives} rotated{" "}
-            {source.archives === 1 ? "archive" : "archives"}
+            Include the {source.archives} rotated {source.archives === 1 ? "archive" : "archives"}
           </Button>
         ) : undefined
       }
