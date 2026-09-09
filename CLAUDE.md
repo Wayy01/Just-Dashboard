@@ -1380,6 +1380,15 @@ split matters — the pane is reused by the compose runner and knows nothing abo
 
 In `xterm-pane.tsx` and the page, load-bearing and easy to undo:
 
+- **The New-session menu exposes both terminal paths.** Persistent sessions run through tmux and keep
+  windows, panes and detach/reattach. Direct PTYs omit the multiplexer for applications whose terminal
+  capability queries are not tmux-safe; they end when closed and therefore cannot be named, filed or
+  resumed. The backend already treats `persist: false` as a real PTY rather than an emulation mode. Keep
+  tmux-only copy-mode controls disabled for that direct path.
+- **Truecolor must be set on the tmux session, not only its client.** `COLORTERM` is not in tmux's default
+  `update-environment` list, so setting it on the outer PTY process does not put it in panes owned by an
+  already-running server. `new-session -e COLORTERM=truecolor` installs it before the first login starts;
+  reattach also repairs the session environment so later windows and restarted TUIs inherit it.
 - **`forcePointerToSelect` takes the pointer back from tmux's mouse mode.** xterm gates mouse-report
   forwarding on one predicate (`shouldForceSelection`, asked by both its selection service and its
   forwarding, so answering once keeps them agreeing) and the pane inverts it: the drag belongs to the page

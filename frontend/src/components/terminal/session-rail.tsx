@@ -81,6 +81,7 @@ export function SessionRail({
   onSetColour,
   onClose,
   onNew,
+  onNewDirect,
   onCreateFolder,
   onUpdateFolder,
   onDeleteFolder,
@@ -99,6 +100,8 @@ export function SessionRail({
   onSetColour: (session: TerminalWorkspace, colour: string) => void
   onClose: (session: TerminalWorkspace) => void
   onNew: (folder?: string) => void
+  /** Open a PTY without tmux for applications that need direct emulator queries. */
+  onNewDirect: () => void
   onCreateFolder: (name: string) => void
   onUpdateFolder: (name: string, next: { name?: string; colour?: string }) => void
   onDeleteFolder: (folder: TerminalFolder) => void
@@ -167,9 +170,38 @@ export function SessionRail({
         <IconAction label="New folder" className="size-7" onClick={() => setCreatingFolder(true)}>
           <FolderPlus />
         </IconAction>
-        <IconAction label="New session" className="size-7" onClick={() => onNew()}>
-          <Plus />
-        </IconAction>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="New session"
+              className="size-7 [&_svg:not([class*='size-'])]:size-3.5"
+            >
+              <Plus />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuItem className="items-start gap-2" onSelect={onNewDirect}>
+              <Terminal className="mt-0.5 size-3.5 shrink-0" />
+              <span className="grid gap-0.5">
+                <span className="text-xs font-medium">Direct PTY</span>
+                <span className="text-[11px] leading-4 text-muted-foreground">
+                  Native TUI compatibility; ends when closed.
+                </span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="items-start gap-2" onSelect={() => onNew()}>
+              <Pin className="mt-0.5 size-3.5 shrink-0" />
+              <span className="grid gap-0.5">
+                <span className="text-xs font-medium">Persistent session</span>
+                <span className="text-[11px] leading-4 text-muted-foreground">
+                  Runs through tmux and survives disconnects.
+                </span>
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-0.5">

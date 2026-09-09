@@ -176,11 +176,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		// session is the same session as a plain one with a multiplexer in
 		// front. `-c` sets the directory tmux starts the pane in, which the
 		// login above is now built to keep rather than override.
-		wrap := []string{"tmux", "new-session", "-A", "-s", sess.TmuxName}
-		if startDir != "" {
-			wrap = append(wrap, "-c", startDir)
-		}
-		argv = append(wrap, argv...)
+		// The environment on the tmux *client* is not automatically the
+		// environment of the pane. In particular COLORTERM is not in tmux's
+		// default update-environment list, so an already-running server silently
+		// dropped truecolor from every new dashboard shell even though the outer
+		// PTY correctly advertised it. `new-session -e` writes the capability on
+		// the session before the first pane process starts; setting it later is
+		// too late for Codex, Claude and any login shell already running there.
+		argv = tmuxNewSessionArgv(sess.TmuxName, startDir, argv)
 	}
 	// CommandOnHost always crosses into the host's namespaces, even though
 	// this image happens to ship bash and tmux of its own. That is the whole
@@ -265,6 +268,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	go sess.readLoop(func() { m.remove(id) })
 	return sess, nil
+}
+
+func tmuxNewSessionArgv(name, startDir string, login []string) []string {
+	argv := []string{"tmux", "new-session", "-A", "-e", "COLORTERM=truecolor", "-s", name}
+	if startDir != "" {
+		argv = append(argv, "-c", startDir)
+	}
+	return append(argv, login...)
 }
 
 // hostDir accepts a requested working directory only if it is one. The host's
@@ -667,6 +678,13 @@ func (m *Manager) Reattach(ctx context.Context, tmuxName, owner string, rows, co
 	// session made before they existed — or by an older build — is fixed by
 	// being picked up rather than by being recreated. Both are idempotent.
 	m.rememberOptions(tmuxName, option{"status", "off"}, option{"mouse", "on"})
+	// Sessions created by older dashboard builds have no COLORTERM in their
+	// session environment. This cannot rewrite the environment of a process
+	// that is already running, but it makes every new window/pane correct and
+	// means restarting a TUI after reattach observes the same capabilities as
+	// a newly-created session.
+	_ = hostexec.CommandOnHost(ctx, "tmux", "set-environment", "-t", tmuxName,
+		"COLORTERM", "truecolor").Run()
 	cmd := hostexec.CommandOnHost(context.Background(), "tmux", "attach-session", "-t", tmuxName)
 	cmd.Env = terminalEnv(os.Environ(), id)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})

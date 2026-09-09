@@ -132,3 +132,17 @@ func TestTerminalEnvReplacesInheritedCapabilities(t *testing.T) {
 		t.Fatalf("terminalEnv() = %#v, want %#v", got, want)
 	}
 }
+
+func TestTmuxNewSessionSetsPaneTruecolorBeforeLoginStarts(t *testing.T) {
+	// tmux does not copy COLORTERM from a client into an existing server by
+	// default. Keep this assertion beside terminalEnv so neither half of the
+	// PTY -> tmux -> pane capability chain can regress independently.
+	got := tmuxNewSessionArgv("vpsd-test", "/srv/app", []string{"su", "-l", "ubuntu"})
+	want := []string{
+		"tmux", "new-session", "-A", "-e", "COLORTERM=truecolor", "-s", "vpsd-test",
+		"-c", "/srv/app", "su", "-l", "ubuntu",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("tmuxNewSessionArgv() = %#v, want %#v", got, want)
+	}
+}

@@ -8,6 +8,7 @@ const browser = await chromium.launch({ headless: true })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 const errors = []
 const mutations = []
+const creates = []
 const input = []
 const controls = []
 let scrollOffset = 40
@@ -34,6 +35,7 @@ await page.route("**/api/v1/**", async (route) => {
   let data = {}
   if (route.request().method() === "POST") mutations.push(path)
   if (path === "/terminal/" && route.request().method() === "POST") {
+    creates.push(route.request().postDataJSON())
     sessionPresent = true
     return route.fulfill({ json: { id: "preview" } })
   }
@@ -146,6 +148,19 @@ try {
     terminalGeometry,
     "the resize control must match xterm's measured grid",
   )
+  await page.getByRole("button", { name: "Show the sessions rail", exact: true }).click()
+  await page.getByRole("button", { name: "New session", exact: true }).click()
+  assert.equal(await page.getByRole("menuitem", { name: /Direct PTY/ }).count(), 1)
+  assert.equal(await page.getByRole("menuitem", { name: /Persistent session/ }).count(), 1)
+  const directCreated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/api/v1/terminal/") &&
+      response.request().method() === "POST",
+  )
+  await page.getByRole("menuitem", { name: /Direct PTY/ }).click()
+  await directCreated
+  assert.equal(creates.at(-1).persist, false, "Direct PTY must bypass tmux in the create request")
+  await page.getByRole("button", { name: "Hide the sessions rail", exact: true }).click()
   assert.equal(await page.getByRole("textbox", { name: "Command draft" }).count(), 0)
   assert.equal(await page.getByRole("button", { name: "Focus", exact: true }).count(), 0)
   const jump = page.getByRole("button", { name: "Jump to the end", exact: true })
@@ -292,7 +307,7 @@ try {
   )
   assert.deepEqual(errors, [])
   console.log(
-    "PASS: native typing and Tab, clickable jump, scroll seeking, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
+    "PASS: direct/persistent creation, native typing and Tab, clickable jump, scroll seeking, tab actions and close, one-time launch, refresh after closing, bounded layout and dark/light/mobile",
   )
 } finally {
   await browser.close()

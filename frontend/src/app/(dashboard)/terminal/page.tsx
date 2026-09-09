@@ -112,12 +112,12 @@ export default function TerminalPage() {
   )
 
   const openSession = useCallback(
-    async (cwd?: string, folder?: string) => {
+    async (cwd?: string, folder?: string, persist = true) => {
       try {
         const session = await post<{ id: string }>("/terminal/", {
           rows: 30,
           cols: 110,
-          persist: true,
+          persist,
           cwd,
           folder,
           // Named after the directory, because a shell opened from a stack is
@@ -750,6 +750,7 @@ export default function TerminalPage() {
             onSetColour={(s, colour) => setMeta(s.tmuxName, { colour })}
             onClose={closeSession}
             onNew={(folder) => openSession(undefined, folder)}
+            onNewDirect={() => openSession(undefined, undefined, false)}
             onCreateFolder={(name) =>
               act(() => post("/terminal/folders", { name }), "Could not create that folder")
             }
@@ -888,7 +889,7 @@ export default function TerminalPage() {
               focusRef={focusPaneRef}
               // These sessions are tmux's, so the pane may ask what the wheel
               // did and put the operator back at the prompt before a keystroke.
-              copyMode
+              copyMode={Boolean(tmuxName)}
               // No minimum height: the pane is whatever is left after the
               // header and the strips, and a floor taller than that would
               // push the page past the window — which is the one thing a
