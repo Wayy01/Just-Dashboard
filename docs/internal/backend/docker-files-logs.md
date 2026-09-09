@@ -50,6 +50,8 @@ build argv explicitly.
   already has them, and "what uses this volume" for every volume at once is otherwise an inspect per
   container per poll); `ListStacks` builds on `ListContainers` so it inherits resolved health and uptime;
   `Diagnose` inspects each container once and runs every rule against that payload.
+  `ListContainersWithLabels` applies exact label filters in the Engine list call before health/uptime
+  enrichment, so a deployment detail read inspects only its matching running containers.
 
 ## Files
 

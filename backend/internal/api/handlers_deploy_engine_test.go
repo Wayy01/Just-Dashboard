@@ -375,6 +375,7 @@ func TestDeploymentReadModelsExposeFleetDetailAndEngineRuns(t *testing.T) {
 		Project    deploy.Project           `json:"project"`
 		Running    bool                     `json:"running"`
 		Deployment deploy.DeploymentSummary `json:"deployment"`
+		Runtime    deploy.RuntimeServices   `json:"runtime"`
 	}
 	if err := json.Unmarshal(detailResponse.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
@@ -383,6 +384,9 @@ func TestDeploymentReadModelsExposeFleetDetailAndEngineRuns(t *testing.T) {
 		detail.Deployment.EnvironmentID != environmentID ||
 		detail.Deployment.ActiveRun == nil || detail.Deployment.ActiveRun.ID != run.ID {
 		t.Fatalf("deployment detail = %#v", detail)
+	}
+	if detail.Runtime.Status != "unavailable" || detail.Runtime.Reason == "" || detail.Runtime.Services == nil {
+		t.Fatalf("missing Docker must remain unavailable: %+v", detail.Runtime)
 	}
 
 	runsResponse := c.do(http.MethodGet,

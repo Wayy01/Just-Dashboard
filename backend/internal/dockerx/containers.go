@@ -46,11 +46,25 @@ type Container struct {
 }
 
 func (c *Client) ListContainers(ctx context.Context, all bool) ([]Container, error) {
+	return c.listContainers(ctx, container.ListOptions{All: all})
+}
+
+// ListContainersWithLabels filters at the daemon before uptime/health inspection,
+// so observing one deployment does not inspect every running container on the host.
+func (c *Client) ListContainersWithLabels(ctx context.Context, labels map[string]string) ([]Container, error) {
+	args := filters.NewArgs()
+	for key, value := range labels {
+		args.Add("label", key+"="+value)
+	}
+	return c.listContainers(ctx, container.ListOptions{All: true, Filters: args})
+}
+
+func (c *Client) listContainers(ctx context.Context, options container.ListOptions) ([]Container, error) {
 	cli, err := c.api()
 	if err != nil {
 		return nil, err
 	}
-	items, err := cli.ContainerList(ctx, container.ListOptions{All: all})
+	items, err := cli.ContainerList(ctx, options)
 	if err != nil {
 		return nil, err
 	}

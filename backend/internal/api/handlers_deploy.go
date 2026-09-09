@@ -184,8 +184,13 @@ func (s *Server) handleDeployGet(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapDeployError(err)
 	}
+	var runtimeOwner deploy.RuntimeObserver
+	if s.modules.docker != nil {
+		runtimeOwner = s.modules.docker
+	}
+	runtime := deploy.ObserveRuntimeServices(r.Context(), runtimeOwner, summary.EnvironmentID, summary.LiveReleaseID)
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"project": p, "running": running, "deployment": summary,
+		"project": p, "running": running, "deployment": summary, "runtime": runtime,
 	})
 	return nil
 }

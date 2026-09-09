@@ -117,6 +117,13 @@ only renderer/executor/validation authority for their feature.
   only their generated route/runtime; PR close retires those exact preview resources before archival.
   Outbound notifications sign the exact JSON body, keep headers and signing keys sealed, discard response
   bodies, and can warn but never change an otherwise successful deployment outcome.
+- Deployment detail includes a C8 `runtime` observation for the production environment. Docker filters
+  managed environment labels at the daemon before inspecting matching running containers once each.
+  The five-second bounded read returns container/release/Compose identities, state, health and start
+  time, without command text, environment values or arbitrary labels. `liveRelease` identifies the
+  persisted live release, not a current health verdict. Failed or missing Docker is `unavailable` with
+  a fixed recovery hint; a successful empty inventory is `available`. Missing health inspection evidence
+  remains `unavailable`. Runtime UI/deep links and the remaining C8 summaries are still in progress.
 - Closed vocabularies, route capabilities/confirmations/audit actions, retention limits and error codes
   are contracts. Change one only with an ADR plus migration and exhaustive transition/route tests.
 

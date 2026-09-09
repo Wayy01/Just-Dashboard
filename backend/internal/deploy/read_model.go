@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// DeploymentSummary is the operator-facing read model. It deliberately keeps
-// runtime health honest until C5 can observe a managed runtime: "unavailable"
-// is different from a green status inferred from the last deployment.
+// DeploymentSummary is the operator-facing read model. Health is the persisted
+// activation-check outcome; current Docker state is a separate runtime observation.
 type DeploymentSummary struct {
 	ID               int64           `json:"id"`
 	Name             string          `json:"name"`
