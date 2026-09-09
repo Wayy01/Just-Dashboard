@@ -25,7 +25,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="antialiased">
         <AuthProvider>
           {children}
-          <Toaster position="top-right" richColors closeButton />
+          {/* Position and surface are sonner's defaults — bottom right, one
+              neutral popover for every type. `closeButton` is the one addition:
+              a failure carries its reason underneath it and stays up for
+              twelve seconds or until dismissed, which is too long to wait out. */}
+          <Toaster closeButton />
         </AuthProvider>
       </body>
     </html>
