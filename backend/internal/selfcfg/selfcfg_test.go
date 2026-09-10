@@ -232,3 +232,68 @@ func TestSiblingArgv(t *testing.T) {
 		t.Fatal("the sibling was handed a secret it has no use for")
 	}
 }
+
+// The shape of a real `tailscale status --json`, trimmed to the fields this
+// reads. Taken from a machine on a tailnet with HTTPS switched off, which is
+// the state that used to surface as a settings form rejecting its own
+// suggestion.
+const tailscaleStatusFixture = `{
+  "Version": "1.80.0",
+  "BackendState": "Running",
+  "MagicDNSSuffix": "tailed39ba.ts.net",
+  "CertDomains": null,
+  "Self": {
+    "HostName": "vps-07749119-vps-ovh-net",
+    "DNSName": "vps-07749119-vps-ovh-net.tailed39ba.ts.net.",
+    "TailscaleIPs": ["100.110.34.31", "fd7a:115c:a1e0::9e37:2220"]
+  }
+}`
+
+func TestParseTailscaleStatus(t *testing.T) {
+	id := parseTailscaleStatus([]byte(tailscaleStatusFixture))
+	if !id.Available || !id.Running {
+		t.Fatalf("a running client read as available:%v running:%v", id.Available, id.Running)
+	}
+	if id.Hostname != "vps-07749119-vps-ovh-net.tailed39ba.ts.net" {
+		t.Fatalf("hostname = %q; the trailing dot belongs to DNS, not to a browser", id.Hostname)
+	}
+	// The IPv6 address is a perfectly good tailnet address and a useless bind
+	// for this purpose: the proxy is given one address and it has to be the v4.
+	if id.IP4 != "100.110.34.31" {
+		t.Fatalf("ip4 = %q", id.IP4)
+	}
+	if id.HTTPSEnabled {
+		t.Fatal("a tailnet with no CertDomains was reported as able to issue certificates")
+	}
+	if !strings.Contains(id.Detail, "login.tailscale.com/admin/dns") {
+		t.Fatalf("detail does not say where the switch is: %q", id.Detail)
+	}
+	if !id.Usable() {
+		t.Fatal("a running client with a MagicDNS name should still be usable — only the padlock is missing")
+	}
+}
+
+func TestParseTailscaleStatusWhenLoggedOut(t *testing.T) {
+	id := parseTailscaleStatus([]byte(`{"BackendState":"NeedsLogin","Self":{}}`))
+	if id.Running || id.Usable() {
+		t.Fatal("a logged-out client was reported as usable")
+	}
+	if !strings.Contains(id.Detail, "tailscale up") {
+		t.Fatalf("detail does not say what to run: %q", id.Detail)
+	}
+}
+
+// Adding rather than replacing: the entries already there are the operator's,
+// and picking a certificate has no business deciding they were wrong.
+func TestWithTailnetAddsTheRangeOnceOnly(t *testing.T) {
+	got := WithTailnet("127.0.0.1/32,::1/128")
+	if got != "100.64.0.0/10,127.0.0.1/32,::1/128" {
+		t.Fatalf("WithTailnet = %q", got)
+	}
+	if again := WithTailnet(got); again != got {
+		t.Fatalf("WithTailnet is not idempotent: %q", again)
+	}
+	if covered := WithTailnet("100.64.0.0/10,127.0.0.1/32"); covered != "100.64.0.0/10,127.0.0.1/32" {
+		t.Fatalf("an allowlist that already covers the tailnet was rewritten: %q", covered)
+	}
+}

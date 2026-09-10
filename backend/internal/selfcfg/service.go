@@ -8,6 +8,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
@@ -27,7 +28,17 @@ type Service struct {
 	observed func() Observed
 	list     selfupdate.Lister
 	log      *slog.Logger
+
+	// The tailnet identity, cached: the settings page polls, and shelling out
+	// to `tailscale status` on every poll would be a subprocess a second for an
+	// answer that changes when somebody runs `tailscale up`.
+	mu        sync.Mutex
+	tailnet   Identity
+	tailnetAt time.Time
 }
+
+// tailnetTTL is how long the discovered tailnet identity is trusted.
+const tailnetTTL = 30 * time.Second
 
 // Observed is what this process is actually running, as opposed to what the
 // file on disk says it should be.
@@ -93,6 +104,11 @@ type Report struct {
 
 	Settings Settings `json:"settings"`
 	Endpoint string   `json:"endpoint"`
+	// Tailscale is what this machine is on its tailnet, so the form can fill
+	// the address, the interface and the allowlist in for itself when the
+	// operator picks that certificate — rather than rejecting what they typed
+	// because they had to guess at three facts the machine already knew.
+	Tailscale Identity `json:"tailscale"`
 	// Drift is the file disagreeing with the running process, which is what an
 	// operator who edited .env over ssh and never restarted is looking at. It
 	// covers only the settings this backend can observe about itself.
@@ -121,12 +137,31 @@ func (s *Service) Report(ctx context.Context) Report {
 	}
 	rep.Endpoint = rep.Settings.Endpoint()
 	rep.Drift = s.drift(rep.Settings)
+	rep.Tailscale = s.Tailnet(ctx)
 
 	if run, err := s.store.Load(); err == nil && run != nil {
 		rep.Run = run
 		rep.Log = s.store.Tail()
 	}
 	return rep
+}
+
+// Tailnet is the machine's tailnet identity, cached for tailnetTTL.
+func (s *Service) Tailnet(ctx context.Context) Identity {
+	s.mu.Lock()
+	if time.Since(s.tailnetAt) < tailnetTTL {
+		id := s.tailnet
+		s.mu.Unlock()
+		return id
+	}
+	s.mu.Unlock()
+
+	id := DetectTailscale(ctx)
+
+	s.mu.Lock()
+	s.tailnet, s.tailnetAt = id, time.Now()
+	s.mu.Unlock()
+	return id
 }
 
 // drift compares the file with the process, on the fields the process knows.

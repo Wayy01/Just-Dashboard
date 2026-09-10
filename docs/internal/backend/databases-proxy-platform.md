@@ -258,6 +258,15 @@ this install" rather than asking Docker the same question twice — `Options.Loc
   has to be read is *where the dashboard will be*, since the browser that asked cannot follow it there.
 - **`Report.Drift`** compares the file with the running process on the fields this backend can observe
   about itself, which is what an operator who edited `.env` over ssh and never restarted is looking at.
+- **`DetectTailscale`** is what stops the settings form rejecting its own suggestion. Choosing a
+  Tailscale certificate needs three facts — the MagicDNS name (which is on the certificate), the
+  tailnet IP (which is what the proxy binds, since it resolves names through Docker's resolver) and
+  the tailnet range in the allowlist — and all three are one `tailscale status --json` away. The
+  report carries them as `Identity`, cached for 30 s, and the form fills them in when the mode is
+  picked. `CertDomains` is Tailscale's own answer to "may this node ask for a certificate", so a
+  tailnet with HTTPS switched off is said *before* an apply fails on it, with the admin-console link
+  and the self-signed fallback at the same address. `parseTailscaleStatus` is split out from the
+  subprocess so the part that reads somebody else's JSON is tested against a fixture.
 - **`CertKeeper`** is why a Tailscale install shows an ordinary padlock rather than a warning:
   `tailscale cert` runs on the host through `hostexec` (tailscaled's socket is the host's, and this image
   deliberately carries no Tailscale client) and writes into `JD_DATA_DIR/certs`, which the proxy mounts

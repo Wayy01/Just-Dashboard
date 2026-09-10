@@ -2843,6 +2843,28 @@ export type DashboardConfigRun = {
   error?: string
 }
 
+/**
+ * What this machine is on its tailnet, as the dashboard discovered it.
+ *
+ * The settings form fills the address, the listening interface and the
+ * allowlist from this the moment somebody picks a Tailscale certificate. Those
+ * three facts are one `tailscale status` away, and asking an operator to find
+ * them by hand — then rejecting the form when they guessed — is the dashboard
+ * refusing to do its own job.
+ */
+export type TailscaleIdentity = {
+  available: boolean
+  running: boolean
+  state?: string
+  /** MagicDNS name, without the trailing dot. */
+  hostname?: string
+  ip4?: string
+  /** Whether the tailnet will issue certificates at all. */
+  httpsEnabled: boolean
+  /** Why it cannot be used, in a sentence meant for a person. */
+  detail?: string
+}
+
 export type DashboardConfigReport = {
   /** False on an install with no compose stack to recreate. */
   supported: boolean
@@ -2853,6 +2875,7 @@ export type DashboardConfigReport = {
   settings: DashboardSettings
   /** The URL this configuration implies. */
   endpoint: string
+  tailscale: TailscaleIdentity
   /** Settings the file asks for that the running process is not doing. */
   drift?: DashboardConfigChange[]
   run?: DashboardConfigRun

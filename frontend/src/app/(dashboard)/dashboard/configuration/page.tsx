@@ -14,7 +14,7 @@ import {
 } from "@/components/icons"
 import { errorMessage } from "@/lib/api"
 import { notify } from "@/lib/toast"
-import type { DashboardSettings } from "@/lib/types"
+import type { DashboardSettings, TailscaleIdentity } from "@/lib/types"
 import { useAuth } from "@/hooks/use-auth"
 import { useSelfConfig } from "@/hooks/use-self-config"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -92,6 +92,62 @@ export default function DashboardConfigurationPage() {
   const set = <K extends keyof DashboardSettings>(key: K, value: DashboardSettings[K]) =>
     setLocal({ ...draft, [key]: value })
 
+  const tailnet = report.tailscale
+  // Where this browser is talking to the dashboard, which is what decides
+  // whether a change to loopback-only takes the page's own route away.
+  const currentHost = typeof window === "undefined" ? "your-server" : window.location.hostname
+  const isLocalhost = currentHost === "localhost" || currentHost === "127.0.0.1"
+
+  /**
+   * Picking a certificate is picking a way of being reached, so it carries the
+   * address, the interface and the allowlist with it.
+   *
+   * This is the whole fix for a form that used to reject its own suggestion:
+   * choosing Tailscale left the address on `localhost`, and applying then
+   * failed with "the address has to be a MagicDNS name" — a fact the machine
+   * knew perfectly well and made the operator go and look up. Each mode now
+   * sets the fields that mode implies, and every one of them is still editable
+   * afterwards for the install that wants something else.
+   */
+  const selectMode = (tls: DashboardSettings["tls"]) => {
+    if (tls === "tailscale" && tailnet.hostname) {
+      setLocal({
+        ...draft,
+        tls,
+        site: tailnet.hostname,
+        // The proxy container resolves names through Docker's resolver rather
+        // than the host's, so it binds the tailnet IP and answers for the name.
+        bind: tailnet.ip4 ?? "",
+        allowedCidrs: withTailnet(draft.allowedCidrs),
+      })
+      return
+    }
+    if (tls === "off") {
+      // Plain HTTP is loopback-only by definition, so the address follows the
+      // certificate back to localhost rather than being left somewhere the
+      // validator would refuse.
+      setLocal({ ...draft, tls, site: "localhost", bind: "" })
+      return
+    }
+    // Self-signed works at any address, so it changes nothing else: coming from
+    // Tailscale it keeps the tailnet address (which is the useful fallback when
+    // the tailnet has HTTPS switched off), and coming from localhost it stays
+    // on localhost.
+    setLocal({ ...draft, tls })
+  }
+
+  /** The tailnet address with a self-signed certificate: reachable now, warning and all. */
+  const useTailnetSelfSigned = () => {
+    if (!tailnet.hostname) return
+    setLocal({
+      ...draft,
+      tls: "internal",
+      site: tailnet.hostname,
+      bind: tailnet.ip4 ?? "",
+      allowedCidrs: withTailnet(draft.allowedCidrs),
+    })
+  }
+
   const applyChanges = () => {
     // The phrase the server will demand, computed the same way it computes it,
     // so the dialog asks for exactly what the API expects rather than for
@@ -131,6 +187,21 @@ export default function DashboardConfigurationPage() {
               It will then answer at <b>{endpointOf(draft)}</b>, not at the address this tab is
               using. That is why the phrase below is that address — type it and you have read it.
             </p>
+          )}
+          {/* Loopback-only from a browser that is not on loopback is the one
+              change that ends with no way back in through a browser at all. The
+              tunnel command is the way back, so it is given here rather than
+              left as an exercise. */}
+          {draft.site === "localhost" && !isLocalhost && (
+            <div className="space-y-1">
+              <p>
+                After this it listens on loopback only, so this address stops answering. Reach it
+                with an SSH tunnel:
+              </p>
+              <code className="block rounded-lg border border-hairline bg-surface-sunken p-2 font-mono text-[11px] break-all">
+                ssh -N -L {draft.port}:localhost:{draft.port} you@{currentHost}
+              </code>
+            </div>
           )}
           <p className="text-muted-foreground">
             If the new configuration does not come back up, the previous one is restored
@@ -335,21 +406,23 @@ export default function DashboardConfigurationPage() {
               />
             </Field>
 
-            <Field
-              label="Certificate"
-              hint={certHint(draft.tls)}
-              className={draft.tls === "internal" ? "sm:col-span-2" : undefined}
-            >
+            <Field label="Certificate" hint={certHint(draft.tls)}>
               <Select
                 value={draft.tls}
                 disabled={!editable}
-                onValueChange={(value) => set("tls", value as DashboardSettings["tls"])}
+                onValueChange={(value) => selectMode(value as DashboardSettings["tls"])}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="tailscale">Tailscale — trusted, no warning</SelectItem>
+                  {/* Disabled only when picking it could not possibly work.
+                      A tailnet with HTTPS switched off is a different case: the
+                      switch is one click away in their admin console, so the
+                      option stays and the notice below says what to do. */}
+                  <SelectItem value="tailscale" disabled={!tailnet.running || !tailnet.hostname}>
+                    Tailscale — trusted, no warning
+                  </SelectItem>
                   <SelectItem value="internal">Self-signed — the browser warns</SelectItem>
                   <SelectItem value="off">Plain HTTP — localhost only</SelectItem>
                 </SelectContent>
@@ -367,6 +440,17 @@ export default function DashboardConfigurationPage() {
                 onChange={(e) => set("bind", e.target.value)}
               />
             </Field>
+
+            {editable && (
+              <div className="sm:col-span-2">
+                <TailscaleNotice
+                  tailnet={tailnet}
+                  draft={draft}
+                  onUseTailnet={() => selectMode("tailscale")}
+                  onUseSelfSigned={useTailnetSelfSigned}
+                />
+              </div>
+            )}
           </PanelBody>
         </Panel>
 
@@ -523,6 +607,82 @@ export default function DashboardConfigurationPage() {
       )}
     </Page>
   )
+}
+
+/**
+ * What this machine's tailnet can and cannot do for it, said before an apply
+ * rather than after one.
+ *
+ * Three states worth a sentence: no tailnet at all, a tailnet whose HTTPS is
+ * switched off (the common one, and the only one with a fix that is not on this
+ * machine), and a dashboard sitting on localhost while a perfectly good tailnet
+ * address is available.
+ */
+function TailscaleNotice({
+  tailnet,
+  draft,
+  onUseTailnet,
+  onUseSelfSigned,
+}: {
+  tailnet: TailscaleIdentity
+  draft: DashboardSettings
+  onUseTailnet: () => void
+  onUseSelfSigned: () => void
+}) {
+  const onTailnetAddress = Boolean(tailnet.hostname) && draft.site === tailnet.hostname
+
+  if (!tailnet.running || !tailnet.hostname) {
+    // Only worth saying where somebody might have expected it to work.
+    if (!tailnet.available) return null
+    return (
+      <Notice title="Tailscale is installed but not usable yet" icon={Warning}>
+        {tailnet.detail}
+      </Notice>
+    )
+  }
+
+  if (!tailnet.httpsEnabled) {
+    return (
+      <Notice title="This tailnet does not issue certificates yet" tone="warning">
+        <p>{tailnet.detail}</p>
+        <p className="mt-1">
+          Until then the same address works with a self-signed certificate — reachable from every
+          device on your tailnet, with the usual browser warning once.
+        </p>
+        {!onTailnetAddress && (
+          <Button className="mt-2" size="sm" variant="outline" onClick={onUseSelfSigned}>
+            Use {tailnet.hostname} with a self-signed certificate
+          </Button>
+        )}
+      </Notice>
+    )
+  }
+
+  if (draft.tls !== "tailscale") {
+    return (
+      <Notice title="A trusted certificate is available for this machine" tone="success">
+        <p>
+          Your tailnet issues certificates, so this dashboard can answer at{" "}
+          <code className="font-mono">{tailnet.hostname}</code> with an ordinary padlock and no
+          warning. Choosing it fills in the address, the interface and the allowlist.
+        </p>
+        <Button className="mt-2" size="sm" variant="outline" onClick={onUseTailnet}>
+          Switch to the Tailscale certificate
+        </Button>
+      </Notice>
+    )
+  }
+  return null
+}
+
+/** The allowlist with the tailnet range added, unless it is already covered. */
+function withTailnet(list: string) {
+  const entries = list
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  if (entries.some((entry) => entry === "100.64.0.0/10")) return list
+  return ["100.64.0.0/10", ...entries].join(",")
 }
 
 function Field({

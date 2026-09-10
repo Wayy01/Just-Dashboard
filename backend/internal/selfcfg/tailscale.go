@@ -3,10 +3,12 @@ package selfcfg
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,4 +202,126 @@ func readCertificate(path string) (*x509.Certificate, error) {
 		return x509.ParseCertificate(block.Bytes)
 	}
 	return nil, errors.New("no certificate in " + path)
+}
+
+// TailnetCIDR is the range every tailnet address falls in, and therefore the
+// allowlist entry a Tailscale install needs.
+const TailnetCIDR = "100.64.0.0/10"
+
+// Identity is what this machine is on its tailnet, as far as the dashboard can
+// tell by asking.
+//
+// It exists because the settings page was asking the operator for facts the
+// machine already knew. Switching to a Tailscale certificate needs the MagicDNS
+// name (which is on the certificate), the tailnet IP (which is what the proxy
+// binds, since this container resolves names through Docker's resolver rather
+// than the host's) and the tailnet range in the allowlist. Every one of those
+// is one `tailscale status` away, and making somebody find them by hand — then
+// rejecting the form when they guessed — is the dashboard refusing to do its
+// own job.
+type Identity struct {
+	// Available is whether a Tailscale client exists on this host at all.
+	Available bool `json:"available"`
+	// Running is whether it is signed in and up. A stopped or logged-out
+	// client can report a name it is not currently reachable at.
+	Running bool   `json:"running"`
+	State   string `json:"state,omitempty"`
+	// Hostname is the MagicDNS name with the trailing dot removed, because
+	// nobody types a DNS-correct FQDN into a browser.
+	Hostname string `json:"hostname,omitempty"`
+	IP4      string `json:"ip4,omitempty"`
+	// HTTPSEnabled is whether the tailnet will issue certificates. It is read
+	// from CertDomains, which is Tailscale's own answer to "may this node ask
+	// for a certificate" — so the dashboard can say the switch is off *before*
+	// an apply fails on it, rather than after.
+	HTTPSEnabled bool `json:"httpsEnabled"`
+	// Detail is why this cannot be used, in a sentence meant for the person
+	// reading it.
+	Detail string `json:"detail,omitempty"`
+}
+
+// Usable reports whether a Tailscale address can be filled in from this.
+func (i Identity) Usable() bool { return i.Running && i.Hostname != "" }
+
+// tailscaleStatus is the part of `tailscale status --json` this needs.
+type tailscaleStatus struct {
+	BackendState string `json:"BackendState"`
+	CertDomains  []string
+	Self         struct {
+		DNSName      string
+		TailscaleIPs []string
+	}
+}
+
+// DetectTailscale asks the host what it is on its tailnet.
+//
+// On the host rather than in this container: tailscaled's socket is the host's,
+// and this image deliberately carries no Tailscale client.
+func DetectTailscale(ctx context.Context) Identity {
+	if !hostexec.Available("tailscale") {
+		return Identity{Detail: "Tailscale is not installed on this host."}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	out, err := hostexec.CommandOnHost(ctx, "tailscale", "status", "--json").Output()
+	if err != nil {
+		return Identity{Available: true, Detail: "Tailscale is installed but did not answer: " + err.Error()}
+	}
+	return parseTailscaleStatus(out)
+}
+
+// parseTailscaleStatus is DetectTailscale without the subprocess, so the part
+// that can silently break — reading fields out of somebody else's JSON — is
+// testable against a fixture rather than against whatever this machine's
+// tailnet happens to be doing today.
+func parseTailscaleStatus(raw []byte) Identity {
+	var st tailscaleStatus
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return Identity{Available: true, Detail: "Tailscale's status could not be read: " + err.Error()}
+	}
+
+	id := Identity{
+		Available: true,
+		State:     st.BackendState,
+		Running:   st.BackendState == "Running",
+		// The trailing dot is DNS-correct and nobody types it into a browser.
+		Hostname: strings.TrimSuffix(strings.TrimSpace(st.Self.DNSName), "."),
+		// CertDomains is Tailscale's own answer to "may this node ask for a
+		// certificate", which is exactly the question an operator is about to
+		// find out the hard way.
+		HTTPSEnabled: len(st.CertDomains) > 0,
+	}
+	for _, addr := range st.Self.TailscaleIPs {
+		if ip := net.ParseIP(addr); ip != nil && ip.To4() != nil {
+			id.IP4 = ip.String()
+			break
+		}
+	}
+	switch {
+	case !id.Running:
+		id.Detail = "This machine is not connected to a tailnet (" + st.BackendState + "). Run `tailscale up` on the host."
+	case id.Hostname == "":
+		id.Detail = "This machine has no MagicDNS name, so no certificate can be issued for it."
+	case !id.HTTPSEnabled:
+		id.Detail = "HTTPS is not enabled for this tailnet, so Tailscale will not issue a certificate for " +
+			id.Hostname + " yet. Turn it on at https://login.tailscale.com/admin/dns — it is one switch."
+	}
+	return id
+}
+
+// WithTailnet returns the allowlist with the tailnet range added, if it is not
+// already covered. Adding rather than replacing: the existing entries are the
+// operator's, and a mode switch has no business deciding they were wrong.
+func WithTailnet(list string) string {
+	if nets, err := parseCIDRList(list); err == nil {
+		if containsIP(nets, net.ParseIP("100.64.0.1")) {
+			return list
+		}
+	}
+	list = strings.TrimSpace(list)
+	if list == "" {
+		return TailnetCIDR
+	}
+	return TailnetCIDR + "," + list
 }
