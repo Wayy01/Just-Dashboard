@@ -140,11 +140,15 @@ browser ──(Tailscale / SSH tunnel)──▶ Caddy :8443
                                         └─ /*     ─▶ frontend :3000 (loopback)
 ```
 
-Ports are variables — `JD_PORT` (8443), `JD_BACKEND_PORT` (8080), `JD_FRONTEND_PORT` (3000) — read by
-`docker-compose.yml` and `deploy/Caddyfile` from one `.env` and chosen from what is free by `install.sh`,
-which fills them into an older `.env` on a re-run. It never *moves* a recorded port: on a re-run against a
-dashboard that is up, the process holding the port is this dashboard, and telling that apart from a
-squatter is a guess that breaks a working install when wrong.
+Ports are variables — `JD_PORT` (8443), `JD_BACKEND_PORT`, `JD_FRONTEND_PORT` — read by
+`docker-compose.yml` and `deploy/Caddyfile` from one `.env`. `install.sh` keeps the memorable default for
+the one port a person types and walks it upward only if something already holds it; the two internal ports
+are **picked at random from 20000–59999** and checked free, because their historical defaults (3000, 8080)
+are the two most contested numbers on a Linux server and nothing outside this machine ever addresses them.
+On a re-run it fills a missing variable into an older `.env` but never *moves* a recorded port: the process
+holding it is this dashboard, and telling that apart from a squatter is a guess that breaks a working
+install when wrong. `internal/selfcfg` is the other half — changing a port from the dashboard probes the
+new one first and rolls the whole change back if the stack does not come up on it.
 
 **The frontend is the one service not on the host network**, which is what makes a taken port survivable
 rather than silent. On the host namespace Next failed to bind, the container restart-looped, and Caddy's
@@ -153,8 +157,15 @@ dashboard's own certificate, with nothing in any log saying so. Published on loo
 first, before anything serves. Inside the container the port is always 3000; only the host side varies,
 because only the host side can collide.
 
-Caddy is the only listener on anything but loopback and binds `{$JD_SITE}` **plus** loopback explicitly —
-site addresses alone would leave it listening on every interface. One origin for UI and API is
+Caddy is the only listener on anything but loopback and binds `{$JD_BIND}` (falling back to `{$JD_SITE}`)
+**plus** loopback explicitly — site addresses alone would leave it listening on every interface. The bind
+is separable from the site because a Tailscale install answers for a MagicDNS name whose certificate is
+issued to that name while the socket must be opened on the tailnet IP: this container resolves names
+through Docker's resolver, not the host's. `deploy/proxy-entrypoint.sh` derives the scheme and the `tls`
+directive from `JD_TLS` — `tailscale` (a real certificate from `JD_DATA_DIR/certs`, mounted read-only and
+renewed by the backend), `internal` (Caddy's CA, the source of the browser warning) or `off` (plain HTTP,
+loopback only, which browsers treat as a secure context and therefore do not warn about). A Caddyfile
+cannot branch, and generating one would put a tracked file in the way of every `git pull`. One origin for UI and API is
 load-bearing: `SameSite=Strict` cookies, the mutation CSRF header and the WebSocket origin check all
 depend on it. The frontend's `src/proxy.ts` creates a fresh CSP nonce per document and passes the policy
 into Next so framework scripts and the pre-paint theme script receive it; no production policy grants

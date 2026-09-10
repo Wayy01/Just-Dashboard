@@ -43,6 +43,7 @@ import {
   Shield,
   ShieldCheck,
   SignIn,
+  SettingsSliders,
   Sparkles,
   Terminal,
   TerminalWindow,
@@ -85,6 +86,8 @@ type NavChild = {
   title: string
   href: string
   icon: React.ComponentType<{ className?: string }>
+  /** Hidden unless the signed-in role holds this capability. */
+  capability?: Capability
 }
 
 type NavItem = {
@@ -176,7 +179,19 @@ export const NAV: { label: string; items: NavItem[] }[] = [
   {
     label: "Operations",
     items: [
-      { title: "Dashboard", href: "/dashboard", icon: Sparkles },
+      {
+        title: "Dashboard",
+        href: "/dashboard",
+        icon: Sparkles,
+        children: [
+          {
+            title: "Configuration",
+            href: "/dashboard/configuration",
+            icon: SettingsSliders,
+            capability: "system.admin",
+          },
+        ],
+      },
       { title: "Packages", href: "/packages", icon: Puzzle },
       { title: "Deployments", href: "/deploy", icon: CloudUpload },
       { title: "Backups", href: "/backups", icon: Archive },
@@ -330,6 +345,7 @@ export function AppSidebar() {
  */
 function NavParent({ item, pathname }: { item: NavItem; pathname: string }) {
   const { state } = useSidebar()
+  const { can } = useAuth()
   const inSection = navMatches(item.href, pathname)
   const [open, setOpen] = useState(inSection)
 
@@ -359,7 +375,10 @@ function NavParent({ item, pathname }: { item: NavItem; pathname: string }) {
 
   const children: NavChild[] = [
     { title: "Overview", href: item.href, icon: GridSquare },
-    ...(item.children ?? []),
+    // A sub-page can be privileged even where its parent is not: the
+    // dashboard's own settings describe this install's perimeter, which is not
+    // something a read-only operator needs on screen.
+    ...(item.children ?? []).filter((child) => !child.capability || can(child.capability)),
   ]
 
   return (

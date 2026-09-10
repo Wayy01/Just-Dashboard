@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Wayy01/Just-Dashboard/backend/internal/backups"
@@ -20,6 +22,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/netsec"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/procs"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/proxysvc"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfcfg"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/sysinfo"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/term"
@@ -47,6 +50,8 @@ type moduleSet struct {
 	github       *ghx.Service
 	updates      *updates.Service
 	selfUpdate   *selfupdate.Service
+	selfConfig   *selfcfg.Service
+	certKeeper   *selfcfg.CertKeeper
 	proxy        *proxysvc.Service
 	dbs          *dbx.Manager
 	linuxUsers   *linuxusers.Service
@@ -116,6 +121,23 @@ func (s *Server) initModules() {
 		List:        s.listSiblings,
 		Log:         s.Log,
 	})
+	// The settings half of the same idea, and it shares the update module's
+	// answer to "where is this install" rather than working it out again: two
+	// packages asking Docker the same question would be two chances to
+	// disagree about which container this dashboard is.
+	s.modules.selfConfig = selfcfg.New(selfcfg.Options{
+		DataDir:    s.Cfg.DataDir,
+		DockerHost: s.Cfg.DockerHost,
+		Locate:     s.modules.selfUpdate.Location,
+		Observed:   s.observedConfig,
+		List:       s.listSiblings,
+		Log:        s.Log,
+	})
+	// The dashboard's own certificate, as opposed to the certificates it
+	// manages for the server's sites. It renews itself and restarts the proxy
+	// that serves it, because Caddy reads a file-based certificate once.
+	s.modules.certKeeper = selfcfg.NewCertKeeper(
+		s.Cfg.Site, s.Cfg.TLSMode, s.Cfg.DataDir, s.restartProxy, s.Log)
 	s.modules.proxy = proxysvc.New(s.Cfg.NginxDir, s.Cfg.CaddyFile)
 	s.modules.dbs = dbx.NewManager()
 	s.modules.linuxUsers = linuxusers.New()
@@ -178,6 +200,66 @@ func (s *Server) initModules() {
 		s.Log,
 	)
 	s.modules.deploySchedule = deploy.NewAutomationScheduler(s.modules.deployAutomation, s.dispatchDeploymentSchedule)
+}
+
+// restartProxy restarts the Caddy container in this dashboard's own stack.
+//
+// By compose service rather than by container name: the name carries a project
+// prefix and an index, both of which an operator can change, while
+// `com.docker.compose.service=proxy` is what the file says and cannot drift
+// from it.
+func (s *Server) restartProxy(ctx context.Context) error {
+	list, err := s.listSiblings(ctx)
+	if err != nil {
+		return err
+	}
+	loc, locErr := s.modules.selfUpdate.Location(ctx)
+	for _, c := range list {
+		if c.Service != "proxy" {
+			continue
+		}
+		// On a host running more than one of these stacks, only ours.
+		if locErr == nil && loc.Project != "" && c.Project != loc.Project {
+			continue
+		}
+		return s.modules.docker.Lifecycle(ctx, c.ID, dockerx.ActionRestart, nil)
+	}
+	return errors.New("no proxy container in this stack to restart")
+}
+
+// observedConfig is what this process is actually running, for the settings
+// page to compare against the file on disk.
+//
+// Only what this backend can see for itself: it binds its own port and
+// enforces its own allowlist, but the dashboard port belongs to Caddy and the
+// frontend port to Next, and inventing values for those would turn "your file
+// and your running dashboard disagree" — a genuinely useful warning — into
+// noise nobody reads.
+func (s *Server) observedConfig() selfcfg.Observed {
+	obs := selfcfg.Observed{
+		Site:            s.Cfg.Site,
+		TLS:             s.Cfg.TLSMode,
+		TerminalEnabled: s.Cfg.TerminalEnable,
+		Require2FA:      s.Cfg.Require2FA,
+		SessionTTL:      s.Cfg.SessionTTL.String(),
+		IdleTTL:         s.Cfg.IdleTTL.String(),
+		UpdateCheck:     s.Cfg.UpdateCheck,
+		AllowedCIDRs:    joinCIDRs(s.Cfg.AllowedCIDRs),
+	}
+	if _, port, err := net.SplitHostPort(s.Cfg.Addr); err == nil {
+		obs.BackendPort, _ = strconv.Atoi(port)
+	}
+	return obs
+}
+
+// joinCIDRs renders the parsed allowlist the way .env spells it, so a
+// comparison between the two is comparing like with like.
+func joinCIDRs(nets []*net.IPNet) string {
+	parts := make([]string, 0, len(nets))
+	for _, n := range nets {
+		parts = append(parts, n.String())
+	}
+	return strings.Join(parts, ",")
 }
 
 // listSiblings is how internal/selfupdate sees this host's containers.

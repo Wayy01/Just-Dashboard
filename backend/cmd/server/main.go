@@ -27,6 +27,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/audit"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfcfg"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/selfupdate"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/version"
@@ -44,6 +45,11 @@ func main() {
 	// the work cannot be a child process of the server.
 	selfUpdate := flag.Bool("self-update", false,
 		"carry out the dashboard upgrade recorded in -state-dir, then exit")
+	// The settings half of the same idea: applying a port change or a restart
+	// recreates the container that asked for it, so a sibling does the work
+	// and this is the flag that makes this binary that sibling.
+	selfRestart := flag.Bool("self-restart", false,
+		"carry out the dashboard restart recorded in -state-dir, then exit")
 	stateDir := flag.String("state-dir", "",
 		"directory holding the upgrade record and its transcript (the value of JD_DATA_DIR)")
 	flag.Parse()
@@ -70,6 +76,24 @@ func main() {
 		}
 		if err := selfupdate.RunUpdater(dir); err != nil {
 			fmt.Fprintln(os.Stderr, "update failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *selfRestart {
+		// Before config.Load, for the reason -self-update is: this process is
+		// given no master key, no database and nothing from the environment of
+		// the process that started it. The record on disk is the whole job.
+		dir := *stateDir
+		if dir == "" {
+			dir = config.Env("JD_DATA_DIR")
+		}
+		if dir == "" {
+			fmt.Fprintln(os.Stderr, "fatal: -self-restart needs -state-dir (the dashboard's JD_DATA_DIR)")
+			os.Exit(2)
+		}
+		if err := selfcfg.RunRestart(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "restart failed:", err)
 			os.Exit(1)
 		}
 		return
@@ -105,7 +129,7 @@ func run(agentFlag, agentReset bool) error {
 	if err != nil {
 		return err
 	}
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
 	aud := audit.New(st, log)
 
 	var identity *agent.Identity

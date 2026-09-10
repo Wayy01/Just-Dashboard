@@ -90,6 +90,18 @@ func (s *Service) ResolveSession(ctx context.Context, token string) (*Session, *
 		s.st.DB.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID)
 		return nil, nil, ErrAccountDisabled
 	}
+	// A session that was left half-authenticated by a policy which no longer
+	// demands a second factor is completed here rather than left unusable.
+	// Turning JD_REQUIRE_2FA off otherwise strands everyone who was mid-flow
+	// when it changed: their session is valid, it can never be elevated
+	// (there is no authenticator to prove), and every route but the enrolment
+	// ones refuses it until the cookie expires.
+	if !sess.TwoFAPassed && !s.require2FA && !u.TOTPEnabled {
+		if err := s.elevate(ctx, sess.ID, u.ID); err == nil {
+			sess.TwoFAPassed = true
+		}
+	}
+
 	if now.Sub(sess.LastSeenAt) > 30*time.Second {
 		s.st.DB.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE id = ?`, now.Unix(), sess.ID)
 		sess.LastSeenAt = now

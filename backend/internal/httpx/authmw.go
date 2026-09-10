@@ -64,7 +64,7 @@ func (a *Authenticator) AuthenticatePartial(next http.Handler) http.Handler {
 		}
 		p := &Principal{
 			User: user, Role: user.Role, SessionID: sess.ID, Kind: "session",
-			IP: ClientIP(r), UserAgent: r.UserAgent(),
+			IP: ClientIP(r), UserAgent: r.UserAgent(), Elevated: sess.TwoFAPassed,
 		}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
@@ -78,7 +78,7 @@ func (a *Authenticator) resolve(r *http.Request) (*Principal, error) {
 		}
 		return &Principal{
 			User: user, Role: role, TokenID: tok.ID, Kind: "token",
-			IP: ClientIP(r), UserAgent: r.UserAgent(),
+			IP: ClientIP(r), UserAgent: r.UserAgent(), Elevated: true,
 		}, nil
 	}
 	token := sessionToken(r)
@@ -103,7 +103,7 @@ func (a *Authenticator) resolve(r *http.Request) (*Principal, error) {
 	}
 	return &Principal{
 		User: user, Role: user.Role, SessionID: sess.ID, Kind: "session",
-		IP: ClientIP(r), UserAgent: r.UserAgent(),
+		IP: ClientIP(r), UserAgent: r.UserAgent(), Elevated: true,
 	}, nil
 }
 

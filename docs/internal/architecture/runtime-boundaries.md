@@ -16,7 +16,8 @@ information (`ErrorState` in `components/state.tsx`), not an error.
 `Server.Start(ctx)` is separate from `New` so failing to schedule background work is reported by `main`
 rather than swallowed in construction. It starts the metrics recorder (here, not lazily — its whole
 purpose is to have been running while nobody was looking), the Docker event log, the self-update check,
-the backup scheduler, and `selfupdate.Installer.Reconcile`. `Shutdown` releases what outlives a request:
+the backup scheduler, `selfupdate.Installer.Reconcile`, `selfcfg.Applier.Reconcile` and the Tailscale
+certificate keeper. `Shutdown` releases what outlives a request:
 sampler, scheduler, live PTYs, database pools, Docker client.
 
 `helpers.detachedContext` is the deliberate opposite: work that must outlive its request (a backup
@@ -54,10 +55,16 @@ metadata is never trusted as the quota. `internal/sysinfo` reads the host throug
 ## Auth, secrets, state
 
 `internal/auth` owns users, sessions, TOTP, recovery codes, API tokens. Cookie `vpsd_session` (HttpOnly,
-SameSite=Strict, Secure unless `JD_DEV`). A password alone yields a *partial* session accepted only by
+SameSite=Strict, Secure unless `JD_DEV`). A session that still owes a second factor is accepted only by
 the 2FA routes (`AuthenticatePartial`); everything else answers `totp_required` /
-`totp_enrollment_required`. That is an invariant, not a deployment option: `JD_REQUIRE_2FA` is no longer
-read, and the `require2fa` status field remains `true` only for compatibility with existing frontends.
+`totp_enrollment_required`. Who owes one is decided per account: an enrolled account is always challenged,
+and `JD_REQUIRE_2FA` (default false, reported as the `require2fa` status field) decides only whether an
+*unenrolled* account may sign in at all — see
+[invariant 2](../security/invariants.md#invariant-2-what-two-factor-still-guarantees). With the policy off,
+`Login` elevates the session at creation and `ResolveSession` completes one left half-authenticated by a
+policy that changed under it, so turning the setting off cannot strand a session that can never be
+elevated. `Service.DisableTOTP` is the account holder's own off switch, costs their password, and is
+refused where the policy demands an authenticator.
 API tokens may narrow their creator's role, never widen it, and are demoted with the account.
 `auth.Sealer` (from the 64-hex `JD_MASTER_KEY`) encrypts every stored secret — TOTP seeds, connection
 strings, deploy env, backup credentials.

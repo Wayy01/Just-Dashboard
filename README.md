@@ -37,14 +37,50 @@ git clone https://github.com/Wayy01/Just-Dashboard.git
 cd Just-Dashboard && sudo ./install.sh
 ```
 
-Four or five questions, and only one of them really matters: how you intend to reach it.
+A handful of questions, and only one of them really matters: how you intend to reach it.
+There are two answers, and neither puts anything on the public internet.
+
 **Tailscale is the default.** Your laptop and phone get in from anywhere while the machine
-stays invisible to the internet, and the installer will set it up for you. An SSH tunnel is
-the fallback: nothing to install, no account, and it still works on a day Tailscale does not.
+stays invisible to the internet, and the installer will set it up for you. Where the tailnet
+has HTTPS enabled it also asks Tailscale for a certificate, so the dashboard answers at
+`https://your-box.tailnet-name.ts.net:8443` with an ordinary padlock — a real Let's Encrypt
+certificate for a name that resolves only inside your tailnet, renewed by the dashboard
+before it expires. **An SSH tunnel is the fallback**: nothing to install, no account, and it
+works on a day Tailscale does not. That one is served over plain HTTP on loopback, which is
+not a downgrade — the tunnel is already encrypted and authenticated, and browsers treat
+`http://localhost` as a secure context, so there is no warning to click through either.
+
+The two ports behind the one you connect to are picked at random from the high range, so a
+new install cannot collide with whatever this machine already runs on 3000 or 8080.
 
 The installer then generates the master key and a first password, writes `.env`, builds,
 waits for the stack to answer and prints the exact command to get in. Re-running it later
 keeps your `.env` and just rebuilds, so it is safe after a `git pull`.
+
+Everything it asked about — address, certificate, ports, allowlist, two-factor — is editable
+afterwards from **Operations → Dashboard → Configuration**, which restarts the stack into the
+change and puts the previous configuration back if it does not come up.
+
+### Upgrading an install you already have
+
+`git pull` and `docker compose up -d --build`, or the in-app update, or `sudo ./install.sh` again —
+all three keep your `.env`, your database, your accounts and your sessions. There is no schema
+change in this release and nothing to migrate.
+
+Three things worth knowing before you do it:
+
+- **Two-factor becomes optional unless you say otherwise.** An account that has already enrolled an
+  authenticator is still asked for its code at every sign-in — that does not change. What changes is
+  that an account *without* one can now sign in on its password. Re-running `install.sh` asks you
+  which you want; upgrading any other way takes the new default, so set `JD_REQUIRE_2FA=true` in
+  `.env` first if this install is shared.
+- **Your address, ports and certificate stay exactly as they are.** `JD_TLS` defaults to `internal`,
+  which is what every install did before it existed, and no recorded port is ever moved. The random
+  internal ports and the trusted Tailscale certificate are things you opt into afterwards, from
+  Operations → Dashboard → Configuration.
+- **`docker-compose.yml` and `deploy/Caddyfile` both changed.** If you have edited either by hand,
+  the in-app update fast-forwards and will stop with the conflict rather than discarding your edits;
+  resolve it in the checkout and run the update again.
 
 Prefer to do it by hand? [Setting it up without the installer](#setting-it-up-by-hand).
 
@@ -59,8 +95,11 @@ It is built to sit behind a VPN or an SSH tunnel, and that is enforced rather th
   `JD_ALLOWED_CIDRS` allowlist.
 - The allowlist is checked **before authentication**. Off-network you cannot reach the login
   handler at all, let alone guess at it.
-- Two-factor is **mandatory**. A correct password on its own yields a session that every
-  route rejects except the 2FA ones.
+- Two-factor is **enforced for every account that has it**. A session that owes a code is
+  rejected by every route except the 2FA ones. Whether an account *must* enrol is a setting
+  (`JD_REQUIRE_2FA`, off by default): the perimeter above is what stands in front of an
+  install with a single operator, and an authenticator that cannot be skipped was a chore
+  rather than a defence there. Turn it on for anything shared — Configuration, or `.env`.
 - Destructive actions pause for a confirmation, and the rare, unrecoverable ones — dropping a
   table, removing a volume, deleting an account, restoring over live data — additionally
   require a **typed confirmation phrase**, checked on the server, so it cannot be skipped by
@@ -224,6 +263,7 @@ opened from the branch you are on without leaving for a browser tab.
 | **Backups** | Scheduled archives to local disk, S3 or Backblaze B2, with retention and restore. |
 | **System users** | Host accounts, SSH keys, lock and unlock. |
 | **Audit log** | Every state-changing request, filterable by actor, action and outcome. |
+| **Dashboard → Configuration** | The panel's own settings: the address and port it answers on, which certificate it presents, the network allowlist, whether two-factor is compulsory, session lifetimes, and the internal ports. Applying a change restarts the stack into it from a container that outlives the restart, narrates each phase, and **puts the previous configuration back automatically** if the new one does not come up. Restart and rebuild live here too. |
 | **Appearance** | One palette in light and dark, applied before the page paints so the light mode never flashes black. The choice belongs to the browser you are sitting at, not to the account — as does how you left each page arranged. |
 
 ---
@@ -311,7 +351,9 @@ preventing it. Give `readonly` to someone you would let read the disk, and narro
 | Apply system updates | | | ✅ |
 | Host accounts, firewall, users, tokens | | | ✅ |
 
-New accounts must change their password and enrol 2FA before anything else works.
+New accounts must change their password before anything else works. Enrolling an
+authenticator is offered on the Account page and required at sign-in only where
+`JD_REQUIRE_2FA` is on; an account that has enrolled is always asked for its code.
 
 ---
 
@@ -334,12 +376,14 @@ The installer writes the ones that matter. These are for tuning afterwards.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your Tailscale address is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
+| `JD_SITE` | `localhost` | The address the stack answers on and the name on its certificate. Your machine's MagicDNS name (`box.tailnet-name.ts.net`) is the recommended value. Loopback is bound alongside it either way, so an SSH tunnel always works. Never `0.0.0.0`. |
+| `JD_BIND` | none | What the proxy listens on, when that is not the same string as `JD_SITE`. Blank uses `JD_SITE`. A Tailscale install answers for a MagicDNS name and binds the tailnet IP behind it, because the proxy container resolves names through Docker's resolver rather than the host's. |
+| `JD_TLS` | `internal` | How the connection is trusted. `tailscale` serves the certificate `tailscale cert` issues for `JD_SITE` — publicly trusted, no browser warning, renewed automatically. `internal` is Caddy's own CA, which is what produces "not secure". `off` is plain HTTP and is refused on anything but loopback. |
 | `JD_ALLOWED_CIDRS` | `127.0.0.1/32,::1/128` | Who may reach the API at all, checked before authentication. Use `100.64.0.0/10,127.0.0.1/32,::1/128` for Tailscale, and keep loopback or you lose the tunnel. |
 | `JD_TRUSTED_PROXIES` | none | Addresses allowed to set `X-Forwarded-For`. Without it a client could spoof its way past the allowlist. One hop is supported: the bundled Caddy replaces the header with the client's real address, so anything placed *in front* of Caddy becomes the client as far as the allowlist is concerned. |
 | `JD_PORT` | `8443` | The port you connect to — the only one the proxy publishes. |
-| `JD_BACKEND_PORT` | `8080` | The API's loopback port, behind the proxy. |
-| `JD_FRONTEND_PORT` | `3000` | The UI's loopback port, behind the proxy. |
+| `JD_BACKEND_PORT` | `8080` | The API's loopback port, behind the proxy. `install.sh` picks a random high port on a new install so nothing collides with it. |
+| `JD_FRONTEND_PORT` | `3000` | The UI's loopback port, behind the proxy. Likewise randomised at install time. |
 | `JD_ADDR` | `127.0.0.1:$JD_BACKEND_PORT` | Where the API binds, if you need to override the host as well as the port. Leave it on loopback; the proxy is the entry point. |
 | `JD_ALLOWED_ORIGINS` | none | Complete browser origins allowed to open WebSockets. Scheme, host, and port must match; only needed if the UI is served from a different origin. |
 
@@ -347,6 +391,7 @@ The installer writes the ones that matter. These are for tuning afterwards.
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `JD_REQUIRE_2FA` | `false` | Whether an account with no authenticator may sign in. An account that *has* enrolled is always asked for its code, whatever this says. |
 | `JD_TERMINAL_ENABLED` | `true` | The web terminal. |
 | `JD_TERMINAL_SHELL` | account's shell | Overrides the login shell. Empty honours `chsh`. |
 | `JD_TERMINAL_USER` | lowest regular account | Host account a terminal session logs in as. |
@@ -566,17 +611,33 @@ bun is the package manager. Do not add `package-lock.json` or `yarn.lock`.
 cp .env.example .env
 ```
 
-Edit it. Two settings matter more than the rest:
+Edit it. Three settings matter more than the rest:
 
 ```bash
 # Encrypts TOTP seeds, database strings, deploy env and backup credentials.
 # Generate once. Losing it loses every stored secret.
 JD_MASTER_KEY=$(openssl rand -hex 32)
 
-# The address the dashboard answers on. Your Tailscale address is recommended;
-# localhost means reachable only through an SSH tunnel. Either way loopback is
-# bound too, so a tunnel is always available as a fallback.
+# The address the dashboard answers on. Your machine's MagicDNS name is
+# recommended; localhost means reachable only through an SSH tunnel. Either way
+# loopback is bound too, so a tunnel is always available as a fallback.
 JD_SITE=localhost
+
+# How it is trusted: tailscale (a real certificate, no browser warning),
+# internal (Caddy's own CA — this is what produces "not secure"), or off
+# (plain HTTP, loopback only, for the ssh-tunnel setup).
+JD_TLS=internal
+```
+
+For `JD_TLS=tailscale`, issue the certificate once before starting the stack — the dashboard
+renews it from then on:
+
+```bash
+sudo mkdir -p /var/lib/just-dashboard/certs
+sudo tailscale cert \
+  --cert-file /var/lib/just-dashboard/certs/site.crt \
+  --key-file  /var/lib/just-dashboard/certs/site.key \
+  "$(tailscale status --json | grep -m1 DNSName | cut -d'"' -f4 | sed 's/\.$//')"
 ```
 
 Then:

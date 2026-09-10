@@ -3,7 +3,11 @@
 A change that weakens any of these has to say so explicitly.
 
 1. The network allowlist runs **before** authentication.
-2. Two-factor is mandatory; a password-only session reaches nothing but the 2FA routes.
+2. Two-factor is *enforced where it applies*, and this is the one invariant that is now a policy rather
+   than a constant — see [Invariant 2](#invariant-2-what-two-factor-still-guarantees) below. An account
+   with an authenticator is **always** asked for a code, and a session that owes one reaches nothing but
+   the 2FA routes. What `JD_REQUIRE_2FA` decides is whether an account that has *not* enrolled may sign
+   in at all. It defaults to false.
 3. Every destructive action is behind `s.destructive` — capability, `destrLim`, audit entry — and pauses
    the operator with a confirmation dialog. A **subset** also requires the typed `X-Confirm` phrase,
    enforced server-side inside the handler. See below.
@@ -25,6 +29,30 @@ A change that weakens any of these has to say so explicitly.
    `applyAddedColumns` ALTERs in at open. Every entry needs a `DEFAULT` (SQLite refuses a NOT NULL column
    on a populated table without one) and **no entry is ever removed** — the list is the path from every
    shipped schema to the current one, not a description of the current one.
+
+## Invariant 2: what two-factor still guarantees
+
+Two-factor used to be unconditional, and the reasoning was sound for the install the product was first
+written for. It was wrong for the one it is actually installed into: this dashboard is reachable only
+over a tailnet or an ssh tunnel, both of which authenticate the network before a packet reaches the login
+page, and making an authenticator app compulsory turned the first ninety seconds of a single-operator
+install into a chore that could not be skipped.
+
+What did **not** change, and must not:
+
+- An account with `totp_enabled` is asked for a code at every sign-in, whatever `JD_REQUIRE_2FA` says.
+  `Service.Login` decides on the account, not on the policy.
+- A session that owes a second factor is never elevated. `httpx.Authenticator.resolve` refuses it
+  everywhere but the 2FA routes, exactly as before.
+- Where `JD_REQUIRE_2FA` is true, an account with no authenticator gets a password-only session that
+  reaches nothing but enrolment — the old behaviour, unchanged.
+- Turning an authenticator off is the account holder's own action, requires their password, and is
+  refused outright by `Service.DisableTOTP` where the policy demands one.
+
+The one deliberate loosening: with the policy off, an account that has never enrolled signs in on a
+password alone. `auth.Service.Login` elevates that session at creation, and `ResolveSession` completes a
+session that was left half-authenticated when the policy changed under it — without that, turning the
+setting off would strand everyone who was mid-flow with a session that can never be elevated.
 
 ## Invariant 3: which routes take a typed phrase
 

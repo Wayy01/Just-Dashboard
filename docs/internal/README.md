@@ -33,7 +33,8 @@ strategy, and feature ownership behind those rules.
 - [`backend/git-backups-users.md`](backend/git-backups-users.md) — Git working copies and mutations,
   backup scheduling/storage/restore, and host accounts/SSH keys.
 - [`backend/databases-proxy-platform.md`](backend/databases-proxy-platform.md) — eight database engines,
-  nginx/proxy/TLS/DNS, streaming, jobs, secrets, agent mode, configuration, releases, and self-update.
+  nginx/proxy/TLS/DNS, streaming, jobs, secrets, agent mode, configuration, releases, self-update, and the
+  dashboard's own settings (restart, rebuild, rollback, Tailscale certificates).
 
 ## Deployments and frontend
 

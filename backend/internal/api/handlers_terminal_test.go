@@ -52,7 +52,7 @@ func terminalServer(t *testing.T) (*Server, http.Handler) {
 		TerminalEnable: true,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL)
+	svc := auth.NewService(st, sealer, cfg.SessionTTL, cfg.IdleTTL, cfg.Require2FA)
 	s := New(cfg, log, st, svc, sealer, audit.New(st, log), nil)
 	s.modules.term.SetClipboardRootForTest(t.TempDir())
 	if _, err := s.modules.term.Account(); err != nil {

@@ -6,9 +6,10 @@ hiding a control through `useAuth().can()` is affordance only.
 
 | Route area | UI responsibility | Primary implementation |
 | --- | --- | --- |
-| `/login` | Password, mandatory TOTP enrollment/challenge, recovery, and partial-session states | `src/app/login/page.tsx`, auth hooks, shared logo/state/controls |
+| `/login` | One centred column: password, TOTP challenge, enrolment where the install requires it, recovery codes, and partial-session states | `src/app/login/page.tsx`, auth hooks, shared logo/state/controls |
 | `/` | Host overview, current health, capacity, recent events, and sparklines | dashboard root page plus `components/metrics/` |
 | `/dashboard` | Dashboard self-update status and searchable release notes | `components/update/`, self-update provider |
+| `/dashboard/configuration` | The panel's own settings — address, certificate mode, ports, allowlist, two-factor policy, session lifetimes — plus restart, rebuild, and a run record that is followed across the restart it describes | `components/config/restart-progress.tsx`, `hooks/use-self-config.tsx` (`system.admin` only) |
 | `/account` | Password, TOTP/recovery codes, dashboard users, roles, and API tokens | account page, auth hook, confirmation primitives |
 | `/appearance` | Light/dark/system presentation choice | appearance page and theme hook; see [`data-theming.md`](data-theming.md) |
 | `/audit` | Filtered/paginated mutation audit trail | audit page and shared page/panel/state controls |

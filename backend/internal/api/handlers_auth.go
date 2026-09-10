@@ -106,7 +106,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) error {
 	switch {
 	case current != nil && !current.TwoFAPassed && p.User.TOTPEnabled:
 		st.NeedsTOTP = true
-	case current != nil && !current.TwoFAPassed:
+	case current != nil && !current.TwoFAPassed && s.Auth.Require2FA():
 		st.NeedsEnroll = true
 	default:
 		st.Authenticated = true
@@ -148,14 +148,21 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) error 
 		}
 		return httpx.Internal(err)
 	}
-	if err := s.Auth.VerifySecondFactor(r.Context(), p.SessionID, p.UserID(), req.Code); err != nil {
-		// The code was just consumed confirming the enrollment, so TOTP's
-		// replay window refuses it a second time. That leaves this partial
-		// session unable to pass its second factor, so it is revoked and the
-		// user signs in again — rather than elevated on the strength of a
-		// check that did not pass.
-		if err := s.Auth.RevokeSession(r.Context(), p.SessionID); err != nil {
-			return httpx.Internal(err)
+	// Only a half-authenticated session has anything left to settle here. One
+	// that is already elevated — somebody enrolling voluntarily from their
+	// account page — has proved its second factor by another route, and
+	// signing them out for improving their own security would be a strange
+	// reward for it.
+	if !p.Elevated {
+		if err := s.Auth.VerifySecondFactor(r.Context(), p.SessionID, p.UserID(), req.Code); err != nil {
+			// The code was just consumed confirming the enrollment, so TOTP's
+			// replay window refuses it a second time. That leaves this partial
+			// session unable to pass its second factor, so it is revoked and the
+			// user signs in again — rather than elevated on the strength of a
+			// check that did not pass.
+			if err := s.Auth.RevokeSession(r.Context(), p.SessionID); err != nil {
+				return httpx.Internal(err)
+			}
 		}
 	}
 	httpx.SetAudit(r, "auth.2fa.enable", p.Username(), nil)
@@ -223,6 +230,35 @@ func (s *Server) handleRecoveryCodesRegen(w http.ResponseWriter, r *http.Request
 	}
 	httpx.SetAudit(r, "auth.2fa.recovery.regenerate", p.Username(), nil)
 	httpx.JSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
+	return nil
+}
+
+// handleDisableTOTP turns the caller's own authenticator off.
+//
+// The current password is required, and that is the whole security argument
+// for this route: a session left open on an unlocked laptop is exactly the
+// threat two-factor exists to answer, so removing it has to cost something
+// only the account holder has.
+func (s *Server) handleDisableTOTP(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		return err
+	}
+	p := httpx.MustPrincipal(r)
+	if !s.Auth.VerifyUserPassword(r.Context(), p.UserID(), req.Password) {
+		httpx.SetAudit(r, "auth.2fa.disable", p.Username(), map[string]any{"result": "rejected"})
+		return httpx.Err(http.StatusUnauthorized, "invalid_credentials", "that password is incorrect")
+	}
+	if err := s.Auth.DisableTOTP(r.Context(), p.UserID()); err != nil {
+		if errors.Is(err, auth.ErrTOTPRequired) {
+			return httpx.Err(http.StatusConflict, "totp_required", err.Error())
+		}
+		return httpx.Internal(err)
+	}
+	httpx.SetAudit(r, "auth.2fa.disable", p.Username(), nil)
+	httpx.NoContent(w)
 	return nil
 }
 

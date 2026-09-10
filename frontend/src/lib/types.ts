@@ -2779,6 +2779,87 @@ export type SelfUpdateReport = {
 }
 
 /**
+ * The dashboard's own settings, as internal/selfcfg speaks them.
+ *
+ * Every field here is a line in the `.env` beside the compose file, and
+ * changing one restarts the stack into it. That is why the shape is flat and
+ * small: these are the settings somebody has a reason to change from a
+ * browser, not every variable the backend reads.
+ */
+export type DashboardSettings = {
+  site: string
+  /** The interface to listen on, when that is not the same as `site`. */
+  bind: string
+  tls: "tailscale" | "internal" | "off"
+  port: number
+  frontendPort: number
+  backendPort: number
+  allowedCidrs: string
+  terminalEnabled: boolean
+  require2fa: boolean
+  sessionTtl: string
+  idleTtl: string
+  updateCheck: boolean
+}
+
+/** One setting moving, for the confirmation dialog and the run record. */
+export type DashboardConfigChange = {
+  key: string
+  label: string
+  from: string
+  to: string
+}
+
+export type ConfigRunStatus = "pending" | "running" | "success" | "failed" | "rolled_back"
+export type ConfigPhase = "queued" | "applying" | "waiting" | "rollback" | "finished"
+
+/**
+ * One restart, as recorded on disk by the container that carried it out.
+ *
+ * It outlives the dashboard it restarts, which is the whole point: the browser
+ * follows this record across the moment the API stops answering, and picks the
+ * story up from whatever backend comes back.
+ */
+export type DashboardConfigRun = {
+  id: string
+  status: ConfigRunStatus
+  phase: ConfigPhase
+  action: "apply" | "restart" | "rebuild"
+  changes?: DashboardConfigChange[]
+  dir: string
+  compose: string
+  image: string
+  envPath?: string
+  backup?: string
+  health?: string
+  rollbackHealth?: string
+  /** Where to go once this finishes — the address may have moved. */
+  endpoint?: string
+  container: string
+  actor: string
+  startedAt: string
+  updatedAt: string
+  finishedAt?: string
+  error?: string
+}
+
+export type DashboardConfigReport = {
+  /** False on an install with no compose stack to recreate. */
+  supported: boolean
+  reason?: string
+  dir?: string
+  compose?: string
+  envPath?: string
+  settings: DashboardSettings
+  /** The URL this configuration implies. */
+  endpoint: string
+  /** Settings the file asks for that the running process is not doing. */
+  drift?: DashboardConfigChange[]
+  run?: DashboardConfigRun
+  log?: string
+}
+
+/**
  * The security verdict. Mirrors netsec.Posture: the same three-field shape as
  * a health finding, because what was measured, what it means and what to do
  * are three different things and the UI renders them differently.

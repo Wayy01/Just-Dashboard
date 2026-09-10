@@ -103,12 +103,11 @@ export default function AccountPage() {
 }
 
 function SecurityTab() {
-  const { status, logout } = useAuth()
+  const { logout } = useAuth()
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
   const [confirmPw, setConfirmPw] = useState("")
   const [busy, setBusy] = useState(false)
-  const [codes, setCodes] = useState<string[] | null>(null)
 
   const change = async () => {
     if (next !== confirmPw) {
@@ -180,46 +179,179 @@ function SecurityTab() {
         </PanelFooter>
       </Panel>
 
-      <Panel>
-        <PanelHeader
-          icon={ShieldCheck}
-          title="Two-factor authentication"
-          description="A code from your authenticator app, checked at every sign in"
-          actions={
-            <Badge
-              variant={status?.user?.totpEnabled ? "success" : "secondary"}
-              className="font-normal"
-            >
-              {status?.user?.totpEnabled ? "enabled" : "not enrolled"}
-            </Badge>
-          }
-        />
-        <PanelBody className="space-y-3">
-          {codes ? (
-            <>
-              <Notice tone="warning" icon={Key} title="New recovery codes">
-                The previous set no longer works. These are shown only now.
-              </Notice>
-              <Well className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                {codes.map((c) => (
-                  <span key={c} className="tracking-wider">
-                    {c}
-                  </span>
-                ))}
+      <TwoFactorPanel />
+    </div>
+  )
+}
+
+/**
+ * Two-factor, as something you turn on rather than something you are handed.
+ *
+ * It used to be neither: enrolment happened once, during a sign-in nobody
+ * could get past without it, and this panel existed only to reissue recovery
+ * codes. Now that an install can leave it optional, the account page is where
+ * enrolling and un-enrolling actually belong — and the panel has to make the
+ * state obvious, because "am I protected by this" is the whole question.
+ *
+ * The three states are: not enrolled, enrolled, and enrolled on an install
+ * that requires it — where the off switch is absent rather than disabled,
+ * since a control that cannot be used is a question the operator has to answer
+ * for themselves.
+ */
+function TwoFactorPanel() {
+  const { status, refresh } = useAuth()
+  const [enrollment, setEnrollment] = useState<{ secret: string; otpauthUrl: string } | null>(null)
+  const [code, setCode] = useState("")
+  const [codes, setCodes] = useState<string[] | null>(null)
+  const [password, setPassword] = useState("")
+  const [disabling, setDisabling] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const enrolled = Boolean(status?.user?.totpEnabled)
+  const required = Boolean(status?.require2fa)
+
+  const begin = async () => {
+    setBusy(true)
+    try {
+      setEnrollment(await post<{ secret: string; otpauthUrl: string }>("/auth/2fa/setup"))
+    } catch (err) {
+      notify.error("Could not start enrolment", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const enable = async () => {
+    setBusy(true)
+    try {
+      const res = await post<{ recoveryCodes: string[] }>("/auth/2fa/enable", { code })
+      setCodes(res.recoveryCodes)
+      setEnrollment(null)
+      setCode("")
+      await refresh().catch(() => undefined)
+      notify.success("Two-factor enabled", {
+        description: "You will be asked for a code the next time you sign in.",
+      })
+    } catch (err) {
+      notify.error("Code rejected", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disable = async () => {
+    setBusy(true)
+    try {
+      await post("/account/2fa/disable", { password })
+      setPassword("")
+      setDisabling(false)
+      setCodes(null)
+      await refresh().catch(() => undefined)
+      notify.success("Two-factor turned off", {
+        description: "Your password is now the only thing between a session and this server.",
+      })
+    } catch (err) {
+      notify.error("Could not turn it off", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel>
+      <PanelHeader
+        icon={ShieldCheck}
+        title="Two-factor authentication"
+        description="A code from your authenticator app, checked at every sign in"
+        actions={
+          <Badge variant={enrolled ? "success" : "secondary"} className="font-normal">
+            {enrolled ? "enabled" : required ? "required — not yet enrolled" : "not enrolled"}
+          </Badge>
+        }
+      />
+      <PanelBody className="space-y-3">
+        {codes ? (
+          <>
+            <Notice tone="warning" icon={Key} title="Recovery codes">
+              Each one works once, in place of your authenticator. Any previous set no longer works,
+              and this is the only time these are shown.
+            </Notice>
+            <Well className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {codes.map((c) => (
+                <span key={c} className="tracking-wider">
+                  {c}
+                </span>
+              ))}
+            </Well>
+          </>
+        ) : enrolled ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Your account asks for a code at every sign in. Recovery codes are the way back in if you
+            lose the authenticator; regenerating issues a fresh set and invalidates the old one
+            immediately.
+          </p>
+        ) : enrollment ? (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Secret</Label>
+              <Well className="font-mono text-[13px] tracking-widest break-all">
+                {enrollment.secret}
               </Well>
-            </>
-          ) : (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Recovery codes are your way back in if you lose the authenticator. Regenerating issues
-              a fresh set and invalidates the old one immediately.
-            </p>
-          )}
-        </PanelBody>
-        <PanelFooter>
+              <p className="text-xs text-muted-foreground">
+                Add it to your authenticator, or{" "}
+                <a href={enrollment.otpauthUrl} className="underline underline-offset-4">
+                  open it directly
+                </a>
+                . The seed is sealed with the dashboard&apos;s master key and shown only here.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="enrol-code">Code from your app</Label>
+              <Input
+                id="enrol-code"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="000000"
+                className="h-11 max-w-48 text-center font-mono text-lg tracking-[0.4em]"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : disabling ? (
+          <div className="space-y-3">
+            <Notice tone="warning" title="Your password becomes the only factor">
+              This dashboard is root-equivalent. A session left open on an unlocked laptop is
+              exactly what the second factor answers, which is why turning it off costs a password.
+            </Notice>
+            <div className="space-y-1.5">
+              <Label htmlFor="disable-pw">Current password</Label>
+              <Input
+                id="disable-pw"
+                type="password"
+                autoComplete="current-password"
+                className="max-w-72"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {required
+              ? "This install requires an authenticator. Enrol one now — until you do, your session can reach nothing but this page."
+              : "Not required on this install, and worth having anyway: a password alone is one stolen credential away from root on this server."}
+          </p>
+        )}
+      </PanelBody>
+      <PanelFooter className="gap-2">
+        {enrolled && !codes && (
           <Button
             size="sm"
             variant="outline"
+            disabled={busy}
             onClick={async () => {
+              setBusy(true)
               try {
                 const res = await post<{ recoveryCodes: string[] }>("/account/recovery-codes")
                 setCodes(res.recoveryCodes)
@@ -228,14 +360,72 @@ function SecurityTab() {
                 })
               } catch (err) {
                 notify.error("Could not regenerate", err)
+              } finally {
+                setBusy(false)
               }
             }}
           >
             Regenerate recovery codes
           </Button>
-        </PanelFooter>
-      </Panel>
-    </div>
+        )}
+
+        {enrolled && !required && !disabling && (
+          <Button size="sm" variant="ghost" onClick={() => setDisabling(true)}>
+            Turn off
+          </Button>
+        )}
+
+        {disabling && (
+          <>
+            <Button size="sm" variant="destructive" disabled={busy || !password} onClick={disable}>
+              {busy && <Spinner className="size-4" />}
+              Turn two-factor off
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setDisabling(false)
+                setPassword("")
+              }}
+            >
+              Cancel
+            </Button>
+          </>
+        )}
+
+        {!enrolled &&
+          (enrollment ? (
+            <>
+              <Button size="sm" disabled={busy || code.length < 6} onClick={enable}>
+                {busy && <Spinner className="size-4" />}
+                Enable two-factor
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setEnrollment(null)
+                  setCode("")
+                }}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" disabled={busy} onClick={begin}>
+              {busy && <Spinner className="size-4" />}
+              Enable two-factor
+            </Button>
+          ))}
+
+        {codes && (
+          <Button size="sm" variant="outline" onClick={() => setCodes(null)}>
+            I have saved them
+          </Button>
+        )}
+      </PanelFooter>
+    </Panel>
   )
 }
 

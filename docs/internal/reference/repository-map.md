@@ -8,8 +8,8 @@ fields.
 
 | Area | Responsibility | Detailed reference |
 | --- | --- | --- |
-| `docker-compose.yml`, `deploy/Caddyfile` | Single-host production topology, loopback-only services, Caddy listener, mounts, and health checks | [`../deployments/implementation.md`](../deployments/implementation.md#deployment-topology) |
-| `install.sh`, `.env.example` | Installation, port selection, secrets, and operator configuration | [`../overview.md`](../overview.md), public [`../../../README.md`](../../../README.md) |
+| `docker-compose.yml`, `deploy/Caddyfile`, `deploy/proxy-entrypoint.sh` | Single-host production topology, loopback-only services, the Caddy listener and its three TLS modes, mounts, and health checks | [`../deployments/implementation.md`](../deployments/implementation.md#deployment-topology) |
+| `install.sh`, `.env.example` | Installation: two reachability routes (Tailscale, SSH tunnel), certificate issuance, randomised internal ports, secrets, and operator configuration | [`../overview.md`](../overview.md), public [`../../../README.md`](../../../README.md) |
 | `scripts/release.sh`, `backend/scripts/` | Version update, generated changelog, build verification, and release commit preparation | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#cutting-a-release) |
 | `AGENTS.md`, `CONTRIBUTING.md` | Mandatory contributor workflow, security baseline, licensing, and full validation gate | [`../contributing/conventions.md`](../contributing/conventions.md) |
 | `docs/plans/0.6.7-deployments/` | Frozen deployment contracts, ADRs, checkpoint evidence, and unfinished release scope | [`../deployments/implementation.md`](../deployments/implementation.md) |
@@ -25,7 +25,7 @@ services, handles signals, and supports the isolated self-update worker mode. Th
 | `agent` | Agent identity, certificates, and hub-facing mode | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#streaming-jobs-secrets-agent-mode) |
 | `api` | Route map, middleware composition, handlers, module wiring, audit, and feature joins | [`../architecture/request-lifecycle.md`](../architecture/request-lifecycle.md) |
 | `audit` | Durable and process-log mutation audit records | [`../architecture/runtime-boundaries.md`](../architecture/runtime-boundaries.md#auth-secrets-state) |
-| `auth` | Passwords, mandatory TOTP, recovery codes, sessions, roles/capabilities, and API tokens | [`../architecture/runtime-boundaries.md`](../architecture/runtime-boundaries.md#auth-secrets-state) |
+| `auth` | Passwords, TOTP enrolment and policy, recovery codes, sessions, roles/capabilities, and API tokens | [`../architecture/runtime-boundaries.md`](../architecture/runtime-boundaries.md#auth-secrets-state) |
 | `backups` | Backup definitions/runs, scheduler, object stores, retention, archive listing, and contained restore | [`../backend/git-backups-users.md`](../backend/git-backups-users.md#backups) |
 | `config` | Environment parsing, defaults, bounds, legacy aliases, and network safety validation | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#configuration-version-release-self-update) |
 | `dbx` | SQL and NoSQL connections, classification, browsing, DDL, query, import/export, and dumps | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#databases-eight-engines-one-shape) |
@@ -44,6 +44,7 @@ services, handles signals, and supports the isolated self-update worker mode. Th
 | `procs` | Process inventory, signals, PM2, systemd, and cron | [`../backend/processes-terminal-github.md`](../backend/processes-terminal-github.md#processes) |
 | `proxysvc` | nginx sites/streams, certificates, DNS/TLS checks, ports, htpasswd, and deployment routes | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#proxy) |
 | `safepath` | Symlink-safe archive extraction boundary | [`../architecture/runtime-boundaries.md`](../architecture/runtime-boundaries.md#reaching-the-host-and-containing-paths) |
+| `selfcfg` | The dashboard's own settings: `.env` reading/writing, validation, restart and rebuild in a sibling container with automatic rollback, and Tailscale certificate issuance/renewal | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#the-dashboards-own-settings) |
 | `selfupdate` | Release checks, changelog, installer state, reconciliation, and updater | [`../backend/databases-proxy-platform.md`](../backend/databases-proxy-platform.md#configuration-version-release-self-update) |
 | `store` | SQLite schema, additive columns, deployment migration, and connection lifecycle | [`../architecture/runtime-boundaries.md`](../architecture/runtime-boundaries.md#auth-secrets-state) |
 | `sysinfo` | Host metrics, disk/device statistics, pressure, sockets, and capacity | [`../backend/observability-security.md`](../backend/observability-security.md#metrics-saturation-health) |

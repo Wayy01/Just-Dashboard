@@ -36,6 +36,14 @@
   (which renders *nothing* when there is nothing to say), the release-notes sheet, and the panel on
   `/dashboard` — that page is the dashboard's own version and nothing else, because the server's packages
   and the tool you look at it through are updated by completely different machinery.
+- `hooks/use-self-config.tsx` is the same shape for the dashboard's own settings, with one problem the
+  update flow does not have: a change to the port or the address means the dashboard **does not come back
+  here**. Nothing on the client can follow it, so the run record carries the new endpoint and
+  `components/config/restart-progress.tsx` states it as a URL to open rather than spinning on an address
+  that is now answering nothing. It also renders a fourth outcome — `rolled_back`, the configuration that
+  did not come up and was undone — because showing that as either success or failure would misreport it.
+  The form on `/dashboard/configuration` **derives** its draft from the poll rather than mirroring it into
+  state: a copy refreshed every two seconds would wipe half-typed input during a restart.
 - **Theming is light and dark, one palette**, in `globals.css`'s `:root` and `.dark`. `lib/themes.ts` holds
   only what does not belong in a component: `ThemeMode`, `DEFAULT_MODE` (dark), the storage key, and
   `themeBootstrapScript()`. That script is inlined in `<head>` so the stored choice applies **before first

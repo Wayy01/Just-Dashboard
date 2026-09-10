@@ -10,8 +10,9 @@ logs, a real PTY, files, git, databases, reverse proxy, firewall, backups and de
 authenticated UI. Go backend + Next.js frontend behind Caddy, one `docker compose` stack.
 
 The software is **root-equivalent** — it drives the Docker socket, systemd, the firewall, host
-accounts and a shell. Its security boundary is *the network perimeter plus mandatory 2FA*, not the
-container. Every architectural oddity here traces back to that.
+accounts and a shell. Its security boundary is *the network perimeter plus authentication*, not the
+container — a tailnet or an ssh tunnel in front, and two-factor enforced for every account that has
+enrolled one (`JD_REQUIRE_2FA` decides whether enrolling is compulsory; it is not by default). Every architectural oddity here traces back to that.
 
 ## Commands
 
@@ -29,6 +30,7 @@ bun run test:browser                 # Playwright Chromium journey gate
 
 # whole stack
 sudo ./install.sh                    # interactive first install; re-runnable, keeps .env
+                                     # asks one question that matters: Tailscale (default) or SSH tunnel
 docker compose up -d --build
 docker compose logs backend | grep "bootstrap admin"   # generated password, printed once
 scripts/release.sh 0.6               # see backend/databases-proxy-platform.md#cutting-a-release

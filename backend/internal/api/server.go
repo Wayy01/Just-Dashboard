@@ -11,6 +11,7 @@ import (
 	"github.com/Wayy01/Just-Dashboard/backend/internal/auth"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/config"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/httpx"
+	"github.com/Wayy01/Just-Dashboard/backend/internal/selfcfg"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/store"
 	"github.com/Wayy01/Just-Dashboard/backend/internal/wsx"
 )
@@ -50,8 +51,15 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, svc *auth.Servic
 		Sealer: sealer,
 		Audit:  aud,
 		Agent:  id,
-		Authn:  &httpx.Authenticator{Svc: svc, Secure: !cfg.Dev},
-		WS:     wsx.NewUpgrader(cfg.AllowedOrigins, !cfg.Dev),
+		// Secure is dropped in exactly two configurations, and both of them are
+		// plain HTTP by design: local development, and the ssh-tunnel install
+		// where the proxy serves http://localhost because the tunnel is
+		// already the encrypted, authenticated hop. Most browsers do accept a
+		// Secure cookie from localhost — they treat it as a trustworthy origin
+		// — but not all of them have, and a session cookie the browser
+		// silently declines to store is a login page that simply loops.
+		Authn: &httpx.Authenticator{Svc: svc, Secure: !cfg.Dev && cfg.TLSMode != selfcfg.TLSOff},
+		WS:    wsx.NewUpgrader(cfg.AllowedOrigins, !cfg.Dev),
 		// Login is deliberately tight: five attempts a minute per address on
 		// top of the per-account lockout.
 		loginLim: httpx.NewLimiter(10, 5),
@@ -90,6 +98,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// needs to be told about a release is the one who has not opened the
 	// dashboard in a month.
 	s.modules.selfUpdate.Start(ctx)
+	// The same settling, for a restart rather than an upgrade. After a
+	// successful one this process is likewise the only evidence it worked,
+	// because the sibling that carried it out has already exited.
+	s.modules.selfConfig.Start(ctx)
+	// Issued and renewed here rather than at install time, because the
+	// certificate this obtains lives 90 days and the install that most needs
+	// it is the one nobody has touched since.
+	s.modules.certKeeper.Start(ctx)
 	if err := s.modules.backupSched.Start(ctx); err != nil {
 		return err
 	}
@@ -112,6 +128,7 @@ func (s *Server) Shutdown() {
 	s.modules.backupSched.Stop()
 	s.modules.deploySchedule.Stop()
 	s.modules.selfUpdate.Stop()
+	s.modules.certKeeper.Stop()
 	s.modules.term.Shutdown()
 	s.modules.dbs.Shutdown()
 	s.modules.docker.Close()

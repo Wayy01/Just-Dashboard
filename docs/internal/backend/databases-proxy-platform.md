@@ -230,3 +230,40 @@ done by hand, and the UI refuses to fold it away.
   edited compose file is normal, so a local change survives unless it genuinely collides. And it **waits
   for the health URL to answer** before calling itself finished, since `compose up -d` returns as soon as
   containers start and a backend that starts then dies looks identical from there.
+
+### The dashboard's own settings
+
+**`internal/selfcfg`** is the settings half of the same idea, and it borrows the same manoeuvre for the
+same reason: applying a port change recreates the container serving the request that asked for it, so the
+work runs in a sibling container (`just-dashboard-reconfigure`, this image, `-self-restart`) writing
+`self-config.json` and `self-config.log` into `JD_DATA_DIR`. It shares `selfupdate`'s answer to "where is
+this install" rather than asking Docker the same question twice — `Options.Locate` is
+`selfupdate.Service.Location`.
+
+- **One source of truth**: the `.env` beside the compose file, edited the way a person would. `EnvFile`
+  keeps the file as lines, so the paragraph of explanation above each setting survives a change made from
+  a browser, and a setting already present is replaced in place rather than appended. Every write takes a
+  backup (`.env.jd-previous`) first — that copy is what the rollback restores.
+- **Validation happens before anything is written**, because the process doing the checking is the process
+  about to be restarted. Ports are range-checked, de-duplicated and probed (only the ones that *move*: the
+  three in use are held by this very stack); durations must parse; the allowlist must still contain
+  loopback **and** the caller's own address. That last rule is the most valuable one in the package — the
+  allowlist runs before authentication, so an operator who drops their own network out of it does not get
+  an error page, they get a dashboard that has silently stopped existing for them.
+- **Rollback is what makes the feature offerable at all.** If the new configuration does not answer its
+  health probe, the sibling restores the previous `.env`, brings the stack back up on it and records
+  `StatusRolledBack` — a failure of the change and a success of the net, which is why it is a fourth
+  status rather than "failed".
+- **A change that moves the endpoint takes the typed phrase**, and the phrase is the new `host:port`: what
+  has to be read is *where the dashboard will be*, since the browser that asked cannot follow it there.
+- **`Report.Drift`** compares the file with the running process on the fields this backend can observe
+  about itself, which is what an operator who edited `.env` over ssh and never restarted is looking at.
+- **`CertKeeper`** is why a Tailscale install shows an ordinary padlock rather than a warning:
+  `tailscale cert` runs on the host through `hostexec` (tailscaled's socket is the host's, and this image
+  deliberately carries no Tailscale client) and writes into `JD_DATA_DIR/certs`, which the proxy mounts
+  read-only. Checked at boot and every 12 h, renewed with 30 days to spare, and the proxy is restarted
+  afterwards because Caddy reads a file-based certificate once. `deploy/proxy-entrypoint.sh` turns
+  `JD_TLS` into the scheme and the `tls` directive: a Caddyfile cannot branch, and an installer that
+  edited a tracked one would make every later `git pull` a merge conflict.
+- Routes: `GET/PUT /api/v1/dashboard/config`, `POST /api/v1/dashboard/restart`,
+  `DELETE /api/v1/dashboard/config/run`, all `system.admin`, the two mutations inside `s.destructive`.

@@ -116,6 +116,8 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: bool
                     // sidebar is collapsed to the icon rail and hides them.
                     for (const child of item.children ?? []) {
                       if (child.href === item.href) continue
+                      // A child can be privileged where its parent is not.
+                      if (child.capability && !can(child.capability)) continue
                       rows.push(
                         <CommandItem
                           key={child.href}

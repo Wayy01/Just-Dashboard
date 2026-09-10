@@ -122,6 +122,10 @@ func (s *Server) mountAccountRoutes(r chi.Router) {
 		r.Use(httpx.RequireSession)
 		r.Method(http.MethodPost, "/password", s.handle(s.handleChangePassword))
 		r.Method(http.MethodPost, "/recovery-codes", s.handle(s.handleRecoveryCodesRegen))
+		// Enrolling is on the half-authenticated group above, because that is
+		// where an install requiring 2FA sends you. Turning it off is only
+		// ever done by somebody already signed in, so it lives here.
+		r.Method(http.MethodPost, "/2fa/disable", s.handle(s.handleDisableTOTP))
 		r.Method(http.MethodGet, "/sessions", s.handle(s.handleListOwnSessions))
 		r.Method(http.MethodDelete, "/sessions/{id}", s.handle(s.handleRevokeOwnSession))
 	})

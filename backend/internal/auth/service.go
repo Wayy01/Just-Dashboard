@@ -18,6 +18,7 @@ var (
 	ErrAccountLocked      = errors.New("account temporarily locked after repeated failed logins")
 	ErrAccountDisabled    = errors.New("account disabled")
 	ErrInvalidTOTP        = errors.New("invalid verification code")
+	ErrTOTPRequired       = errors.New("this dashboard requires two-factor authentication, so it cannot be turned off")
 	ErrNotFound           = errors.New("not found")
 	ErrLastAdmin          = errors.New("cannot remove the last enabled admin")
 )
@@ -33,15 +34,22 @@ type Service struct {
 	sealer     *Sealer
 	sessionTTL time.Duration
 	idleTTL    time.Duration
+	require2FA bool
 }
 
-func NewService(st *store.Store, sealer *Sealer, sessionTTL, idleTTL time.Duration) *Service {
-	return &Service{st: st, sealer: sealer, sessionTTL: sessionTTL, idleTTL: idleTTL}
+func NewService(st *store.Store, sealer *Sealer, sessionTTL, idleTTL time.Duration, require2FA bool) *Service {
+	return &Service{st: st, sealer: sealer, sessionTTL: sessionTTL, idleTTL: idleTTL, require2FA: require2FA}
 }
 
-// Require2FA remains in the status contract so existing frontends can render
-// the login flow, but it is a security invariant rather than configuration.
-func (s *Service) Require2FA() bool { return true }
+// Require2FA reports whether an account with no authenticator is allowed in.
+//
+// The policy is a setting rather than a constant, and the two states differ
+// only in what happens to an account that has not enrolled: with it on, a
+// password buys a session that reaches the enrolment routes and nothing else;
+// with it off, that account is signed in and invited to enrol later. What it
+// never does is weaken an account that *has* enrolled — a user with an
+// authenticator is always asked for a code, whatever this says.
+func (s *Service) Require2FA() bool { return s.require2FA }
 
 type User struct {
 	ID           int64     `json:"id"`
@@ -304,17 +312,30 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	}
 	s.st.DB.ExecContext(ctx, `UPDATE users SET failed_count = 0, locked_until = 0 WHERE id = ?`, u.ID)
 
-	// A session always starts un-elevated. Nothing beyond the 2FA endpoints
-	// accepts it until the second factor is proved.
-	sess, token, err := s.newSession(ctx, u.ID, ip, userAgent, false)
+	// A session starts un-elevated whenever a second factor is still owed —
+	// an enrolled authenticator, or an unenrolled account on an install that
+	// demands one. Nothing beyond the 2FA endpoints accepts it until that
+	// factor is proved. The one case that starts complete is the account with
+	// nothing left to prove: no authenticator, and no policy requiring one.
+	complete := !u.TOTPEnabled && !s.require2FA
+	sess, token, err := s.newSession(ctx, u.ID, ip, userAgent, complete)
 	if err != nil {
 		return nil, err
 	}
 	res := &LoginResult{User: u, Token: token, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt}
-	if u.TOTPEnabled {
+	switch {
+	case u.TOTPEnabled:
 		res.NeedsTOTP = true
-	} else {
+	case s.require2FA:
 		res.NeedsEnroll = true
+	default:
+		// elevate() is what stamps last_login_at everywhere else; a session
+		// that never passes through it would leave that column reading
+		// "never" for the accounts that sign in most often.
+		if _, err := s.st.DB.ExecContext(ctx,
+			`UPDATE users SET last_login_at = ? WHERE id = ?`, now.Unix(), u.ID); err != nil {
+			return nil, err
+		}
 	}
 	return res, nil
 }
@@ -403,6 +424,27 @@ func (s *Service) elevate(ctx context.Context, sessionID string, userID int64) e
 		return err
 	}
 	_, err := s.st.DB.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, time.Now().Unix(), userID)
+	return err
+}
+
+// DisableTOTP removes the caller's own authenticator.
+//
+// Separate from ResetTOTP, which is the administrator's lever for a locked-out
+// account and revokes every session with it. This one is the account holder
+// turning off something they turned on, so the session they are doing it from
+// survives — being signed out for tidying your own settings is a punishment
+// for the wrong action. It refuses outright when the install requires 2FA:
+// the check belongs here rather than only in the handler, because this is the
+// function that would otherwise leave an account unable to sign in at all.
+func (s *Service) DisableTOTP(ctx context.Context, userID int64) error {
+	if s.require2FA {
+		return ErrTOTPRequired
+	}
+	if _, err := s.st.DB.ExecContext(ctx,
+		`UPDATE users SET totp_enabled = 0, totp_secret = '' WHERE id = ?`, userID); err != nil {
+		return err
+	}
+	_, err := s.st.DB.ExecContext(ctx, `DELETE FROM recovery_codes WHERE user_id = ?`, userID)
 	return err
 }
 
